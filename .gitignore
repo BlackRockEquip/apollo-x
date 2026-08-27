@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Next.js build / cache
+.next/
+out/
+*.tsbuildinfo
+
+# Test / coverage output
+coverage/
+
+# Environment & local secrets (never commit). Keep .env.example as a safe template.
+.env
+.env.*
+!.env.example
+
+# Disposable isolated local PostgreSQL test cluster (data + logs)
+.test-postgres/
+pg_log/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Uploaded / local user documents & temporary files
+uploads/
+local/
+*.tmp
+*.temp
+
+# Private keys / credential bundles
+*.pem
+*.key
+*.p12
+*.pfx
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini

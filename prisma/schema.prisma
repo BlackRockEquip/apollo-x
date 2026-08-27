@@ -1,0 +1,752 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  ENDED
+}
+
+enum TenantRole {
+  COMPANY_ADMIN
+  MANAGER
+  USER
+  STORE_CONTROLLER
+  SALES
+  FINANCE
+}
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+  SUPPORT_READ_ONLY
+  SUPPORT_OPERATOR
+  SECURITY_AUDITOR
+}
+
+enum SupportAccessMode {
+  READ_ONLY
+  READ_WRITE
+}
+
+enum ModuleKey {
+  DASHBOARD
+  CUSTOMERS
+  SUPPLIERS
+  JOBS_WIP
+  INVENTORY
+  STORAGE
+  JOB_KITS
+  REBUILDS
+  PEX_STOCK
+  PEX_TRACKING
+  PROCUREMENT
+  OUTWORK
+  WARRANTY
+  FIELD_SERVICE
+  NOTIFICATIONS
+  QUOTES
+  SALES_ORDERS
+  INVOICES
+  PAYMENTS
+  REPORTS
+  ATTACHMENTS
+  IMPORT_EXPORT
+}
+
+enum EntitlementSource {
+  INTERNAL_FREE
+  PLAN
+  BUNDLE
+  MODULE
+  TRIAL
+  PLATFORM_OVERRIDE
+}
+
+enum EntitlementStatus {
+  ACTIVE
+  SCHEDULED
+  GRACE_READ_ONLY
+  EXPIRED
+  SUSPENDED
+}
+
+enum AuditSource {
+  UI
+  API
+  IMPORT
+  INTEGRATION
+  WORKER
+  PLATFORM
+}
+
+enum AddressType {
+  BILLING
+  DELIVERY
+  PHYSICAL
+  POSTAL
+}
+
+enum TaxCodeType {
+  STANDARD
+  ZERO_RATED
+  EXEMPT
+  NON_TAXABLE
+}
+
+enum CommercialTermType {
+  PAYMENT
+  QUOTE_VALIDITY
+  DELIVERY
+  STANDARD_TEXT
+}
+
+enum StorageLocationType {
+  STORES
+  SHELF
+  BIN
+  WORKSHOP
+  PEX_HOLDING
+  QUARANTINE
+  RECEIVING
+  OTHER
+}
+
+enum DocumentSequenceType {
+  JOB
+  PEX_JOB
+  QUOTE
+  SALES_ORDER
+  INVOICE
+  PAYMENT_RECEIPT
+  PROCUREMENT_RFQ
+}
+
+model UserIdentity {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  displayName    String
+  passwordHash   String
+  active         Boolean  @default(true)
+  sessionVersion Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  memberships         CompanyMembership[]
+  platformAssignments PlatformRoleAssignment[]
+  sessions            UserSession[]
+  initiatedSupport    PlatformSupportAccess[]  @relation("SupportInitiator")
+  endedSupport        PlatformSupportAccess[]  @relation("SupportEnder")
+  auditEvents         AuditEvent[]
+}
+
+model Company {
+  id                     String       @id @default(cuid())
+  internalCode           String       @unique
+  legalName              String
+  tradingName            String?
+  status                 TenantStatus @default(ACTIVE)
+  defaultCurrencyCode    String       @default("ZAR")
+  defaultGracePeriodDays Int          @default(30)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  memberships       CompanyMembership[]
+  entitlements      CompanyModuleEntitlement[]
+  entitlementEvents EntitlementHistory[]
+  supportAccess     PlatformSupportAccess[]
+  auditEvents       AuditEvent[]
+  settings          CompanySettings?
+  addresses         CompanyAddress[]
+  customers         Customer[]
+  customerBranches  CustomerBranch[]
+  customerContacts  CustomerContact[]
+  customerAddresses CustomerAddress[]
+  suppliers         Supplier[]
+  supplierContacts  SupplierContact[]
+  supplierAddresses SupplierAddress[]
+  manufacturers     Manufacturer[]
+  supplierBrands    SupplierManufacturer[]
+  parts             Part[]
+  storageLocations  StorageLocation[]
+  serviceItems      ServiceItem[]
+  taxCodes          TaxCode[]
+  commercialTerms   CommercialTerm[]
+  documentSequences DocumentNumberSequence[]
+}
+
+model CompanyMembership {
+  id        String           @id @default(cuid())
+  userId    String
+  companyId String
+  role      TenantRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user        UserIdentity           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company     Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  permissions MembershipPermission[]
+  sessions    UserSession[]
+
+  @@unique([userId, companyId])
+  @@index([companyId, status])
+}
+
+model MembershipPermission {
+  id           String  @id @default(cuid())
+  membershipId String
+  permission   String
+  allowed      Boolean
+
+  membership CompanyMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, permission])
+}
+
+model PlatformRoleAssignment {
+  id        String       @id @default(cuid())
+  userId    String
+  role      PlatformRole
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user        UserIdentity         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissions PlatformPermission[]
+
+  @@unique([userId, role])
+}
+
+model PlatformPermission {
+  id           String  @id @default(cuid())
+  assignmentId String
+  permission   String
+  allowed      Boolean
+
+  assignment PlatformRoleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, permission])
+}
+
+model PlatformSupportAccess {
+  id         String            @id @default(cuid())
+  operatorId String
+  companyId  String
+  mode       SupportAccessMode
+  reason     String
+  startedAt  DateTime          @default(now())
+  expiresAt  DateTime
+  endedAt    DateTime?
+  endedById  String?
+
+  operator UserIdentity  @relation("SupportInitiator", fields: [operatorId], references: [id])
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  endedBy  UserIdentity? @relation("SupportEnder", fields: [endedById], references: [id])
+  sessions UserSession[]
+
+  @@index([operatorId, expiresAt])
+  @@index([companyId, expiresAt])
+}
+
+model UserSession {
+  id              String    @id @default(cuid())
+  tokenHash       String    @unique
+  userId          String
+  membershipId    String?
+  supportAccessId String?
+  sessionVersion  Int
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  lastSeenAt      DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  user          UserIdentity           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership    CompanyMembership?     @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  supportAccess PlatformSupportAccess? @relation(fields: [supportAccessId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model LoginThrottle {
+  keyHash      String    @id
+  attemptCount Int       @default(0)
+  windowStart  DateTime  @default(now())
+  lockedUntil  DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  @@index([lockedUntil])
+}
+
+model CompanyModuleEntitlement {
+  id                    String            @id @default(cuid())
+  companyId             String
+  module                ModuleKey
+  source                EntitlementSource
+  status                EntitlementStatus
+  effectiveFrom         DateTime
+  expiresAt             DateTime?
+  gracePeriodDays       Int?
+  readOnlyOverrideUntil DateTime?
+  metadata              Json?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, module])
+  @@index([companyId, status])
+}
+
+model EntitlementHistory {
+  id             String             @id @default(cuid())
+  companyId      String
+  module         ModuleKey
+  previousStatus EntitlementStatus?
+  newStatus      EntitlementStatus
+  source         EntitlementSource
+  effectiveAt    DateTime
+  expiresAt      DateTime?
+  reason         String?
+  changedById    String?
+  createdAt      DateTime           @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, module, createdAt])
+}
+
+model CompanySettings {
+  id                     String  @id @default(cuid())
+  companyId              String  @unique
+  defaultCurrencyCode    String  @default("ZAR")
+  defaultTaxJurisdiction String  @default("ZA")
+  themeColor             String?
+  logoObjectKey          String?
+  registrationNumber     String?
+  vatNumber              String?
+  mainTelephone          String?
+  mainEmail              String?
+  website                String?
+  defaultTaxCodeId       String?
+  defaultPaymentTermId   String?
+  quoteValidityDays      Int     @default(30)
+  documentHeaderText     String?
+  documentFooterText     String?
+
+  company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  defaultTaxCode     TaxCode?        @relation(fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
+  defaultPaymentTerm CommercialTerm? @relation(fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
+}
+
+model CompanyAddress {
+  id          String      @id @default(cuid())
+  companyId   String
+  type        AddressType
+  label       String?
+  line1       String
+  line2       String?
+  city        String?
+  province    String?
+  postalCode  String?
+  countryCode String      @default("ZA")
+  isPrimary   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, type])
+}
+
+model Customer {
+  id                    String            @id @default(cuid())
+  companyId             String
+  name                  String
+  nameNormalized        String
+  tradingName           String?
+  accountCode           String?
+  accountCodeNormalized String?
+  registrationNumber    String?
+  vatNumber             String?
+  mainTelephone         String?
+  mainEmail             String?
+  website               String?
+  notes                 String?
+  active                Boolean           @default(true)
+  paymentTermId         String?
+  defaultTaxCodeId      String?
+  currencyCode          String            @default("ZAR")
+  creditLimit           Decimal?          @db.Decimal(19, 4)
+  accountOnHold         Boolean           @default(false)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  company               Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  paymentTerm           CommercialTerm?   @relation("CustomerPaymentTerm", fields: [paymentTermId], references: [id], onDelete: SetNull)
+  defaultTaxCode        TaxCode?          @relation("CustomerTaxCode", fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
+  branches              CustomerBranch[]
+  contacts              CustomerContact[]
+  addresses             CustomerAddress[]
+
+  @@unique([companyId, accountCodeNormalized])
+  @@index([companyId, nameNormalized])
+  @@index([companyId, active])
+}
+
+model CustomerBranch {
+  id              String            @id @default(cuid())
+  companyId       String
+  customerId      String
+  name            String
+  code            String?
+  mainTelephone   String?
+  mainEmail       String?
+  notes           String?
+  active          Boolean           @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  contacts        CustomerContact[]
+  addresses       CustomerAddress[]
+
+  @@unique([companyId, customerId, code])
+  @@index([companyId, customerId])
+}
+
+model CustomerContact {
+  id              String          @id @default(cuid())
+  companyId       String
+  customerId      String
+  branchId        String?
+  firstName       String
+  lastName        String?
+  position        String?
+  telephone       String?
+  mobile          String?
+  email           String?
+  notes           String?
+  isPrimary       Boolean         @default(false)
+  active          Boolean         @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch          CustomerBranch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, customerId])
+  @@index([companyId, email])
+}
+
+model CustomerAddress {
+  id              String          @id @default(cuid())
+  companyId       String
+  customerId      String
+  branchId        String?
+  type            AddressType
+  label           String?
+  line1           String
+  line2           String?
+  city            String?
+  province        String?
+  postalCode      String?
+  countryCode     String          @default("ZA")
+  isPrimary       Boolean         @default(false)
+  active          Boolean         @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch          CustomerBranch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, customerId, type])
+}
+
+model Supplier {
+  id                    String                 @id @default(cuid())
+  companyId             String
+  name                  String
+  nameNormalized        String
+  accountCode           String?
+  accountCodeNormalized String?
+  registrationNumber    String?
+  vatNumber             String?
+  mainTelephone         String?
+  mainEmail             String?
+  website               String?
+  notes                 String?
+  active                Boolean                @default(true)
+  paymentTermId         String?
+  currencyCode          String                 @default("ZAR")
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  company               Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  paymentTerm           CommercialTerm?        @relation("SupplierPaymentTerm", fields: [paymentTermId], references: [id], onDelete: SetNull)
+  contacts              SupplierContact[]
+  addresses             SupplierAddress[]
+  manufacturers         SupplierManufacturer[]
+
+  @@unique([companyId, accountCodeNormalized])
+  @@index([companyId, nameNormalized])
+  @@index([companyId, active])
+}
+
+model SupplierContact {
+  id              String    @id @default(cuid())
+  companyId       String
+  supplierId      String
+  firstName       String
+  lastName        String?
+  position        String?
+  telephone       String?
+  mobile          String?
+  email           String?
+  notes           String?
+  isPrimary       Boolean   @default(false)
+  active          Boolean   @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, supplierId])
+}
+
+model SupplierAddress {
+  id              String      @id @default(cuid())
+  companyId       String
+  supplierId      String
+  type            AddressType
+  label           String?
+  line1           String
+  line2           String?
+  city            String?
+  province        String?
+  postalCode      String?
+  countryCode     String      @default("ZA")
+  isPrimary       Boolean     @default(false)
+  active          Boolean     @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, supplierId, type])
+}
+
+model Manufacturer {
+  id             String                 @id @default(cuid())
+  companyId      String
+  name           String
+  nameNormalized String
+  code           String?
+  codeNormalized String?
+  description    String?
+  active         Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  company        Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  parts          Part[]
+  suppliers      SupplierManufacturer[]
+
+  @@unique([companyId, nameNormalized])
+  @@unique([companyId, codeNormalized])
+  @@index([companyId, active])
+}
+
+model SupplierManufacturer {
+  id              String       @id @default(cuid())
+  companyId       String
+  supplierId      String
+  manufacturerId  String
+  createdAt       DateTime     @default(now())
+  active          Boolean      @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  company         Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  manufacturer    Manufacturer @relation(fields: [manufacturerId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, supplierId, manufacturerId])
+  @@index([companyId, manufacturerId])
+}
+
+model Part {
+  id                     String        @id @default(cuid())
+  companyId              String
+  partNumber             String
+  partNumberNormalized   String
+  description            String
+  manufacturerId         String?
+  manufacturerPartNumber String?
+  category               String?
+  unitOfMeasure          String        @default("EA")
+  notes                  String?
+  active                 Boolean       @default(true)
+  defaultPurchaseCost    Decimal?      @db.Decimal(19, 4)
+  defaultSellingPrice    Decimal?      @db.Decimal(19, 4)
+  taxCodeId              String?
+  reorderMinimum         Decimal?      @db.Decimal(19, 4)
+  reorderMaximum         Decimal?      @db.Decimal(19, 4)
+  reorderQuantity        Decimal?      @db.Decimal(19, 4)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  company                Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  manufacturer           Manufacturer? @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
+  taxCode                TaxCode?      @relation("PartTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, partNumberNormalized])
+  @@index([companyId, description])
+  @@index([companyId, active])
+}
+
+model StorageLocation {
+  id             String              @id @default(cuid())
+  companyId      String
+  code           String
+  codeNormalized String
+  name           String
+  type           StorageLocationType
+  description    String?
+  parentId       String?
+  active         Boolean             @default(true)
+  sortOrder      Int                 @default(0)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  company        Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  parent         StorageLocation?    @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children       StorageLocation[]   @relation("LocationHierarchy")
+
+  @@unique([companyId, codeNormalized])
+  @@index([companyId, parentId, sortOrder])
+}
+
+model ServiceItem {
+  id                  String   @id @default(cuid())
+  companyId           String
+  code                String
+  codeNormalized      String
+  description         String
+  category            String?
+  unitOfMeasure       String   @default("HOUR")
+  defaultCost         Decimal? @db.Decimal(19, 4)
+  defaultSellingPrice Decimal? @db.Decimal(19, 4)
+  taxCodeId           String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  taxCode             TaxCode? @relation("ServiceTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, codeNormalized])
+  @@index([companyId, active])
+}
+
+model TaxCode {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  codeNormalized   String
+  description      String
+  rate             Decimal           @db.Decimal(9, 6)
+  type             TaxCodeType
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customerDefaults Customer[]        @relation("CustomerTaxCode")
+  parts            Part[]            @relation("PartTaxCode")
+  services         ServiceItem[]     @relation("ServiceTaxCode")
+  settingsDefaults CompanySettings[]
+
+  @@unique([companyId, codeNormalized, effectiveFrom])
+  @@index([companyId, active, effectiveFrom])
+}
+
+model CommercialTerm {
+  id               String             @id @default(cuid())
+  companyId        String
+  type             CommercialTermType
+  code             String
+  codeNormalized   String
+  label            String
+  days             Int?
+  termsText        String?
+  active           Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  company          Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customerDefaults Customer[]         @relation("CustomerPaymentTerm")
+  supplierDefaults Supplier[]         @relation("SupplierPaymentTerm")
+  settingsDefaults CompanySettings[]
+
+  @@unique([companyId, type, codeNormalized])
+  @@index([companyId, type, active])
+}
+
+model DocumentNumberSequence {
+  id                      String               @id @default(cuid())
+  companyId               String
+  type                    DocumentSequenceType
+  prefix                  String
+  padding                 Int                  @default(6)
+  nextValue               BigInt               @default(1)
+  includeFinancialYear    Boolean              @default(false)
+  financialYearStartMonth Int                  @default(3)
+  active                  Boolean              @default(true)
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  company                 Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, type])
+  @@index([companyId, active])
+}
+
+model AuditEvent {
+  id              String      @id @default(cuid())
+  companyId       String?
+  actorId         String?
+  supportAccessId String?
+  source          AuditSource
+  module          String
+  entityType      String
+  entityId        String?
+  action          String
+  beforeData      Json?
+  afterData       Json?
+  reason          String?
+  correlationId   String
+  ipAddress       String?
+  userAgent       String?
+  occurredAt      DateTime    @default(now())
+
+  company Company?      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actor   UserIdentity? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@index([correlationId])
+}

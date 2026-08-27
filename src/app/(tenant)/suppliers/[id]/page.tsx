@@ -1,0 +1,1 @@
+import{PartyDetailWorkspace}from"@/components/PartyDetailWorkspace";export default async function Page({params}:{params:Promise<{id:string}>}){return <PartyDetailWorkspace kind="suppliers" id={(await params).id}/>}

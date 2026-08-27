@@ -1,0 +1,3 @@
+import {NextRequest,NextResponse} from "next/server";import {requireRequestContext} from "@/lib/auth/session";import {apiError} from "@/lib/http/errors";import {requireSameOrigin} from "@/lib/security/request";import {getCompanySettings,updateCompanySettings} from "@/lib/master-data/company-settings-service";
+export async function GET(){try{return NextResponse.json(await getCompanySettings(await requireRequestContext()));}catch(e){return apiError(e);}}
+export async function PATCH(r:NextRequest){try{requireSameOrigin(r);return NextResponse.json(await updateCompanySettings(await requireRequestContext(),await r.json()));}catch(e){return apiError(e);}}

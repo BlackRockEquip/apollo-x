@@ -1,0 +1,2 @@
+import{NextRequest,NextResponse}from"next/server";import{requireRequestContext}from"@/lib/auth/session";import{apiError}from"@/lib/http/errors";import{customerSelections}from"@/lib/master-data/detail-service";
+export async function GET(r:NextRequest){try{return NextResponse.json({items:await customerSelections(await requireRequestContext(),r.nextUrl.searchParams.get("q")||"")});}catch(e){return apiError(e);}}

@@ -1,0 +1,2 @@
+import{NextResponse}from"next/server";import{requireRequestContext}from"@/lib/auth/session";import{apiError}from"@/lib/http/errors";import{getCustomerDetail}from"@/lib/master-data/detail-service";
+export async function GET(_:Request,{params}:{params:Promise<{id:string}>}){try{return NextResponse.json(await getCustomerDetail(await requireRequestContext(),(await params).id));}catch(e){return apiError(e);}}

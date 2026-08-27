@@ -1,0 +1,1 @@
+import{CompanySettingsForm}from"@/components/CompanySettingsForm";export default function Page(){return <><header className="page-header"><div><p className="eyebrow">Tenant configuration</p><h1>Company settings</h1><p>Legal identity, tax defaults and branded document configuration.</p></div></header><CompanySettingsForm/></>}
