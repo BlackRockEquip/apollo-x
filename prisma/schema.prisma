@@ -123,6 +123,52 @@ enum StorageLocationType {
   OTHER
 }
 
+enum StockMovementType {
+  RECEIPT
+  TRANSFER
+  ISSUE
+  RETURN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  RESERVATION
+  RESERVATION_RELEASE
+  PICK
+  UNPICK
+  REVERSAL
+  RECONCILIATION
+  SCRAP
+}
+
+enum StockReferenceType {
+  GENERAL
+  RECEIPT
+  TRANSFER
+  ISSUE
+  RETURN
+  ADJUSTMENT
+  RESERVATION
+  RECONCILIATION
+  SUPPLIER_DELIVERY
+  JOB
+  PEX_REPAIR
+  SALES_ORDER
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  RELEASED
+  CONVERTED
+  EXPIRED
+  CANCELLED
+}
+
+enum StockCountStatus {
+  OPEN
+  COMPLETED
+  APPROVED
+  CANCELLED
+}
+
 enum DocumentSequenceType {
   JOB
   PEX_JOB
@@ -149,6 +195,11 @@ model UserIdentity {
   initiatedSupport    PlatformSupportAccess[]  @relation("SupportInitiator")
   endedSupport        PlatformSupportAccess[]  @relation("SupportEnder")
   auditEvents         AuditEvent[]
+  stockMovements      StockMovement[]          @relation("StockMovementActor")
+  stockReservations   StockReservation[]       @relation("StockReservationActor")
+  stockReleases       StockReservation[]       @relation("StockReservationReleaser")
+  stockCountsCounted  StockCount[]             @relation("StockCountCounter")
+  stockCountsApproved StockCount[]             @relation("StockCountApprover")
 }
 
 model Company {
@@ -168,6 +219,10 @@ model Company {
   supportAccess     PlatformSupportAccess[]
   auditEvents       AuditEvent[]
   settings          CompanySettings?
+  stockBalances     StockBalance[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
+  stockCounts       StockCount[]
   addresses         CompanyAddress[]
   customers         Customer[]
   customerBranches  CustomerBranch[]
@@ -592,7 +647,7 @@ model SupplierManufacturer {
 }
 
 model Part {
-  id                     String        @id @default(cuid())
+  id                     String             @id @default(cuid())
   companyId              String
   partNumber             String
   partNumberNormalized   String
@@ -600,20 +655,24 @@ model Part {
   manufacturerId         String?
   manufacturerPartNumber String?
   category               String?
-  unitOfMeasure          String        @default("EA")
+  unitOfMeasure          String             @default("EA")
   notes                  String?
-  active                 Boolean       @default(true)
-  defaultPurchaseCost    Decimal?      @db.Decimal(19, 4)
-  defaultSellingPrice    Decimal?      @db.Decimal(19, 4)
+  active                 Boolean            @default(true)
+  defaultPurchaseCost    Decimal?           @db.Decimal(19, 4)
+  defaultSellingPrice    Decimal?           @db.Decimal(19, 4)
   taxCodeId              String?
-  reorderMinimum         Decimal?      @db.Decimal(19, 4)
-  reorderMaximum         Decimal?      @db.Decimal(19, 4)
-  reorderQuantity        Decimal?      @db.Decimal(19, 4)
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
-  company                Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  manufacturer           Manufacturer? @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
-  taxCode                TaxCode?      @relation("PartTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+  reorderMinimum         Decimal?           @db.Decimal(19, 4)
+  reorderMaximum         Decimal?           @db.Decimal(19, 4)
+  reorderQuantity        Decimal?           @db.Decimal(19, 4)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  company                Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  manufacturer           Manufacturer?      @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
+  taxCode                TaxCode?           @relation("PartTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+  stockBalances          StockBalance[]
+  stockMovements         StockMovement[]
+  stockReservations      StockReservation[]
+  stockCountLines        StockCountLine[]
 
   @@unique([companyId, partNumberNormalized])
   @@index([companyId, description])
@@ -621,24 +680,168 @@ model Part {
 }
 
 model StorageLocation {
-  id             String              @id @default(cuid())
-  companyId      String
-  code           String
-  codeNormalized String
-  name           String
-  type           StorageLocationType
-  description    String?
-  parentId       String?
-  active         Boolean             @default(true)
-  sortOrder      Int                 @default(0)
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  company        Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  parent         StorageLocation?    @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children       StorageLocation[]   @relation("LocationHierarchy")
+  id                String              @id @default(cuid())
+  companyId         String
+  code              String
+  codeNormalized    String
+  name              String
+  type              StorageLocationType
+  description       String?
+  parentId          String?
+  active            Boolean             @default(true)
+  sortOrder         Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  parent            StorageLocation?    @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children          StorageLocation[]   @relation("LocationHierarchy")
+  stockBalances     StockBalance[]
+  movementsFrom     StockMovement[]     @relation("MovementFrom")
+  movementsTo       StockMovement[]     @relation("MovementTo")
+  stockReservations StockReservation[]
+  stockCounts       StockCount[]
 
   @@unique([companyId, codeNormalized])
   @@index([companyId, parentId, sortOrder])
+}
+
+model StockBalance {
+  id                String    @id @default(cuid())
+  companyId         String
+  partId            String
+  locationId        String
+  quantityOnHand    Decimal   @default(0) @db.Decimal(19, 4)
+  quantityReserved  Decimal   @default(0) @db.Decimal(19, 4)
+  lowStockThreshold Decimal?  @db.Decimal(19, 4)
+  reorderMaximum    Decimal?  @db.Decimal(19, 4)
+  version           Int       @default(1)
+  lastMovementAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company  Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part     Part            @relation(fields: [partId], references: [id], onDelete: Restrict)
+  location StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, partId, locationId])
+  @@index([companyId, partId])
+  @@index([companyId, locationId])
+  @@index([companyId, lastMovementAt])
+}
+
+model StockMovement {
+  id                    String              @id @default(cuid())
+  companyId             String
+  partId                String
+  movementType          StockMovementType
+  quantity              Decimal             @db.Decimal(19, 4)
+  fromLocationId        String?
+  toLocationId          String?
+  referenceType         StockReferenceType?
+  referenceId           String?
+  referenceNumber       String?
+  unitCost              Decimal?            @db.Decimal(19, 4)
+  reason                String?
+  notes                 String?
+  actorId               String?
+  resultingFromQuantity Decimal?            @db.Decimal(19, 4)
+  resultingToQuantity   Decimal?            @db.Decimal(19, 4)
+  idempotencyKey        String?
+  reversalOfId          String?
+  correlationId         String
+  occurredAt            DateTime            @default(now())
+
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part         Part             @relation(fields: [partId], references: [id], onDelete: Restrict)
+  fromLocation StorageLocation? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocation   StorageLocation? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: Restrict)
+  actor        UserIdentity?    @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+  reversalOf   StockMovement?   @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals    StockMovement[]  @relation("MovementReversal")
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, occurredAt])
+  @@index([companyId, partId, occurredAt])
+  @@index([companyId, movementType, occurredAt])
+  @@index([companyId, fromLocationId, occurredAt])
+  @@index([companyId, toLocationId, occurredAt])
+  @@index([companyId, referenceType, referenceId])
+  @@index([correlationId])
+}
+
+model StockReservation {
+  id              String                 @id @default(cuid())
+  companyId       String
+  partId          String
+  locationId      String
+  quantity        Decimal                @db.Decimal(19, 4)
+  status          StockReservationStatus @default(ACTIVE)
+  referenceType   StockReferenceType?
+  referenceId     String?
+  referenceNumber String?
+  reason          String?
+  notes           String?
+  expiresAt       DateTime?
+  actorId         String?
+  releasedById    String?
+  releasedAt      DateTime?
+  idempotencyKey  String?
+  correlationId   String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part       Part            @relation(fields: [partId], references: [id], onDelete: Restrict)
+  location   StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  actor      UserIdentity?   @relation("StockReservationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  releasedBy UserIdentity?   @relation("StockReservationReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, partId, status])
+  @@index([companyId, locationId, status])
+  @@index([companyId, referenceType, referenceId])
+  @@index([companyId, status, expiresAt])
+}
+
+model StockCount {
+  id              String           @id @default(cuid())
+  companyId       String
+  locationId      String
+  status          StockCountStatus @default(OPEN)
+  referenceNumber String?
+  notes           String?
+  countedById     String?
+  approvedById    String?
+  startedAt       DateTime         @default(now())
+  completedAt     DateTime?
+  approvedAt      DateTime?
+  correlationId   String
+
+  company    Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  location   StorageLocation  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  countedBy  UserIdentity?    @relation("StockCountCounter", fields: [countedById], references: [id], onDelete: SetNull)
+  approvedBy UserIdentity?    @relation("StockCountApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  lines      StockCountLine[]
+
+  @@index([companyId, status])
+  @@index([companyId, locationId, startedAt])
+}
+
+model StockCountLine {
+  id               String  @id @default(cuid())
+  companyId        String
+  countId          String
+  partId           String
+  expectedQuantity Decimal @db.Decimal(19, 4)
+  countedQuantity  Decimal @db.Decimal(19, 4)
+  variance         Decimal @db.Decimal(19, 4)
+  reason           String?
+
+  part  Part       @relation(fields: [partId], references: [id], onDelete: Restrict)
+  count StockCount @relation(fields: [countId], references: [id], onDelete: Restrict)
+
+  @@unique([countId, partId])
+  @@index([companyId, partId])
 }
 
 model ServiceItem {

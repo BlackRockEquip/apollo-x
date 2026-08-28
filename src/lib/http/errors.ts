@@ -3,7 +3,15 @@ import { ZodError } from "zod";
 import { AuthorizationError } from "@/lib/auth/guards";
 import { Prisma } from "@prisma/client";
 
+export class StockError extends Error {
+  constructor(public code: string, message: string) {
+    super(message);
+    this.name = "StockError";
+  }
+}
+
 export function apiError(error: unknown) {
+  if (error instanceof StockError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: 409 });
   if (error instanceof AuthorizationError) return NextResponse.json({ error: { code: "FORBIDDEN", message: error.message } }, { status: 403 });
   if (error instanceof ZodError) return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "The request is invalid.", fields: error.flatten().fieldErrors } }, { status: 400 });
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ error: { code: "DUPLICATE", message: "A record with the same company-specific code or name already exists." } }, { status: 409 });
