@@ -1,7 +1,7 @@
-import { Boxes, Search, Eye, Plus } from "lucide-react";
+import { Search, Eye, Plus } from "lucide-react";
+import Link from "next/link";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule } from "@/lib/auth/guards";
-import { MODULE_LABELS } from "@/lib/constants";
 import { listInventoryPositions } from "@/lib/inventory/service";
 import { positionQuery } from "@/lib/inventory/validation";
 import { STOCK_STATE_LABEL, STOCK_STATE_CLASS, type StockState } from "@/lib/inventory/stock-state";
@@ -31,24 +31,21 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header compact">
         <div>
-          <p className="eyebrow">{MODULE_LABELS.INVENTORY}</p>
+          <p className="eyebrow">Inventory</p>
           <h1>Inventory</h1>
           <p>Stock on hand, location breakdown, reservations, and recent movements.</p>
         </div>
       </div>
 
-      <section className="inventory-tools">
-        <div className="search-box">
-          <Search size={16} />
-          <form id="inventory-filter-form" method="GET" action="/inventory">
-            <input type="text" name="q" placeholder="Part number, description, manufacturer…" defaultValue={parsed.q || ""} />
-            <button type="submit">Filter</button>
+      <section className="master-panel inventory-panel">
+        <div className="master-toolbar inventory-toolbar">
+          <form id="inventory-filter-form" method="GET" action="/inventory" className="search-control inventory-search-control">
+            <Search size={15} />
+            <input type="text" name="q" placeholder="Search part number, description or manufacturer" defaultValue={parsed.q || ""} />
           </form>
-        </div>
-
-        <div className="stock-filters">
+        <div className="stock-filters compact">
           {(["ALL", "OUT_OF_STOCK", "LOW_STOCK", "IN_STOCK"] as const).map((s) => (
             <label key={s}>
               <input type="radio" name="stockState" value={s} defaultChecked={parsed.stockState === s} form="inventory-filter-form" />
@@ -57,14 +54,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           ))}
         </div>
 
-        {hasManage && (
-          <button className="action-btn primary">
+          <button type="submit" form="inventory-filter-form" className="quiet-button">Apply</button>
+          <span>{total} item{total === 1 ? "" : "s"}</span>
+          {hasManage && (
+          <button className="gold-button inventory-primary-action" type="button">
             <Plus size={16} /> Receive Stock
           </button>
-        )}
-      </section>
+          )}
+        </div>
 
-      <div className="table-container">
+      <div className="data-table-wrap">
         <table className="data-table">
           <thead>
             <tr>
@@ -93,17 +92,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <span className={`state-badge ${STOCK_STATE_CLASS[row.stockState as StockState]}`}>{STOCK_STATE_LABEL[row.stockState as StockState]}</span>
                 </td>
                 <td className="actions">
-                  <a href={`/inventory/parts/${row.id}`} className="action-link" title="View part detail">
+                  <Link href={`/inventory/parts/${row.id}`} className="action-link" title="View part detail">
                     <Eye size={15} />
-                  </a>
+                  </Link>
                 </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="empty-state">
-                  <Boxes size={32} />
-                  <span>No parts match the current filters.</span>
+                <td colSpan={9} className="table-state compact-empty-state">
+                  <span>No inventory items match the current filters.</span>
                 </td>
               </tr>
             )}
@@ -111,9 +109,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </table>
       </div>
 
-      <div className="pagination-bar">
-        Showing {total === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
-      </div>
+      <footer className="table-footer inventory-footer"><span>Showing {total === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}</span></footer>
+      </section>
     </div>
   );
 }

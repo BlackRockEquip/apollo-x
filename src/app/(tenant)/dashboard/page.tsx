@@ -1,11 +1,10 @@
-import { Boxes, BriefcaseBusiness, FileCheck2, Repeat2, Package, AlertTriangle } from "lucide-react";
+import { Package, AlertTriangle, Boxes } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// Phase 3 dashboard inventory widgets — permission-gated summaries.
 async function inventorySummary(companyId: string | null) {
   if (!companyId) return null;
   const [totalStocked, lowStock, outOfStock, movements] = await Promise.all([
@@ -25,19 +24,13 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <div className="page-header"><div><p className="eyebrow">Operational overview</p><h1>Dashboard</h1><p>Phase 1 foundation is active. Operational metrics arrive with their authoritative modules.</p></div></div>
-      <section className="metric-grid" aria-label="Foundation status">
-        <article className="metric-card"><BriefcaseBusiness /><span>Jobs & WIP</span><strong>Foundation ready</strong><small>Phase 4</small></article>
-        <article className="metric-card"><Boxes /><span>Inventory</span><strong>Ledger live</strong><small>Phase 3</small></article>
-        <article className="metric-card"><Repeat2 /><span>PEX</span><strong>Lifecycle planned</strong><small>Phase 8</small></article>
-        <article className="metric-card"><FileCheck2 /><span>Commercial</span><strong>Snapshot-safe</strong><small>Phases 5–9</small></article>
-      </section>
+      <div className="page-header compact"><div><p className="eyebrow">Overview</p><h1>Dashboard</h1><p>Track stock availability and the latest inventory activity.</p></div></div>
 
       {inventory && (
-        <section className="metric-grid" aria-label="Inventory summary">
-          <article className="metric-card"><Package /><span>Stocked Parts</span><strong>{inventory.totalStocked}</strong></article>
-          <article className="metric-card"><AlertTriangle /><span>Low Stock</span><strong>{inventory.lowStock}</strong></article>
-          <article className="metric-card"><Package /><span>Out of Stock</span><strong>{inventory.outOfStock}</strong></article>
+        <section className="metric-grid compact" aria-label="Inventory summary">
+          <article className="metric-card compact"><Package /><span>Stocked Parts</span><strong>{inventory.totalStocked}</strong></article>
+          <article className="metric-card compact"><AlertTriangle /><span>Low Stock</span><strong>{inventory.lowStock}</strong></article>
+          <article className="metric-card compact"><Boxes /><span>Out of Stock</span><strong>{inventory.outOfStock}</strong></article>
         </section>
       )}
 
@@ -62,10 +55,6 @@ export default async function DashboardPage() {
         </section>
       )}
 
-      <section className="foundation-panel">
-        <div><h2>Secure tenant foundation</h2><p>This dashboard is rendered only after the server validates the active identity, session version, membership or support context, tenant status, module entitlement and permission.</p></div>
-        <span className="status-pill">Active</span>
-      </section>
     </div>
   );
 }

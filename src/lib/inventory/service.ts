@@ -24,6 +24,7 @@ import { deriveStockState } from "@/lib/inventory/stock-state";
 
 type Tx = Prisma.TransactionClient;
 type Quantity = Prisma.Decimal;
+type DbClient = Tx | typeof prisma;
 
 const D = Prisma.Decimal;
 
@@ -110,6 +111,19 @@ function buildMovement(input: {
 }
 
 type LockedBalance = { id: string; onHand: Quantity; reserved: Quantity; version: number };
+type LockedReservation = {
+  id: string;
+  companyId: string;
+  partId: string;
+  locationId: string;
+  quantity: Quantity;
+  status: Prisma.StockReservationGetPayload<{ select: { status: true } }>['status'];
+  referenceType: StockReferenceType | null;
+  referenceId: string | null;
+  referenceNumber: string | null;
+  reason: string | null;
+  notes: string | null;
+};
 
 // Row-level lock on the one balance row per (company, part, location). The
 // FOR UPDATE is what serialises concurrent issues/transfers/reservations so
@@ -155,6 +169,69 @@ async function saveBalance(tx: Tx, balance: LockedBalance, next: { onHand?: Quan
   });
 }
 
+async function lockReservation(tx: Tx, companyId: string, reservationId: string): Promise<LockedReservation | null> {
+  const rows = await tx.$queryRaw<{
+    id: string;
+    companyId: string;
+    partId: string;
+    locationId: string;
+    quantity: string;
+    status: string;
+    referenceType: StockReferenceType | null;
+    referenceId: string | null;
+    referenceNumber: string | null;
+    reason: string | null;
+    notes: string | null;
+  }[]>`
+    SELECT "id", "companyId", "partId", "locationId", "quantity", "status", "referenceType", "referenceId", "referenceNumber", "reason", "notes"
+    FROM "StockReservation"
+    WHERE "companyId" = ${companyId} AND "id" = ${reservationId}
+    FOR UPDATE`;
+
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    partId: row.partId,
+    locationId: row.locationId,
+    quantity: new D(row.quantity),
+    status: row.status as LockedReservation['status'],
+    referenceType: row.referenceType,
+    referenceId: row.referenceId,
+    referenceNumber: row.referenceNumber,
+    reason: row.reason,
+    notes: row.notes,
+  };
+}
+
+async function getReservationUsage(tx: Tx, companyId: string, reservationId: string) {
+  const rows = await tx.$queryRaw<{ movementType: StockMovementType; quantity: string }[]>`
+    SELECT "movementType", "quantity"
+    FROM "StockMovement"
+    WHERE "companyId" = ${companyId}
+      AND "referenceType" = 'RESERVATION'::"StockReferenceType"
+      AND "referenceId" = ${reservationId}`;
+
+  let issued = new D(0);
+  let released = new D(0);
+  for (const row of rows) {
+    const qty = new D(row.quantity);
+    if (row.movementType === "ISSUE") issued = issued.plus(qty);
+    if (row.movementType === "RESERVATION_RELEASE") released = released.plus(qty);
+  }
+  return { issued, released, remaining: null as Quantity | null };
+}
+
+async function getReservationRemaining(tx: Tx, reservation: LockedReservation) {
+  const usage = await getReservationUsage(tx, reservation.companyId, reservation.id);
+  const remaining = reservation.quantity.minus(usage.issued).minus(usage.released);
+  if (remaining.lt(0)) {
+    throw new StockError("INVALID_RESERVATION", "Reservation history is inconsistent.");
+  }
+  return { ...usage, remaining };
+}
+
 // Tenant-scoped existence checks. Missing rows always raise the generic
 // NOT_FOUND signal â€” a caller must never learn whether a foreign-tenant ID
 // exists.
@@ -185,6 +262,17 @@ async function replayedMovement(companyId: string, idempotencyKey: string | null
   return prisma.stockMovement.findUnique({
     where: { companyId_idempotencyKey: { companyId, idempotencyKey } },
   });
+}
+
+async function replayedMovementWithClient(db: DbClient, companyId: string, idempotencyKey: string | null | undefined) {
+  if (!idempotencyKey) return null;
+  return db.stockMovement.findUnique({
+    where: { companyId_idempotencyKey: { companyId, idempotencyKey } },
+  });
+}
+
+function isUniqueIdempotencyError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
 // ============================================================
@@ -285,58 +373,65 @@ export async function transferStock(ctx: RequestContext, input: z.infer<typeof t
   requireInventory(ctx, "INVENTORY_TRANSFER");
   const replay = await replayedMovement(ctx.companyId, input.idempotencyKey);
   if (replay) return { movementId: replay.id, replayed: true };
-
-  const movementId = await prisma.$transaction(async (tx) => {
-    const part = await requirePart(tx, ctx, input.partId);
-    const from = await requireLocation(tx, ctx, input.fromLocationId);
-    const to = await requireLocation(tx, ctx, input.toLocationId);
-    if (from.id === to.id) throw new StockError("INVALID_TRANSFER", "Source and destination locations must differ.");
-    assertOperable(part, from);
-    assertOperable(part, to);
-    const qty = new D(input.quantity);
-    const balances = new Map<string, LockedBalance>();
-    for (const locationId of [from.id, to.id].sort()) {
-      const balance = await lockBalance(tx, ctx.companyId, part.id, locationId, { createIfMissing: true });
-      if (!balance) notFound();
-      balances.set(locationId, balance);
-    }
-    const source = balances.get(from.id)!;
-    const destination = balances.get(to.id)!;
-    if (source.onHand.minus(source.reserved).lt(qty)) insufficient();
-    const nextSource = source.onHand.minus(qty);
-    const nextDestination = destination.onHand.plus(qty);
-    const movement = await tx.stockMovement.create({
-      data: buildMovement({
-        companyId: ctx.companyId,
-        partId: part.id,
-        movementType: "TRANSFER",
-        quantity: qty,
-        fromLocationId: from.id,
-        toLocationId: to.id,
-        referenceType: "TRANSFER",
-        referenceNumber: input.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: input.notes ?? null,
-        actorId: ctx.userId,
-        resultingFromQuantity: nextSource,
-        resultingToQuantity: nextDestination,
-        idempotencyKey: input.idempotencyKey ?? null,
-        correlationId: ctx.correlationId,
-      }),
+  let result: { movementId: string; replayed: boolean };
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const part = await requirePart(tx, ctx, input.partId);
+      const from = await requireLocation(tx, ctx, input.fromLocationId);
+      const to = await requireLocation(tx, ctx, input.toLocationId);
+      if (from.id === to.id) throw new StockError("INVALID_TRANSFER", "Source and destination locations must differ.");
+      assertOperable(part, from);
+      assertOperable(part, to);
+      const qty = new D(input.quantity);
+      const balances = new Map<string, LockedBalance>();
+      for (const locationId of [from.id, to.id].sort()) {
+        const balance = await lockBalance(tx, ctx.companyId, part.id, locationId, { createIfMissing: true });
+        if (!balance) notFound();
+        balances.set(locationId, balance);
+      }
+      const source = balances.get(from.id)!;
+      const destination = balances.get(to.id)!;
+      if (source.onHand.minus(source.reserved).lt(qty)) insufficient();
+      const nextSource = source.onHand.minus(qty);
+      const nextDestination = destination.onHand.plus(qty);
+      const movement = await tx.stockMovement.create({
+        data: buildMovement({
+          companyId: ctx.companyId,
+          partId: part.id,
+          movementType: "TRANSFER",
+          quantity: qty,
+          fromLocationId: from.id,
+          toLocationId: to.id,
+          referenceType: "TRANSFER",
+          referenceNumber: input.referenceNumber ?? null,
+          reason: input.reason ?? null,
+          notes: input.notes ?? null,
+          actorId: ctx.userId,
+          resultingFromQuantity: nextSource,
+          resultingToQuantity: nextDestination,
+          idempotencyKey: input.idempotencyKey ?? null,
+          correlationId: ctx.correlationId,
+        }),
+      });
+      await saveBalance(tx, source, { onHand: nextSource });
+      await saveBalance(tx, destination, { onHand: nextDestination });
+      return { movementId: movement.id, replayed: false };
     });
-    await saveBalance(tx, source, { onHand: nextSource });
-    await saveBalance(tx, destination, { onHand: nextDestination });
-    return movement.id;
-  });
+  } catch (error) {
+    if (!isUniqueIdempotencyError(error)) throw error;
+    const retried = await replayedMovement(ctx.companyId, input.idempotencyKey);
+    if (!retried) throw error;
+    result = { movementId: retried.id, replayed: true };
+  }
   await recordAudit(ctx, {
     source: "UI",
     module: "INVENTORY",
     entityType: "StockMovement",
-    entityId: movementId,
+    entityId: result.movementId,
     action: "TRANSFER",
     afterData: { partId: input.partId, fromLocationId: input.fromLocationId, toLocationId: input.toLocationId, quantity: input.quantity, idempotencyKey: input.idempotencyKey ?? null },
   });
-  return { movementId, replayed: false };
+  return result;
 }
 
 // ============================================================
@@ -349,118 +444,201 @@ export async function issueStock(ctx: RequestContext, input: z.infer<typeof issu
   requireInventory(ctx, "INVENTORY_ISSUE");
   const replay = await replayedMovement(ctx.companyId, input.idempotencyKey);
   if (replay) return { movementId: replay.id, replayed: true };
-
-  const movementId = await prisma.$transaction(async (tx) => {
-    const part = await requirePart(tx, ctx, input.partId);
-    const location = await requireLocation(tx, ctx, input.locationId);
-    assertOperable(part, location);
-    const qty = new D(input.quantity);
-    const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
-    if (!balance) insufficient();
-    if (balance.onHand.minus(balance.reserved).lt(qty)) insufficient();
-    const nextOnHand = balance.onHand.minus(qty);
-    const movement = await tx.stockMovement.create({
-      data: buildMovement({
-        companyId: ctx.companyId,
-        partId: part.id,
-        movementType: "ISSUE",
-        quantity: qty,
-        fromLocationId: location.id,
-        referenceType: input.referenceType,
-        referenceId: input.referenceId ?? null,
-        referenceNumber: input.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: input.notes ?? null,
-        actorId: ctx.userId,
-        resultingFromQuantity: nextOnHand,
-        idempotencyKey: input.idempotencyKey ?? null,
-        correlationId: ctx.correlationId,
-      }),
+  let result: { movementId: string; replayed: boolean };
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const part = await requirePart(tx, ctx, input.partId);
+      const location = await requireLocation(tx, ctx, input.locationId);
+      assertOperable(part, location);
+      const qty = new D(input.quantity);
+      const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+      if (!balance) insufficient();
+      if (balance.onHand.minus(balance.reserved).lt(qty)) insufficient();
+      const nextOnHand = balance.onHand.minus(qty);
+      const movement = await tx.stockMovement.create({
+        data: buildMovement({
+          companyId: ctx.companyId,
+          partId: part.id,
+          movementType: "ISSUE",
+          quantity: qty,
+          fromLocationId: location.id,
+          referenceType: input.referenceType,
+          referenceId: input.referenceId ?? null,
+          referenceNumber: input.referenceNumber ?? null,
+          reason: input.reason ?? null,
+          notes: input.notes ?? null,
+          actorId: ctx.userId,
+          resultingFromQuantity: nextOnHand,
+          idempotencyKey: input.idempotencyKey ?? null,
+          correlationId: ctx.correlationId,
+        }),
+      });
+      await saveBalance(tx, balance, { onHand: nextOnHand });
+      return { movementId: movement.id, replayed: false };
     });
-    await saveBalance(tx, balance, { onHand: nextOnHand });
-    return movement.id;
-  });
+  } catch (error) {
+    if (!isUniqueIdempotencyError(error)) throw error;
+    const retried = await replayedMovement(ctx.companyId, input.idempotencyKey);
+    if (!retried) throw error;
+    result = { movementId: retried.id, replayed: true };
+  }
   await recordAudit(ctx, {
     source: "UI",
     module: "INVENTORY",
     entityType: "StockMovement",
-    entityId: movementId,
+    entityId: result.movementId,
     action: "ISSUE",
     afterData: { partId: input.partId, locationId: input.locationId, quantity: input.quantity, referenceType: input.referenceType, referenceId: input.referenceId ?? null, idempotencyKey: input.idempotencyKey ?? null },
   });
-  return { movementId, replayed: false };
+  return result;
 }
 
-// ============================================================
-// RETURNS â€” stock coming back to a location. When the source
-// issue is linked (sourceMovementId) the return may never
-// exceed the quantity issued minus what has already been
-// returned against that same issue; the linkage is preserved
-// on the ledger row via reversalOfId.
-// ============================================================
+export async function issueReservedStock(
+  ctx: RequestContext,
+  reservationId: string,
+  input: z.infer<typeof issueInput>,
+) {
+  requireInventory(ctx, "INVENTORY_ISSUE");
+  const result = await prisma.$transaction((tx) => issueReservedStockTx(tx, ctx, reservationId, input));
 
-export async function returnStock(ctx: RequestContext, input: z.infer<typeof returnInput>) {
-  requireInventory(ctx, "INVENTORY_RETURN");
-  const replay = await replayedMovement(ctx.companyId, input.idempotencyKey);
-  if (replay) return { movementId: replay.id, replayed: true };
-
-  const movementId = await prisma.$transaction(async (tx) => {
-    const part = await requirePart(tx, ctx, input.partId);
-    const location = await requireLocation(tx, ctx, input.locationId);
-    assertOperable(part, location);
-    const qty = new D(input.quantity);
-
-    let source: { id: string; referenceType: StockReferenceType | null; referenceId: string | null; referenceNumber: string | null } | null = null;
-    if (input.sourceMovementId) {
-      const found = await tx.stockMovement.findFirst({
-        where: { id: input.sourceMovementId, companyId: ctx.companyId, partId: part.id, movementType: "ISSUE" },
-      });
-      if (!found || found.fromLocationId !== location.id) notFound();
-      const alreadyReturned = await tx.stockMovement.aggregate({
-        where: { companyId: ctx.companyId, reversalOfId: found.id, movementType: "RETURN" },
-        _sum: { quantity: true },
-      });
-      const returned = new D(alreadyReturned._sum?.quantity ?? 0);
-      if (found.quantity.minus(returned).lt(qty)) {
-        throw new StockError("RETURN_EXCEEDS_ISSUED", "The return exceeds the quantity still outstanding on the linked issue.");
-      }
-      source = { id: found.id, referenceType: found.referenceType, referenceId: found.referenceId, referenceNumber: found.referenceNumber };
-    }
-
-    const balance = await lockBalance(tx, ctx.companyId, part.id, location.id, { createIfMissing: true });
-    if (!balance) notFound();
-    const nextOnHand = balance.onHand.plus(qty);
-    const movement = await tx.stockMovement.create({
-      data: buildMovement({
-        companyId: ctx.companyId,
-        partId: part.id,
-        movementType: "RETURN",
-        quantity: qty,
-        toLocationId: location.id,
-        referenceType: source?.referenceType ?? "RETURN",
-        referenceId: source?.referenceId ?? null,
-        referenceNumber: source?.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: input.notes ?? null,
-        actorId: ctx.userId,
-        resultingToQuantity: nextOnHand,
-        idempotencyKey: input.idempotencyKey ?? null,
-        reversalOfId: source?.id ?? null,
-        correlationId: ctx.correlationId,
-      }),
-    });
-    await saveBalance(tx, balance, { onHand: nextOnHand });
-    return movement.id;
-  });
   await recordAudit(ctx, {
     source: "UI",
     module: "INVENTORY",
     entityType: "StockMovement",
-    entityId: movementId,
+    entityId: result.movementId,
+    action: "ISSUE",
+    afterData: {
+      reservationId,
+      partId: input.partId,
+      locationId: input.locationId,
+      quantity: input.quantity,
+      referenceType: "RESERVATION",
+      idempotencyKey: input.idempotencyKey ?? null,
+    },
+  });
+  return result;
+}
+
+export async function issueReservedStockTx(
+  tx: Tx,
+  ctx: RequestContext & { companyId: string },
+  reservationId: string,
+  input: z.infer<typeof issueInput>,
+) {
+  const replay = await replayedMovementWithClient(tx, ctx.companyId, input.idempotencyKey);
+  if (replay) return { movementId: replay.id, replayed: true };
+
+  const reservation = await lockReservation(tx, ctx.companyId, reservationId);
+  if (!reservation || reservation.status !== "ACTIVE") notFound();
+
+  const part = await requirePart(tx, ctx, input.partId);
+  const location = await requireLocation(tx, ctx, input.locationId);
+  assertOperable(part, location);
+
+  if (reservation.partId !== part.id || reservation.locationId !== location.id) notFound();
+
+  const qty = new D(input.quantity);
+  const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+  if (!balance) insufficient();
+
+  const usage = await getReservationRemaining(tx, reservation);
+  if (usage.remaining.lt(qty)) insufficient();
+  if (balance.onHand.lt(qty) || balance.reserved.lt(qty)) insufficient();
+
+  const nextOnHand = balance.onHand.minus(qty);
+  const nextReserved = balance.reserved.minus(qty);
+  if (nextOnHand.lt(0) || nextReserved.lt(0)) insufficient();
+
+  const movement = await tx.stockMovement.create({
+    data: buildMovement({
+      companyId: ctx.companyId,
+      partId: part.id,
+      movementType: "ISSUE",
+      quantity: qty,
+      fromLocationId: location.id,
+      referenceType: "RESERVATION",
+      referenceId: reservation.id,
+      referenceNumber: input.referenceNumber ?? reservation.referenceNumber ?? null,
+      reason: input.reason ?? reservation.reason ?? null,
+      notes: composeNotes(input.notes, reservation.notes),
+      actorId: ctx.userId,
+      resultingFromQuantity: nextOnHand,
+      idempotencyKey: input.idempotencyKey ?? null,
+      correlationId: ctx.correlationId,
+    }),
+  });
+
+  await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
+
+  if (usage.remaining.eq(qty)) {
+    await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
+  }
+
+  return { movementId: movement.id, replayed: false };
+}
+
+export async function returnStock(ctx: RequestContext, input: z.infer<typeof returnInput>) {
+  requireInventory(ctx, "INVENTORY_RETURN");
+  const result = await prisma.$transaction((tx) => returnStockTx(tx, ctx, input));
+  await recordAudit(ctx, {
+    source: "UI",
+    module: "INVENTORY",
+    entityType: "StockMovement",
+    entityId: result.movementId,
     action: "RETURN",
     afterData: { partId: input.partId, locationId: input.locationId, quantity: input.quantity, sourceMovementId: input.sourceMovementId ?? null, idempotencyKey: input.idempotencyKey ?? null },
   });
-  return { movementId, replayed: false };
+  return result;
+}
+
+export async function returnStockTx(tx: Tx, ctx: RequestContext & { companyId: string }, input: z.infer<typeof returnInput>) {
+  const replay = await replayedMovementWithClient(tx, ctx.companyId, input.idempotencyKey);
+  if (replay) return { movementId: replay.id, replayed: true };
+
+  const part = await requirePart(tx, ctx, input.partId);
+  const location = await requireLocation(tx, ctx, input.locationId);
+  assertOperable(part, location);
+  const qty = new D(input.quantity);
+
+  let source: { id: string; referenceType: StockReferenceType | null; referenceId: string | null; referenceNumber: string | null } | null = null;
+  if (input.sourceMovementId) {
+    const found = await tx.stockMovement.findFirst({
+      where: { id: input.sourceMovementId, companyId: ctx.companyId, partId: part.id, movementType: "ISSUE" },
+    });
+    if (!found || found.fromLocationId !== location.id) notFound();
+    const alreadyReturned = await tx.stockMovement.aggregate({
+      where: { companyId: ctx.companyId, reversalOfId: found.id, movementType: "RETURN" },
+      _sum: { quantity: true },
+    });
+    const returned = new D(alreadyReturned._sum?.quantity ?? 0);
+    if (new D(found.quantity).minus(returned).lt(qty)) insufficient();
+    source = { id: found.id, referenceType: found.referenceType, referenceId: found.referenceId, referenceNumber: found.referenceNumber };
+  }
+
+  const balance = await lockBalance(tx, ctx.companyId, part.id, location.id, { createIfMissing: true });
+  if (!balance) notFound();
+  const nextOnHand = balance.onHand.plus(qty);
+  const movement = await tx.stockMovement.create({
+    data: buildMovement({
+      companyId: ctx.companyId,
+      partId: part.id,
+      movementType: "RETURN",
+      quantity: qty,
+      toLocationId: location.id,
+      referenceType: source?.referenceType ?? null,
+      referenceId: source?.referenceId ?? null,
+      referenceNumber: source?.referenceNumber ?? null,
+      reason: input.reason ?? null,
+      notes: input.notes ?? null,
+      actorId: ctx.userId,
+      resultingToQuantity: nextOnHand,
+      idempotencyKey: input.idempotencyKey ?? null,
+      reversalOfId: source?.id ?? null,
+      correlationId: ctx.correlationId,
+    }),
+  });
+  await saveBalance(tx, balance, { onHand: nextOnHand });
+  return { movementId: movement.id, replayed: false };
 }
 
 // ============================================================
@@ -528,57 +706,7 @@ export async function adjustStock(ctx: RequestContext, input: z.infer<typeof adj
 
 export async function reserveStock(ctx: RequestContext, input: z.infer<typeof reservationInput>) {
   requireInventory(ctx, "INVENTORY_RESERVE");
-  const replay = await replayedMovement(ctx.companyId, input.idempotencyKey);
-  if (replay) return { reservationId: replay.referenceId ?? "", movementId: replay.id, replayed: true };
-
-  const result = await prisma.$transaction(async (tx) => {
-    const part = await requirePart(tx, ctx, input.partId);
-    const location = await requireLocation(tx, ctx, input.locationId);
-    if (!part.active || !location.active) throw new StockError("PART_INACTIVE", "Reservations require an active part and location.");
-    const qty = new D(input.quantity);
-    const balance = await lockBalance(tx, ctx.companyId, part.id, location.id, { createIfMissing: true });
-    if (!balance) notFound();
-    if (balance.onHand.minus(balance.reserved).lt(qty)) insufficient();
-    const nextReserved = balance.reserved.plus(qty);
-    const reservation = await tx.stockReservation.create({
-      data: {
-        companyId: ctx.companyId,
-        partId: part.id,
-        locationId: location.id,
-        quantity: qty,
-        status: "ACTIVE",
-        referenceType: input.referenceType,
-        referenceId: input.referenceId ?? null,
-        referenceNumber: input.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: input.notes ?? null,
-        expiresAt: input.expiresAt ?? null,
-        actorId: ctx.userId,
-        idempotencyKey: input.idempotencyKey ?? null,
-        correlationId: ctx.correlationId,
-      },
-    });
-    const movement = await tx.stockMovement.create({
-      data: buildMovement({
-        companyId: ctx.companyId,
-        partId: part.id,
-        movementType: "RESERVATION",
-        quantity: qty,
-        fromLocationId: location.id,
-        referenceType: input.referenceType,
-        referenceId: reservation.id,
-        referenceNumber: input.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: input.notes ?? null,
-        actorId: ctx.userId,
-        resultingFromQuantity: balance.onHand.minus(nextReserved),
-        idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:reserve` : null,
-        correlationId: ctx.correlationId,
-      }),
-    });
-    await saveBalance(tx, balance, { reserved: nextReserved });
-    return { reservationId: reservation.id, movementId: movement.id, replayed: false };
-  });
+  const result = await prisma.$transaction((tx) => reserveStockTx(tx, ctx, input));
   await recordAudit(ctx, {
     source: "UI",
     module: "INVENTORY",
@@ -590,50 +718,64 @@ export async function reserveStock(ctx: RequestContext, input: z.infer<typeof re
   return result;
 }
 
+export async function reserveStockTx(tx: Tx, ctx: RequestContext & { companyId: string }, input: z.infer<typeof reservationInput>) {
+  const replay = await replayedMovementWithClient(tx, ctx.companyId, input.idempotencyKey);
+  if (replay) return { reservationId: replay.referenceId ?? "", movementId: replay.id, replayed: true };
+
+  const part = await requirePart(tx, ctx, input.partId);
+  const location = await requireLocation(tx, ctx, input.locationId);
+  if (!part.active || !location.active) throw new StockError("PART_INACTIVE", "Reservations require an active part and location.");
+  const qty = new D(input.quantity);
+  const balance = await lockBalance(tx, ctx.companyId, part.id, location.id, { createIfMissing: true });
+  if (!balance) notFound();
+  if (balance.onHand.minus(balance.reserved).lt(qty)) insufficient();
+  const nextReserved = balance.reserved.plus(qty);
+  const reservation = await tx.stockReservation.create({
+    data: {
+      companyId: ctx.companyId,
+      partId: part.id,
+      locationId: location.id,
+      quantity: qty,
+      status: "ACTIVE",
+      referenceType: input.referenceType,
+      referenceId: input.referenceId ?? null,
+      referenceNumber: input.referenceNumber ?? null,
+      reason: input.reason ?? null,
+      notes: input.notes ?? null,
+      expiresAt: input.expiresAt ?? null,
+      actorId: ctx.userId,
+      idempotencyKey: input.idempotencyKey ?? null,
+      correlationId: ctx.correlationId,
+    },
+  });
+  const movement = await tx.stockMovement.create({
+    data: buildMovement({
+      companyId: ctx.companyId,
+      partId: part.id,
+      movementType: "RESERVATION",
+      quantity: qty,
+      fromLocationId: location.id,
+      referenceType: "RESERVATION",
+      referenceId: reservation.id,
+      referenceNumber: input.referenceNumber ?? null,
+      reason: input.reason ?? null,
+      notes: input.notes ?? null,
+      actorId: ctx.userId,
+      resultingFromQuantity: balance.onHand.minus(nextReserved),
+      idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:reserve` : null,
+      correlationId: ctx.correlationId,
+    }),
+  });
+  await saveBalance(tx, balance, { reserved: nextReserved });
+  return { reservationId: reservation.id, movementId: movement.id, replayed: false };
+}
+
 // Reuses the balance lock so a release can never overshoot the
 // reserved quantity, and marks the reservation RELEASED (the
 // partial unique index then frees the reference for reuse).
 export async function releaseReservation(ctx: RequestContext, reservationId: string, input: z.infer<typeof releaseInput>) {
   requireInventory(ctx, "INVENTORY_RELEASE_RESERVATION");
-  const result = await prisma.$transaction(async (tx) => {
-    const reservation = await tx.stockReservation.findFirst({
-      where: { id: reservationId, companyId: ctx.companyId, status: "ACTIVE" },
-    });
-    if (!reservation) notFound();
-    const balance = await lockBalance(tx, ctx.companyId, reservation.partId, reservation.locationId);
-    if (!balance) notFound();
-    if (balance.reserved.lt(new D(reservation.quantity))) insufficient();
-    const nextReserved = balance.reserved.minus(new D(reservation.quantity));
-    const updated = await tx.stockReservation.update({
-      where: { id: reservation.id },
-      data: { status: "RELEASED", releasedById: ctx.userId, releasedAt: new Date() },
-    });
-    const originalMovement = await tx.stockMovement.findFirst({
-      where: { companyId: ctx.companyId, referenceType: "RESERVATION", referenceId: reservation.id },
-      orderBy: { occurredAt: "asc" },
-    });
-    const movement = await tx.stockMovement.create({
-      data: buildMovement({
-        companyId: ctx.companyId,
-        partId: reservation.partId,
-        movementType: "RESERVATION_RELEASE",
-        quantity: reservation.quantity,
-        toLocationId: reservation.locationId,
-        referenceType: "RESERVATION",
-        referenceId: reservation.id,
-        referenceNumber: reservation.referenceNumber ?? null,
-        reason: input.reason ?? null,
-        notes: null,
-        actorId: ctx.userId,
-        resultingToQuantity: balance.onHand.minus(nextReserved),
-        idempotencyKey: null,
-        reversalOfId: originalMovement?.id ?? null,
-        correlationId: ctx.correlationId,
-      }),
-    });
-    await saveBalance(tx, balance, { reserved: nextReserved });
-    return { reservationId: updated.id, movementId: movement.id, replayed: false };
-  });
+  const result = await prisma.$transaction((tx) => releaseReservationTx(tx, ctx, reservationId, input));
   await recordAudit(ctx, {
     source: "UI",
     module: "INVENTORY",
@@ -643,6 +785,53 @@ export async function releaseReservation(ctx: RequestContext, reservationId: str
     afterData: { quantity: input.reason ?? null, reservationId: result.reservationId },
   });
   return result;
+}
+
+export async function releaseReservationTx(tx: Tx, ctx: RequestContext & { companyId: string }, reservationId: string, input: z.infer<typeof releaseInput>) {
+  const reservation = await lockReservation(tx, ctx.companyId, reservationId);
+  if (!reservation) notFound();
+  if (reservation.status !== "ACTIVE") notFound();
+  const balance = await lockBalance(tx, ctx.companyId, reservation.partId, reservation.locationId);
+  if (!balance) notFound();
+  const usage = await getReservationRemaining(tx, reservation);
+  if (usage.remaining.isZero()) {
+    const updated = await tx.stockReservation.update({
+      where: { id: reservation.id },
+      data: { status: "CONVERTED" },
+    });
+    return { reservationId: updated.id, movementId: null, replayed: false };
+  }
+  if (balance.reserved.lt(usage.remaining)) insufficient();
+  const nextReserved = balance.reserved.minus(usage.remaining);
+  const updated = await tx.stockReservation.update({
+    where: { id: reservation.id },
+    data: { status: "RELEASED", releasedById: ctx.userId, releasedAt: new Date() },
+  });
+  const originalMovement = await tx.stockMovement.findFirst({
+    where: { companyId: ctx.companyId, referenceType: "RESERVATION", referenceId: reservation.id },
+    orderBy: { occurredAt: "asc" },
+  });
+  const movement = await tx.stockMovement.create({
+    data: buildMovement({
+      companyId: ctx.companyId,
+      partId: reservation.partId,
+      movementType: "RESERVATION_RELEASE",
+      quantity: usage.remaining,
+      toLocationId: reservation.locationId,
+      referenceType: "RESERVATION",
+      referenceId: reservation.id,
+      referenceNumber: reservation.referenceNumber ?? null,
+      reason: input.reason ?? null,
+      notes: null,
+      actorId: ctx.userId,
+      resultingToQuantity: balance.onHand.minus(nextReserved),
+      idempotencyKey: null,
+      reversalOfId: originalMovement?.id ?? null,
+      correlationId: ctx.correlationId,
+    }),
+  });
+  await saveBalance(tx, balance, { reserved: nextReserved });
+  return { reservationId: updated.id, movementId: movement.id, replayed: false };
 }
 // ============================================================
 // RECONCILIATION / STOCK COUNT
@@ -844,18 +1033,19 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
   if (input.manufacturerId) where.manufacturerId = input.manufacturerId;
   if (input.category) where.category = input.category;
 
+  const stockBalanceWhere = input.locationId ? { locationId: input.locationId } : undefined;
+
   const [parts, total] = await Promise.all([
     prisma.part.findMany({
       where,
-      include: { manufacturer: { select: { name: true } }, stockBalances: true },
+      include: { manufacturer: { select: { name: true } }, stockBalances: stockBalanceWhere ? { where: stockBalanceWhere } : true },
       orderBy: { partNumber: "asc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
     }),
     prisma.part.count({ where }),
   ]);
 
-  // Stock-state filtering is derived per part after the page is read.
+  // Stock-state filtering is derived per part before pagination so totals and
+  // page contents stay consistent with the user's selected state.
   let selected = parts;
   if (input.stockState !== "ALL") {
     selected = parts.filter((p) => {
@@ -864,8 +1054,10 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
     });
   }
 
+  const paged = selected.slice((page - 1) * pageSize, page * pageSize);
+
   return {
-    items: selected.map((p) => {
+    items: paged.map((p) => {
       const totals = sumBalances(p.stockBalances);
       const available = totals.onHand.minus(totals.reserved);
       return {
@@ -882,7 +1074,7 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         cost: viewCost ? (p.defaultPurchaseCost?.toString() ?? null) : null,
       };
     }),
-    total,
+    total: input.stockState === "ALL" ? total : selected.length,
     page,
     pageSize,
   };

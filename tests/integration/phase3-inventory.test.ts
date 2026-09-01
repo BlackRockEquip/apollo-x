@@ -8,6 +8,7 @@ import {
   receiveStock,
   transferStock,
   issueStock,
+  issueReservedStock,
   returnStock,
   adjustStock,
   reserveStock,
@@ -274,6 +275,229 @@ describe("Phase 3 inventory operations", () => {
     expect(types.has("RESERVATION")).toBe(true);
     expect(types.has("RESERVATION_RELEASE")).toBe(true);
     expect(types.has("RECONCILIATION")).toBe(true);
+  });
+
+  it("consumes a reservation in parts and converts only when fully issued", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-ISS-${suffix}`,
+      description: "Reserved Issue Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVI-${suffix}`,
+      name: "Reserved Issue Bin",
+      type: "BIN",
+    })) as { id: string };
+
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "10",
+      referenceType: "JOB",
+      idempotencyKey: `reserve-foundation-${suffix}`,
+    });
+
+    const partial = await issueReservedStock(ctx(a, ua), reserve.reservationId, {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "4",
+      referenceType: "JOB",
+      idempotencyKey: `issue-reserved-partial-${suffix}`,
+    });
+    expect(partial.replayed).toBe(false);
+
+    let detail = await getInventoryDetail(ctx(a, ua), freshPart.id);
+    let loc = detail.locations.find((l) => l.locationId === freshLoc.id)!;
+    expect(loc.quantityOnHand).toBe("6");
+    expect(loc.quantityReserved).toBe("6");
+    expect(loc.quantityAvailable).toBe("0");
+
+    let reservation = await db.stockReservation.findFirstOrThrow({ where: { id: reserve.reservationId, companyId: a } });
+    expect(reservation.status).toBe("ACTIVE");
+    expect(String(reservation.quantity)).toBe("10");
+
+    await issueReservedStock(ctx(a, ua), reserve.reservationId, {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "6",
+      referenceType: "JOB",
+      idempotencyKey: `issue-reserved-final-${suffix}`,
+    });
+
+    detail = await getInventoryDetail(ctx(a, ua), freshPart.id);
+    loc = detail.locations.find((l) => l.locationId === freshLoc.id)!;
+    expect(loc.quantityOnHand).toBe("0");
+    expect(loc.quantityReserved).toBe("0");
+    expect(loc.quantityAvailable).toBe("0");
+
+    reservation = await db.stockReservation.findFirstOrThrow({ where: { id: reserve.reservationId, companyId: a } });
+    expect(reservation.status).toBe("CONVERTED");
+    expect(String(reservation.quantity)).toBe("10");
+
+    const issueMovements = await db.stockMovement.findMany({
+      where: { companyId: a, referenceType: "RESERVATION", referenceId: reserve.reservationId, movementType: "ISSUE" },
+      orderBy: { occurredAt: "asc" },
+    });
+    expect(issueMovements).toHaveLength(2);
+    expect(issueMovements.map((m) => String(m.quantity))).toEqual(["4", "6"]);
+  });
+
+  it("releases only the remaining reserved quantity after a partial issue", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-REL-${suffix}`,
+      description: "Reserved Release Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVR-${suffix}`,
+      name: "Reserved Release Bin",
+      type: "BIN",
+    })) as { id: string };
+
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "10",
+      referenceType: "JOB",
+    });
+    await issueReservedStock(ctx(a, ua), reserve.reservationId, {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "4",
+      referenceType: "JOB",
+    });
+
+    const release = await releaseReservation(ctx(a, ua), reserve.reservationId, { reason: "Unused balance" });
+    expect(release.movementId).toBeTruthy();
+
+    const detail = await getInventoryDetail(ctx(a, ua), freshPart.id);
+    const loc = detail.locations.find((l) => l.locationId === freshLoc.id)!;
+    expect(loc.quantityOnHand).toBe("6");
+    expect(loc.quantityReserved).toBe("0");
+    expect(loc.quantityAvailable).toBe("6");
+
+    const releaseMovement = await db.stockMovement.findFirstOrThrow({ where: { id: release.movementId! } });
+    expect(String(releaseMovement.quantity)).toBe("6");
+
+    const reservation = await db.stockReservation.findFirstOrThrow({ where: { id: reserve.reservationId, companyId: a } });
+    expect(reservation.status).toBe("RELEASED");
+    expect(String(reservation.quantity)).toBe("10");
+  });
+
+  it("rejects issuing more than the remaining reservation quantity", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-LIMIT-${suffix}`,
+      description: "Reserved Limit Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVL-${suffix}`,
+      name: "Reserved Limit Bin",
+      type: "BIN",
+    })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10", referenceType: "JOB" });
+    await issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "4", referenceType: "JOB" });
+
+    await expect(
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "7", referenceType: "JOB" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects reserved issue for wrong tenant and wrong part/location", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-SCOPE-${suffix}`,
+      description: "Reserved Scope Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const otherPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-SCOPE-OTHER-${suffix}`,
+      description: "Reserved Scope Part Other",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVS-${suffix}`,
+      name: "Reserved Scope Bin",
+      type: "BIN",
+    })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "5", referenceType: "JOB" });
+
+    await expect(
+      issueReservedStock(ctx(b, ub), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "1", referenceType: "JOB" }),
+    ).rejects.toThrow("NOT_FOUND");
+    await expect(
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: otherPart.id, locationId: freshLoc.id, quantity: "1", referenceType: "JOB" }),
+    ).rejects.toThrow("NOT_FOUND");
+    await expect(
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: locA2.id, quantity: "1", referenceType: "JOB" }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("replays duplicate reserved issue requests without double issuing", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-IDEM-${suffix}`,
+      description: "Reserved Idempotent Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVID-${suffix}`,
+      name: "Reserved Idempotent Bin",
+      type: "BIN",
+    })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10", referenceType: "JOB" });
+
+    const key = `idem-rsv-issue-${suffix}`;
+    const first = await issueReservedStock(ctx(a, ua), reserve.reservationId, {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "4",
+      referenceType: "JOB",
+      idempotencyKey: key,
+    });
+    const second = await issueReservedStock(ctx(a, ua), reserve.reservationId, {
+      partId: freshPart.id,
+      locationId: freshLoc.id,
+      quantity: "4",
+      referenceType: "JOB",
+      idempotencyKey: key,
+    });
+    expect(first.replayed).toBe(false);
+    expect(second.replayed).toBe(true);
+    expect(first.movementId).toBe(second.movementId);
+  });
+
+  it("prevents concurrent reserved consumption from over-issuing or negative balances", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", {
+      partNumber: `RSV-CON-${suffix}`,
+      description: "Reserved Concurrent Part",
+      unitOfMeasure: "EA",
+    })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", {
+      code: `RSVC-${suffix}`,
+      name: "Reserved Concurrent Bin",
+      type: "BIN",
+    })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10" });
+    const reserve = await reserveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "10", referenceType: "JOB" });
+
+    const results = await Promise.allSettled([
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "6", referenceType: "JOB", idempotencyKey: `rsv-con-1-${suffix}` }),
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "6", referenceType: "JOB", idempotencyKey: `rsv-con-2-${suffix}` }),
+      issueReservedStock(ctx(a, ua), reserve.reservationId, { partId: freshPart.id, locationId: freshLoc.id, quantity: "6", referenceType: "JOB", idempotencyKey: `rsv-con-3-${suffix}` }),
+    ]);
+
+    const succeeded = results.filter((r): r is PromiseFulfilledResult<{ movementId: string; replayed: boolean }> => r.status === "fulfilled");
+    expect(succeeded.length).toBeLessThanOrEqual(1);
+
+    const detail = await getInventoryDetail(ctx(a, ua), freshPart.id);
+    const loc = detail.locations.find((l) => l.locationId === freshLoc.id)!;
+    expect(parseFloat(loc.quantityOnHand)).toBeGreaterThanOrEqual(0);
+    expect(parseFloat(loc.quantityReserved)).toBeGreaterThanOrEqual(0);
+    expect(parseFloat(loc.quantityAvailable)).toBeGreaterThanOrEqual(0);
   });
 
   it("derives correct stock states for active stocked parts", async () => {

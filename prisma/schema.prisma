@@ -179,6 +179,65 @@ enum DocumentSequenceType {
   PROCUREMENT_RFQ
 }
 
+enum JobType {
+  STANDARD_REPAIR
+  PARTIAL_REPAIR
+  PEX_SUPPLY
+  PEX_RETURN
+  OUTRIGHT_SALE
+  FIELD_SERVICE
+  WARRANTY
+}
+
+enum JobStatus {
+  DRAFT
+  TO_BE_COLLECTED
+  TO_BE_RECEIVED
+  STRIPPING
+  QUOTE_IN_PROGRESS
+  AWAITING_GO_AHEAD
+  WAITING_FOR_PARTS
+  ASSEMBLY
+  TESTING
+  TO_BE_DELIVERED
+  COMPLETE
+  CLOSED
+  CANCELLED
+}
+
+enum JobActivityType {
+  JOB_CREATED
+  JOB_REGISTERED
+  STATUS_CHANGED
+  JOB_CLOSED
+  JOB_REOPENED
+  PART_ADDED
+  PART_REMOVED
+  PART_RESERVED
+  RESERVATION_RELEASED
+  PART_ISSUED
+  PART_RETURNED
+  NOTE_ADDED
+  FIELD_SERVICE_UPDATED
+  WARRANTY_UPDATED
+}
+
+enum JobWarrantyStatus {
+  PENDING
+  GRANTED
+  DECLINED
+}
+
+enum JobPartAllocationMovementKind {
+  ISSUE
+  RETURN
+}
+
+enum JobPartReturnDisposition {
+  UNUSED_SURPLUS
+  REQUIREMENT_REMAINS
+}
+
 model UserIdentity {
   id             String   @id @default(cuid())
   email          String   @unique
@@ -200,6 +259,13 @@ model UserIdentity {
   stockReleases       StockReservation[]       @relation("StockReservationReleaser")
   stockCountsCounted  StockCount[]             @relation("StockCountCounter")
   stockCountsApproved StockCount[]             @relation("StockCountApprover")
+  jobsCreated         Job[]                    @relation("JobCreatedBy")
+  jobsUpdated         Job[]                    @relation("JobUpdatedBy")
+  jobsClosed          Job[]                    @relation("JobClosedBy")
+  jobsStripAssigned   Job[]                    @relation("JobStripMechanic")
+  jobsBuildAssigned   Job[]                    @relation("JobBuildMechanic")
+  jobNotes            JobNote[]                @relation("JobNoteAuthor")
+  jobActivities       JobActivity[]            @relation("JobActivityActor")
 }
 
 model Company {
@@ -239,6 +305,15 @@ model Company {
   taxCodes          TaxCode[]
   commercialTerms   CommercialTerm[]
   documentSequences DocumentNumberSequence[]
+  jobs              Job[]
+  jobComponents     JobComponent[]
+  jobPartRequirements JobPartRequirement[]
+  jobPartAllocations JobPartAllocation[]
+  jobPartAllocationMovements JobPartAllocationMovement[]
+  jobNotes          JobNote[]
+  jobActivities     JobActivity[]
+  jobFieldServiceReports JobFieldServiceReport[]
+  jobWarranties     JobWarranty[]
 }
 
 model CompanyMembership {
@@ -452,6 +527,7 @@ model Customer {
   branches              CustomerBranch[]
   contacts              CustomerContact[]
   addresses             CustomerAddress[]
+  jobs                  Job[]
 
   @@unique([companyId, accountCodeNormalized])
   @@index([companyId, nameNormalized])
@@ -673,6 +749,8 @@ model Part {
   stockMovements         StockMovement[]
   stockReservations      StockReservation[]
   stockCountLines        StockCountLine[]
+  jobPartRequirements    JobPartRequirement[]
+  jobPartAllocations     JobPartAllocation[]
 
   @@unique([companyId, partNumberNormalized])
   @@index([companyId, description])
@@ -700,6 +778,7 @@ model StorageLocation {
   movementsTo       StockMovement[]     @relation("MovementTo")
   stockReservations StockReservation[]
   stockCounts       StockCount[]
+  jobPartAllocations JobPartAllocation[]
 
   @@unique([companyId, codeNormalized])
   @@index([companyId, parentId, sortOrder])
@@ -758,6 +837,7 @@ model StockMovement {
   actor        UserIdentity?    @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
   reversalOf   StockMovement?   @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversals    StockMovement[]  @relation("MovementReversal")
+  jobPartAllocationMovements JobPartAllocationMovement[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, occurredAt])
@@ -795,6 +875,7 @@ model StockReservation {
   location   StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
   actor      UserIdentity?   @relation("StockReservationActor", fields: [actorId], references: [id], onDelete: SetNull)
   releasedBy UserIdentity?   @relation("StockReservationReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
+  jobAllocations JobPartAllocation[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, partId, status])
@@ -952,4 +1033,210 @@ model AuditEvent {
   @@index([actorId, occurredAt])
   @@index([entityType, entityId, occurredAt])
   @@index([correlationId])
+}
+
+model Job {
+  id                  String      @id @default(cuid())
+  companyId           String
+  jobNumber           String?     @unique
+  draftNumber         String      @unique @default(cuid())
+  status              JobStatus   @default(DRAFT)
+  type                JobType
+  customerId          String
+  customerReference   String?
+  customerPo          String?
+  dateReceived        DateTime?
+  machineModel        String?
+  machineSerial       String?
+  component           String?
+  componentType       String?
+  componentSerial     String?
+  componentPartNumber String?
+  description         String?
+  etaDate             DateTime?
+  relationshipNotes   String?
+  relatedJobId        String?
+  stripMechanicId     String?
+  buildMechanicId     String?
+  closingOutcome      String?
+  closingNote         String?
+  closedAt            DateTime?
+  closedById          String?
+  createdById         String
+  updatedById         String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  relatedJob          Job?          @relation("RelatedJob", fields: [relatedJobId], references: [id], onDelete: SetNull)
+  relatedJobs         Job[]         @relation("RelatedJob")
+  stripMechanic       UserIdentity? @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
+  buildMechanic       UserIdentity? @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
+  createdBy           UserIdentity  @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  components          JobComponent[]
+  partRequirements    JobPartRequirement[]
+  partAllocations     JobPartAllocation[]
+  notes               JobNote[]
+  activities          JobActivity[]
+  fieldServiceReport  JobFieldServiceReport?
+  warranty            JobWarranty?
+
+  @@index([companyId, status, createdAt])
+  @@index([companyId, type, createdAt])
+  @@index([companyId, customerId, createdAt])
+}
+
+model JobComponent {
+  id                  String   @id @default(cuid())
+  companyId           String
+  jobId               String
+  component           String
+  componentType       String?
+  componentSerial     String?
+  componentPartNumber String?
+  createdAt           DateTime @default(now())
+
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, jobId])
+}
+
+model JobPartRequirement {
+  id                String   @id @default(cuid())
+  companyId         String
+  jobId             String
+  partId            String
+  quantityRequired  Decimal  @db.Decimal(19, 4)
+  notes             String?
+  etaDate           DateTime?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job               Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  part              Part     @relation(fields: [partId], references: [id], onDelete: Restrict)
+  allocations       JobPartAllocation[]
+
+  @@index([companyId, jobId])
+  @@index([companyId, partId])
+}
+
+model JobPartAllocation {
+  id                 String                     @id @default(cuid())
+  companyId          String
+  jobId              String
+  requirementId      String
+  partId             String
+  locationId         String
+  stockReservationId String?
+  quantityReserved   Decimal                    @default(0) @db.Decimal(19, 4)
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  company            Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requirement        JobPartRequirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  part               Part                       @relation(fields: [partId], references: [id], onDelete: Restrict)
+  location           StorageLocation            @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  stockReservation   StockReservation?          @relation(fields: [stockReservationId], references: [id], onDelete: SetNull)
+  movements          JobPartAllocationMovement[]
+
+  @@unique([requirementId, locationId, stockReservationId])
+  @@index([companyId, jobId])
+  @@index([companyId, requirementId])
+  @@index([companyId, partId])
+  @@index([companyId, locationId])
+}
+
+model JobPartAllocationMovement {
+  id                String                         @id @default(cuid())
+  companyId         String
+  allocationId      String
+  stockMovementId   String
+  kind              JobPartAllocationMovementKind
+  quantity          Decimal                        @db.Decimal(19, 4)
+  returnDisposition JobPartReturnDisposition?
+  createdAt         DateTime                       @default(now())
+
+  company           Company                        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  allocation        JobPartAllocation              @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+  stockMovement     StockMovement                  @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
+
+  @@unique([allocationId, stockMovementId, kind])
+  @@index([companyId, allocationId])
+  @@index([companyId, stockMovementId])
+  @@index([companyId, kind])
+}
+
+model JobNote {
+  id          String       @id @default(cuid())
+  companyId   String
+  jobId       String
+  note        String
+  createdById String
+  createdAt   DateTime     @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy   UserIdentity @relation("JobNoteAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([companyId, jobId, createdAt])
+}
+
+model JobActivity {
+  id          String          @id @default(cuid())
+  companyId   String
+  jobId       String
+  type        JobActivityType
+  description String
+  metadata    Json?
+  actorId     String?
+  createdAt   DateTime        @default(now())
+
+  company     Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  actor       UserIdentity?   @relation("JobActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, jobId, createdAt])
+}
+
+model JobFieldServiceReport {
+  id          String   @id @default(cuid())
+  companyId   String
+  jobId       String   @unique
+  site        String?
+  technician  String?
+  vehicle     String?
+  hours       Decimal? @db.Decimal(19, 4)
+  report      String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, jobId])
+}
+
+model JobWarranty {
+  id                     String            @id @default(cuid())
+  companyId              String
+  jobId                  String            @unique
+  status                 JobWarrantyStatus
+  notes                  String?
+  historicalSourceStatus String?
+  updatedById            String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  company                Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                    Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, jobId])
 }
