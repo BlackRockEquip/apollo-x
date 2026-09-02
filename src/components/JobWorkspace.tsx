@@ -31,6 +31,7 @@ type AllocationRow = Row & {
   summary?: AllocationSummary;
 };
 type StorageLocationOption = Row & { code?: string | null; name?: string | null; type?: string | null; active?: boolean };
+type JobKitOption = Row & { name: string; machineMake?: string | null; machineModel?: string | null; componentType?: string | null; lineCount?: unknown; active?: boolean };
 type RequirementRow = Row & {
   active?: boolean;
   quantityRequired?: unknown;
@@ -81,6 +82,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [locationQuery, setLocationQuery] = useState("");
   const [locationOptions, setLocationOptions] = useState<StorageLocationOption[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<StorageLocationOption | null>(null);
+  const [jobKitQuery, setJobKitQuery] = useState("");
+  const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
+  const [jobKitId, setJobKitId] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
@@ -201,6 +205,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return () => clearTimeout(timer);
   }, [locationQuery, reserveRequirementId]);
 
+  useEffect(() => {
+    if (!jobId) return;
+    const q = jobKitQuery.trim();
+    const timer = setTimeout(async () => {
+      const r = await fetch(`/api/v1/job-kits?q=${encodeURIComponent(q)}&status=active&pageSize=20`, { cache: "no-store" });
+      const b = await r.json();
+      setJobKitOptions((b.items || []).filter((item: JobKitOption) => item.active !== false));
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [jobId, jobKitQuery]);
+
   const title = useMemo(() => job?.jobNumber || job?.draftNumber || "New job", [job]);
 
   function updateField(key: string, value: string) {
@@ -305,6 +320,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  async function applyJobKit() {
+    if (!jobId || !jobKitId) return;
+    setSaving(true);
+    setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/apply-kit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kitId: jobKitId }) });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to apply job kit.");
+      setJobKitId("");
+      setJobKitQuery("");
+      setJobKitOptions([]);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to apply job kit.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <div className="table-state"><Loader2 className="spin" size={20} /> Loading job…</div>;
 
   return (
@@ -386,6 +420,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <section className="detail-panel">
             <header><div><h2>Parts required</h2><p>Requirements are visible here, but any actual reserve / issue / return must still flow through the immutable inventory ledger.</p></div></header>
             <div className="drawer-fields">
+              <label className="wide party-selector"><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
+              <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
               <label className="wide party-selector"><span>Part</span><div><Search size={15} /><input value={partQuery} onChange={(e) => setPartQuery(e.target.value)} placeholder="Search part number or description" /></div>{partOptions.length > 0 && <div className="selector-results">{partOptions.map((part) => <button key={part.id} type="button" onClick={() => { setPartId(part.id); setPartQuery(`${text(part.partNumber)} · ${text(part.description)}`); setPartOptions([]); }}><strong>{text(part.partNumber)}</strong><span>{text(part.description)}</span></button>)}</div>}</label>
               <label><span>Qty required</span><input type="number" min="0.0001" step="0.0001" value={form.partQty} onChange={(e) => updateField("partQty", e.target.value)} /></label>
               <label><span>ETA date</span><input type="date" value={form.partEtaDate} onChange={(e) => updateField("partEtaDate", e.target.value)} /></label>

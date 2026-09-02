@@ -217,6 +217,7 @@ enum JobActivityType {
   RESERVATION_RELEASED
   PART_ISSUED
   PART_RETURNED
+  KIT_APPLIED
   NOTE_ADDED
   FIELD_SERVICE_UPDATED
   WARRANTY_UPDATED
@@ -264,6 +265,7 @@ model UserIdentity {
   jobsClosed          Job[]                    @relation("JobClosedBy")
   jobsStripAssigned   Job[]                    @relation("JobStripMechanic")
   jobsBuildAssigned   Job[]                    @relation("JobBuildMechanic")
+  jobKitsCreated      JobKit[]
   jobNotes            JobNote[]                @relation("JobNoteAuthor")
   jobActivities       JobActivity[]            @relation("JobActivityActor")
 }
@@ -307,6 +309,8 @@ model Company {
   documentSequences DocumentNumberSequence[]
   jobs              Job[]
   jobComponents     JobComponent[]
+  jobKits           JobKit[]
+  jobKitLines       JobKitLine[]
   jobPartRequirements JobPartRequirement[]
   jobPartAllocations JobPartAllocation[]
   jobPartAllocationMovements JobPartAllocationMovement[]
@@ -748,6 +752,7 @@ model Part {
   stockBalances          StockBalance[]
   stockMovements         StockMovement[]
   stockReservations      StockReservation[]
+  jobKitLines        JobKitLine[]
   stockCountLines        StockCountLine[]
   jobPartRequirements    JobPartRequirement[]
   jobPartAllocations     JobPartAllocation[]
@@ -1103,6 +1108,53 @@ model JobComponent {
   job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([companyId, jobId])
+}
+
+model JobKit {
+  id             String       @id @default(cuid())
+  companyId      String
+  name           String
+  nameNormalized String
+  description    String?
+  machineMake    String?
+  machineModel   String?
+  componentType  String?
+  active         Boolean      @default(true)
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  company        Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  createdBy      UserIdentity? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  lines          JobKitLine[]
+
+  @@unique([companyId, nameNormalized])
+  @@unique([id, companyId])
+  @@index([companyId, active])
+  @@index([companyId, machineMake])
+  @@index([companyId, machineModel])
+  @@index([companyId, componentType])
+}
+
+model JobKitLine {
+  id              String    @id @default(cuid())
+  companyId       String
+  jobKitId        String
+  partId          String
+  quantityDefault Decimal   @db.Decimal(19, 4)
+  notes           String?
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobKit          JobKit    @relation(fields: [jobKitId], references: [id], onDelete: Cascade)
+  part            Part      @relation(fields: [partId], references: [id], onDelete: Restrict)
+
+  @@unique([jobKitId, partId])
+  @@unique([id, companyId])
+  @@index([companyId, jobKitId])
+  @@index([companyId, partId])
 }
 
 model JobPartRequirement {

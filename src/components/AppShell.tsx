@@ -44,6 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: BriefcaseBusiness,
     items: [
       { key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", icon: BriefcaseBusiness },
+      { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", icon: PackageOpen },
     ],
   },
   {
