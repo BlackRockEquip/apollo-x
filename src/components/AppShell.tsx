@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, Building2, ChevronDown, LayoutDashboard, MapPin, Settings, Tags, Users, Wrench, Factory, PackageOpen, BriefcaseBusiness } from "lucide-react";
+import { Boxes, Building2, ChevronDown, LayoutDashboard, MapPin, Settings, Tags, Users, Wrench, Factory, PackageOpen, BriefcaseBusiness, Repeat } from "lucide-react";
 import type { ModuleKey } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { TENANT_ROLE_LABELS } from "@/lib/constants";
@@ -45,6 +45,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", icon: BriefcaseBusiness },
       { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", icon: PackageOpen },
+      { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", icon: Repeat },
+      { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", icon: Repeat },
     ],
   },
   {

@@ -667,16 +667,18 @@ describe("Phase 3 inventory concurrency", () => {
 
 describe("Phase 3 inventory idempotency", () => {
   it("replays a receipt without duplicating the ledger row", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", { partNumber: `IDR-${suffix}`, description: "Idem Receipt", unitOfMeasure: "EA" })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", { code: `IDR-${suffix}`, name: "Idem Receipt Bin", type: "BIN" })) as { id: string };
     const key = `idem-receipt-${suffix}`;
     const first = await receiveStock(ctx(a, ua), {
-      partId: partA.id,
-      locationId: locA2.id,
+      partId: freshPart.id,
+      locationId: freshLoc.id,
       quantity: "1",
       idempotencyKey: key,
     });
     const second = await receiveStock(ctx(a, ua), {
-      partId: partA.id,
-      locationId: locA2.id,
+      partId: freshPart.id,
+      locationId: freshLoc.id,
       quantity: "1",
       idempotencyKey: key,
     });
@@ -686,18 +688,22 @@ describe("Phase 3 inventory idempotency", () => {
   });
 
   it("replays a transfer without duplicating the ledger row", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", { partNumber: `IDT-${suffix}`, description: "Idem Transfer", unitOfMeasure: "EA" })) as { id: string };
+    const from = (await createMaster(ctx(a, ua), "storage-locations", { code: `IDTF-${suffix}`, name: "Idem From", type: "BIN" })) as { id: string };
+    const to = (await createMaster(ctx(a, ua), "storage-locations", { code: `IDTT-${suffix}`, name: "Idem To", type: "BIN" })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: from.id, quantity: "2" });
     const key = `idem-transfer-${suffix}`;
     const first = await transferStock(ctx(a, ua), {
-      partId: partA.id,
-      fromLocationId: locA1.id,
-      toLocationId: locA2.id,
+      partId: freshPart.id,
+      fromLocationId: from.id,
+      toLocationId: to.id,
       quantity: "1",
       idempotencyKey: key,
     });
     const second = await transferStock(ctx(a, ua), {
-      partId: partA.id,
-      fromLocationId: locA1.id,
-      toLocationId: locA2.id,
+      partId: freshPart.id,
+      fromLocationId: from.id,
+      toLocationId: to.id,
       quantity: "1",
       idempotencyKey: key,
     });
@@ -707,17 +713,20 @@ describe("Phase 3 inventory idempotency", () => {
   });
 
   it("replays an issue without duplicating the ledger row", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", { partNumber: `IDI-${suffix}`, description: "Idem Issue", unitOfMeasure: "EA" })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", { code: `IDI-${suffix}`, name: "Idem Issue Bin", type: "BIN" })) as { id: string };
+    await receiveStock(ctx(a, ua), { partId: freshPart.id, locationId: freshLoc.id, quantity: "2" });
     const key = `idem-issue-${suffix}`;
     const first = await issueStock(ctx(a, ua), {
-      partId: partA.id,
-      locationId: locA1.id,
+      partId: freshPart.id,
+      locationId: freshLoc.id,
       quantity: "1",
       referenceType: "GENERAL",
       idempotencyKey: key,
     });
     const second = await issueStock(ctx(a, ua), {
-      partId: partA.id,
-      locationId: locA1.id,
+      partId: freshPart.id,
+      locationId: freshLoc.id,
       quantity: "1",
       referenceType: "GENERAL",
       idempotencyKey: key,
@@ -781,9 +790,11 @@ describe("Phase 3 inventory business rules", () => {
   });
 
   it("allows adjustment with short reason when called directly on the service", async () => {
+    const freshPart = (await createMaster(ctx(a, ua), "parts", { partNumber: `ADJ-${suffix}`, description: "Short Reason Adjust", unitOfMeasure: "EA" })) as { id: string };
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", { code: `ADJ-${suffix}`, name: "Adjust Bin", type: "BIN" })) as { id: string };
     const result = await adjustStock(ctx(a, ua), {
-      partId: partA.id,
-      locationId: locA1.id,
+      partId: freshPart.id,
+      locationId: freshLoc.id,
       direction: "IN",
       quantity: "1",
       reason: "ok",
@@ -792,8 +803,9 @@ describe("Phase 3 inventory business rules", () => {
   });
 
   it("cancels an open stock count", async () => {
+    const freshLoc = (await createMaster(ctx(a, ua), "storage-locations", { code: `CNT-${suffix}`, name: "Count Cancel Bin", type: "BIN" })) as { id: string };
     const count = await countCreate(ctx(a, ua), {
-      locationId: locA1.id,
+      locationId: freshLoc.id,
       lines: [],
     });
     await countCancel(ctx(a, ua), count.countId, { notes: "Cancelled" });

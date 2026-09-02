@@ -218,9 +218,32 @@ enum JobActivityType {
   PART_ISSUED
   PART_RETURNED
   KIT_APPLIED
+  PEX_STOCK_TRANSFERRED
+  PEX_STOCK_LINKED
+  PEX_STOCK_UNLINKED
+  PEX_RETURN_AUTO_CREATED
+  PEX_RETURN_REGISTERED
+  PEX_RETURN_RECEIVED
+  PEX_RETURN_RELINKED
+  PEX_SUPPLY_CANCELLED
+  PEX_RETURN_CLOSED_WITHOUT_CORE
+  PEX_STOCK_STATUS_CHANGED
   NOTE_ADDED
   FIELD_SERVICE_UPDATED
   WARRANTY_UPDATED
+}
+
+enum PexStockStatus {
+  AVAILABLE
+  SUPPLIED
+  QUARANTINE
+  SCRAPPED
+}
+
+enum PexReturnStatus {
+  EXPECTED
+  RECEIVED
+  CLOSED_WITHOUT_RETURN
 }
 
 enum JobWarrantyStatus {
@@ -268,6 +291,12 @@ model UserIdentity {
   jobKitsCreated      JobKit[]
   jobNotes            JobNote[]                @relation("JobNoteAuthor")
   jobActivities       JobActivity[]            @relation("JobActivityActor")
+  pexStockUnitsCreated PexStockUnit[]          @relation("PexStockUnitCreatedBy")
+  pexStockUnitsUpdated PexStockUnit[]          @relation("PexStockUnitUpdatedBy")
+  pexSupplyLinksCreated PexSupplyLink[]        @relation("PexSupplyLinkCreatedBy")
+  pexSupplyLinksUpdated PexSupplyLink[]        @relation("PexSupplyLinkUpdatedBy")
+  pexReturnsReceived  PexSupplyLink[]          @relation("PexReturnReceivedBy")
+  pexReturnsClosed    PexSupplyLink[]          @relation("PexReturnClosedBy")
 }
 
 model Company {
@@ -318,6 +347,8 @@ model Company {
   jobActivities     JobActivity[]
   jobFieldServiceReports JobFieldServiceReport[]
   jobWarranties     JobWarranty[]
+  pexStockUnits     PexStockUnit[]
+  pexSupplyLinks    PexSupplyLink[]
 }
 
 model CompanyMembership {
@@ -784,8 +815,10 @@ model StorageLocation {
   stockReservations StockReservation[]
   stockCounts       StockCount[]
   jobPartAllocations JobPartAllocation[]
+  pexStockUnits     PexStockUnit[]
 
   @@unique([companyId, codeNormalized])
+  @@unique([id, companyId])
   @@index([companyId, parentId, sortOrder])
 }
 
@@ -1088,7 +1121,13 @@ model Job {
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
   warranty            JobWarranty?
+  pexSourceStockUnits PexStockUnit[]          @relation("PexStockSourceJob")
+  pexSupplyStockUnits PexStockUnit[]          @relation("PexStockCurrentSupplyJob")
+  pexReturnStockUnits PexStockUnit[]          @relation("PexStockCurrentReturnJob")
+  pexSupplyLinksAsSupply PexSupplyLink[]      @relation("PexSupplyJob")
+  pexSupplyLinksAsReturn PexSupplyLink[]      @relation("PexReturnJob")
 
+  @@unique([id, companyId])
   @@index([companyId, status, createdAt])
   @@index([companyId, type, createdAt])
   @@index([companyId, customerId, createdAt])
@@ -1106,8 +1145,93 @@ model JobComponent {
 
   company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  pexStockUnit        PexStockUnit?
 
+  @@unique([id, companyId])
   @@index([companyId, jobId])
+}
+
+model PexStockUnit {
+  id                  String         @id @default(cuid())
+  companyId           String
+  sourceJobId         String
+  sourceJobComponentId String         @unique
+  currentSupplyJobId  String?
+  currentReturnJobId  String?
+  storageLocationId   String?
+  component           String
+  componentType       String?
+  componentPartNumber String?
+  componentSerial     String?
+  machineModel        String?
+  machineSerial       String?
+  status              PexStockStatus @default(AVAILABLE)
+  notes               String?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  company             Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sourceJob           Job            @relation("PexStockSourceJob", fields: [sourceJobId], references: [id], onDelete: Restrict)
+  sourceJobComponent  JobComponent   @relation(fields: [sourceJobComponentId], references: [id], onDelete: Restrict)
+  currentSupplyJob    Job?           @relation("PexStockCurrentSupplyJob", fields: [currentSupplyJobId], references: [id], onDelete: SetNull)
+  currentReturnJob    Job?           @relation("PexStockCurrentReturnJob", fields: [currentReturnJobId], references: [id], onDelete: SetNull)
+  storageLocation     StorageLocation? @relation(fields: [storageLocationId], references: [id], onDelete: SetNull)
+  createdBy           UserIdentity?  @relation("PexStockUnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy           UserIdentity?  @relation("PexStockUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  supplyLinks         PexSupplyLink[]
+
+  @@unique([id, companyId])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, sourceJobId])
+  @@index([companyId, currentSupplyJobId])
+  @@index([companyId, currentReturnJobId])
+  @@index([companyId, storageLocationId])
+}
+
+model PexSupplyLink {
+  id                        String          @id @default(cuid())
+  companyId                 String
+  supplyJobId               String
+  returnJobId               String
+  pexStockUnitId            String
+  returnStatus              PexReturnStatus @default(EXPECTED)
+  expectedCoreDescription   String?
+  expectedCoreType          String?
+  expectedCorePartNumber    String?
+  expectedCoreSerial        String?
+  returnedCoreDescription   String?
+  returnedCoreType          String?
+  returnedCorePartNumber    String?
+  returnedCoreSerial        String?
+  returnMismatchReason      String?
+  returnedReceivedAt        DateTime?
+  returnedReceivedById      String?
+  closedWithoutReturnReason String?
+  closedWithoutReturnNote   String?
+  closedWithoutReturnAt     DateTime?
+  closedWithoutReturnById   String?
+  active                    Boolean         @default(true)
+  createdById               String?
+  updatedById               String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  company                   Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplyJob                 Job             @relation("PexSupplyJob", fields: [supplyJobId], references: [id], onDelete: Restrict)
+  returnJob                 Job             @relation("PexReturnJob", fields: [returnJobId], references: [id], onDelete: Restrict)
+  pexStockUnit              PexStockUnit    @relation(fields: [pexStockUnitId], references: [id], onDelete: Restrict)
+  returnedReceivedBy        UserIdentity?   @relation("PexReturnReceivedBy", fields: [returnedReceivedById], references: [id], onDelete: SetNull)
+  closedWithoutReturnBy     UserIdentity?   @relation("PexReturnClosedBy", fields: [closedWithoutReturnById], references: [id], onDelete: SetNull)
+  createdBy                 UserIdentity?   @relation("PexSupplyLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                 UserIdentity?   @relation("PexSupplyLinkUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([supplyJobId, companyId])
+  @@unique([returnJobId, companyId])
+  @@unique([id, companyId])
+  @@index([companyId, pexStockUnitId, active])
+  @@index([companyId, returnStatus, active])
 }
 
 model JobKit {

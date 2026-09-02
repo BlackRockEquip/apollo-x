@@ -76,6 +76,17 @@ export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: st
 }
 
 export async function allocateDocumentNumber(ctx: RequestContext, type: string, now=new Date()) {
-  authorize(ctx,"numbering","WRITE","edit"); const companyId=ctx.companyId!;
-  return prisma.$transaction(async tx=>{ const rows=await tx.$queryRaw<Array<{id:string;prefix:string;padding:number;includeFinancialYear:boolean;financialYearStartMonth:number;allocated:bigint}>>`UPDATE "DocumentNumberSequence" SET "nextValue"="nextValue"+1,"updatedAt"=NOW() WHERE "companyId"=${companyId} AND "type"=CAST(${type} AS "DocumentSequenceType") AND active=true RETURNING id,prefix,padding,"includeFinancialYear","financialYearStartMonth","nextValue"-1 AS allocated`; if(rows.length!==1) throw new Error("SEQUENCE_NOT_FOUND"); const r=rows[0]; const year=now.getUTCMonth()+1>=r.financialYearStartMonth?now.getUTCFullYear()+1:now.getUTCFullYear(); const number=`${r.prefix}${r.includeFinancialYear?`${year}/`:""}${r.allocated.toString().padStart(r.padding,"0")}`; await tx.auditEvent.create({data:audit(ctx,"numbering",r.id,"ALLOCATE",undefined,{type,number})}); return number; });
+  authorize(ctx,"numbering","WRITE","edit");
+  return prisma.$transaction(async tx=>allocateDocumentNumberTx(tx, ctx, type, now));
+}
+
+export async function allocateDocumentNumberTx(tx: Prisma.TransactionClient, ctx: RequestContext, type: string, now=new Date()) {
+  const companyId=ctx.companyId!;
+  const rows=await tx.$queryRaw<Array<{id:string;prefix:string;padding:number;includeFinancialYear:boolean;financialYearStartMonth:number;allocated:bigint}>>`UPDATE "DocumentNumberSequence" SET "nextValue"="nextValue"+1,"updatedAt"=NOW() WHERE "companyId"=${companyId} AND "type"=CAST(${type} AS "DocumentSequenceType") AND active=true RETURNING id,prefix,padding,"includeFinancialYear","financialYearStartMonth","nextValue"-1 AS allocated`;
+  if(rows.length!==1) throw new Error("SEQUENCE_NOT_FOUND");
+  const r=rows[0];
+  const year=now.getUTCMonth()+1>=r.financialYearStartMonth?now.getUTCFullYear()+1:now.getUTCFullYear();
+  const number=`${r.prefix}${r.includeFinancialYear?`${year}/`:""}${r.allocated.toString().padStart(r.padding,"0")}`;
+  await tx.auditEvent.create({data:audit(ctx,"numbering",r.id,"ALLOCATE",undefined,{type,number})});
+  return number;
 }

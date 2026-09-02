@@ -32,6 +32,37 @@ type AllocationRow = Row & {
 };
 type StorageLocationOption = Row & { code?: string | null; name?: string | null; type?: string | null; active?: boolean };
 type JobKitOption = Row & { name: string; machineMake?: string | null; machineModel?: string | null; componentType?: string | null; lineCount?: unknown; active?: boolean };
+type PexStockUnitSummary = Row & {
+  component?: string | null;
+  componentType?: string | null;
+  componentPartNumber?: string | null;
+  componentSerial?: string | null;
+  status?: string | null;
+  sourceJob?: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null };
+  storageLocation?: Row & { id: string; code?: string | null; name?: string | null } | null;
+  currentSupplyJob?: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null } | null;
+  currentReturnJob?: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null } | null;
+  sourceJobComponentId?: string | null;
+};
+type PexSupplyLinkSummary = Row & {
+  active?: boolean;
+  returnStatus?: string | null;
+  expectedCoreDescription?: string | null;
+  expectedCoreType?: string | null;
+  expectedCorePartNumber?: string | null;
+  expectedCoreSerial?: string | null;
+  returnedCoreDescription?: string | null;
+  returnedCoreType?: string | null;
+  returnedCorePartNumber?: string | null;
+  returnedCoreSerial?: string | null;
+  returnMismatchReason?: string | null;
+  returnedReceivedAt?: string | null;
+  closedWithoutReturnReason?: string | null;
+  pexStockUnit: PexStockUnitSummary;
+  returnJob?: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; status?: string | null };
+  supplyJob?: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; status?: string | null };
+};
+type JobComponentRow = Row & { component?: string | null; componentType?: string | null; componentPartNumber?: string | null; componentSerial?: string | null };
 type RequirementRow = Row & {
   active?: boolean;
   quantityRequired?: unknown;
@@ -50,6 +81,10 @@ type JobDetail = Row & {
   activities: Array<Row & { actor?: { displayName?: string | null } | null }>;
   fieldServiceReport?: Row | null;
   warranty?: Row | null;
+  components: JobComponentRow[];
+  pexSourceStockUnits: PexStockUnitSummary[];
+  pexSupplyLinksAsSupply: PexSupplyLinkSummary[];
+  pexSupplyLinksAsReturn: PexSupplyLinkSummary[];
   partRequirements: RequirementRow[];
 };
 
@@ -85,6 +120,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [jobKitQuery, setJobKitQuery] = useState("");
   const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
   const [jobKitId, setJobKitId] = useState("");
+  const [pexLocationQuery, setPexLocationQuery] = useState("");
+  const [pexLocationOptions, setPexLocationOptions] = useState<StorageLocationOption[]>([]);
+  const [selectedPexLocation, setSelectedPexLocation] = useState<StorageLocationOption | null>(null);
+  const [pexSupplyQuery, setPexSupplyQuery] = useState("");
+  const [pexSupplyOptions, setPexSupplyOptions] = useState<PexStockUnitSummary[]>([]);
+  const [selectedPexUnitId, setSelectedPexUnitId] = useState("");
 
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
@@ -119,6 +160,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     partQty: "1",
     partNotes: "",
     partEtaDate: "",
+    pexMismatchReason: "",
+    pexCloseReason: "",
+    pexCloseNote: "",
+    pexReturnedCoreDescription: "",
+    pexReturnedCoreType: "",
+    pexReturnedCorePartNumber: "",
+    pexReturnedCoreSerial: "",
+    pexCorrectionReason: "",
   });
 
   const load = useCallback(async () => {
@@ -215,6 +264,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }, 200);
     return () => clearTimeout(timer);
   }, [jobId, jobKitQuery]);
+
+  useEffect(() => {
+    const q = pexLocationQuery.trim();
+    const timer = setTimeout(async () => {
+      const r = await fetch(`/api/v1/master-data/storage-locations?q=${encodeURIComponent(q)}&status=active&pageSize=20`, { cache: "no-store" });
+      const b = await r.json();
+      setPexLocationOptions((b.items || []).filter((item: StorageLocationOption) => item.active !== false));
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [pexLocationQuery]);
+
+  useEffect(() => {
+    if (job?.type !== "PEX_SUPPLY") { setPexSupplyOptions([]); return; }
+    const q = pexSupplyQuery.trim();
+    const timer = setTimeout(async () => {
+      const r = await fetch(`/api/v1/pex-stock?status=AVAILABLE&pageSize=20&q=${encodeURIComponent(q)}`, { cache: "no-store" });
+      const b = await r.json();
+      setPexSupplyOptions((b.items || []) as PexStockUnitSummary[]);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [job?.type, pexSupplyQuery]);
 
   const title = useMemo(() => job?.jobNumber || job?.draftNumber || "New job", [job]);
 
@@ -339,6 +409,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  async function patchAction(path: string, payload: Record<string, unknown>) {
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(path, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Action failed.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAction(path: string, payload: Record<string, unknown>) {
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(path, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Action failed.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <div className="table-state"><Loader2 className="spin" size={20} /> Loading job…</div>;
 
   return (
@@ -434,6 +532,45 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {job.type === "FIELD_SERVICE" && <section className="detail-panel"><header><div><h2>Field service</h2><p>Capture site, technician and report details for field-service work.</p></div></header><div className="drawer-fields"><label><span>Site</span><input value={form.fieldSite} onChange={(e) => updateField("fieldSite", e.target.value)} /></label><label><span>Technician</span><input value={form.fieldTechnician} onChange={(e) => updateField("fieldTechnician", e.target.value)} /></label><label><span>Vehicle</span><input value={form.fieldVehicle} onChange={(e) => updateField("fieldVehicle", e.target.value)} /></label><label><span>Hours</span><input type="number" min="0" step="0.25" value={form.fieldHours} onChange={(e) => updateField("fieldHours", e.target.value)} /></label><label className="wide"><span>Report</span><textarea rows={4} value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void putAction(`/api/v1/jobs/${job.id}/field-service`, { site: form.fieldSite || null, technician: form.fieldTechnician || null, vehicle: form.fieldVehicle || null, hours: form.fieldHours ? Number(form.fieldHours) : null, report: form.fieldReport || null })}>Save field-service info</button></footer></section>}
 
           {job.type === "WARRANTY" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></section>}
+
+          {job.type === "STANDARD_REPAIR" && <section className="detail-panel"><header><div><h2>Transfer to PEX Stock</h2><p>Completed Standard Repair components can transfer independently into serialized PEX stock.</p></div></header>
+            <div className="drawer-fields">
+              <label className="wide party-selector"><span>Storage location</span><div><Search size={14} /><input value={pexLocationQuery} onFocus={() => setPexLocationQuery(pexLocationQuery)} onChange={(e) => { setPexLocationQuery(e.target.value); setSelectedPexLocation(null); }} placeholder="Search active storage locations…" /></div>{pexLocationOptions.length > 0 && <div className="selector-results">{pexLocationOptions.map((location) => <button type="button" key={location.id} onClick={() => { setSelectedPexLocation(location); setPexLocationQuery(`${text(location.code)} · ${text(location.name)}`); setPexLocationOptions([]); }}><strong>{text(location.code)}</strong><span>{text(location.name)} · {text(location.type)}</span></button>)}</div>}</label>
+            </div>
+            <div className="record-list pex-record-list">{job.components.map((component) => {
+              const linkedUnit = job.pexSourceStockUnits.find((unit) => unit.sourceJobComponentId === component.id);
+              return <article key={component.id}>
+                <div className="record-icon">PX</div>
+                <div><strong>{text(component.component || job.component)}</strong><span>{text(component.componentPartNumber)} · {text(component.componentSerial)} · {text(component.componentType)}</span></div>
+                <span className={`status-pill ${linkedUnit ? "" : "neutral"}`}>{linkedUnit ? text(linkedUnit.status) : "Eligible"}</span>
+                <div className="stack-grid pex-link-stack">{linkedUnit ? <><span className="muted small-line">Transferred to {text(linkedUnit.storageLocation?.code || linkedUnit.storageLocation?.name)}</span>{linkedUnit.currentSupplyJob?.id ? <Link href={`/jobs/${linkedUnit.currentSupplyJob.id}`} className="table-action">Open supply {text(linkedUnit.currentSupplyJob.jobNumber || linkedUnit.currentSupplyJob.draftNumber)}</Link> : null}</> : <span className="muted small-line">Not yet transferred to PEX Stock.</span>}</div>
+                <div className="stack-row">{!linkedUnit && <button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex-transfer`, { jobComponentId: component.id, storageLocationId: selectedPexLocation?.id || null })}>Transfer</button>}</div>
+              </article>;
+            })}</div>
+          </section>}
+
+          {job.type === "PEX_SUPPLY" && <section className="detail-panel"><header><div><h2>PEX Supply</h2><p>Link one available PEX stock unit and track the automatically created return chain.</p></div></header>
+            {job.pexSupplyLinksAsSupply[0] ? <div className="record-list pex-record-list"><article>
+              <div className="record-icon">PX</div>
+              <div><strong>{text(job.pexSupplyLinksAsSupply[0].pexStockUnit.component)}</strong><span>{text(job.pexSupplyLinksAsSupply[0].pexStockUnit.componentPartNumber)} · {text(job.pexSupplyLinksAsSupply[0].pexStockUnit.componentSerial)}</span></div>
+              <span className="status-pill">{text(job.pexSupplyLinksAsSupply[0].returnStatus)}</span>
+              <div className="stack-grid pex-link-stack"><span className="muted small-line">Return: {text(job.pexSupplyLinksAsSupply[0].returnJob?.jobNumber || job.pexSupplyLinksAsSupply[0].returnJob?.draftNumber)}</span><span className="muted small-line">Expected core: {text(job.pexSupplyLinksAsSupply[0].expectedCoreDescription)} · {text(job.pexSupplyLinksAsSupply[0].expectedCorePartNumber)} · {text(job.pexSupplyLinksAsSupply[0].expectedCoreSerial)}</span>{job.pexSupplyLinksAsSupply[0].returnJob?.id ? <Link href={`/jobs/${job.pexSupplyLinksAsSupply[0].returnJob?.id}`} className="table-action">Open return</Link> : null}</div>
+              <div className="stack-row">{job.pexSupplyLinksAsSupply[0].active && <button type="button" className="table-action danger" disabled={saving} onClick={async () => { const reason = window.prompt("Cancellation reason", "")?.trim(); if (!reason) return; await deleteAction(`/api/v1/pex-tracking/supply/${job.id}`, { reason }); }}>Cancel link</button>}</div>
+            </article></div> : <><div className="drawer-fields"><label className="wide party-selector"><span>Available PEX stock unit</span><div><Search size={14} /><input value={pexSupplyQuery} onChange={(e) => setPexSupplyQuery(e.target.value)} placeholder="Search available component, part number, serial or location…" /></div>{pexSupplyOptions.length > 0 && <div className="selector-results">{pexSupplyOptions.map((unit) => <button type="button" key={unit.id} onClick={() => { setSelectedPexUnitId(unit.id); setPexSupplyQuery(`${text(unit.component)} · ${text(unit.componentSerial || unit.componentPartNumber)}`); setPexSupplyOptions([]); }}><strong>{text(unit.component)}</strong><span>{text(unit.componentPartNumber)} · {text(unit.componentSerial)} · {text(unit.storageLocation?.code || unit.storageLocation?.name)} · {text(unit.sourceJob?.jobNumber || unit.sourceJob?.draftNumber)}</span></button>)}</div>}</label><label><span>Expected core component</span><input value={form.pexReturnedCoreDescription} onChange={(e) => updateField("pexReturnedCoreDescription", e.target.value)} placeholder="Optional override" /></label><label><span>Expected core type</span><input value={form.pexReturnedCoreType} onChange={(e) => updateField("pexReturnedCoreType", e.target.value)} /></label><label><span>Expected core part number</span><input value={form.pexReturnedCorePartNumber} onChange={(e) => updateField("pexReturnedCorePartNumber", e.target.value)} /></label><label><span>Expected core serial</span><input value={form.pexReturnedCoreSerial} onChange={(e) => updateField("pexReturnedCoreSerial", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !selectedPexUnitId} onClick={() => void postAction(`/api/v1/pex-tracking/supply/${job.id}`, { pexStockUnitId: selectedPexUnitId, expectedCoreDescription: form.pexReturnedCoreDescription || null, expectedCoreType: form.pexReturnedCoreType || null, expectedCorePartNumber: form.pexReturnedCorePartNumber || null, expectedCoreSerial: form.pexReturnedCoreSerial || null })}>Link available PEX unit</button></footer></>}
+          </section>}
+
+          {job.type === "PEX_RETURN" && job.pexSupplyLinksAsReturn[0] && <section className="detail-panel"><header><div><h2>PEX Return</h2><p>Receive the returned core, close without return, or use the approved correction workflow.</p></div></header>
+            <div className="record-list pex-record-list"><article>
+              <div className="record-icon">RT</div>
+              <div><strong>{text(job.pexSupplyLinksAsReturn[0].supplyJob?.jobNumber || job.pexSupplyLinksAsReturn[0].supplyJob?.draftNumber)}</strong><span>{text(job.pexSupplyLinksAsReturn[0].pexStockUnit.component)} · {text(job.pexSupplyLinksAsReturn[0].pexStockUnit.componentPartNumber)} · {text(job.pexSupplyLinksAsReturn[0].pexStockUnit.componentSerial)}</span></div>
+              <span className="status-pill">{text(job.pexSupplyLinksAsReturn[0].returnStatus)}</span>
+              <div className="stack-grid pex-link-stack"><span className="muted small-line">Expected core: {text(job.pexSupplyLinksAsReturn[0].expectedCoreDescription)} · {text(job.pexSupplyLinksAsReturn[0].expectedCorePartNumber)} · {text(job.pexSupplyLinksAsReturn[0].expectedCoreSerial)}</span><span className="muted small-line">Actual core: {text(job.pexSupplyLinksAsReturn[0].returnedCoreDescription)} · {text(job.pexSupplyLinksAsReturn[0].returnedCorePartNumber)} · {text(job.pexSupplyLinksAsReturn[0].returnedCoreSerial)}</span>{job.pexSupplyLinksAsReturn[0].returnMismatchReason ? <span className="muted small-line">Mismatch: {text(job.pexSupplyLinksAsReturn[0].returnMismatchReason)}</span> : null}</div>
+              <div className="stack-grid pex-action-stack">{job.pexSupplyLinksAsReturn[0].returnStatus === "EXPECTED" && <><label><span>Returned component</span><input value={form.pexReturnedCoreDescription} onChange={(e) => updateField("pexReturnedCoreDescription", e.target.value)} /></label><label><span>Returned type</span><input value={form.pexReturnedCoreType} onChange={(e) => updateField("pexReturnedCoreType", e.target.value)} /></label><label><span>Returned part number</span><input value={form.pexReturnedCorePartNumber} onChange={(e) => updateField("pexReturnedCorePartNumber", e.target.value)} /></label><label><span>Returned serial</span><input value={form.pexReturnedCoreSerial} onChange={(e) => updateField("pexReturnedCoreSerial", e.target.value)} /></label><label className="wide"><span>Mismatch reason if different</span><input value={form.pexMismatchReason} onChange={(e) => updateField("pexMismatchReason", e.target.value)} /></label><div className="stack-row"><button type="button" className="quiet-button" disabled={saving || form.pexReturnedCoreDescription.trim().length < 2} onClick={() => void postAction(`/api/v1/pex-tracking/supply/${job.pexSupplyLinksAsReturn[0].supplyJob?.id}/receive`, { returnedCoreDescription: form.pexReturnedCoreDescription, returnedCoreType: form.pexReturnedCoreType || null, returnedCorePartNumber: form.pexReturnedCorePartNumber || null, returnedCoreSerial: form.pexReturnedCoreSerial || null, returnMismatchReason: form.pexMismatchReason || null })}>Receive core</button></div><label className="wide"><span>Close without return reason</span><input value={form.pexCloseReason} onChange={(e) => updateField("pexCloseReason", e.target.value)} /></label><label className="wide"><span>Close note</span><textarea rows={3} value={form.pexCloseNote} onChange={(e) => updateField("pexCloseNote", e.target.value)} /></label><div className="stack-row"><button type="button" className="table-action danger" disabled={saving || form.pexCloseReason.trim().length < 2} onClick={() => void postAction(`/api/v1/pex-tracking/supply/${job.pexSupplyLinksAsReturn[0].supplyJob?.id}/close-without-return`, { closedWithoutReturnReason: form.pexCloseReason, closedWithoutReturnNote: form.pexCloseNote || null })}>Close without return</button></div></>}
+                {job.pexSupplyLinksAsReturn[0].returnStatus !== "EXPECTED" && <span className="muted small-line">This return has been resolved and is read-only for incompatible actions.</span>}
+                {job.pexSupplyLinksAsReturn[0].supplyJob?.id && <><label className="wide"><span>Correction / relink reason</span><input value={form.pexCorrectionReason} onChange={(e) => updateField("pexCorrectionReason", e.target.value)} /></label><label className="wide party-selector"><span>Relink to available PEX unit</span><div><Search size={14} /><input value={pexSupplyQuery} onChange={(e) => setPexSupplyQuery(e.target.value)} placeholder="Search available PEX stock…" /></div>{pexSupplyOptions.length > 0 && <div className="selector-results">{pexSupplyOptions.map((unit) => <button type="button" key={unit.id} onClick={() => { setSelectedPexUnitId(unit.id); setPexSupplyQuery(`${text(unit.component)} · ${text(unit.componentSerial || unit.componentPartNumber)}`); setPexSupplyOptions([]); }}><strong>{text(unit.component)}</strong><span>{text(unit.componentPartNumber)} · {text(unit.componentSerial)} · {text(unit.storageLocation?.code || unit.storageLocation?.name)}</span></button>)}</div>}</label><div className="stack-row"><button type="button" className="quiet-button" disabled={saving || !selectedPexUnitId || form.pexCorrectionReason.trim().length < 2} onClick={() => void patchAction(`/api/v1/pex-tracking/supply/${job.pexSupplyLinksAsReturn[0].supplyJob?.id}`, { pexStockUnitId: selectedPexUnitId, reason: form.pexCorrectionReason })}>Relink chain</button></div></>}
+              </div>
+            </article></div>
+          </section>}
 
           <section className="detail-panel"><header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header><div className="drawer-fields"><label className="wide"><span>New note</span><textarea rows={4} value={form.note} onChange={(e) => updateField("note", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || form.note.trim().length < 2} onClick={async () => { await postAction(`/api/v1/jobs/${job.id}/notes`, { note: form.note }); updateField("note", ""); }}>Add note</button></footer><div className="record-list">{job.notes.map((note) => <article key={note.id}><div className="record-icon"><Plus size={14} /></div><div><strong>{text(note.note)}</strong><span>{note.createdBy?.displayName || "System"}</span></div><span>{new Date(String(note.createdAt)).toLocaleString("en-ZA")}</span></article>)}</div></section>
 

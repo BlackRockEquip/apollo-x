@@ -25,6 +25,7 @@ import {
   type JobPartReturnInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
+import { registerPexJob } from "@/lib/pex/service";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
@@ -104,6 +105,29 @@ async function getJobScoped(companyId: string, id: string) {
       activities: { include: { actor: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
       fieldServiceReport: true,
       warranty: true,
+      components: true,
+      pexSourceStockUnits: {
+        include: {
+          storageLocation: { select: { id: true, code: true, name: true } },
+          currentSupplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
+          currentReturnJob: { select: { id: true, jobNumber: true, draftNumber: true } },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      },
+      pexSupplyLinksAsSupply: {
+        include: {
+          pexStockUnit: { select: { id: true, component: true, componentPartNumber: true, componentSerial: true, status: true } },
+          returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      },
+      pexSupplyLinksAsReturn: {
+        include: {
+          pexStockUnit: { select: { id: true, component: true, componentPartNumber: true, componentSerial: true, status: true } },
+          supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      },
       partRequirements: {
         include: {
           part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true } },
@@ -351,6 +375,11 @@ export async function registerJob(ctx: RequestContext, id: string, raw: unknown)
   const input = jobRegisterInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (existing.jobNumber) throw new Error("Job is already registered.");
+  if (existing.type === "PEX_SUPPLY" || existing.type === "PEX_RETURN") {
+    const updated = await registerPexJob(ctx, existing.id, input.initialStatus as JobStatus);
+    await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "REGISTER", afterData: { id: updated.id, jobNumber: updated.jobNumber, status: updated.status, sequenceType: "PEX_JOB" } });
+    return updated;
+  }
   const updated = await prisma.$transaction(async (tx) => {
     const r = await tx.documentNumberSequence.update({
       where: { companyId_type: { companyId, type: "JOB" } },
