@@ -1,65 +1,43 @@
 import { z } from "zod";
 
-const optionalText = z.string().trim().max(500).optional().nullable();
 const longText = z.string().trim().max(4000).optional().nullable();
 
-export const pexStockListQuery = z.object({
+// PEX Stock (Apollo X's page/route name) shows ModApp's "PEX Inventory"
+// content — units that have physically come back and aren't out on a job
+// yet. ModApp's own /pex-inventory page has no status filter at all (just
+// search + per-column client filters) — this adds one anyway, matching
+// every other Apollo X list page's own search+status convention, scoped to
+// the two states the page's stat cards already group by.
+export const pexInventoryListQuery = z.object({
   q: z.string().trim().max(120).default(""),
-  status: z.enum(["ALL", "AVAILABLE", "SUPPLIED", "QUARANTINE", "SCRAPPED"]).default("ALL"),
+  status: z.enum(["ALL", "READY", "TO_BE_REPAIRED"]).default("ALL"),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 
+// PEX Tracking shows ModApp's "PEX Units" content — every PEX record with a
+// supply leg, full cycle history. Same "add a status filter Apollo X's
+// other list pages have, that ModApp's own /pex page doesn't" reasoning as
+// above.
 export const pexTrackingListQuery = z.object({
   q: z.string().trim().max(120).default(""),
-  status: z.enum(["ALL", "EXPECTED", "RECEIVED", "CLOSED_WITHOUT_RETURN", "OUTSTANDING"]).default("ALL"),
+  status: z.enum(["ALL", "TO_BE_DELIVERED", "AWAIT_CORE", "OUTSTANDING", "RECEIVED", "IN_REPAIR", "COMPLETED", "SCRAPPED"]).default("ALL"),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 
-export const pexTransferInput = z.object({
-  jobComponentId: z.string().cuid(),
-  storageLocationId: z.string().cuid().optional().nullable(),
-  notes: longText,
+export const pexUnlinkedReturnJobsQuery = z.object({
+  q: z.string().trim().max(120).default(""),
 });
 
-export const pexStockUpdateInput = z.object({
-  storageLocationId: z.string().cuid().optional().nullable(),
-  notes: longText,
+export const pexLinkReturnJobInput = z.object({
+  returnJobId: z.string().cuid(),
 });
 
-export const pexStockStatusInput = z.object({
-  reason: optionalText,
-  notes: longText,
-});
-
-export const pexSupplyLinkCreateInput = z.object({
-  pexStockUnitId: z.string().cuid(),
-  expectedCoreDescription: optionalText,
-  expectedCoreType: optionalText,
-  expectedCorePartNumber: optionalText,
-  expectedCoreSerial: optionalText,
-});
-
-export const pexReturnReceiveInput = z.object({
-  returnedCoreDescription: z.string().trim().min(2).max(500),
-  returnedCoreType: optionalText,
-  returnedCorePartNumber: optionalText,
-  returnedCoreSerial: optionalText,
-  returnedReceivedAt: z.coerce.date().optional().nullable(),
-  returnMismatchReason: z.string().trim().max(500).optional().nullable(),
-});
-
-export const pexCloseWithoutReturnInput = z.object({
-  closedWithoutReturnReason: z.string().trim().min(2).max(200),
-  closedWithoutReturnNote: longText,
-});
-
-export const pexCancelLinkInput = z.object({
+export const pexScrapInput = z.object({
   reason: z.string().trim().min(2).max(500),
 });
 
-export const pexRelinkInput = z.object({
-  pexStockUnitId: z.string().cuid(),
-  reason: z.string().trim().min(2).max(500),
+export const pexNotesUpdateInput = z.object({
+  notes: longText,
 });

@@ -6,34 +6,24 @@ import { StockError } from "@/lib/http/errors";
 import { prisma } from "@/lib/prisma";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
 import {
-  pexCancelLinkInput,
-  pexCloseWithoutReturnInput,
-  pexRelinkInput,
-  pexReturnReceiveInput,
-  pexStockListQuery,
-  pexStockStatusInput,
-  pexStockUpdateInput,
-  pexSupplyLinkCreateInput,
+  pexInventoryListQuery,
+  pexLinkReturnJobInput,
+  pexNotesUpdateInput,
+  pexScrapInput,
   pexTrackingListQuery,
-  pexTransferInput,
+  pexUnlinkedReturnJobsQuery,
 } from "@/lib/pex/validation";
 
 type Tx = Prisma.TransactionClient;
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
 type JobActivityType = Prisma.JobActivityGetPayload<{ select: { type: true } }>["type"];
-
-const COMPLETED_JOB_STATUSES = new Set<JobStatus>(["COMPLETE", "CLOSED"]);
+type PexStatus = Prisma.PexRecordGetPayload<{ select: { status: true } }>["status"];
+type ScopedJob = Prisma.JobGetPayload<Record<string, never>>;
 
 function requirePexStockRead(ctx: RequestContext) {
   requireModule(ctx, "PEX_STOCK", "READ");
   requireTenantPermission(ctx, "PEX_STOCK_VIEW");
-  return ctx.companyId!;
-}
-
-function requirePexStockWrite(ctx: RequestContext, permission: "PEX_STOCK_TRANSFER_IN" | "PEX_STOCK_EDIT" | "PEX_STOCK_QUARANTINE" | "PEX_STOCK_SCRAP") {
-  requireModule(ctx, "PEX_STOCK", "WRITE");
-  requireTenantPermission(ctx, permission);
   return ctx.companyId!;
 }
 
@@ -43,8 +33,23 @@ function requirePexTrackingRead(ctx: RequestContext) {
   return ctx.companyId!;
 }
 
-function requirePexSupplyWrite(ctx: RequestContext, permission: "PEX_SUPPLY_LINK" | "PEX_SUPPLY_CREATE" | "PEX_SUPPLY_EDIT" | "PEX_RETURN_RECEIVE" | "PEX_CHAIN_RELINK") {
-  requireModule(ctx, permission === "PEX_RETURN_RECEIVE" || permission === "PEX_CHAIN_RELINK" ? "PEX_TRACKING" : "PEX_STOCK", "WRITE");
+// Every mutating PEX action lives conceptually "under" the job page's PEX
+// section, regardless of which of the two list pages (PEX Stock/PEX
+// Tracking) happens to surface the resulting record — so, unlike the old
+// PexStockUnit/PexSupplyLink service, writes are gated uniformly through
+// the PEX_STOCK module rather than split by action. Tenant permission
+// names are reused unchanged from the retired PexStockUnit/PexSupplyLink
+// permission set (see permissions.ts) rather than adding new ones, since
+// their original meanings map cleanly onto the new, smaller action surface
+// (PEX_SUPPLY_LINK -> "Link PEX return job", PEX_SUPPLY_CREATE -> "Create
+// linked return job now" / "Send to PEX Inventory", PEX_SUPPLY_EDIT ->
+// unlink / notes, PEX_STOCK_SCRAP -> "Scrap unit"). PEX_STOCK_TRANSFER_IN,
+// PEX_STOCK_EDIT, PEX_STOCK_QUARANTINE, PEX_RETURN_RECEIVE and
+// PEX_CHAIN_RELINK are now unused dead permission names — the storage-
+// location/quarantine/core-mismatch concepts they gated don't exist in
+// ModApp's PexRecord model this replaces.
+function requirePexWrite(ctx: RequestContext, permission: "PEX_SUPPLY_CREATE" | "PEX_SUPPLY_LINK" | "PEX_SUPPLY_EDIT" | "PEX_STOCK_SCRAP") {
+  requireModule(ctx, "PEX_STOCK", "WRITE");
   requireTenantPermission(ctx, permission);
   return ctx.companyId!;
 }
@@ -53,475 +58,691 @@ function notFound(): never {
   throw new Error("NOT_FOUND");
 }
 
-function normalize(value: string | null | undefined) {
-  const trimmed = String(value ?? "").trim();
-  return trimmed || null;
+async function requireScopedJob(tx: Tx, companyId: string, id: string): Promise<ScopedJob> {
+  const job = await tx.job.findFirst({ where: { id, companyId } });
+  if (!job) notFound();
+  return job;
 }
 
-function sameCoreIdentity(expected: { description?: string | null; type?: string | null; partNumber?: string | null; serial?: string | null }, actual: { description?: string | null; type?: string | null; partNumber?: string | null; serial?: string | null }) {
-  return normalize(expected.description) === normalize(actual.description)
-    && normalize(expected.type) === normalize(actual.type)
-    && normalize(expected.partNumber) === normalize(actual.partNumber)
-    && normalize(expected.serial) === normalize(actual.serial);
-}
-
-async function addJobActivity(tx: Tx, ctx: RequestContext, jobId: string, type: JobActivityType, description: string, metadata?: Prisma.InputJsonValue) {
+async function addActivity(tx: Tx, ctx: RequestContext, jobId: string, type: JobActivityType, description: string, metadata?: Prisma.InputJsonValue) {
   await tx.jobActivity.create({ data: { companyId: ctx.companyId!, jobId, type, description, metadata, actorId: ctx.userId } });
 }
 
-async function requireScopedJob(tx: Tx, companyId: string, jobId: string) {
-  const job = await tx.job.findFirst({
-    where: { id: jobId, companyId },
-    include: {
-      customer: { select: { id: true, name: true } },
-      components: true,
+// ---------------------------------------------------------------------------
+// Job-lifecycle hooks — called from src/lib/jobs/service.ts, not from any
+// API route directly. Every one is a safe no-op for a job this doesn't
+// apply to, matching ModApp's own "just call it unconditionally" shape for
+// syncPexConsumption/the PEX block inside updateJobStatus.
+// ---------------------------------------------------------------------------
+
+// Mirrors ModApp's inline "if (jobType === PEX_SUPPLY) { create a PexRecord
+// if one doesn't already exist }" — done at job creation and, separately,
+// whenever a save changes an existing job's type to PEX_SUPPLY. Makes the
+// unit visible on PEX Tracking the moment the supply job exists, not only
+// once a return job gets linked to it.
+export async function createPexRecordForSupplyJob(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  job: { id: string; type: JobType; customerId: string; component: string | null; componentType: string | null; deliveryDate: Date | null },
+) {
+  if (job.type !== "PEX_SUPPLY") return;
+  const existing = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
+  if (existing) return;
+  await tx.pexRecord.create({
+    data: {
+      companyId,
+      customerId: job.customerId,
+      unitDescription: job.componentType ?? job.component ?? null,
+      supplyJobId: job.id,
+      // Covers the (unusual but possible) case of a save that changes an
+      // EXISTING job's type to PEX_SUPPLY when it already has a delivery
+      // date on file — see syncPexAwaitCoreFromDeliveryDate below for the
+      // normal, far more common path (deliveryDate set on an already-PEX
+      // job later).
+      status: job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED",
+      createdById: ctx.userId,
+      updatedById: ctx.userId,
     },
   });
-  if (!job) notFound();
-  return job;
 }
 
-async function requireScopedComponent(tx: Tx, companyId: string, jobId: string, componentId: string) {
-  const component = await tx.jobComponent.findFirst({ where: { id: componentId, companyId, jobId } });
-  if (!component) notFound();
-  return component;
-}
-
-async function requireScopedLocation(tx: Tx, companyId: string, locationId: string | null | undefined) {
-  if (!locationId) return null;
-  const location = await tx.storageLocation.findFirst({ where: { id: locationId, companyId, active: true } });
-  if (!location) notFound();
-  return location;
-}
-
-async function requireScopedPexUnit(tx: Tx, companyId: string, id: string) {
-  const unit = await tx.pexStockUnit.findFirst({
-    where: { id, companyId },
-    include: {
-      sourceJob: { select: { id: true, jobNumber: true, draftNumber: true, type: true, status: true } },
-      sourceJobComponent: true,
-      currentSupplyJob: { select: { id: true, jobNumber: true, draftNumber: true, type: true, status: true } },
-      currentReturnJob: { select: { id: true, jobNumber: true, draftNumber: true, type: true, status: true } },
-      storageLocation: { select: { id: true, code: true, name: true, type: true } },
-      supplyLinks: { where: { companyId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] },
-    },
-  });
-  if (!unit) notFound();
-  return unit;
-}
-
-async function requireScopedSupplyJob(tx: Tx, companyId: string, id: string) {
-  const job = await tx.job.findFirst({ where: { id, companyId }, include: { customer: true } });
-  if (!job) notFound();
-  return job;
-}
-
-async function requireScopedSupplyLink(tx: Tx, companyId: string, supplyJobId: string) {
-  const link = await tx.pexSupplyLink.findFirst({
-    where: { companyId, supplyJobId },
-    include: {
-      pexStockUnit: { include: { sourceJob: true, storageLocation: true } },
-      supplyJob: true,
-      returnJob: true,
-    },
-  });
-  if (!link) notFound();
-  return link;
-}
-
-function ensureCompletedStandardRepair(job: { type: JobType; status: JobStatus }) {
-  if (job.type !== "STANDARD_REPAIR") throw new StockError("INVALID_JOB_TYPE", "Only completed Standard Repair jobs can transfer a component into PEX Stock.");
-  if (!COMPLETED_JOB_STATUSES.has(job.status)) throw new StockError("JOB_NOT_COMPLETE", "The source repair must be complete before transferring a component into PEX Stock.");
-}
-
-function ensureReturnDraftCancelable(job: { type: JobType; status: JobStatus; jobNumber: string | null }) {
-  if (job.type !== "PEX_RETURN" || job.status !== "DRAFT" || job.jobNumber) {
-    throw new StockError("PEX_UNWIND_BLOCKED", "This PEX chain can no longer be unwound silently; use the correction workflow instead.");
+// Keeps a PEX Supply job's PexRecord status in step with whether the unit
+// has actually been delivered yet, independent of the job's own status
+// stepper — deliveryDate is a plain form field (Commercial & logistics
+// panel), not tied to any particular job-status stage, so it can change
+// without any job-status transition happening alongside it. At the user's
+// direct request: "when a pex supply has a delivery date its status says
+// to be delivered still, this needs to change to await core." Once
+// delivered, what's actually still being waited on is the customer
+// returning their old core unit, not delivery — so the record now shows
+// AWAIT_CORE instead of staying on TO_BE_DELIVERED indefinitely. Only
+// touches a record that hasn't been linked to a return job yet (once
+// linked, attachReturnJobTx takes over deriving status from the return
+// job's own progress) and isn't SCRAPPED (a deliberate terminal state a
+// delivery-date save should never second-guess). Called unconditionally on
+// every job create/save, same pattern as syncPexRedeployment.
+export async function syncPexAwaitCoreFromDeliveryDate(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  job: { id: string; type: JobType; deliveryDate: Date | null },
+) {
+  if (job.type !== "PEX_SUPPLY") return;
+  const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
+  if (!pexAsSupply || pexAsSupply.returnJobId || pexAsSupply.status === "SCRAPPED") return;
+  const desired: PexStatus = job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+  if (pexAsSupply.status !== desired) {
+    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
   }
 }
 
-export async function listPexStockUnits(ctx: RequestContext, raw: unknown) {
-  const companyId = requirePexStockRead(ctx);
-  const query = pexStockListQuery.parse(raw);
-  const skip = (query.page - 1) * query.pageSize;
-  const contains = { contains: query.q, mode: "insensitive" as const };
-  const where: Prisma.PexStockUnitWhereInput = {
-    companyId,
-    ...(query.status !== "ALL" ? { status: query.status } : {}),
-    ...(query.q ? {
-      OR: [
-        { component: contains },
-        { componentType: contains },
-        { componentPartNumber: contains },
-        { componentSerial: contains },
-        { machineModel: contains },
-        { machineSerial: contains },
-        { sourceJob: { jobNumber: contains } },
-        { sourceJob: { draftNumber: contains } },
-        { currentSupplyJob: { jobNumber: contains } },
-        { storageLocation: { code: contains } },
-        { storageLocation: { name: contains } },
-      ],
-    } : {}),
-  };
-  const [items, total] = await prisma.$transaction([
-    prisma.pexStockUnit.findMany({
-      where,
-      include: {
-        sourceJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-        currentSupplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-        currentReturnJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-        storageLocation: { select: { id: true, code: true, name: true } },
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      skip,
-      take: query.pageSize,
-    }),
-    prisma.pexStockUnit.count({ where }),
-  ]);
-  return { items, total, page: query.page, pageSize: query.pageSize };
+// Mirrors ModApp's syncPexConsumption exactly (down to the self-correcting
+// "field changed or was cleared" branch) — called on EVERY job create/save,
+// not just PEX-typed ones, since redeployment is driven purely by whatever
+// text is in THIS job's own "Previous job number" field. Keeps
+// PexRecord.consumedByJobId/consumedAt in step with it: typing in a
+// completed PEX return job's number marks that unit "redeployed" (dropping
+// it out of PEX Inventory's "Ready to Go" list); changing or clearing the
+// field releases whatever it previously claimed back to available.
+export async function syncPexRedeployment(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  job: { id: string; previousJobNumber: string | null },
+) {
+  const currentlyConsumed = await tx.pexRecord.findFirst({
+    where: { companyId, consumedByJobId: job.id },
+    include: { returnJob: { select: { jobNumber: true } } },
+  });
+
+  if (currentlyConsumed && currentlyConsumed.returnJob?.jobNumber === job.previousJobNumber) {
+    return; // already linked to the right unit, nothing to do
+  }
+
+  if (currentlyConsumed) {
+    await tx.pexRecord.update({ where: { id: currentlyConsumed.id }, data: { consumedByJobId: null, consumedAt: null, updatedById: ctx.userId } });
+  }
+
+  if (!job.previousJobNumber) return;
+
+  // Only a completed ("Ready to Go") return job counts as an available
+  // unit to redeploy — and only if nothing else has already claimed it.
+  const candidate = await tx.pexRecord.findFirst({
+    where: { companyId, consumedByJobId: null, returnJob: { jobNumber: job.previousJobNumber, status: "COMPLETE" } },
+  });
+
+  if (candidate && candidate.returnJobId !== job.id) {
+    await tx.pexRecord.update({ where: { id: candidate.id }, data: { consumedByJobId: job.id, consumedAt: new Date(), updatedById: ctx.userId } });
+  }
 }
 
-export async function getPexStockUnitById(ctx: RequestContext, id: string) {
-  const companyId = requirePexStockRead(ctx);
-  return requireScopedPexUnit(prisma, companyId, id);
-}
+// Maps a PEX return job's own generic status onto the PEX lifecycle, purely
+// so the PexRecord row (and both list pages, which group/filter by it)
+// makes sense — there's no separate user-facing PEX-status control, it's
+// derived automatically here. Mirrors ModApp's JOB_STATUS_TO_PEX_STATUS.
+// Only the main-workshop flow's real step list is covered (a PEX_RETURN
+// job is never field-service) — DRAFT/CANCELLED/RETURNED_UNREPAIRED and
+// every field-service-only status intentionally have no entry, so
+// syncPexStatusFromJobStatus below leaves the PexRecord's status exactly
+// as it was for those, the same as ModApp's mapping simply never being
+// consulted for a status a PEX job can't actually reach.
+// Exported (2026-09-10) so scripts/repair-pex-record-status.ts can reuse
+// this exact mapping to recompute already-stored PexRecord rows rather than
+// keeping a second, driftable copy of it.
+export const JOB_STATUS_TO_PEX_STATUS: Partial<Record<JobStatus, PexStatus>> = {
+  TO_BE_COLLECTED: "OUTSTANDING",
+  TO_BE_RECEIVED: "OUTSTANDING",
+  TO_STRIP: "RECEIVED",
+  STRIPPING: "IN_REPAIR",
+  QUOTE_IN_PROGRESS: "IN_REPAIR",
+  AWAITING_GO_AHEAD: "IN_REPAIR",
+  AWAIT_OUTWORK: "IN_REPAIR",
+  WAITING_FOR_PARTS: "IN_REPAIR",
+  ASSEMBLY: "IN_REPAIR",
+  TESTING: "IN_REPAIR",
+  TO_PAINT_WRAP: "IN_REPAIR",
+  TO_BE_DELIVERED: "IN_REPAIR",
+  DELIVERED_AWAITING_PAYMENT: "IN_REPAIR",
+  COMPLETE: "COMPLETED",
+  // Not part of the ordered stepper, but reachable via the separate
+  // "Close job" action once a job is COMPLETE — treated the same as
+  // COMPLETE rather than left unmapped, so closing a finished PEX return
+  // job doesn't leave its PexRecord looking unfinished.
+  CLOSED: "COMPLETED",
+};
 
-export async function transferCompletedRepairToPexStock(ctx: RequestContext, jobId: string, raw: unknown) {
-  const companyId = requirePexStockWrite(ctx, "PEX_STOCK_TRANSFER_IN");
-  const input = pexTransferInput.parse(raw);
-  const result = await prisma.$transaction(async (tx) => {
-    const job = await requireScopedJob(tx, companyId, jobId);
-    ensureCompletedStandardRepair(job);
-    const component = await requireScopedComponent(tx, companyId, job.id, input.jobComponentId);
-    const location = await requireScopedLocation(tx, companyId, input.storageLocationId ?? null);
-    const existing = await tx.pexStockUnit.findFirst({ where: { companyId, sourceJobComponentId: component.id } });
-    if (existing) throw new StockError("PEX_ALREADY_TRANSFERRED", "This completed repair component has already been transferred into PEX Stock.");
-    const created = await tx.pexStockUnit.create({
+// Shared by createAndAttachReturnJobTx (new return job) and linkPexReturnJob
+// (an existing standalone job) — sets the PexRecord's returnJobId/status/
+// supplyDate and keeps the return job's "Previous job number" pointing back
+// at the supply job, exactly like ModApp's createLinkedPexReturnJob /
+// linkPexReturnJob both do.
+async function attachReturnJobTx(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  supplyJob: ScopedJob,
+  returnJob: ScopedJob,
+  pexAsSupply: { id: string; supplyDate: Date | null; returnDate: Date | null } | null,
+) {
+  const supplyDate = pexAsSupply?.supplyDate ?? supplyJob.dateReceived ?? supplyJob.createdAt;
+  const unitDescription = supplyJob.componentType ?? supplyJob.component ?? null;
+  // Derive the PexRecord's status from the return job's OWN current status
+  // (same JOB_STATUS_TO_PEX_STATUS mapping syncPexStatusFromJobStatus uses)
+  // instead of hardcoding OUTSTANDING. For the automatic "create a
+  // brand-new return job" path (createAndAttachReturnJobTx) this still
+  // computes OUTSTANDING, since a freshly created return job's status is
+  // always TO_BE_RECEIVED, which maps to OUTSTANDING anyway — no behavior
+  // change there. It matters for "Link PEX return job", which attaches an
+  // ALREADY-EXISTING PEX_RETURN job: that job may already be further along
+  // the workshop flow (received, being stripped, etc.) by the time someone
+  // gets around to linking it, and hardcoding OUTSTANDING was leaving the
+  // PexRecord (and so PEX Tracking's Status column) showing "Outstanding" —
+  // i.e. still awaited back from the client — for a unit that had, in
+  // reality, already been received and was being worked on.
+  const status = JOB_STATUS_TO_PEX_STATUS[returnJob.status] ?? "OUTSTANDING";
+  // Same "first time it moves off outstanding is the moment it actually
+  // came back" rule syncPexStatusFromJobStatus uses — a return job linked
+  // in already past that stage should get a returnDate backfilled too,
+  // rather than leaving it blank until its next status change.
+  const returnDate = pexAsSupply?.returnDate ?? (status !== "OUTSTANDING" ? new Date() : null);
+
+  if (pexAsSupply) {
+    await tx.pexRecord.update({
+      where: { id: pexAsSupply.id },
+      data: { returnJobId: returnJob.id, unitDescription, status, supplyDate, returnDate, updatedById: ctx.userId },
+    });
+  } else {
+    await tx.pexRecord.create({
       data: {
         companyId,
-        sourceJobId: job.id,
-        sourceJobComponentId: component.id,
-        storageLocationId: location?.id ?? null,
-        component: component.component,
-        componentType: component.componentType,
-        componentPartNumber: component.componentPartNumber,
-        componentSerial: component.componentSerial,
-        machineModel: job.machineModel,
-        machineSerial: job.machineSerial,
-        status: "AVAILABLE",
-        notes: input.notes ?? null,
-        createdById: ctx.userId,
-        updatedById: ctx.userId,
-      },
-      include: { sourceJob: true, storageLocation: true },
-    });
-    await addJobActivity(tx, ctx, job.id, "PEX_STOCK_TRANSFERRED", `Component transferred into PEX Stock as available unit.`, {
-      pexStockUnitId: created.id,
-      sourceJobComponentId: component.id,
-      storageLocationId: location?.id ?? null,
-    });
-    return created;
-  });
-  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexStockUnit", entityId: result.id, action: "TRANSFER_IN", afterData: { jobId, jobComponentId: input.jobComponentId, storageLocationId: input.storageLocationId ?? null } });
-  return result;
-}
-
-export async function updatePexStockMetadata(ctx: RequestContext, id: string, raw: unknown) {
-  const companyId = requirePexStockWrite(ctx, "PEX_STOCK_EDIT");
-  const input = pexStockUpdateInput.parse(raw);
-  const updated = await prisma.$transaction(async (tx) => {
-    const existing = await requireScopedPexUnit(tx, companyId, id);
-    const location = await requireScopedLocation(tx, companyId, input.storageLocationId ?? null);
-    return tx.pexStockUnit.update({
-      where: { id: existing.id },
-      data: { storageLocationId: location?.id ?? null, notes: input.notes ?? null, updatedById: ctx.userId },
-      include: { sourceJob: true, storageLocation: true },
-    });
-  });
-  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexStockUnit", entityId: updated.id, action: "UPDATE", afterData: { storageLocationId: input.storageLocationId ?? null } });
-  return updated;
-}
-
-async function setPexStockStatus(ctx: RequestContext, id: string, nextStatus: "QUARANTINE" | "AVAILABLE" | "SCRAPPED", permission: "PEX_STOCK_QUARANTINE" | "PEX_STOCK_SCRAP", raw: unknown) {
-  const companyId = requirePexStockWrite(ctx, permission);
-  const input = pexStockStatusInput.parse(raw);
-  const updated = await prisma.$transaction(async (tx) => {
-    const existing = await requireScopedPexUnit(tx, companyId, id);
-    if (nextStatus === "QUARANTINE" && existing.status !== "AVAILABLE") throw new StockError("INVALID_PEX_STATUS", "Only available PEX units can move into quarantine.");
-    if (nextStatus === "AVAILABLE" && existing.status !== "QUARANTINE") throw new StockError("INVALID_PEX_STATUS", "Only quarantined PEX units can be released back to available stock.");
-    if (nextStatus === "SCRAPPED" && !["AVAILABLE", "QUARANTINE"].includes(existing.status)) throw new StockError("INVALID_PEX_STATUS", "Only available or quarantined PEX units can be scrapped.");
-    if (existing.currentSupplyJobId || existing.currentReturnJobId || existing.status === "SUPPLIED") throw new StockError("PEX_STATUS_BLOCKED", "This PEX unit has an active supply/return chain and cannot be changed this way.");
-    const unit = await tx.pexStockUnit.update({ where: { id: existing.id }, data: { status: nextStatus, updatedById: ctx.userId, notes: input.notes ?? existing.notes }, include: { sourceJob: true } });
-    await addJobActivity(tx, ctx, existing.sourceJobId, "PEX_STOCK_STATUS_CHANGED", `PEX stock unit status changed to ${nextStatus}.`, { pexStockUnitId: existing.id, from: existing.status, to: nextStatus, reason: input.reason ?? null });
-    return unit;
-  });
-  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexStockUnit", entityId: updated.id, action: `STATUS_${nextStatus}`, afterData: { status: nextStatus, reason: input.reason ?? null } });
-  return updated;
-}
-
-export function quarantinePexStockUnit(ctx: RequestContext, id: string, raw: unknown) {
-  return setPexStockStatus(ctx, id, "QUARANTINE", "PEX_STOCK_QUARANTINE", raw);
-}
-
-export function releasePexStockUnit(ctx: RequestContext, id: string, raw: unknown) {
-  return setPexStockStatus(ctx, id, "AVAILABLE", "PEX_STOCK_QUARANTINE", raw);
-}
-
-export function scrapPexStockUnit(ctx: RequestContext, id: string, raw: unknown) {
-  return setPexStockStatus(ctx, id, "SCRAPPED", "PEX_STOCK_SCRAP", raw);
-}
-
-export async function listPexSupplyLinks(ctx: RequestContext, raw: unknown) {
-  const companyId = requirePexTrackingRead(ctx);
-  const query = pexTrackingListQuery.parse(raw);
-  const skip = (query.page - 1) * query.pageSize;
-  const contains = { contains: query.q, mode: "insensitive" as const };
-  const where: Prisma.PexSupplyLinkWhereInput = {
-    companyId,
-    ...(query.status === "OUTSTANDING" ? { returnStatus: "EXPECTED", active: true } : query.status !== "ALL" ? { returnStatus: query.status as "EXPECTED" | "RECEIVED" | "CLOSED_WITHOUT_RETURN" } : {}),
-    ...(query.q ? {
-      OR: [
-        { supplyJob: { jobNumber: contains } },
-        { supplyJob: { draftNumber: contains } },
-        { returnJob: { jobNumber: contains } },
-        { returnJob: { draftNumber: contains } },
-        { pexStockUnit: { component: contains } },
-        { pexStockUnit: { componentSerial: contains } },
-        { expectedCoreDescription: contains },
-        { expectedCorePartNumber: contains },
-        { expectedCoreSerial: contains },
-        { returnedCoreDescription: contains },
-        { returnedCorePartNumber: contains },
-        { returnedCoreSerial: contains },
-      ],
-    } : {}),
-  };
-  const [items, total] = await prisma.$transaction([
-    prisma.pexSupplyLink.findMany({
-      where,
-      include: {
-        pexStockUnit: { include: { sourceJob: { select: { jobNumber: true, draftNumber: true } } } },
-        supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true, customer: { select: { name: true, tradingName: true } } } },
-        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      skip,
-      take: query.pageSize,
-    }),
-    prisma.pexSupplyLink.count({ where }),
-  ]);
-  return { items, total, page: query.page, pageSize: query.pageSize };
-}
-
-export async function getPexSupplyLinkBySupplyJobId(ctx: RequestContext, supplyJobId: string) {
-  const companyId = requirePexTrackingRead(ctx);
-  return requireScopedSupplyLink(prisma, companyId, supplyJobId);
-}
-
-export async function linkPexSupplyJob(ctx: RequestContext, supplyJobId: string, raw: unknown) {
-  const companyId = requirePexSupplyWrite(ctx, "PEX_SUPPLY_LINK");
-  const input = pexSupplyLinkCreateInput.parse(raw);
-  const result = await prisma.$transaction(async (tx) => {
-    const supplyJob = await requireScopedSupplyJob(tx, companyId, supplyJobId);
-    if (supplyJob.type !== "PEX_SUPPLY") throw new StockError("INVALID_JOB_TYPE", "Only PEX Supply jobs can link to a PEX stock unit.");
-    if (!supplyJob.jobNumber) throw new StockError("PEX_SUPPLY_NOT_REGISTERED", "Register the PEX Supply job before linking a PEX stock unit.");
-    const existingLink = await tx.pexSupplyLink.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
-    if (existingLink) throw new StockError("PEX_ALREADY_LINKED", "This PEX Supply job already has a linked stock unit.");
-
-    const unit = await tx.pexStockUnit.findFirst({
-      where: { id: input.pexStockUnitId, companyId },
-      include: { sourceJob: true },
-    });
-    if (!unit) notFound();
-    if (unit.status !== "AVAILABLE") throw new StockError("PEX_NOT_AVAILABLE", "Only available PEX stock units can be supplied.");
-
-    const lockedUnit = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "PexStockUnit"
-      WHERE id = ${unit.id} AND "companyId" = ${companyId} AND status = 'AVAILABLE'::"PexStockStatus"
-      FOR UPDATE`;
-    if (lockedUnit.length !== 1) throw new StockError("PEX_NOT_AVAILABLE", "The selected PEX stock unit is no longer available.");
-
-    const activeSupply = await tx.pexSupplyLink.findFirst({ where: { companyId, pexStockUnitId: unit.id, active: true } });
-    if (activeSupply) throw new StockError("PEX_ALREADY_SUPPLIED", "This PEX stock unit is already linked to an active supply.");
-
-    const returnDraft = await tx.job.create({
-      data: {
-        companyId,
-        draftNumber: `PEX-RET-${Date.now().toString(36).toUpperCase()}`,
-        jobNumber: null,
-        status: "DRAFT",
-        type: "PEX_RETURN",
         customerId: supplyJob.customerId,
-        customerReference: supplyJob.customerReference,
-        customerPo: supplyJob.customerPo,
-        dateReceived: null,
-        machineModel: unit.machineModel,
-        machineSerial: unit.machineSerial,
-        component: unit.component,
-        componentType: unit.componentType,
-        componentSerial: unit.componentSerial,
-        componentPartNumber: unit.componentPartNumber,
-        description: `Auto-created PEX return draft for ${supplyJob.jobNumber}.`,
-        relationshipNotes: `Auto-created from PEX supply ${supplyJob.jobNumber}.`,
+        unitDescription,
+        supplyJobId: supplyJob.id,
+        returnJobId: returnJob.id,
+        status,
+        supplyDate,
+        returnDate,
         createdById: ctx.userId,
         updatedById: ctx.userId,
       },
     });
+  }
 
-    const link = await tx.pexSupplyLink.create({
+  if (returnJob.previousJobNumber !== supplyJob.jobNumber) {
+    await tx.job.update({ where: { id: returnJob.id }, data: { previousJobNumber: supplyJob.jobNumber, updatedById: ctx.userId } });
+  }
+
+  await addActivity(tx, ctx, supplyJob.id, "PEX_RETURN_LINKED", `PEX return job ${returnJob.jobNumber ?? returnJob.draftNumber} linked.`, { returnJobId: returnJob.id });
+  await addActivity(tx, ctx, returnJob.id, "PEX_RETURN_LINKED", `Linked as the PEX return job for supply job ${supplyJob.jobNumber ?? supplyJob.draftNumber}.`, { supplyJobId: supplyJob.id });
+}
+
+// Creates the return job itself, then attaches it — shared by the
+// "Create linked return job now" button and the automatic trigger inside
+// syncPexStatusFromJobStatus (a PEX supply job reaching Complete). Numbers
+// and activates the job immediately (status TO_BE_RECEIVED, no DRAFT
+// limbo), matching ModApp's own return jobs — unlike a normal Apollo X job
+// created through the New Job form, this one is system-created on behalf
+// of an already-committed supply job, so there's nothing left to "draft".
+async function createAndAttachReturnJobTx(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  supplyJob: ScopedJob,
+  pexAsSupply: { id: string; supplyDate: Date | null; returnDate: Date | null } | null,
+) {
+  const jobNumber = await allocateDocumentNumberTx(tx, ctx, "PEX_JOB");
+  const returnJob = await tx.job.create({
+    data: {
+      companyId,
+      jobNumber,
+      status: "TO_BE_RECEIVED",
+      type: "PEX_RETURN",
+      customerId: supplyJob.customerId,
+      customerReference: supplyJob.customerReference,
+      customerPo: supplyJob.customerPo,
+      machineMake: supplyJob.machineMake,
+      machineModel: supplyJob.machineModel,
+      machineSerial: supplyJob.machineSerial,
+      component: supplyJob.component,
+      componentType: supplyJob.componentType,
+      componentSerial: supplyJob.componentSerial,
+      componentPartNumber: supplyJob.componentPartNumber,
+      description: `PEX return for supply job ${supplyJob.jobNumber ?? supplyJob.draftNumber}.`,
+      previousJobNumber: supplyJob.jobNumber,
+      createdById: ctx.userId,
+      updatedById: ctx.userId,
+    },
+  });
+  if (returnJob.component) {
+    await tx.jobComponent.create({
       data: {
         companyId,
-        supplyJobId: supplyJob.id,
-        returnJobId: returnDraft.id,
-        pexStockUnitId: unit.id,
-        expectedCoreDescription: input.expectedCoreDescription ?? unit.component,
-        expectedCoreType: input.expectedCoreType ?? unit.componentType,
-        expectedCorePartNumber: input.expectedCorePartNumber ?? unit.componentPartNumber,
-        expectedCoreSerial: input.expectedCoreSerial ?? unit.componentSerial,
-        active: true,
-        createdById: ctx.userId,
-        updatedById: ctx.userId,
+        jobId: returnJob.id,
+        component: returnJob.component,
+        componentType: returnJob.componentType,
+        componentSerial: returnJob.componentSerial,
+        componentPartNumber: returnJob.componentPartNumber,
       },
-      include: { supplyJob: true, returnJob: true, pexStockUnit: true },
     });
-
-    await tx.pexStockUnit.update({ where: { id: unit.id }, data: { status: "SUPPLIED", currentSupplyJobId: supplyJob.id, currentReturnJobId: returnDraft.id, updatedById: ctx.userId } });
-
-    await addJobActivity(tx, ctx, supplyJob.id, "PEX_STOCK_LINKED", `PEX stock unit linked to supply job ${supplyJob.jobNumber}.`, { pexStockUnitId: unit.id, returnJobId: returnDraft.id, linkId: link.id });
-    await addJobActivity(tx, ctx, supplyJob.id, "PEX_RETURN_AUTO_CREATED", `Draft PEX return created for supply job ${supplyJob.jobNumber}.`, { returnJobId: returnDraft.id, linkId: link.id });
-    await addJobActivity(tx, ctx, returnDraft.id, "JOB_CREATED", `Auto-created draft PEX return for supply job ${supplyJob.jobNumber}.`, { supplyJobId: supplyJob.id, pexStockUnitId: unit.id, linkId: link.id });
-    await addJobActivity(tx, ctx, unit.sourceJobId, "PEX_STOCK_STATUS_CHANGED", `PEX stock unit supplied on ${supplyJob.jobNumber}.`, { pexStockUnitId: unit.id, supplyJobId: supplyJob.id, linkId: link.id });
-    return link;
-  });
-  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexSupplyLink", entityId: result.id, action: "SUPPLY_LINK", afterData: { supplyJobId, pexStockUnitId: input.pexStockUnitId, returnJobId: result.returnJobId } });
-  return result;
+  }
+  await addActivity(tx, ctx, returnJob.id, "JOB_CREATED", `PEX return job ${jobNumber} created, linked to supply job ${supplyJob.jobNumber ?? supplyJob.draftNumber}.`, { jobNumber, supplyJobId: supplyJob.id });
+  await attachReturnJobTx(tx, ctx, companyId, supplyJob, returnJob, pexAsSupply);
+  return returnJob;
 }
 
-export async function receivePexReturn(ctx: RequestContext, supplyJobId: string, raw: unknown) {
-  const companyId = requirePexSupplyWrite(ctx, "PEX_RETURN_RECEIVE");
-  const input = pexReturnReceiveInput.parse(raw);
-  const result = await prisma.$transaction(async (tx) => {
-    const link = await requireScopedSupplyLink(tx, companyId, supplyJobId);
-    if (!link.active || link.returnStatus !== "EXPECTED") throw new StockError("PEX_RETURN_CLOSED", "This PEX return has already been resolved.");
-    const materiallyDifferent = !sameCoreIdentity(
-      { description: link.expectedCoreDescription, type: link.expectedCoreType, partNumber: link.expectedCorePartNumber, serial: link.expectedCoreSerial },
-      { description: input.returnedCoreDescription, type: input.returnedCoreType, partNumber: input.returnedCorePartNumber, serial: input.returnedCoreSerial },
-    );
-    if (materiallyDifferent && !normalize(input.returnMismatchReason)) throw new StockError("PEX_MISMATCH_REASON_REQUIRED", "A mismatch reason is required when the returned core identity differs from the expected core.");
-    const updated = await tx.pexSupplyLink.update({
-      where: { id: link.id },
+// Called from jobs/service.ts whenever a job's status actually changes
+// (changeJobStatus, updateJob when it includes a status change, registerJob
+// moving a job out of DRAFT, closeJob, reopenJob) — safe/no-op for any job
+// that isn't currently a linked PEX return job, or an unlinked PEX supply
+// job. Mirrors the PEX block inside ModApp's updateJobStatus.
+export async function syncPexStatusFromJobStatus(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  job: { id: string; deliveryDate: Date | null },
+  nextStatus: JobStatus,
+) {
+  const pexAsReturn = await tx.pexRecord.findFirst({ where: { companyId, returnJobId: job.id } });
+  if (pexAsReturn) {
+    const mapped = JOB_STATUS_TO_PEX_STATUS[nextStatus];
+    if (!mapped) return;
+    await tx.pexRecord.update({
+      where: { id: pexAsReturn.id },
       data: {
-        returnedCoreDescription: input.returnedCoreDescription,
-        returnedCoreType: input.returnedCoreType ?? null,
-        returnedCorePartNumber: input.returnedCorePartNumber ?? null,
-        returnedCoreSerial: input.returnedCoreSerial ?? null,
-        returnMismatchReason: materiallyDifferent ? input.returnMismatchReason ?? null : null,
-        returnedReceivedAt: input.returnedReceivedAt ?? new Date(),
-        returnedReceivedById: ctx.userId,
-        returnStatus: "RECEIVED",
-        active: false,
+        status: mapped,
+        // First time it moves off "outstanding" (still with the client) is
+        // the moment the unit actually came back — record that once, don't
+        // keep overwriting it on every later stage change.
+        returnDate: !pexAsReturn.returnDate && mapped !== "OUTSTANDING" ? new Date() : undefined,
         updatedById: ctx.userId,
       },
-      include: { returnJob: true, supplyJob: true, pexStockUnit: true },
     });
-    await tx.pexStockUnit.update({ where: { id: link.pexStockUnitId }, data: { currentReturnJobId: null, currentSupplyJobId: null, updatedById: ctx.userId } });
-    await addJobActivity(tx, ctx, link.returnJobId, "PEX_RETURN_RECEIVED", `Returned core received for ${link.supplyJob.jobNumber || link.supplyJob.draftNumber}.`, { linkId: link.id, materiallyDifferent, returnMismatchReason: updated.returnMismatchReason });
-    await addJobActivity(tx, ctx, link.supplyJobId, "PEX_RETURN_RECEIVED", `Returned core received against supply job.`, { linkId: link.id, returnJobId: link.returnJobId });
-    return updated;
+    return;
+  }
+
+  const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
+  if (pexAsSupply && !pexAsSupply.returnJobId && pexAsSupply.status !== "SCRAPPED") {
+    if (nextStatus === "COMPLETE") {
+      // Completing the supply job is the moment the unit is actually out
+      // the door with the client — create the return job right here
+      // automatically rather than waiting on a separate manual click.
+      const supplyJob = await requireScopedJob(tx, companyId, job.id);
+      await createAndAttachReturnJobTx(tx, ctx, companyId, supplyJob, pexAsSupply);
+    } else {
+      // Respects deliveryDate rather than always resetting to
+      // TO_BE_DELIVERED — a supply job's status can change (e.g. moving
+      // through the normal stepper, or Reopen) without touching delivery
+      // at all, and if the unit's already been delivered this needs to
+      // land on AWAIT_CORE, not regress the record back to "not delivered
+      // yet". See syncPexAwaitCoreFromDeliveryDate's own comment for the
+      // full reasoning — same rule, applied here too since a status change
+      // is a save just like any other.
+      const desired: PexStatus = job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+      if (pexAsSupply.status !== desired) {
+        await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// API-facing actions — one per button/form on the job page's PEX section.
+// ---------------------------------------------------------------------------
+
+// "Create linked return job now" — for linking early, before the supply
+// job reaches Complete (which would otherwise create it automatically).
+export async function createPexReturnJob(ctx: RequestContext, supplyJobId: string) {
+  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_CREATE");
+  const result = await prisma.$transaction(async (tx) => {
+    const supplyJob = await requireScopedJob(tx, companyId, supplyJobId);
+    if (supplyJob.type !== "PEX_SUPPLY") throw new StockError("INVALID_JOB_TYPE", "Only a PEX Supply job can have a linked return job created for it.");
+    const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
+    if (pexAsSupply?.returnJobId) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a return job.");
+    return createAndAttachReturnJobTx(tx, ctx, companyId, supplyJob, pexAsSupply);
   });
-  await recordAudit(ctx, { source: "UI", module: "PEX_TRACKING", entityType: "PexSupplyLink", entityId: result.id, action: "RETURN_RECEIVE", afterData: { supplyJobId, returnStatus: result.returnStatus, returnedReceivedAt: result.returnedReceivedAt } });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "Job", entityId: result.id, action: "PEX_CREATE_LINKED_RETURN", afterData: { supplyJobId, returnJobId: result.id } });
   return result;
 }
 
-export async function closePexReturnWithoutCore(ctx: RequestContext, supplyJobId: string, raw: unknown) {
-  const companyId = requirePexSupplyWrite(ctx, "PEX_SUPPLY_EDIT");
-  const input = pexCloseWithoutReturnInput.parse(raw);
+// "Link PEX return job" — matches up an already-existing standalone
+// PEX_RETURN job (created by hand through New Job, instead of the button
+// above) to this supply job, same mistake-recovery case ModApp's own
+// linkPexReturnJob exists for.
+export async function linkPexReturnJob(ctx: RequestContext, supplyJobId: string, raw: unknown) {
+  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_LINK");
+  const input = pexLinkReturnJobInput.parse(raw);
   const result = await prisma.$transaction(async (tx) => {
-    const link = await requireScopedSupplyLink(tx, companyId, supplyJobId);
-    if (!link.active || link.returnStatus !== "EXPECTED") throw new StockError("PEX_RETURN_CLOSED", "This PEX return has already been resolved.");
-    const updated = await tx.pexSupplyLink.update({
-      where: { id: link.id },
-      data: {
-        returnStatus: "CLOSED_WITHOUT_RETURN",
-        closedWithoutReturnReason: input.closedWithoutReturnReason,
-        closedWithoutReturnNote: input.closedWithoutReturnNote ?? null,
-        closedWithoutReturnAt: new Date(),
-        closedWithoutReturnById: ctx.userId,
-        active: false,
-        updatedById: ctx.userId,
-      },
-      include: { returnJob: true, supplyJob: true },
-    });
-    await tx.pexStockUnit.update({ where: { id: link.pexStockUnitId }, data: { currentReturnJobId: null, currentSupplyJobId: null, updatedById: ctx.userId } });
-    await addJobActivity(tx, ctx, link.returnJobId, "PEX_RETURN_CLOSED_WITHOUT_CORE", `PEX return closed without receiving the core.`, { linkId: link.id, reason: input.closedWithoutReturnReason });
-    await addJobActivity(tx, ctx, link.supplyJobId, "PEX_RETURN_CLOSED_WITHOUT_CORE", `PEX return obligation closed without a returned core.`, { linkId: link.id, reason: input.closedWithoutReturnReason });
-    return updated;
+    const supplyJob = await requireScopedJob(tx, companyId, supplyJobId);
+    if (supplyJob.type !== "PEX_SUPPLY") throw new StockError("INVALID_JOB_TYPE", "Only a PEX Supply job can be linked to a return job.");
+    if (supplyJob.status === "DRAFT") throw new StockError("PEX_SUPPLY_NOT_REGISTERED", "Register the PEX Supply job before linking a return job.");
+    if (input.returnJobId === supplyJob.id) throw new StockError("INVALID_JOB_TYPE", "A job can't be linked to itself.");
+    const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
+    if (pexAsSupply?.returnJobId) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a return job.");
+    const returnJob = await requireScopedJob(tx, companyId, input.returnJobId);
+    if (returnJob.type !== "PEX_RETURN") throw new StockError("INVALID_JOB_TYPE", "Only a PEX Return job can be linked as a return job.");
+    const alreadyLinkedElsewhere = await tx.pexRecord.findFirst({ where: { companyId, returnJobId: returnJob.id } });
+    if (alreadyLinkedElsewhere) throw new StockError("PEX_ALREADY_LINKED", "That job is already linked as a return job elsewhere.");
+    await attachReturnJobTx(tx, ctx, companyId, supplyJob, returnJob, pexAsSupply);
+    const record = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
+    if (!record) notFound();
+    return record;
   });
-  await recordAudit(ctx, { source: "UI", module: "PEX_TRACKING", entityType: "PexSupplyLink", entityId: result.id, action: "CLOSE_WITHOUT_RETURN", afterData: { supplyJobId, reason: input.closedWithoutReturnReason } });
-  return result;
-}
-
-export async function cancelPexSupplyLink(ctx: RequestContext, supplyJobId: string, raw: unknown) {
-  const companyId = requirePexSupplyWrite(ctx, "PEX_SUPPLY_EDIT");
-  const input = pexCancelLinkInput.parse(raw);
-  const result = await prisma.$transaction(async (tx) => {
-    const link = await requireScopedSupplyLink(tx, companyId, supplyJobId);
-    if (!link.active || link.returnStatus !== "EXPECTED") throw new StockError("PEX_UNWIND_BLOCKED", "Only active outstanding PEX links can be unwound.");
-    ensureReturnDraftCancelable(link.returnJob);
-    await tx.pexSupplyLink.update({ where: { id: link.id }, data: { active: false, updatedById: ctx.userId } });
-    await tx.pexStockUnit.update({ where: { id: link.pexStockUnitId }, data: { status: "AVAILABLE", currentSupplyJobId: null, currentReturnJobId: null, updatedById: ctx.userId } });
-    await tx.job.update({ where: { id: link.returnJobId }, data: { status: "CANCELLED", updatedById: ctx.userId } });
-    await addJobActivity(tx, ctx, link.supplyJobId, "PEX_SUPPLY_CANCELLED", `PEX supply link cancelled and unwound.`, { linkId: link.id, reason: input.reason });
-    await addJobActivity(tx, ctx, link.returnJobId, "PEX_STOCK_UNLINKED", `Auto-created PEX return draft cancelled during unwind.`, { linkId: link.id, reason: input.reason });
-    return link;
-  });
-  await recordAudit(ctx, { source: "UI", module: "PEX_TRACKING", entityType: "PexSupplyLink", entityId: result.id, action: "CANCEL_LINK", afterData: { supplyJobId, reason: input.reason } });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_LINK_RETURN", afterData: { supplyJobId, returnJobId: input.returnJobId } });
   return { ok: true };
 }
 
-export async function relinkPexSupplyChain(ctx: RequestContext, supplyJobId: string, raw: unknown) {
-  const companyId = requirePexSupplyWrite(ctx, "PEX_CHAIN_RELINK");
-  const input = pexRelinkInput.parse(raw);
+// "Unlink" — undoes the two actions above, letting a mistake (wrong job
+// picked, or the wrong job auto-created) be corrected without deleting the
+// supply job itself. Only unwinds the supply side of the pairing — the
+// return job row is left exactly as it was otherwise (still exists, still
+// on whatever status it's on), just free to be re-linked or left standing
+// on its own. Resets the PexRecord to whatever a not-yet-linked supply job
+// with this same delivery state looks like — TO_BE_DELIVERED if it hasn't
+// been delivered, AWAIT_CORE if it has (same rule as
+// syncPexAwaitCoreFromDeliveryDate; unlinking doesn't touch the supply
+// job's own deliveryDate, so the reset should reflect it, not blindly
+// regress to "not delivered").
+export async function unlinkPexReturnJob(ctx: RequestContext, supplyJobId: string) {
+  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_EDIT");
   const result = await prisma.$transaction(async (tx) => {
-    const link = await requireScopedSupplyLink(tx, companyId, supplyJobId);
-    if (!link.active || link.returnStatus !== "EXPECTED") throw new StockError("PEX_UNWIND_BLOCKED", "Only active outstanding PEX links can be corrected with relinking.");
-    const nextUnit = await tx.pexStockUnit.findFirst({ where: { id: input.pexStockUnitId, companyId } });
-    if (!nextUnit) notFound();
-    if (nextUnit.status !== "AVAILABLE") throw new StockError("PEX_NOT_AVAILABLE", "The replacement PEX stock unit must be available.");
-    const replacementConflict = await tx.pexSupplyLink.findFirst({ where: { companyId, pexStockUnitId: nextUnit.id, active: true } });
-    if (replacementConflict) throw new StockError("PEX_ALREADY_SUPPLIED", "The replacement PEX stock unit is already linked to another active supply.");
-    await tx.pexStockUnit.update({ where: { id: link.pexStockUnitId }, data: { status: "AVAILABLE", currentSupplyJobId: null, currentReturnJobId: null, updatedById: ctx.userId } });
-    const updated = await tx.pexSupplyLink.update({
-      where: { id: link.id },
-      data: {
-        pexStockUnitId: nextUnit.id,
-        expectedCoreDescription: nextUnit.component,
-        expectedCoreType: nextUnit.componentType,
-        expectedCorePartNumber: nextUnit.componentPartNumber,
-        expectedCoreSerial: nextUnit.componentSerial,
-        updatedById: ctx.userId,
-      },
-      include: { supplyJob: true, returnJob: true, pexStockUnit: true },
-    });
-    await tx.pexStockUnit.update({ where: { id: nextUnit.id }, data: { status: "SUPPLIED", currentSupplyJobId: link.supplyJobId, currentReturnJobId: link.returnJobId, updatedById: ctx.userId } });
-    await addJobActivity(tx, ctx, link.supplyJobId, "PEX_RETURN_RELINKED", `PEX chain relinked to a different stock unit.`, { linkId: link.id, fromPexStockUnitId: link.pexStockUnitId, toPexStockUnitId: nextUnit.id, reason: input.reason });
+    const supplyJob = await requireScopedJob(tx, companyId, supplyJobId);
+    const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
+    if (!pexAsSupply?.returnJobId) throw new StockError("PEX_NOT_LINKED", "This job isn't linked to a return job.");
+    const returnJob = await tx.job.findFirst({ where: { id: pexAsSupply.returnJobId, companyId } });
+    const resetStatus: PexStatus = supplyJob.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { returnJobId: null, status: resetStatus, updatedById: ctx.userId } });
+    if (returnJob && returnJob.previousJobNumber === supplyJob.jobNumber) {
+      await tx.job.update({ where: { id: returnJob.id }, data: { previousJobNumber: null, updatedById: ctx.userId } });
+    }
+    await addActivity(tx, ctx, supplyJob.id, "PEX_RETURN_UNLINKED", `Return job ${returnJob?.jobNumber ?? returnJob?.draftNumber ?? ""} unlinked.`.trim(), { returnJobId: pexAsSupply.returnJobId });
+    if (returnJob) await addActivity(tx, ctx, returnJob.id, "PEX_RETURN_UNLINKED", `Unlinked from supply job ${supplyJob.jobNumber ?? supplyJob.draftNumber}.`, { supplyJobId: supplyJob.id });
+    return { pexId: pexAsSupply.id, returnJobId: pexAsSupply.returnJobId };
+  });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.pexId, action: "PEX_UNLINK_RETURN", afterData: { supplyJobId, returnJobId: result.returnJobId } });
+  return { ok: true };
+}
+
+// PEX notes field, on either side of the pairing.
+export async function updatePexRecordNotes(ctx: RequestContext, pexId: string, raw: unknown) {
+  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_EDIT");
+  const input = pexNotesUpdateInput.parse(raw);
+  const pex = await prisma.pexRecord.findFirst({ where: { id: pexId, companyId } });
+  if (!pex) notFound();
+  const updated = await prisma.pexRecord.update({ where: { id: pex.id }, data: { notes: input.notes ?? null, updatedById: ctx.userId } });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: updated.id, action: "PEX_UPDATE_NOTES", afterData: { notes: input.notes ?? null } });
+  return updated;
+}
+
+// "Scrap unit" — a returned unit beyond repair, written off rather than
+// left sitting forever in "To be repaired". Drops it out of PEX Inventory
+// (see listPexInventory's `status: { not: "SCRAPPED" }` filter); nothing is
+// deleted, so history stays intact for auditing. `reason` required, and
+// gets logged both as a job note on the return job and in the unit's own
+// history feed.
+export async function scrapPexRecord(ctx: RequestContext, pexId: string, raw: unknown) {
+  const companyId = requirePexWrite(ctx, "PEX_STOCK_SCRAP");
+  const input = pexScrapInput.parse(raw);
+  const result = await prisma.$transaction(async (tx) => {
+    const pex = await tx.pexRecord.findFirst({ where: { id: pexId, companyId }, include: { returnJob: true, supplyJob: true } });
+    if (!pex) notFound();
+    if (pex.consumedByJobId) throw new StockError("PEX_ALREADY_CONSUMED", "This unit has already been redeployed to another job — it can't be scrapped.");
+    if (pex.status === "SCRAPPED") return pex;
+    const noteLine = `Scrapped — removed from PEX Inventory: ${input.reason}`;
+    const updated = await tx.pexRecord.update({ where: { id: pex.id }, data: { status: "SCRAPPED", updatedById: ctx.userId } });
+    if (pex.returnJob) {
+      await tx.jobNote.create({ data: { companyId, jobId: pex.returnJob.id, note: noteLine, createdById: ctx.userId } });
+      await addActivity(tx, ctx, pex.returnJob.id, "PEX_UNIT_SCRAPPED", noteLine, { pexId: pex.id, reason: input.reason });
+    }
+    if (pex.supplyJob) await addActivity(tx, ctx, pex.supplyJob.id, "PEX_UNIT_SCRAPPED", noteLine, { pexId: pex.id, reason: input.reason });
     return updated;
   });
-  await recordAudit(ctx, { source: "UI", module: "PEX_TRACKING", entityType: "PexSupplyLink", entityId: result.id, action: "RELINK", afterData: { supplyJobId, pexStockUnitId: input.pexStockUnitId, reason: input.reason } });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_SCRAP", afterData: { reason: input.reason } });
+  return { ok: true };
+}
+
+// "Send job to PEX Inventory" — any completed job of ANY type, not
+// otherwise part of a PEX supply/return cycle, can be allocated straight
+// to PEX Inventory: the job itself becomes the "return" record, no supply
+// leg at all. Mirrors ModApp's allocateJobToPexInventory.
+export async function allocateJobToPexInventory(ctx: RequestContext, jobId: string) {
+  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_CREATE");
+  const result = await prisma.$transaction(async (tx) => {
+    const job = await requireScopedJob(tx, companyId, jobId);
+    if (job.status !== "COMPLETE") throw new StockError("JOB_NOT_COMPLETE", "The job must be complete before it can be allocated to PEX Inventory.");
+    const existing = await tx.pexRecord.findFirst({ where: { companyId, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
+    if (existing) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a PEX record.");
+    const created = await tx.pexRecord.create({
+      data: {
+        companyId,
+        customerId: job.customerId,
+        unitDescription: job.componentType ?? job.component ?? null,
+        returnJobId: job.id,
+        status: "COMPLETED",
+        returnDate: new Date(),
+        createdById: ctx.userId,
+        updatedById: ctx.userId,
+      },
+    });
+    await addActivity(tx, ctx, job.id, "PEX_UNIT_ALLOCATED_TO_INVENTORY", "Allocated directly to PEX Inventory.", { pexId: created.id });
+    return created;
+  });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_ALLOCATE_DIRECT", afterData: { jobId } });
   return result;
 }
 
-export async function registerPexJob(ctx: RequestContext, jobId: string, initialStatus: JobStatus) {
-  const companyId = ctx.companyId!;
-  return prisma.$transaction(async (tx) => {
-    const job = await tx.job.findFirst({ where: { id: jobId, companyId } });
-    if (!job) notFound();
-    if (job.jobNumber) throw new StockError("JOB_ALREADY_REGISTERED", "Job is already registered.");
-    if (job.type !== "PEX_SUPPLY" && job.type !== "PEX_RETURN") throw new StockError("INVALID_JOB_TYPE", "Only PEX Supply and PEX Return jobs use PEX_JOB numbering.");
-    const number = await allocateDocumentNumberTx(tx, ctx, "PEX_JOB");
-    const updated = await tx.job.update({ where: { id: job.id }, data: { jobNumber: number, status: initialStatus, updatedById: ctx.userId } });
-    await addJobActivity(tx, ctx, job.id, job.type === "PEX_RETURN" ? "PEX_RETURN_REGISTERED" : "JOB_REGISTERED", `Job registered as ${number}.`, { jobNumber: number, status: initialStatus, sequenceType: "PEX_JOB" });
-    return updated;
+// ---------------------------------------------------------------------------
+// Read/list actions — feed the job page's PEX section and both list pages.
+// ---------------------------------------------------------------------------
+
+// Options for the "Link PEX return job" search — every PEX_RETURN job in
+// this company not already linked as a return job anywhere.
+export async function listUnlinkedPexReturnJobs(ctx: RequestContext, raw: unknown) {
+  const companyId = requirePexStockRead(ctx);
+  const query = pexUnlinkedReturnJobsQuery.parse(raw);
+  const contains = { contains: query.q, mode: "insensitive" as const };
+  const items = await prisma.job.findMany({
+    where: {
+      companyId,
+      type: "PEX_RETURN",
+      pexAsReturn: { is: null },
+      ...(query.q ? { OR: [{ jobNumber: contains }, { customer: { name: contains } }, { customer: { tradingName: contains } }] } : {}),
+    },
+    select: { id: true, jobNumber: true, draftNumber: true, customer: { select: { name: true, tradingName: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 20,
   });
+  return { items };
+}
+
+// PEX Stock page — shows ModApp's "PEX Inventory" content: units that have
+// physically come back and aren't out on a job yet.
+export async function listPexInventory(ctx: RequestContext, raw: unknown) {
+  const companyId = requirePexStockRead(ctx);
+  const query = pexInventoryListQuery.parse(raw);
+  const contains = { contains: query.q, mode: "insensitive" as const };
+  const baseWhere: Prisma.PexRecordWhereInput = {
+    companyId,
+    returnJobId: { not: null },
+    returnJob: { status: { not: "TO_BE_RECEIVED" } },
+    consumedByJobId: null,
+    status: { not: "SCRAPPED" },
+  };
+  const returnJobStatusFilter: Prisma.JobWhereInput =
+    query.status === "READY"
+      ? { status: "COMPLETE" }
+      : query.status === "TO_BE_REPAIRED"
+        ? { status: { notIn: ["TO_BE_RECEIVED", "COMPLETE"] } }
+        : { status: { not: "TO_BE_RECEIVED" } };
+  const where: Prisma.PexRecordWhereInput = {
+    ...baseWhere,
+    returnJob: returnJobStatusFilter,
+    ...(query.q
+      ? {
+          OR: [
+            { unitDescription: contains },
+            { returnJob: { jobNumber: contains } },
+            { returnJob: { machineMake: contains } },
+            { returnJob: { machineModel: contains } },
+            { supplyJob: { jobNumber: contains } },
+          ],
+        }
+      : {}),
+  };
+  const [items, total, readyCount, totalCount] = await prisma.$transaction([
+    prisma.pexRecord.findMany({
+      where,
+      include: {
+        supplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
+        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true, machineMake: true, machineModel: true, componentPartNumber: true } },
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    }),
+    prisma.pexRecord.count({ where }),
+    prisma.pexRecord.count({ where: { ...baseWhere, returnJob: { status: "COMPLETE" } } }),
+    prisma.pexRecord.count({ where: baseWhere }),
+  ]);
+  return { items, total, page: query.page, pageSize: query.pageSize, readyCount, toBeRepairedCount: totalCount - readyCount, totalCount };
+}
+
+// PEX Tracking page — shows ModApp's "PEX Units" content: every PEX record
+// with a supply leg, the full supply -> return cycle history.
+export async function listPexTracking(ctx: RequestContext, raw: unknown) {
+  const companyId = requirePexTrackingRead(ctx);
+  const query = pexTrackingListQuery.parse(raw);
+  const contains = { contains: query.q, mode: "insensitive" as const };
+  const where: Prisma.PexRecordWhereInput = {
+    companyId,
+    supplyJobId: { not: null },
+    ...(query.status !== "ALL" ? { status: query.status as PexStatus } : {}),
+    ...(query.q
+      ? {
+          OR: [
+            { unitDescription: contains },
+            { supplyJob: { jobNumber: contains } },
+            { returnJob: { jobNumber: contains } },
+            { customer: { name: contains } },
+            { customer: { tradingName: contains } },
+          ],
+        }
+      : {}),
+  };
+  const [items, total] = await prisma.$transaction([
+    prisma.pexRecord.findMany({
+      where,
+      include: {
+        customer: { select: { id: true, name: true, tradingName: true } },
+        supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, purchaseOrderNumber: true } },
+        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    }),
+    prisma.pexRecord.count({ where }),
+  ]);
+  const countsBase: Prisma.PexRecordWhereInput = { companyId, supplyJobId: { not: null } };
+  const [toBeDelivered, awaitCore, outstanding, received, inRepair] = await prisma.$transaction([
+    prisma.pexRecord.count({ where: { ...countsBase, status: "TO_BE_DELIVERED" } }),
+    prisma.pexRecord.count({ where: { ...countsBase, status: "AWAIT_CORE" } }),
+    prisma.pexRecord.count({ where: { ...countsBase, status: "OUTSTANDING" } }),
+    prisma.pexRecord.count({ where: { ...countsBase, status: "RECEIVED" } }),
+    prisma.pexRecord.count({ where: { ...countsBase, status: "IN_REPAIR" } }),
+  ]);
+  return { items, total, page: query.page, pageSize: query.pageSize, counts: { toBeDelivered, awaitCore, outstanding, received, inRepair } };
+}
+
+// Which JobActivity types actually belong in a PEX unit's own history feed
+// — mirrors ModApp's PEX_UNIT_HISTORY_ACTIONS allow-list. STATUS_CHANGED is
+// the big one: a return job's status IS this record's PEX status (see
+// JOB_STATUS_TO_PEX_STATUS above), so its activity trail doubles as this
+// unit's own status timeline, same reasoning as ModApp relying on its own
+// JOB_STATUS_CHANGED for the same purpose.
+const PEX_RECORD_HISTORY_ACTIVITY_TYPES: JobActivityType[] = [
+  "JOB_CREATED",
+  "STATUS_CHANGED",
+  "PEX_RETURN_LINKED",
+  "PEX_RETURN_UNLINKED",
+  "PEX_UNIT_SCRAPPED",
+  "PEX_UNIT_ALLOCATED_TO_INVENTORY",
+  "JOB_RETURNED_UNREPAIRED",
+  "JOB_REOPENED",
+];
+
+// One step back in a unit's redeployment chain — mirrors ModApp's
+// getPreviousPexCycle exactly (down to walking via the supply job's own
+// "Previous job number", not consumedByJobId, for the same reliability
+// reason ModApp's own comment gives).
+async function getPreviousPexCycle(companyId: string, previousJobNumber: string | null) {
+  if (!previousJobNumber) return null;
+  const priorReturnJob = await prisma.job.findFirst({ where: { companyId, jobNumber: previousJobNumber } });
+  if (!priorReturnJob) return null;
+  return prisma.pexRecord.findFirst({ where: { companyId, returnJobId: priorReturnJob.id }, include: { supplyJob: true, returnJob: true } });
+}
+
+// Feeds the "History" button next to a unit on either list page or the job
+// page's PEX section — a read-only lifecycle view for one specific record.
+// Mirrors ModApp's getPexUnitHistory. Reachable from either PEX page —
+// PEX_STOCK read is required here regardless of which page linked to it,
+// since it's the less-restrictive of the two view gates a company could
+// have configured and both pages' users need to be able to open it.
+export async function getPexRecordHistory(ctx: RequestContext, id: string) {
+  const companyId = requirePexStockRead(ctx);
+  const pex = await prisma.pexRecord.findFirst({ where: { id, companyId }, include: { supplyJob: true, returnJob: true, consumedByJob: true } });
+  if (!pex) notFound();
+
+  const jobIds = [pex.supplyJobId, pex.returnJobId].filter((jobId): jobId is string => !!jobId);
+  const activity = jobIds.length
+    ? await prisma.jobActivity.findMany({
+        where: { companyId, jobId: { in: jobIds }, type: { in: PEX_RECORD_HISTORY_ACTIVITY_TYPES } },
+        orderBy: { createdAt: "asc" },
+        include: { actor: { select: { displayName: true } } },
+      })
+    : [];
+
+  // Walk backward one cycle at a time via the current cycle's own supply
+  // job's "Previous job number" — capped well above any realistic chain
+  // length as a defensive backstop against a data cycle looping forever,
+  // same as ModApp's own 50-iteration cap.
+  const previousCycles: Array<{ supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null }> = [];
+  let cursorPreviousJobNumber = pex.supplyJob?.previousJobNumber ?? null;
+  for (let i = 0; i < 50; i++) {
+    const prior = await getPreviousPexCycle(companyId, cursorPreviousJobNumber);
+    if (!prior) break;
+    previousCycles.push({
+      supplyJobNumber: prior.supplyJob?.jobNumber ?? null,
+      supplyJobId: prior.supplyJobId,
+      supplyDate: prior.supplyDate ? prior.supplyDate.toISOString() : null,
+      returnJobNumber: prior.returnJob?.jobNumber ?? null,
+      returnJobId: prior.returnJobId,
+      returnDate: prior.returnDate ? prior.returnDate.toISOString() : null,
+    });
+    cursorPreviousJobNumber = prior.supplyJob?.previousJobNumber ?? null;
+  }
+
+  return {
+    id: pex.id,
+    unitDescription: pex.unitDescription,
+    status: pex.status,
+    notes: pex.notes,
+    supplyJobNumber: pex.supplyJob?.jobNumber ?? null,
+    supplyJobId: pex.supplyJobId,
+    supplyDate: pex.supplyDate ? pex.supplyDate.toISOString() : null,
+    returnJobNumber: pex.returnJob?.jobNumber ?? null,
+    returnJobId: pex.returnJobId,
+    returnDate: pex.returnDate ? pex.returnDate.toISOString() : null,
+    consumedByJobNumber: pex.consumedByJob?.jobNumber ?? null,
+    consumedByJobId: pex.consumedByJobId,
+    consumedAt: pex.consumedAt ? pex.consumedAt.toISOString() : null,
+    entries: activity.map((a) => ({
+      id: a.id,
+      type: a.type,
+      description: a.description,
+      userName: a.actor?.displayName ?? null,
+      createdAt: a.createdAt.toISOString(),
+    })),
+    previousCycles,
+  };
 }

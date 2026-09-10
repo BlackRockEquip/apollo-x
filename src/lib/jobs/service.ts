@@ -4,7 +4,9 @@ import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
-import { issueReservedStockTx, releaseReservationTx, reserveStockTx, returnStockTx } from "@/lib/inventory/service";
+import { isCompanyEmailConfigured } from "@/lib/email";
+import { normalized } from "@/lib/master-data/validation";
+import { allocateDocumentNumberTx } from "@/lib/master-data/service";
 import {
   jobsListQuery,
   jobCreateDraftInput,
@@ -16,23 +18,36 @@ import {
   jobNoteCreateInput,
   jobFieldServiceInput,
   jobWarrantyInput,
-  jobPartRequirementCreateInput,
-  jobPartRequirementUpdateInput,
-  jobPartIssueInput,
-  jobPartReserveInput,
-  jobPartReleaseInput,
-  jobPartReturnInput,
-  type JobPartReturnInput,
+  jobPartLineBulkAddInput,
+  jobPartLineOrderUpdateInput,
+  jobPartLineDescriptionUpdateInput,
+  jobPartLineReceiveInput,
+  outworkAddInput,
+  outworkEditInput,
+  outworkReceiveInput,
+  jobMarkReturnedUnrepairedInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
-import { registerPexJob } from "@/lib/pex/service";
+import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
+import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, RETURNED_UNREPAIRED_REOPEN_STATUS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
 type JobActivityType = Prisma.JobActivityGetPayload<{ select: { type: true } }>["type"];
 
-const WIP_STATUSES: JobStatus[] = ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "STRIPPING", "QUOTE_IN_PROGRESS", "AWAITING_GO_AHEAD", "WAITING_FOR_PARTS", "ASSEMBLY", "TESTING", "TO_BE_DELIVERED"];
+// Every flow-family stepper stage except the terminal COMPLETE — kept in
+// sync with src/lib/jobs/ui.ts's per-family step lists rather than
+// duplicating status names here.
+const WIP_STATUSES: JobStatus[] = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
 
+// Broadened for the Jobs & WIP list's customizable columns (see
+// src/lib/jobs/wip-columns.ts) — every scalar field any column in
+// JOBS_WIP_COLUMNS can show, so a user checking one of the less common
+// columns (Kms travelled, Sales representative, ...) doesn't need a
+// separate query. All flat scalars, no extra joins beyond the existing
+// customer relation, so the added columns cost nothing beyond a slightly
+// wider row.
 const jobListSelect = {
   id: true,
   jobNumber: true,
@@ -41,12 +56,38 @@ const jobListSelect = {
   type: true,
   customerReference: true,
   customerPo: true,
+  dateReceived: true,
+  machineMake: true,
   machineModel: true,
   machineSerial: true,
   component: true,
+  componentType: true,
   componentSerial: true,
+  componentPartNumber: true,
   description: true,
   etaDate: true,
+  mechanicEtaDate: true,
+  relationshipNotes: true,
+  quoteNumber: true,
+  quoteDate: true,
+  salesOrderNumber: true,
+  salesOrderDate: true,
+  invoiceNumber: true,
+  invoiceDate: true,
+  purchaseOrderNumber: true,
+  purchaseOrderDate: true,
+  purchaseOrderStatus: true,
+  deliveryDate: true,
+  deliveryType: true,
+  receivingTransport: true,
+  kmsTravelled: true,
+  paymentDateReceived: true,
+  machineHours: true,
+  plantNumber: true,
+  reportNumber: true,
+  importTrackingNumber: true,
+  previousJobNumber: true,
+  salesRepresentative: true,
   createdAt: true,
   updatedAt: true,
   customer: { select: { id: true, name: true, tradingName: true, accountCode: true } },
@@ -96,6 +137,7 @@ async function getJobScoped(companyId: string, id: string) {
           addresses: { where: { active: true }, orderBy: [{ isPrimary: "desc" }, { type: "asc" }] },
         },
       },
+      company: { select: { id: true, legalName: true, tradingName: true } },
       createdBy: true,
       updatedBy: true,
       closedBy: true,
@@ -106,120 +148,114 @@ async function getJobScoped(companyId: string, id: string) {
       fieldServiceReport: true,
       warranty: true,
       components: true,
-      pexSourceStockUnits: {
-        include: {
-          storageLocation: { select: { id: true, code: true, name: true } },
-          currentSupplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-          currentReturnJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-        },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink
+      // includes above — see schema.prisma's PexRecord comment. A job is
+      // linked on at most one of these three legs at a time.
+      pexAsSupply: {
+        include: { returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } } },
       },
-      pexSupplyLinksAsSupply: {
-        include: {
-          pexStockUnit: { select: { id: true, component: true, componentPartNumber: true, componentSerial: true, status: true } },
-          returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
-        },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      pexAsReturn: {
+        include: { supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } } },
       },
-      pexSupplyLinksAsReturn: {
-        include: {
-          pexStockUnit: { select: { id: true, component: true, componentPartNumber: true, componentSerial: true, status: true } },
-          supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
-        },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      pexConsumedBy: {
+        include: { returnJob: { select: { id: true, jobNumber: true, draftNumber: true } } },
       },
-      partRequirements: {
+      // Parts list — replaces the old reserve/issue/return "Parts required"
+      // workflow (see schema.prisma's JobPartLine comment). Much simpler
+      // than the old partRequirements/allocations/movements chain: each row
+      // is its own record with a direct status, no derived summary needed.
+      partLines: {
         include: {
           part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true } },
-          allocations: {
-            include: {
-              stockReservation: { select: { id: true, status: true, location: { select: { code: true, name: true } } } },
-              location: { select: { id: true, code: true, name: true } },
-              movements: {
-                include: {
-                  stockMovement: { select: { id: true, movementType: true, referenceNumber: true, occurredAt: true, reversalOfId: true } },
-                },
-                orderBy: { createdAt: "desc" },
-              },
+          orderedFromSupplier: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+      // Outwork — new (see schema.prisma's OutworkItem comment).
+      outworkItems: {
+        include: {
+          supplier: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      // RFQ (request for quote) — new (see schema.prisma's JobRfqRequest
+      // comment). fileName/mimeType/sizeBytes are included so the UI can
+      // show "a file is attached" without pulling the raw bytes down;
+      // the bytes themselves are only fetched by the dedicated download
+      // route (see rfq/[rfqId]/quote/file/route.ts).
+      rfqRequests: {
+        include: {
+          supplier: { select: { id: true, name: true, mainEmail: true } },
+          quote: {
+            select: {
+              id: true,
+              fileName: true,
+              mimeType: true,
+              sizeBytes: true,
+              notes: true,
+              receivedAt: true,
+              lines: true,
             },
-            orderBy: { createdAt: "desc" },
           },
         },
-        orderBy: [{ active: "desc" }, { createdAt: "desc" }],
+        orderBy: [{ requestedAt: "desc" }],
       },
     },
   });
   if (!job) notFound();
 
-  return {
-    ...job,
-    partRequirements: job.partRequirements.map((requirement) => {
-      const allocationSummaries = requirement.allocations.map((allocation) => {
-        const issued = allocation.movements
-          .filter((movement) => movement.kind === "ISSUE")
-          .reduce((sum, movement) => sum.plus(movement.quantity), new Prisma.Decimal(0));
-        const returned = allocation.movements
-          .filter((movement) => movement.kind === "RETURN")
-          .reduce((sum, movement) => sum.plus(movement.quantity), new Prisma.Decimal(0));
-        const returnedReopen = allocation.movements
-          .filter((movement) => movement.kind === "RETURN" && movement.returnDisposition === "REQUIREMENT_REMAINS")
-          .reduce((sum, movement) => sum.plus(movement.quantity), new Prisma.Decimal(0));
-        const effectiveFulfilled = issued.minus(returnedReopen);
-
-        return {
-          ...allocation,
-          summary: {
-            quantityReserved: allocation.quantityReserved,
-            quantityIssued: issued,
-            quantityReturned: returned,
-            quantityReturnedToOutstanding: returnedReopen,
-            quantityEffectiveFulfilled: effectiveFulfilled,
-          },
-        };
-      });
-
-      const totalReserved = allocationSummaries.reduce((sum, allocation) => sum.plus(allocation.quantityReserved), new Prisma.Decimal(0));
-      const totalIssued = allocationSummaries.reduce((sum, allocation) => sum.plus(allocation.summary.quantityIssued), new Prisma.Decimal(0));
-      const totalReturned = allocationSummaries.reduce((sum, allocation) => sum.plus(allocation.summary.quantityReturned), new Prisma.Decimal(0));
-      const totalReturnedToOutstanding = allocationSummaries.reduce((sum, allocation) => sum.plus(allocation.summary.quantityReturnedToOutstanding), new Prisma.Decimal(0));
-      const totalEffectiveFulfilled = allocationSummaries.reduce((sum, allocation) => sum.plus(allocation.summary.quantityEffectiveFulfilled), new Prisma.Decimal(0));
-      const outstanding = Prisma.Decimal.max(requirement.quantityRequired.minus(totalEffectiveFulfilled), new Prisma.Decimal(0));
-
-      return {
-        ...requirement,
-        allocations: allocationSummaries,
-        summary: {
-          quantityRequired: requirement.quantityRequired,
-          quantityReserved: totalReserved,
-          grossIssued: totalIssued,
-          grossReturned: totalReturned,
-          returnedReopeningRequirement: totalReturnedToOutstanding,
-          effectiveFulfilled: totalEffectiveFulfilled,
-          outstanding,
-        },
-      };
-    }),
-  };
+  return job;
 }
 
-async function getRequirementScoped(companyId: string, jobId: string, requirementId: string) {
-  const requirement = await prisma.jobPartRequirement.findFirst({ where: { id: requirementId, companyId, jobId } });
-  if (!requirement) notFound();
-  return requirement;
+async function getPartLineScoped(companyId: string, jobId: string, lineId: string) {
+  const line = await prisma.jobPartLine.findFirst({ where: { id: lineId, companyId, jobId } });
+  if (!line) notFound();
+  return line;
 }
 
-function mapListWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereInput {
-  const contains = { contains: query.q, mode: "insensitive" as const };
+async function getOutworkItemScoped(companyId: string, jobId: string, itemId: string) {
+  const item = await prisma.outworkItem.findFirst({ where: { id: itemId, companyId, jobId } });
+  if (!item) notFound();
+  return item;
+}
+
+// Company/status/type/view filters only — no text search. Shared by
+// mapListWhere below (which adds the text OR on top) and expandLinkedJobIds
+// (which needs the same scoping for a linked job it pulls in by chain
+// traversal, not by text match, to still respect active filters).
+function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereInput {
   return {
     companyId,
     ...(query.status ? { status: query.status } : {}),
     ...(query.type ? { type: query.type } : {}),
     ...(query.view === "wip" ? { status: { in: WIP_STATUSES } } : {}),
     ...(query.view === "completed" ? { status: { in: ["COMPLETE", "CLOSED", "CANCELLED"] } } : {}),
+  };
+}
+
+function mapListWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereInput {
+  const contains = { contains: query.q, mode: "insensitive" as const };
+  return {
+    ...mapListScopeWhere(companyId, query),
     ...(query.q ? {
       OR: [
         { jobNumber: contains },
         { draftNumber: contains },
+        // Chained/linked jobs (a PEX redeployment, a warranty follow-up, or
+        // any job someone typed a prior job's number into) are found by
+        // their OWN job number/customer/etc. already, but not by searching
+        // for the EARLIER job's number they're linked to — previousJobNumber
+        // was missing from this OR entirely. Reported directly by the user:
+        // "when searching through jobs, jobs are not linked through
+        // previous job number." Without this, searching for job BRE1050
+        // would not surface the later job that has "BRE1050" in its own
+        // Previous job number field, even though that's exactly the kind of
+        // relationship this search is meant to help someone trace. This
+        // only covers one direction though (searching the EARLIER job's
+        // number finds the LATER job) — see expandLinkedJobIds below for
+        // the other direction (searching the LATER job's number finds the
+        // EARLIER one it links back to).
+        { previousJobNumber: contains },
         { customerReference: contains },
         { customerPo: contains },
         { machineModel: contains },
@@ -236,31 +272,105 @@ function mapListWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereI
   };
 }
 
+// Bidirectional expansion of the previousJobNumber chain, starting from
+// whatever mapListWhere's text search directly matched. Reported directly
+// by the user: "when searching bre1070, it does not pickup BRE1050" — where
+// BRE1070 is a later job whose own previousJobNumber is "BRE1050" (e.g. a
+// redeployed PEX unit). previousJobNumber being in mapListWhere's OR
+// already means searching "BRE1050" finds BRE1070 (BRE1070's OWN field
+// contains the query), but searching "BRE1070" does NOT find BRE1050 —
+// nothing on BRE1050's own record mentions "BRE1070" at all, so text
+// matching alone can never find it that direction. This walks the chain
+// outward from every directly-matched job instead, both ways (the job a
+// match points back to via its own previousJobNumber, and any job that
+// points forward at a match), so searching either end of a link surfaces
+// the whole chain. Hop-capped as a defensive backstop against a data cycle
+// looping forever — same spirit as getPreviousPexCycle's own cap in
+// pex/service.ts, just smaller, since this is a search result rather than
+// a full audit trail. scopeWhere (company/status/type/view, no text) is
+// applied to every hop so a linked job outside the current filters (e.g.
+// completed, while viewing "WIP only") doesn't unexpectedly appear.
+async function expandLinkedJobIds(
+  scopeWhere: Prisma.JobWhereInput,
+  seed: Array<{ id: string; jobNumber: string | null; previousJobNumber: string | null }>,
+): Promise<string[]> {
+  const known = new Map(seed.map((row) => [row.id, row]));
+  let frontier = seed;
+  for (let hop = 0; hop < 10 && frontier.length > 0; hop++) {
+    const knownNumbers = new Set([...known.values()].map((row) => row.jobNumber).filter((n): n is string => !!n));
+    const wantedNumbers = [...new Set(frontier.map((row) => row.previousJobNumber).filter((n): n is string => !!n && !knownNumbers.has(n)))];
+    const frontierNumbers = frontier.map((row) => row.jobNumber).filter((n): n is string => !!n);
+    if (wantedNumbers.length === 0 && frontierNumbers.length === 0) break;
+    const next = await prisma.job.findMany({
+      where: {
+        ...scopeWhere,
+        id: { notIn: [...known.keys()] },
+        OR: [
+          ...(wantedNumbers.length ? [{ jobNumber: { in: wantedNumbers } }] : []),
+          ...(frontierNumbers.length ? [{ previousJobNumber: { in: frontierNumbers } }] : []),
+        ],
+      },
+      select: { id: true, jobNumber: true, previousJobNumber: true },
+    });
+    if (next.length === 0) break;
+    for (const row of next) known.set(row.id, row);
+    frontier = next;
+  }
+  return [...known.keys()];
+}
+
 async function addActivity(tx: Prisma.TransactionClient, ctx: RequestContext, jobId: string, type: JobActivityType, description: string, metadata?: Prisma.InputJsonValue) {
   await tx.jobActivity.create({
     data: { companyId: ctx.companyId!, jobId, type, description, metadata, actorId: ctx.userId },
   });
 }
 
+// jobNumber is a plain String (`"BRE" + zero-padded sequence`, e.g. "BRE999",
+// "BRE1000" — see the numbering allocator in src/lib/master-data/service.ts),
+// not an Int, so a database-level `orderBy: { jobNumber: "desc" }` sorts it
+// lexicographically, not numerically. That's fine right up until a
+// sequence's digit count grows past its configured zero-padding width — at
+// that point "BRE999" (3 digits) string-sorts *ahead* of "BRE1000" (4
+// digits), because "9" > "1" at the first differing character. Reported
+// directly by the user: "table view starts at BRE999 but there are jobs
+// that are higher on the list." Fixed by pulling the trailing run of digits
+// out of each jobNumber and comparing those numerically instead — works
+// regardless of prefix, padding width, or how many digits the sequence has
+// grown to. A job with no parseable digits (including the null jobNumber a
+// small number of legacy pre-numbering-fix jobs can still have) sorts to
+// the same end of the list in both directions, same as the intent of the
+// old `nulls` handling this replaces.
+function jobNumberSortValue(jobNumber: string | null): number {
+  const match = jobNumber?.match(/(\d+)(?!.*\d)/);
+  return match ? parseInt(match[1], 10) : -1;
+}
+
 export async function listJobs(ctx: RequestContext, raw: unknown) {
   const companyId = requireJobsRead(ctx);
   const query = jobsListQuery.parse(raw);
-  const where = mapListWhere(companyId, query);
-  const orderBy = { createdAt: query.sort === "oldest" ? "asc" : "desc" } as const;
-  const [total, items] = await Promise.all([
-    prisma.job.count({ where }),
-    prisma.job.findMany({
-      where,
-      select: jobListSelect,
-      orderBy,
-      skip: (query.page - 1) * query.pageSize,
-      take: query.pageSize,
-    }),
-  ]);
+  const scopeWhere = mapListScopeWhere(companyId, query);
+  // No DB-level orderBy/skip/take anywhere below — see jobNumberSortValue
+  // above for why job number can't be sorted correctly as a plain string
+  // column. Sorting and paging happen further down, in application code,
+  // over the full matching set (select is scalars-only, no relations, so
+  // this stays cheap even for a company with several thousand jobs).
+  const rows = query.q
+    ? await (async () => {
+        const textWhere = mapListWhere(companyId, query);
+        const seed = await prisma.job.findMany({ where: textWhere, select: { id: true, jobNumber: true, previousJobNumber: true } });
+        const ids = await expandLinkedJobIds(scopeWhere, seed);
+        return prisma.job.findMany({ where: { ...scopeWhere, id: { in: ids } }, select: jobListSelect });
+      })()
+    : await prisma.job.findMany({ where: scopeWhere, select: jobListSelect });
+  const total = rows.length;
+  const direction = query.sort === "oldest" ? 1 : -1;
+  const sorted = rows.slice().sort((a, b) => direction * (jobNumberSortValue(a.jobNumber) - jobNumberSortValue(b.jobNumber)));
+  const start = (query.page - 1) * query.pageSize;
+  const items = sorted.slice(start, start + query.pageSize);
   return { items, total, page: query.page, pageSize: query.pageSize };
 }
 
-export async function createDraftJob(ctx: RequestContext, raw: unknown) {
+export async function createDraftJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string }) {
   const companyId = requireJobs(ctx, "JOBS_CREATE");
   const input = jobCreateDraftInput.parse(raw);
   await getCustomerOrThrow(companyId, input.customerId);
@@ -268,13 +378,54 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown) {
   const buildMechanicId = await getUserOrNull(companyId, input.buildMechanicId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const job = await prisma.$transaction(async (tx) => {
+    // Numbered immediately at creation, matching ModApp's nextJobNumber
+    // (called right inside its createJob, no separate step) — at the
+    // user's explicit request, since Apollo X's old two-step "Draft, then
+    // Register to allocate the number" flow was leaving newly-created jobs
+    // showing their raw internal id instead of picking up the prefix
+    // configured under Settings > Numbering. PEX Supply/Return jobs draw
+    // from the same "PEX_JOB" sequence registerJob used to allocate at
+    // registration; every other type draws from "JOB". Note this throws
+    // SEQUENCE_NOT_FOUND if the company hasn't set up (and activated) a
+    // Numbering entry for that document type yet — job creation now
+    // depends on one existing, where before it didn't.
+    //
+    // registerJob (below) still exists — it now only moves the job out of
+    // DRAFT status into wherever the workflow should start — and keeps a
+    // fallback that allocates a number there instead, purely for any job
+    // that was already sitting in DRAFT (unnumbered) before this change
+    // shipped.
+    //
+    // Note (2026-09-09): the PEX_SUPPLY/PEX_RETURN special-casing this
+    // comment used to describe here — an auto-created PEX return job
+    // deliberately staying unnumbered/DRAFT until a real Register — belonged
+    // to the old PexStockUnit/PexSupplyLink model and no longer applies.
+    // Under the PexRecord replacement (see schema.prisma's PexRecord
+    // comment), a return job created by pex/service.ts's
+    // createAndAttachReturnJobTx is numbered and active immediately, the
+    // same as ModApp's own return jobs — there's no unnumbered-draft state
+    // to protect and no special unwind path for it.
+    // literalJobNumber lets a caller preserve a job's own real number
+    // instead of allocating a fresh one from this company's Numbering
+    // sequence — currently only the historical Jobs import
+    // (src/lib/import-export/service.ts) passes it, so a legacy job can
+    // keep its original number on the way in. Never exposed through the
+    // public create-job API/validation (jobCreateDraftInput has no such
+    // field) — only this internal service function accepts it, as a
+    // second, explicit argument, so the ordinary New Job form still can't
+    // set an arbitrary number by itself.
+    const jobNumber = options?.literalJobNumber
+      ? options.literalJobNumber
+      : await allocateDocumentNumberTx(tx, ctx, input.type === "PEX_SUPPLY" || input.type === "PEX_RETURN" ? "PEX_JOB" : "JOB");
     const created = await tx.job.create({
       data: {
         companyId,
+        jobNumber,
         customerId: input.customerId,
         customerReference: input.customerReference,
         customerPo: input.customerPo,
         dateReceived: input.dateReceived,
+        machineMake: input.machineMake,
         machineModel: input.machineModel,
         machineSerial: input.machineSerial,
         component: input.component,
@@ -284,10 +435,32 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown) {
         description: input.description,
         type: input.type as JobType,
         etaDate: input.etaDate,
+        mechanicEtaDate: input.mechanicEtaDate,
         relationshipNotes: input.relationshipNotes,
         relatedJobId: input.relatedJobId,
         stripMechanicId,
         buildMechanicId,
+        quoteNumber: input.quoteNumber,
+        quoteDate: input.quoteDate,
+        salesOrderNumber: input.salesOrderNumber,
+        salesOrderDate: input.salesOrderDate,
+        invoiceNumber: input.invoiceNumber,
+        invoiceDate: input.invoiceDate,
+        purchaseOrderNumber: input.purchaseOrderNumber,
+        purchaseOrderDate: input.purchaseOrderDate,
+        ...(input.purchaseOrderStatus !== undefined ? { purchaseOrderStatus: input.purchaseOrderStatus } : {}),
+        deliveryDate: input.deliveryDate,
+        deliveryType: input.deliveryType,
+        receivingTransport: input.receivingTransport,
+        kmsTravelled: input.kmsTravelled,
+        paymentDateReceived: input.paymentDateReceived,
+        ...(input.paymentNotApplicable !== undefined ? { paymentNotApplicable: input.paymentNotApplicable } : {}),
+        machineHours: decimalOrNull(input.machineHours === undefined || input.machineHours === null ? null : Number(input.machineHours)),
+        plantNumber: input.plantNumber,
+        reportNumber: input.reportNumber,
+        importTrackingNumber: input.importTrackingNumber,
+        previousJobNumber: input.previousJobNumber,
+        salesRepresentative: input.salesRepresentative,
         createdById: ctx.userId,
         updatedById: ctx.userId,
       },
@@ -305,16 +478,33 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown) {
         },
       });
     }
-    await addActivity(tx, ctx, created.id, "JOB_CREATED", `Draft job ${created.draftNumber} created.`, { draftNumber: created.draftNumber, type: created.type });
+    await addActivity(tx, ctx, created.id, "JOB_CREATED", `Job ${created.jobNumber} created.`, { jobNumber: created.jobNumber, type: created.type });
+    // A PEX Supply job gets its PexRecord the moment it exists — makes the
+    // unit visible on PEX Tracking immediately, not only once a return job
+    // is linked to it (see createPexRecordForSupplyJob's own comment).
+    await createPexRecordForSupplyJob(tx, ctx, companyId, created);
+    // Picks up "Previous job number" immediately if it was filled in on
+    // the create form — previously a no-op here since the job had no
+    // jobNumber yet to sync against (see the numbering comment above).
+    // Unconditional for every job type, matching ModApp's own
+    // syncPexConsumption call (see syncPexRedeployment's own doc comment).
+    await syncPexRedeployment(tx, ctx, companyId, created);
     return created;
   });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: job.id, action: "CREATE_DRAFT", afterData: { id: job.id, draftNumber: job.draftNumber } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: job.id, action: "CREATE_DRAFT", afterData: { id: job.id, jobNumber: job.jobNumber } });
   return job;
 }
 
 export async function getJobById(ctx: RequestContext, id: string) {
   const companyId = requireJobsRead(ctx);
-  return getJobScoped(companyId, id);
+  const job = await getJobScoped(companyId, id);
+  // emailConfigured — added 2026-09-09 alongside real RFQ/parts-follow-up
+  // email sending, so the RFQ panel can show a "set up email under
+  // Settings" banner instead of a confusing silent SKIPPED status. Just a
+  // boolean, not the SMTP details themselves — safe to include for anyone
+  // who can already view this job.
+  const emailConfigured = await isCompanyEmailConfigured(companyId);
+  return { ...job, emailConfigured };
 }
 
 export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
@@ -333,6 +523,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.customerReference !== undefined ? { customerReference: input.customerReference } : {}),
         ...(input.customerPo !== undefined ? { customerPo: input.customerPo } : {}),
         ...(input.dateReceived !== undefined ? { dateReceived: input.dateReceived } : {}),
+        ...(input.machineMake !== undefined ? { machineMake: input.machineMake } : {}),
         ...(input.machineModel !== undefined ? { machineModel: input.machineModel } : {}),
         ...(input.machineSerial !== undefined ? { machineSerial: input.machineSerial } : {}),
         ...(input.component !== undefined ? { component: input.component } : {}),
@@ -342,9 +533,31 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.type !== undefined ? { type: input.type as JobType } : {}),
         ...(input.etaDate !== undefined ? { etaDate: input.etaDate } : {}),
+        ...(input.mechanicEtaDate !== undefined ? { mechanicEtaDate: input.mechanicEtaDate } : {}),
         ...(input.relationshipNotes !== undefined ? { relationshipNotes: input.relationshipNotes } : {}),
         ...(input.relatedJobId !== undefined ? { relatedJobId: input.relatedJobId } : {}),
         ...(input.status !== undefined ? { status: input.status as JobStatus } : {}),
+        ...(input.quoteNumber !== undefined ? { quoteNumber: input.quoteNumber } : {}),
+        ...(input.quoteDate !== undefined ? { quoteDate: input.quoteDate } : {}),
+        ...(input.salesOrderNumber !== undefined ? { salesOrderNumber: input.salesOrderNumber } : {}),
+        ...(input.salesOrderDate !== undefined ? { salesOrderDate: input.salesOrderDate } : {}),
+        ...(input.invoiceNumber !== undefined ? { invoiceNumber: input.invoiceNumber } : {}),
+        ...(input.invoiceDate !== undefined ? { invoiceDate: input.invoiceDate } : {}),
+        ...(input.purchaseOrderNumber !== undefined ? { purchaseOrderNumber: input.purchaseOrderNumber } : {}),
+        ...(input.purchaseOrderDate !== undefined ? { purchaseOrderDate: input.purchaseOrderDate } : {}),
+        ...(input.purchaseOrderStatus !== undefined ? { purchaseOrderStatus: input.purchaseOrderStatus } : {}),
+        ...(input.deliveryDate !== undefined ? { deliveryDate: input.deliveryDate } : {}),
+        ...(input.deliveryType !== undefined ? { deliveryType: input.deliveryType } : {}),
+        ...(input.receivingTransport !== undefined ? { receivingTransport: input.receivingTransport } : {}),
+        ...(input.kmsTravelled !== undefined ? { kmsTravelled: input.kmsTravelled } : {}),
+        ...(input.paymentDateReceived !== undefined ? { paymentDateReceived: input.paymentDateReceived } : {}),
+        ...(input.paymentNotApplicable !== undefined ? { paymentNotApplicable: input.paymentNotApplicable } : {}),
+        ...(input.machineHours !== undefined ? { machineHours: decimalOrNull(input.machineHours === null ? null : Number(input.machineHours)) } : {}),
+        ...(input.plantNumber !== undefined ? { plantNumber: input.plantNumber } : {}),
+        ...(input.reportNumber !== undefined ? { reportNumber: input.reportNumber } : {}),
+        ...(input.importTrackingNumber !== undefined ? { importTrackingNumber: input.importTrackingNumber } : {}),
+        ...(input.previousJobNumber !== undefined ? { previousJobNumber: input.previousJobNumber } : {}),
+        ...(input.salesRepresentative !== undefined ? { salesRepresentative: input.salesRepresentative } : {}),
         stripMechanicId,
         buildMechanicId,
         updatedById: ctx.userId,
@@ -364,6 +577,22 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
     }
 
     await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", "Job details updated.", { updatedFields: Object.keys(input as Record<string, unknown>) });
+
+    // Covers a save that changes an existing job's type TO PEX_SUPPLY —
+    // same "create the PexRecord if one doesn't already exist" as
+    // createDraftJob above, safe/no-op otherwise.
+    await createPexRecordForSupplyJob(tx, ctx, companyId, job);
+    // Unconditional for every job type, matching ModApp's own
+    // syncPexConsumption call.
+    await syncPexRedeployment(tx, ctx, companyId, job);
+    // Also unconditional — deliveryDate is a plain form field with no
+    // status transition of its own, so it needs its own sync call rather
+    // than piggybacking on the status-change branch below (see
+    // syncPexAwaitCoreFromDeliveryDate's own comment).
+    await syncPexAwaitCoreFromDeliveryDate(tx, ctx, companyId, job);
+    if (input.status !== undefined && input.status !== existing.status) {
+      await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
+    }
     return job;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "UPDATE", afterData: { id: updated.id } });
@@ -374,24 +603,31 @@ export async function registerJob(ctx: RequestContext, id: string, raw: unknown)
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobRegisterInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  if (existing.jobNumber) throw new Error("Job is already registered.");
-  if (existing.type === "PEX_SUPPLY" || existing.type === "PEX_RETURN") {
-    const updated = await registerPexJob(ctx, existing.id, input.initialStatus as JobStatus);
-    await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "REGISTER", afterData: { id: updated.id, jobNumber: updated.jobNumber, status: updated.status, sequenceType: "PEX_JOB" } });
-    return updated;
+  // "Already registered" is now a status question, not a numbering one —
+  // every job created via createDraftJob above already has a jobNumber
+  // from the moment it exists, so the old `if (existing.jobNumber)` guard
+  // would reject registering any newly-created job at all. DRAFT is still
+  // the one status Register is meant to move a job out of.
+  if (existing.status !== "DRAFT") throw new Error("Job is already registered.");
+  if (!statusStepsForJobType(existing.type as JobType).includes(input.initialStatus as JobStatus)) {
+    throw new Error(`Status ${input.initialStatus} is not valid for a ${existing.type} job.`);
   }
+  // PEX_SUPPLY/PEX_RETURN jobs now go through this same generic path —
+  // createDraftJob already numbers every job (including these two types)
+  // immediately at creation, so there's no more "stays unregistered/
+  // unnumbered until Register" special case to delegate to a separate
+  // registerPexJob for (that quirk belonged to the old PexStockUnit/
+  // PexSupplyLink model's auto-created return draft, which the PexRecord
+  // replace removed — see schema.prisma's PexRecord comment). Only the PEX
+  // status sync below is genuinely PEX-specific now.
   const updated = await prisma.$transaction(async (tx) => {
-    const r = await tx.documentNumberSequence.update({
-      where: { companyId_type: { companyId, type: "JOB" } },
-      data: { nextValue: { increment: BigInt(1) } },
-      select: { prefix: true, padding: true, includeFinancialYear: true, financialYearStartMonth: true, nextValue: true },
-    });
-    const allocated = Number(r.nextValue) - 1;
-    const now = new Date();
-    const year = r.includeFinancialYear ? (now.getUTCMonth() + 1 >= r.financialYearStartMonth ? now.getUTCFullYear() + 1 : now.getUTCFullYear()) : now.getUTCFullYear();
-    const number = `${r.prefix}${r.includeFinancialYear ? `${year}/` : ""}${allocated.toString().padStart(r.padding, "0")}`;
-    const registered = await tx.job.update({ where: { id: existing.id }, data: { jobNumber: number, status: input.initialStatus as JobStatus, updatedById: ctx.userId }, include: { customer: true } });
-    await addActivity(tx, ctx, existing.id, "JOB_REGISTERED", `Job registered as ${number}.`, { jobNumber: number, status: input.initialStatus });
+    // Normally a no-op now (see createDraftJob) — this only fires for a
+    // job that reached DRAFT before job numbers were assigned at creation
+    // time, so it isn't stuck showing its raw internal id forever.
+    const jobNumber = existing.jobNumber ?? (await allocateDocumentNumberTx(tx, ctx, existing.type === "PEX_SUPPLY" || existing.type === "PEX_RETURN" ? "PEX_JOB" : "JOB"));
+    const registered = await tx.job.update({ where: { id: existing.id }, data: { jobNumber, status: input.initialStatus as JobStatus, updatedById: ctx.userId }, include: { customer: true } });
+    await addActivity(tx, ctx, existing.id, "JOB_REGISTERED", `Job registered — status set to ${input.initialStatus}.`, { jobNumber, status: input.initialStatus });
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, registered, registered.status as JobStatus);
     return registered;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "REGISTER", afterData: { id: updated.id, jobNumber: updated.jobNumber, status: updated.status } });
@@ -403,9 +639,14 @@ export async function changeJobStatus(ctx: RequestContext, id: string, raw: unkn
   const input = jobStatusChangeInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (existing.status === "DRAFT") throw new Error("Draft jobs must be registered before status changes.");
+  const allowedStatuses = [...statusStepsForJobType(existing.type as JobType), ...UNIVERSAL_STATUSES];
+  if (!allowedStatuses.includes(input.status as JobStatus)) {
+    throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
+  }
   const updated = await prisma.$transaction(async (tx) => {
     const job = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
     await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", `Status changed from ${existing.status} to ${input.status}.`, { from: existing.status, to: input.status, reason: input.reason ?? null });
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
     return job;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "STATUS_CHANGE", afterData: { from: existing.status, to: updated.status } });
@@ -419,6 +660,7 @@ export async function closeJob(ctx: RequestContext, id: string, raw: unknown) {
   const updated = await prisma.$transaction(async (tx) => {
     const closed = await tx.job.update({ where: { id: existing.id }, data: { status: "CLOSED", closingOutcome: input.outcome, closingNote: input.closingNote, closedAt: new Date(), closedById: ctx.userId, updatedById: ctx.userId } });
     await addActivity(tx, ctx, existing.id, "JOB_CLOSED", `Job closed. Outcome: ${input.outcome}.`, { outcome: input.outcome });
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, closed, closed.status as JobStatus);
     return closed;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "CLOSE", afterData: { status: updated.status, outcome: updated.closingOutcome } });
@@ -429,13 +671,39 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobReopenInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  if (!["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) throw new Error("Only closed, cancelled or complete jobs can be reopened.");
+  if (!["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(existing.status)) {
+    throw new Error("Only closed, cancelled, complete or returned-unrepaired jobs can be reopened.");
+  }
+  if (!statusStepsForJobType(existing.type as JobType).includes(input.status as JobStatus)) {
+    throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
+  }
   const updated = await prisma.$transaction(async (tx) => {
     const reopened = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
     await addActivity(tx, ctx, existing.id, "JOB_REOPENED", `Job reopened to ${input.status}.`, { from: existing.status, to: input.status, reason: input.reason ?? null, previousClosedAt: existing.closedAt });
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, reopened, reopened.status as JobStatus);
     return reopened;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "REOPEN", afterData: { from: existing.status, to: updated.status } });
+  return updated;
+}
+
+export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobMarkReturnedUnrepairedInput.parse(raw);
+  const existing = await getJobScoped(companyId, id);
+  if (!canMarkReturnedUnrepaired(existing.type as JobType)) {
+    throw new Error(`${existing.type} jobs cannot be marked returned unrepaired — this action is only available for the main workshop flow.`);
+  }
+  if (["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(existing.status)) {
+    throw new Error(`A job with status ${existing.status} cannot be marked returned unrepaired.`);
+  }
+  const updated = await prisma.$transaction(async (tx) => {
+    const marked = await tx.job.update({ where: { id: existing.id }, data: { status: "RETURNED_UNREPAIRED" as JobStatus, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, existing.id, "JOB_RETURNED_UNREPAIRED", `Job returned unrepaired. Reason: ${input.reason}.`, { from: existing.status, to: "RETURNED_UNREPAIRED", reason: input.reason, reopensTo: RETURNED_UNREPAIRED_REOPEN_STATUS });
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, marked, marked.status as JobStatus);
+    return marked;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "RETURNED_UNREPAIRED", afterData: { from: existing.status, to: updated.status, reason: input.reason } });
   return updated;
 }
 
@@ -463,6 +731,12 @@ export async function upsertJobFieldService(ctx: RequestContext, jobId: string, 
       create: { companyId, jobId, site: input.site, technician: input.technician, vehicle: input.vehicle, hours: decimalOrNull(input.hours), report: input.report, updatedById: ctx.userId },
       update: { site: input.site, technician: input.technician, vehicle: input.vehicle, hours: decimalOrNull(input.hours), report: input.report, updatedById: ctx.userId },
     });
+    // Kms travelled is a Job column, not a JobFieldServiceReport column —
+    // it's edited alongside the field-service fields (matching ModApp's
+    // placement) but saved onto the Job record itself.
+    if (input.kmsTravelled !== undefined) {
+      await tx.job.update({ where: { id: jobId }, data: { kmsTravelled: input.kmsTravelled } });
+    }
     await addActivity(tx, ctx, jobId, "FIELD_SERVICE_UPDATED", "Field service information updated.");
     return record;
   });
@@ -488,362 +762,371 @@ export async function upsertJobWarranty(ctx: RequestContext, jobId: string, raw:
   return updated;
 }
 
-export async function addJobPartRequirement(ctx: RequestContext, jobId: string, raw: unknown) {
-  const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobPartRequirementCreateInput.parse(raw);
-  await getJobScoped(companyId, jobId);
-  const part = await prisma.part.findFirst({ where: { id: input.partId, companyId, active: true }, select: { id: true, partNumber: true, description: true } });
-  if (!part) notFound();
-  const requirement = await prisma.$transaction(async (tx) => {
-    const created = await tx.jobPartRequirement.create({
-      data: { companyId, jobId, partId: input.partId, quantityRequired: new Prisma.Decimal(input.quantityRequired), notes: input.notes, etaDate: input.etaDate },
-      include: { part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true } }, allocations: true },
-    });
-    await addActivity(tx, ctx, jobId, "PART_ADDED", `Part requirement added for ${part.partNumber}.`, { requirementId: created.id, partId: part.id });
-    return created;
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartRequirement", entityId: requirement.id, action: "CREATE", afterData: { jobId, partId: input.partId } });
-  return requirement;
+// ---------------------------------------------------------------------------
+// Parts list — replaces the old reserve/issue/return "Parts required"
+// workflow. Added 2026-09-09 at the user's request: "the parts required
+// section in apollo should be removed and the parts list section in modapp
+// should be added". Mirrors ModApp's JobPartLine actions (addPartLinesBulk,
+// markPartReceived/unmarkPartReceived, removePartLine,
+// updatePartLineOrderNumber/updatePartLineDescription) but adapted to
+// Apollo X's Part/StockBalance inventory model instead of ModApp's single
+// InventoryItem.quantity field, and to Apollo X's requireJobs/addActivity/
+// recordAudit conventions instead of Next.js Server Actions.
+//
+// File/spreadsheet import (2026-09-09, at the user's explicit request for
+// an "import parts list" option next to the paste box): src/lib/jobs/
+// parts-import.ts parses an uploaded .xlsx/.xls/.csv into the same row
+// shape as a pasted line, reusing the header-detection approach from
+// src/lib/rfq/quote-extraction.ts's spreadsheet guesser. The RFQ
+// quote-line follow-up integration (PartsFollowUpButton.tsx) is still not
+// ported — that depends on infrastructure Apollo X doesn't have yet.
+// ---------------------------------------------------------------------------
+
+const ALLOWED_PARTS_IMPORT_MIME_TYPES = [
+  "text/csv",
+  "application/csv",
+  "text/plain",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+const MAX_PARTS_IMPORT_FILE_BYTES = 8_000_000;
+
+type ParsedPartLineRow = { partNumber: string; description: string | null; quantity: number };
+
+// "PN-1001, 2, Hydraulic seal kit" or a tab-separated paste straight out of
+// Excel — same shape as ModApp's parseBulkPartRow. Part number and quantity
+// are required; description is optional and can be filled in later via
+// updatePartLineDescription. Unparseable rows (no part number, or a
+// quantity that isn't a positive number) are silently dropped rather than
+// failing the whole paste — a stray blank line or header row shouldn't
+// block the rest of the list.
+function parseBulkPartRow(raw: string): ParsedPartLineRow | null {
+  const cells = (raw.includes("\t") ? raw.split("\t") : raw.split(",")).map((c) => c.trim());
+  const partNumber = cells[0] || "";
+  if (!partNumber) return null;
+  const quantity = Number(cells[1]);
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  const description = cells[2]?.trim() || null;
+  return { partNumber, description, quantity };
 }
 
-export async function updateJobPartRequirement(ctx: RequestContext, jobId: string, requirementId: string, raw: unknown) {
+export type AddPartLinesResult = { addedFromPaste: number; addedFromFile: number };
+
+export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: unknown): Promise<AddPartLinesResult> {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobPartRequirementUpdateInput.parse(raw);
-  const existing = await getRequirementScoped(companyId, jobId, requirementId);
+  const input = jobPartLineBulkAddInput.parse(raw);
+  await getJobScoped(companyId, jobId);
+
+  const pasteRows = (input.bulkLines ?? "")
+    .split("\n")
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map(parseBulkPartRow)
+    .filter((r): r is ParsedPartLineRow => r !== null);
+
+  let fileRows: ParsedPartLineRow[] = [];
+  if (input.fileName && input.mimeType && input.contentBase64) {
+    if (!ALLOWED_PARTS_IMPORT_MIME_TYPES.includes(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+    const data = Buffer.from(input.contentBase64, "base64");
+    if (data.length > MAX_PARTS_IMPORT_FILE_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+    fileRows = await extractPartLinesFromSpreadsheet(data);
+  }
+
+  const rows = [...pasteRows, ...fileRows];
+  if (rows.length === 0) return { addedFromPaste: 0, addedFromFile: 0 };
+
+  await prisma.$transaction(async (tx) => {
+    for (const row of rows) {
+      const partNumberNormalized = normalized(row.partNumber);
+      const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized }, select: { id: true, description: true } }) : null;
+
+      // "In stock" is informational only here (unlike the old Parts
+      // required workflow, this doesn't reserve anything) — it's a quick
+      // signal for whether the total on-hand quantity across all locations
+      // covers what's needed, same purpose as ModApp's InventoryItem
+      // lookup, just against Apollo X's Part/StockBalance model instead.
+      let inStock = false;
+      if (part) {
+        const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: part.id }, _sum: { quantityOnHand: true } });
+        const onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
+        inStock = onHand.gte(row.quantity);
+      }
+
+      const created = await tx.jobPartLine.create({
+        data: {
+          companyId,
+          jobId,
+          partNumber: row.partNumber,
+          description: row.description || part?.description || null,
+          quantity: new Prisma.Decimal(row.quantity),
+          status: inStock ? "IN_STOCK" : "PENDING",
+          partId: part?.id ?? null,
+          createdById: ctx.userId,
+          updatedById: ctx.userId,
+        },
+      });
+
+      if (!inStock) {
+        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}) — not currently in stock.`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
+      } else {
+        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}).`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
+      }
+    }
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: jobId, action: "BULK_ADD", afterData: { jobId, count: rows.length } });
+  return { addedFromPaste: pasteRows.length, addedFromFile: fileRows.length };
+}
+
+// Asks for a received quantity — a delivery doesn't always match exactly.
+// receivedQuantity accumulates ACROSS multiple clicks (each click records
+// "this many arrived just now," added to whatever had already come in
+// before), so receiving part of the order today and the rest later both
+// count toward the same line, rather than the first partial receipt
+// locking the line as fully received with no way to receive the rest. A
+// line only becomes RECEIVED once its cumulative total reaches the full
+// ordered quantity; anything in between is PARTIALLY_RECEIVED. The line's
+// status from *before* any receiving started is remembered once (not
+// overwritten by a later partial-receive click) so unmarkPartLineReceived
+// can restore the true original state. Mirrors ModApp's markPartReceived.
+export async function markPartLineReceived(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobPartLineReceiveInput.parse(raw);
+  const line = await getPartLineScoped(companyId, jobId, lineId);
+
+  const alreadyReceived = line.receivedQuantity ?? new Prisma.Decimal(0);
+  const outstanding = Prisma.Decimal.max(line.quantity.minus(alreadyReceived), new Prisma.Decimal(0));
+  if (outstanding.lte(0)) throw new Error("PART_LINE_ALREADY_FULLY_RECEIVED");
+
+  const enteredQty = new Prisma.Decimal(input.receivedQty);
+  if (enteredQty.gt(outstanding)) throw new Error("PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING");
+
+  const newReceivedQuantity = alreadyReceived.plus(enteredQty);
+  const nowFullyReceived = newReceivedQuantity.gte(line.quantity);
+
   const updated = await prisma.$transaction(async (tx) => {
-    const record = await tx.jobPartRequirement.update({
-      where: { id: existing.id },
+    const record = await tx.jobPartLine.update({
+      where: { id: line.id },
       data: {
-        ...(input.quantityRequired !== undefined ? { quantityRequired: new Prisma.Decimal(input.quantityRequired) } : {}),
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
-        ...(input.etaDate !== undefined ? { etaDate: input.etaDate } : {}),
-        ...(input.active !== undefined ? { active: input.active } : {}),
+        status: nowFullyReceived ? "RECEIVED" : "PARTIALLY_RECEIVED",
+        receivedQuantity: newReceivedQuantity,
+        previousStatus: line.previousStatus ?? line.status,
+        updatedById: ctx.userId,
       },
-      include: { part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true } }, allocations: true },
     });
-    await addActivity(tx, ctx, jobId, input.active === false ? "PART_REMOVED" : "PART_ADDED", input.active === false ? `Part requirement removed from active list.` : `Part requirement updated.`, { requirementId: existing.id });
+    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED", nowFullyReceived
+      ? `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (complete).`
+      : `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (${line.quantity.minus(newReceivedQuantity)} still outstanding).`,
+      { lineId: line.id, receivedQuantity: newReceivedQuantity.toString() });
     return record;
   });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartRequirement", entityId: updated.id, action: "UPDATE", afterData: { jobId, requirementId } });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "RECEIVE", afterData: { jobId, lineId, receivedQuantity: updated.receivedQuantity?.toString() } });
   return updated;
 }
 
-export async function reserveJobRequirementStock(ctx: RequestContext, jobId: string, requirementId: string, raw: unknown) {
+// Full reset — restores whatever status the line was in before any
+// receiving started (not always PENDING) and clears the received quantity
+// back to zero, same as ModApp's unmarkPartReceived. There's no per-receipt
+// history (just a running total), so this undoes all receiving on the line
+// at once rather than "undo the last click."
+export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string, lineId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireTenantPermission(ctx, "INVENTORY_RESERVE");
-  requireModule(ctx, "INVENTORY", "WRITE");
-  const input = jobPartReserveInput.parse(raw);
-  const requirement = await prisma.jobPartRequirement.findFirst({
-    where: { id: requirementId, companyId, jobId, active: true },
-    include: { part: { select: { id: true, partNumber: true, description: true } }, job: { select: { id: true, jobNumber: true, draftNumber: true } } },
-  });
-  if (!requirement) notFound();
+  const line = await getPartLineScoped(companyId, jobId, lineId);
 
-  const location = await prisma.storageLocation.findFirst({ where: { id: input.locationId, companyId, active: true }, select: { id: true, code: true, name: true } });
-  if (!location) notFound();
-
-  const result = await prisma.$transaction(async (tx) => {
-    const reserved = await reserveStockTx(tx, ctx as RequestContext & { companyId: string }, {
-      partId: requirement.partId,
-      locationId: input.locationId,
-      quantity: input.quantity,
-      referenceType: "JOB",
-      referenceId: jobId,
-      referenceNumber: input.referenceNumber ?? requirement.job.jobNumber ?? requirement.job.draftNumber,
-      notes: input.notes ?? null,
-      idempotencyKey: input.idempotencyKey,
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.jobPartLine.update({
+      where: { id: line.id },
+      data: { status: line.previousStatus ?? "PENDING", receivedQuantity: null, previousStatus: null, updatedById: ctx.userId },
     });
+    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED_UNDONE", `${line.partNumber}: receiving undone, line reset.`, { lineId: line.id });
+    return record;
+  });
 
-    const allocation = await tx.jobPartAllocation.create({
-      data: {
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UNRECEIVE", afterData: { jobId, lineId } });
+  return updated;
+}
+
+// The supplier's own PO/order reference for this part line, same as
+// ModApp's updatePartLineOrderNumber — orderedAt is stamped the first time
+// an order number is actually entered (not re-stamped on later edits to the
+// same order number) and cleared if the order number is removed.
+export async function updatePartLineOrder(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobPartLineOrderUpdateInput.parse(raw);
+  const line = await getPartLineScoped(companyId, jobId, lineId);
+
+  const orderNumber = input.orderNumber ?? null;
+  const orderedFromSupplierId = input.orderedFromSupplierId ?? null;
+  const orderedAt = orderNumber ? line.orderedAt ?? new Date() : null;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.jobPartLine.update({
+      where: { id: line.id },
+      data: { orderNumber, orderedFromSupplierId, orderedAt, status: orderNumber && line.status === "PENDING" ? "ON_ORDER" : line.status, updatedById: ctx.userId },
+    });
+    await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: order details updated.`, { lineId: line.id, orderNumber });
+    return record;
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_ORDER", afterData: { jobId, lineId, orderNumber } });
+  return updated;
+}
+
+// Fills in a part line's description after the fact — for the common case
+// where a paste or an "Apply job kit" only had part number + qty.
+// Deliberately one-shot, same as ModApp's updatePartLineDescription: once a
+// description exists, this refuses to touch it again.
+export async function updatePartLineDescription(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobPartLineDescriptionUpdateInput.parse(raw);
+  const line = await getPartLineScoped(companyId, jobId, lineId);
+  if (line.description) throw new Error("PART_LINE_ALREADY_HAS_DESCRIPTION");
+
+  const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { description: input.description, updatedById: ctx.userId } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_DESCRIPTION", afterData: { jobId, lineId } });
+  return updated;
+}
+
+export async function removePartLine(ctx: RequestContext, jobId: string, lineId: string) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const line = await getPartLineScoped(companyId, jobId, lineId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.jobPartLine.delete({ where: { id: line.id } });
+    await addActivity(tx, ctx, jobId, "PART_REMOVED", `Part line removed: ${line.partNumber}.`, { lineId: line.id, partNumber: line.partNumber });
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: line.id, action: "DELETE", afterData: { jobId, lineId, partNumber: line.partNumber } });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Outwork — new. Added 2026-09-09 at the user's request: "The outwork
+// section from modapp should also be added to apollo". Mirrors ModApp's
+// OutworkItem actions (addOutworkItems, markOutworkItemsReceived,
+// editOutworkItem, unmarkOutworkItemReceived, deleteOutworkItem).
+//
+// Deliberately NOT ported from ModApp: printable delivery-note generation
+// (saveGeneratedJobDocument/renderPrintDocument/DocumentBranding) — Apollo X
+// has no document-branding/print-template subsystem yet, so this is
+// record-keeping only (what was sent, to whom, when, and when it came
+// back) rather than also producing a printable note.
+// ---------------------------------------------------------------------------
+
+export async function addOutworkItems(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = outworkAddInput.parse(raw);
+  await getJobScoped(companyId, jobId);
+
+  const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true } });
+  if (!supplier) notFound();
+
+  // One batchId per submission (not per line) — added 2026-09-09 so a
+  // "View delivery note" on any historical item can show the whole group
+  // of items sent together, the same way the transient note shown right
+  // after submitting naturally covers the whole batch. crypto.randomUUID()
+  // is a Node/Web-standard global (available since Node 19) — no new
+  // dependency needed.
+  const batchId = crypto.randomUUID();
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.outworkItem.createMany({
+      data: input.lines.map((line) => ({
         companyId,
         jobId,
-        requirementId,
-        partId: requirement.partId,
-        locationId: input.locationId,
-        stockReservationId: reserved.reservationId,
-        quantityReserved: new Prisma.Decimal(input.quantity),
-      },
+        supplierId: input.supplierId,
+        description: line.description,
+        quantity: line.quantity,
+        dateSentOut: input.dateSentOut,
+        status: "SENT_OUT",
+        batchId,
+        createdById: ctx.userId,
+        updatedById: ctx.userId,
+      })),
     });
-
-    await addActivity(tx, ctx, jobId, "PART_RESERVED", `${input.quantity} × ${requirement.part.partNumber} reserved from ${location.code || location.name}.`, {
-      requirementId,
-      allocationId: allocation.id,
-      reservationId: reserved.reservationId,
-      locationId: location.id,
-      quantity: input.quantity,
-      replayed: reserved.replayed,
-    });
-
-    return { ...reserved, allocationId: allocation.id };
+    await addActivity(tx, ctx, jobId, "OUTWORK_SENT", `${input.lines.length} item${input.lines.length === 1 ? "" : "s"} sent to ${supplier.name}.`, { supplierId: supplier.id, count: input.lines.length });
+    return input.lines.length;
   });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartAllocation", entityId: result.allocationId, action: "RESERVE", afterData: { jobId, requirementId, reservationId: result.reservationId, quantity: input.quantity, locationId: input.locationId, idempotencyKey: input.idempotencyKey ?? null } });
-  return result;
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: jobId, action: "CREATE", afterData: { jobId, supplierId: input.supplierId, count: created, batchId } });
+  return { ok: true, count: created, batchId };
 }
 
-export async function issueJobAllocationStock(ctx: RequestContext, jobId: string, allocationId: string, raw: unknown) {
+// Marks one or more outwork items received in a single call — a supplier
+// may return part of a batch before the rest, so this only touches the ids
+// given (scoped to this job, even if a stray id from elsewhere was passed).
+export async function markOutworkItemsReceived(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireTenantPermission(ctx, "INVENTORY_ISSUE");
-  requireModule(ctx, "INVENTORY", "WRITE");
-  const input = jobPartIssueInput.parse(raw);
+  const input = outworkReceiveInput.parse(raw);
+  await getJobScoped(companyId, jobId);
 
-  const allocation = await prisma.jobPartAllocation.findFirst({
-    where: { id: allocationId, companyId, jobId },
-    include: {
-      requirement: { select: { id: true, active: true, partId: true } },
-      part: { select: { partNumber: true } },
-      location: { select: { id: true, code: true, name: true } },
-    },
-  });
-  if (!allocation || !allocation.stockReservationId || !allocation.requirement.active) notFound();
+  const items = await prisma.outworkItem.findMany({ where: { id: { in: input.itemIds }, companyId, jobId } });
+  if (items.length === 0) throw new Error("OUTWORK_ITEMS_NOT_FOUND");
 
-  const result = await prisma.$transaction(async (tx) => {
-    const issued = await issueReservedStockTx(tx, ctx as RequestContext & { companyId: string }, allocation.stockReservationId!, {
-      partId: allocation.partId,
-      locationId: allocation.locationId,
-      quantity: input.quantity,
-      referenceType: "JOB",
-      referenceId: jobId,
-      referenceNumber: input.referenceNumber ?? null,
-      notes: input.notes ?? null,
-      idempotencyKey: input.idempotencyKey,
-    });
+  const dateReceived = input.receivedDate ?? new Date();
 
-    const movement = await tx.jobPartAllocationMovement.create({
-      data: {
-        companyId,
-        allocationId,
-        stockMovementId: issued.movementId,
-        kind: "ISSUE",
-        quantity: new Prisma.Decimal(input.quantity),
-      },
-    });
-
-    await addActivity(tx, ctx, jobId, "PART_ISSUED", `${input.quantity} × ${allocation.part.partNumber} issued from ${allocation.location.code || allocation.location.name}.`, {
-      allocationId,
-      stockMovementId: issued.movementId,
-      jobPartAllocationMovementId: movement.id,
-      quantity: input.quantity,
-      replayed: issued.replayed,
-    });
-
-    return { ...issued, jobPartAllocationMovementId: movement.id };
+  await prisma.$transaction(async (tx) => {
+    await tx.outworkItem.updateMany({ where: { id: { in: items.map((i) => i.id) } }, data: { status: "RECEIVED", dateReceived, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, jobId, "OUTWORK_RECEIVED", `${items.length} item${items.length === 1 ? "" : "s"} marked received.`, { itemIds: items.map((i) => i.id) });
   });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartAllocationMovement", entityId: result.jobPartAllocationMovementId, action: "ISSUE", afterData: { jobId, allocationId, stockMovementId: result.movementId, quantity: input.quantity, idempotencyKey: input.idempotencyKey ?? null } });
-  return result;
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: jobId, action: "RECEIVE", afterData: { jobId, itemIds: items.map((i) => i.id) } });
+  return { ok: true, count: items.length };
 }
 
-async function returnJobAllocationStockTx(
-  tx: Prisma.TransactionClient,
-  ctx: RequestContext & { companyId: string },
-  jobId: string,
-  allocation: {
-    id: string;
-    companyId: string;
-    partId: string;
-    locationId: string;
-    stockReservationId: string | null;
-    part: { partNumber: string };
-    location: { id: string; code: string | null; name: string };
-  },
-  input: JobPartReturnInput,
-) {
-  const qtyRequested = new Prisma.Decimal(input.quantity);
-
-  if (input.idempotencyKey) {
-    const replayLinks = await tx.jobPartAllocationMovement.findMany({
-      where: {
-        companyId: ctx.companyId,
-        allocationId: allocation.id,
-        kind: "RETURN",
-        stockMovement: {
-          idempotencyKey: { startsWith: `${input.idempotencyKey}:` },
-        },
-      },
-      include: {
-        stockMovement: {
-          select: { id: true, idempotencyKey: true },
-        },
-      },
-      orderBy: [{ stockMovementId: "asc" }, { id: "asc" }],
-    });
-
-    if (replayLinks.length > 0) {
-      const replayQty = replayLinks.reduce((sum, row) => sum.plus(row.quantity), new Prisma.Decimal(0));
-      if (!replayQty.eq(qtyRequested)) throw new Error("IDEMPOTENT_RETURN_QUANTITY_MISMATCH");
-      return {
-        replayed: true,
-        movementId: replayLinks[0]!.stockMovementId,
-        movementIds: replayLinks.map((row) => row.stockMovementId),
-        jobPartAllocationMovementId: replayLinks[0]!.id,
-        jobPartAllocationMovementIds: replayLinks.map((row) => row.id),
-      };
-    }
-  }
-
-  await tx.$queryRaw`SELECT id FROM "JobPartAllocation" WHERE id = ${allocation.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
-  await tx.$queryRaw`SELECT id FROM "JobPartAllocationMovement" WHERE "allocationId" = ${allocation.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
-
-  const issueRows = await tx.jobPartAllocationMovement.findMany({
-    where: { companyId: ctx.companyId, allocationId: allocation.id, kind: "ISSUE" },
-    include: {
-      stockMovement: {
-        select: {
-          id: true,
-          quantity: true,
-          fromLocationId: true,
-          partId: true,
-        },
-      },
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-
-  const returnRows = await tx.jobPartAllocationMovement.findMany({
-    where: { companyId: ctx.companyId, allocationId: allocation.id, kind: "RETURN" },
-    include: {
-      stockMovement: {
-        select: { id: true, reversalOfId: true },
-      },
-    },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-  });
-
-  const returnedBySource = new Map<string, Prisma.Decimal>();
-  for (const row of returnRows) {
-    const sourceId = row.stockMovement?.reversalOfId;
-    if (!sourceId) continue;
-    returnedBySource.set(sourceId, (returnedBySource.get(sourceId) ?? new Prisma.Decimal(0)).plus(row.quantity));
-  }
-
-  const eligibleSources = issueRows
-    .map((row) => {
-      const stockMovement = (row as typeof row & { stockMovement: NonNullable<typeof row.stockMovement> }).stockMovement;
-      if (!stockMovement) throw new Error("ALLOCATION_ISSUE_LINK_MISSING_STOCK_MOVEMENT");
-      const issuedQty = new Prisma.Decimal(row.quantity);
-      const alreadyReturned = returnedBySource.get(stockMovement.id) ?? new Prisma.Decimal(0);
-      const eligibleQty = issuedQty.minus(alreadyReturned);
-      return {
-        jobMovementId: row.id,
-        sourceMovementId: stockMovement.id,
-        eligibleQty,
-      };
-    })
-    .filter((row) => row.eligibleQty.gt(0));
-
-  const totalEligible = eligibleSources.reduce((sum, row) => sum.plus(row.eligibleQty), new Prisma.Decimal(0));
-  if (totalEligible.lt(qtyRequested)) throw new Error("RETURN_EXCEEDS_ELIGIBLE_ISSUED");
-
-  let remaining = qtyRequested;
-  const createdMovementIds: string[] = [];
-  const createdJobMovementIds: string[] = [];
-
-  for (const source of eligibleSources) {
-    if (remaining.lte(0)) break;
-    const splitQty = source.eligibleQty.lt(remaining) ? source.eligibleQty : remaining;
-    const childIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}:${source.sourceMovementId}` : undefined;
-
-    const returned = await returnStockTx(tx, ctx, {
-      partId: allocation.partId,
-      locationId: allocation.locationId,
-      quantity: splitQty.toString(),
-      sourceMovementId: source.sourceMovementId,
-      notes: input.notes ?? null,
-      idempotencyKey: childIdempotencyKey,
-    });
-
-    const link = await tx.jobPartAllocationMovement.upsert({
-      where: {
-        allocationId_stockMovementId_kind: {
-          allocationId: allocation.id,
-          stockMovementId: returned.movementId,
-          kind: "RETURN",
-        },
-      },
-      update: { returnDisposition: input.disposition },
-      create: {
-        companyId: ctx.companyId,
-        allocationId: allocation.id,
-        stockMovementId: returned.movementId,
-        kind: "RETURN",
-        quantity: splitQty,
-        returnDisposition: input.disposition,
-      },
-    });
-
-    createdMovementIds.push(returned.movementId);
-    createdJobMovementIds.push(link.id);
-    remaining = remaining.minus(splitQty);
-  }
-
-  await addActivity(tx, ctx, jobId, "PART_RETURNED", `${input.quantity} × ${allocation.part.partNumber} returned to ${allocation.location.code || allocation.location.name}.`, {
-    allocationId: allocation.id,
-    stockMovementIds: createdMovementIds,
-    jobPartAllocationMovementIds: createdJobMovementIds,
-    quantity: input.quantity,
-    returnDisposition: input.disposition,
-    splitCount: createdMovementIds.length,
-  });
-
-  return {
-    replayed: false,
-    movementId: createdMovementIds[0]!,
-    movementIds: createdMovementIds,
-    jobPartAllocationMovementId: createdJobMovementIds[0]!,
-    jobPartAllocationMovementIds: createdJobMovementIds,
-  };
-}
-
-export async function returnJobAllocationStock(ctx: RequestContext, jobId: string, allocationId: string, raw: unknown) {
+// Corrects a single outwork line after the fact — wrong supplier, a typo'd
+// description, the wrong quantity, or the wrong date sent out. Always edits
+// an existing line in place; adding new lines goes through addOutworkItems.
+export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireTenantPermission(ctx, "INVENTORY_RETURN");
-  requireModule(ctx, "INVENTORY", "WRITE");
-  const input = jobPartReturnInput.parse(raw);
+  const input = outworkEditInput.parse(raw);
+  const item = await getOutworkItemScoped(companyId, jobId, itemId);
 
-  const allocation = await prisma.jobPartAllocation.findFirst({
-    where: { id: allocationId, companyId, jobId },
-    include: {
-      requirement: { select: { id: true, active: true } },
-      part: { select: { partNumber: true } },
-      location: { select: { id: true, code: true, name: true } },
-    },
+  const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true } });
+  if (!supplier) notFound();
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.outworkItem.update({
+      where: { id: item.id },
+      data: { supplierId: input.supplierId, description: input.description, quantity: input.quantity, dateSentOut: input.dateSentOut, notes: input.notes || null, updatedById: ctx.userId },
+    });
+    await addActivity(tx, ctx, jobId, "OUTWORK_EDITED", `Outwork item updated: ${input.description}.`, { itemId: item.id });
+    return record;
   });
-  if (!allocation || !allocation.requirement.active) notFound();
 
-  const result = await prisma.$transaction((tx) => returnJobAllocationStockTx(tx, ctx as RequestContext & { companyId: string }, jobId, allocation, input));
-
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartAllocation", entityId: allocationId, action: "RETURN", afterData: { jobId, allocationId, stockMovementIds: result.movementIds, quantity: input.quantity, disposition: input.disposition, idempotencyKey: input.idempotencyKey ?? null, splitCount: result.movementIds.length } });
-  return result;
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: updated.id, action: "UPDATE", afterData: { jobId, itemId } });
+  return updated;
 }
 
-export async function releaseJobAllocationReservation(ctx: RequestContext, jobId: string, allocationId: string, raw: unknown) {
+// Outwork only has the two states (SENT_OUT / RECEIVED), so unlike the
+// parts list's "remember whatever status it was in before" logic, there's
+// only one place to return to.
+export async function unmarkOutworkItemReceived(ctx: RequestContext, jobId: string, itemId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireTenantPermission(ctx, "INVENTORY_RELEASE_RESERVATION");
-  requireModule(ctx, "INVENTORY", "WRITE");
-  const input = jobPartReleaseInput.parse(raw);
+  const item = await getOutworkItemScoped(companyId, jobId, itemId);
 
-  const allocation = await prisma.jobPartAllocation.findFirst({
-    where: { id: allocationId, companyId, jobId },
-    include: {
-      part: { select: { partNumber: true } },
-      location: { select: { id: true, code: true, name: true } },
-    },
-  });
-  if (!allocation || !allocation.stockReservationId) notFound();
-
-  const result = await prisma.$transaction(async (tx) => {
-    const released = await releaseReservationTx(tx, ctx as RequestContext & { companyId: string }, allocation.stockReservationId!, input);
-    await addActivity(tx, ctx, jobId, "RESERVATION_RELEASED", `Remaining reservation released for ${allocation.part.partNumber} at ${allocation.location.code || allocation.location.name}.`, {
-      allocationId,
-      reservationId: allocation.stockReservationId,
-      stockMovementId: released.movementId,
-      reason: input.reason ?? null,
-    });
-    return released;
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.outworkItem.update({ where: { id: item.id }, data: { status: "SENT_OUT", dateReceived: null, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, jobId, "OUTWORK_RECEIVED_UNDONE", `Outwork item reset to sent-out: ${item.description}.`, { itemId: item.id });
+    return record;
   });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartAllocation", entityId: allocationId, action: "RELEASE_RESERVATION", afterData: { jobId, allocationId, reservationId: allocation.stockReservationId, movementId: result.movementId, reason: input.reason ?? null } });
-  return result;
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: updated.id, action: "UNRECEIVE", afterData: { jobId, itemId } });
+  return updated;
+}
+
+// A disposable line item with no downstream cascade — nothing else
+// references an OutworkItem by id.
+export async function deleteOutworkItem(ctx: RequestContext, jobId: string, itemId: string) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const item = await getOutworkItemScoped(companyId, jobId, itemId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.outworkItem.delete({ where: { id: item.id } });
+    await addActivity(tx, ctx, jobId, "OUTWORK_DELETED", `Outwork item removed: ${item.description}.`, { itemId: item.id });
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: item.id, action: "DELETE", afterData: { jobId, itemId } });
+  return { ok: true };
 }

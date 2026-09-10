@@ -10,15 +10,6 @@ function normalized(value: string) { return value.trim().replace(/\s+/g, " ").to
 function requireJobKitsRead(ctx: RequestContext) { requireModule(ctx, "JOB_KITS", "READ"); requireTenantPermission(ctx, "JOB_KITS_VIEW"); return ctx.companyId!; }
 function requireJobKitsWrite(ctx: RequestContext, permission: "JOB_KITS_CREATE" | "JOB_KITS_EDIT" | "JOB_KITS_DEACTIVATE") { requireModule(ctx, "JOB_KITS", "WRITE"); requireTenantPermission(ctx, permission); return ctx.companyId!; }
 
-function mergeNotes(existing: string | null, incoming: string | null, kitName: string) {
-  const next = incoming?.trim() || "";
-  const current = existing?.trim() || "";
-  const stamp = `Kit ${kitName}${next ? `: ${next}` : ""}`;
-  if (!current) return stamp;
-  if (!next) return current.includes(`Kit ${kitName}`) ? current : `${current}\n${stamp}`;
-  return current.includes(stamp) ? current : `${current}\n${stamp}`;
-}
-
 async function getPartOrThrow(companyId: string, partId: string) {
   const part = await prisma.part.findFirst({ where: { id: partId, companyId, active: true }, select: { id: true, partNumber: true, description: true } });
   if (!part) notFound();
@@ -207,30 +198,40 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
     if (kit.lines.length === 0) throw new Error("This job kit has no parts.");
     if (kit.lines.some((line) => !line.part.active)) notFound();
 
-    const appliedLines: Array<{ partId: string; partNumber: string; quantityAdded: string; requirementId: string; mode: "CREATED" | "INCREMENTED" }> = [];
+    // Targets JobPartLine (the Parts list) rather than the old
+    // JobPartRequirement — updated 2026-09-09 alongside the Parts
+    // required → Parts list swap (see schema.prisma's JobPartLine comment)
+    // so "Apply job kit" stays useful under the new, simpler model. A kit
+    // line for a part already on the job's parts list (and not yet
+    // received) tops up that line's quantity instead of creating a
+    // duplicate row; JobPartLine has no separate notes field, so the kit
+    // line's own notes aren't merged in here — the applied-kit detail is
+    // still captured below in the job activity's metadata.
+    const appliedLines: Array<{ partId: string; partNumber: string; quantityAdded: string; lineId: string; mode: "CREATED" | "INCREMENTED" }> = [];
 
     for (const line of kit.lines) {
-      const existing = await tx.jobPartRequirement.findFirst({ where: { companyId, jobId, partId: line.partId, active: true } });
+      const existing = await tx.jobPartLine.findFirst({ where: { companyId, jobId, partId: line.partId, status: { not: "RECEIVED" } } });
       if (existing) {
-        const updated = await tx.jobPartRequirement.update({
+        const updated = await tx.jobPartLine.update({
           where: { id: existing.id },
-          data: {
-            quantityRequired: existing.quantityRequired.plus(line.quantityDefault),
-            notes: mergeNotes(existing.notes, line.notes, kit.name),
-          },
+          data: { quantity: existing.quantity.plus(line.quantityDefault), updatedById: ctx.userId },
         });
-        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), requirementId: updated.id, mode: "INCREMENTED" });
+        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: updated.id, mode: "INCREMENTED" });
       } else {
-        const created = await tx.jobPartRequirement.create({
+        const created = await tx.jobPartLine.create({
           data: {
             companyId,
             jobId,
+            partNumber: line.part.partNumber,
+            description: line.part.description,
+            quantity: line.quantityDefault,
+            status: "PENDING",
             partId: line.partId,
-            quantityRequired: line.quantityDefault,
-            notes: mergeNotes(null, line.notes, kit.name),
+            createdById: ctx.userId,
+            updatedById: ctx.userId,
           },
         });
-        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), requirementId: created.id, mode: "CREATED" });
+        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: created.id, mode: "CREATED" });
       }
     }
 

@@ -33,9 +33,12 @@ export async function POST(request: NextRequest) {
     }
 
     const eligibleMemberships = user.memberships.filter((membership) => membership.company.status === "ACTIVE");
-    const membership = input.companyCode
-      ? eligibleMemberships.find((item) => item.company.internalCode === input.companyCode)
-      : eligibleMemberships.length === 1 ? eligibleMemberships[0] : null;
+    const preferPlatformContext = !input.companyCode && user.platformAssignments.length > 0;
+    const membership = preferPlatformContext
+      ? null
+      : input.companyCode
+        ? eligibleMemberships.find((item) => item.company.internalCode === input.companyCode)
+        : eligibleMemberships.length === 1 ? eligibleMemberships[0] : null;
 
     if (input.companyCode && !membership) return invalid();
     if (!membership && eligibleMemberships.length > 1) {

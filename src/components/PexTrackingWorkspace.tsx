@@ -1,49 +1,86 @@
 "use client";
 
 import Link from "next/link";
+import { Fragment, useState } from "react";
+import { PexStatusPill } from "@/components/StatusPill";
 
 type Row = Record<string, unknown> & { id: string };
-type LinkRow = Row & {
-  returnStatus?: string | null;
-  expectedCoreDescription?: string | null;
-  expectedCorePartNumber?: string | null;
-  expectedCoreSerial?: string | null;
-  returnedCoreDescription?: string | null;
-  returnedCorePartNumber?: string | null;
-  returnedCoreSerial?: string | null;
-  returnedReceivedAt?: string | Date | null;
-  closedWithoutReturnReason?: string | null;
-  supplyJob: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; customer?: { name?: string | null; tradingName?: string | null } | null };
-  returnJob: Row & { id: string; jobNumber?: string | null; draftNumber?: string | null };
-  pexStockUnit: Row & { component?: string | null; componentSerial?: string | null; componentPartNumber?: string | null; sourceJob?: Record<string, unknown> & { jobNumber?: string | null; draftNumber?: string | null } };
+type PexJobRef = Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; status?: string | null; purchaseOrderNumber?: string | null };
+type TrackingRow = Row & {
+  status: string;
+  unitDescription?: string | null;
+  supplyDate?: string | null;
+  returnDate?: string | null;
+  customer?: Row & { name?: string | null; tradingName?: string | null } | null;
+  supplyJob?: PexJobRef | null;
+  returnJob?: PexJobRef | null;
 };
+type HistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
+type HistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
+type HistoryPayload = { id: string; status: string; entries: HistoryEntry[]; previousCycles: HistoryCycle[] };
 
 function text(value: unknown) { return value == null || value === "" ? "—" : String(value); }
+function dateText(value: unknown) { return value ? new Date(String(value)).toLocaleDateString("en-ZA") : "—"; }
 
-export function PexTrackingWorkspace({ initial }: { initial: { items: LinkRow[]; total: number } }) {
-  return <section className="detail-panel">
-    <header><div><h2>PEX exchange tracking</h2><p>{initial.total} visible exchange chain{initial.total === 1 ? "" : "s"} in the current filtered view.</p></div></header>
-    <div className="record-list pex-record-list">
-      {initial.items.map((item) => <article key={item.id}>
-        <div className="record-icon">RT</div>
-        <div>
-          <strong>{text(item.supplyJob.jobNumber || item.supplyJob.draftNumber)} → {text(item.returnJob.jobNumber || item.returnJob.draftNumber)}</strong>
-          <span className="muted small-line">Customer: {text(item.supplyJob.customer?.tradingName || item.supplyJob.customer?.name)}</span>
-          <span>{text(item.pexStockUnit.component)} · {text(item.pexStockUnit.componentPartNumber)} · {text(item.pexStockUnit.componentSerial)}</span>
-        </div>
-        <div className="stack-grid pex-link-stack">
-          <span className="muted small-line">Expected: {text(item.expectedCoreDescription)} · {text(item.expectedCorePartNumber)} · {text(item.expectedCoreSerial)}</span>
-          <span className="muted small-line">Actual: {text(item.returnedCoreDescription)} · {text(item.returnedCorePartNumber)} · {text(item.returnedCoreSerial)}</span>
-          <span className="muted small-line">Received: {text(item.returnedReceivedAt ? new Date(String(item.returnedReceivedAt)).toLocaleString("en-ZA") : "—")}</span>
-          {item.closedWithoutReturnReason ? <span className="muted small-line">Closed w/o return: {text(item.closedWithoutReturnReason)}</span> : null}
-        </div>
-        <span className="status-pill">{text(item.returnStatus)}</span>
-        <div className="stack-grid pex-link-stack">
-          <Link href={`/jobs/${item.supplyJob.id}`} className="table-action">Open supply</Link>
-          <Link href={`/jobs/${item.returnJob.id}`} className="table-action">Open return</Link>
-        </div>
-      </article>)}
-      {initial.items.length === 0 && <div className="table-state">No PEX supply chains match the current filters.</div>}
-    </div>
-  </section>;
+// Table columns match ModApp's own /pex ("PEX Units") page exactly (Client
+// / Unit / Supply job / Return job / Status / Supply date / Return date /
+// PO number), rendered with Apollo X's .data-table styling — replaces the
+// old duplicate server table + client "record-list" pair.
+export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRow[]; total: number } }) {
+  const [error, setError] = useState("");
+  const [historyOpenId, setHistoryOpenId] = useState("");
+  const [historyById, setHistoryById] = useState<Record<string, HistoryPayload>>({});
+  const [historyLoadingId, setHistoryLoadingId] = useState("");
+
+  async function toggleHistory(id: string) {
+    if (historyOpenId === id) { setHistoryOpenId(""); return; }
+    setHistoryOpenId(id);
+    if (historyById[id]) return;
+    setHistoryLoadingId(id); setError("");
+    try {
+      const r = await fetch(`/api/v1/pex/${id}/history`, { cache: "no-store" });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Couldn't load history.");
+      setHistoryById((prev) => ({ ...prev, [id]: b as HistoryPayload }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load history.");
+      setHistoryOpenId("");
+    } finally {
+      setHistoryLoadingId("");
+    }
+  }
+
+  return <>
+    {error && <div className="inline-error">{error}</div>}
+    <div className="data-table-wrap"><table className="data-table">
+      <thead><tr><th>Client</th><th>Unit</th><th>Supply job</th><th>Return job</th><th>Status</th><th>Supply date</th><th>Return date</th><th>PO number</th><th></th></tr></thead>
+      <tbody>
+        {initial.items.map((item) => {
+          const history = historyById[item.id];
+          return <Fragment key={item.id}>
+            <tr>
+              <td>{text(item.customer?.tradingName || item.customer?.name)}</td>
+              <td>{text(item.unitDescription)}</td>
+              <td className="mono">{item.supplyJob?.id ? <Link href={`/jobs/${item.supplyJob.id}`} className="table-action">{text(item.supplyJob.jobNumber || item.supplyJob.draftNumber)}</Link> : "—"}</td>
+              <td className="mono">{item.returnJob?.id ? <Link href={`/jobs/${item.returnJob.id}`} className="table-action">{text(item.returnJob.jobNumber || item.returnJob.draftNumber)}</Link> : "—"}</td>
+              <td><PexStatusPill status={item.status} /></td>
+              <td>{dateText(item.supplyDate)}</td>
+              <td>{dateText(item.returnDate)}</td>
+              <td>{text(item.supplyJob?.purchaseOrderNumber)}</td>
+              <td className="actions"><button type="button" className="quiet-button" disabled={historyLoadingId === item.id} onClick={() => void toggleHistory(item.id)}>{historyOpenId === item.id ? "Hide history" : "History"}</button></td>
+            </tr>
+            {historyOpenId === item.id && <tr><td colSpan={9}>
+              {historyLoadingId === item.id && <span className="muted small-line">Loading history…</span>}
+              {history && <div className="stack-grid" style={{ gap: 8 }}>
+                {history.previousCycles.length > 0 && <div className="muted small-line">Previous cycles: {history.previousCycles.map((c) => `${text(c.supplyJobNumber)} → ${text(c.returnJobNumber)}`).join(", ")}</div>}
+                {history.entries.map((entry) => <div key={entry.id} className="muted small-line">{new Date(entry.createdAt).toLocaleString("en-ZA")} · {entry.description}{entry.userName ? ` · ${entry.userName}` : ""}</div>)}
+                {history.entries.length === 0 && <span className="muted small-line">No history recorded yet.</span>}
+              </div>}
+            </td></tr>}
+          </Fragment>;
+        })}
+        {initial.items.length === 0 && <tr><td colSpan={9} className="table-state compact-empty-state">No PEX supply chains match the current filters.</td></tr>}
+      </tbody>
+    </table></div>
+  </>;
 }

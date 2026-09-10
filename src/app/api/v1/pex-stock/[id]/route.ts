@@ -1,22 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireRequestContext } from "@/lib/auth/session";
-import { apiError } from "@/lib/http/errors";
-import { getPexStockUnitById, updatePexStockMetadata } from "@/lib/pex/service";
-import { requireSameOrigin } from "@/lib/security/request";
+import { NextResponse } from "next/server";
 
-export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    return NextResponse.json(await getPexStockUnitById(await requireRequestContext(), (await params).id));
-  } catch (error) {
-    return apiError(error);
-  }
+// DEPRECATED (2026-09-09) — superseded by the PexRecord replacement (see
+// schema.prisma's PexRecord comment and pex-stock/[id]/quarantine/route.ts's
+// comment for why this file is a dead stub instead of deleted). There is no
+// direct get-single-unit route under the new model; notes updates moved to
+// PATCH /api/v1/pex/[id]/notes and history to GET /api/v1/pex/[id]/history.
+export async function GET() {
+  return NextResponse.json({ error: { code: "GONE", message: "This endpoint was removed with the PexRecord replacement. Use GET /api/v1/pex/[id]/history for a single record's detail." } }, { status: 410 });
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    requireSameOrigin(request);
-    return NextResponse.json(await updatePexStockMetadata(await requireRequestContext(), (await params).id, await request.json()));
-  } catch (error) {
-    return apiError(error);
-  }
+export async function PATCH() {
+  return NextResponse.json({ error: { code: "GONE", message: "This endpoint moved to PATCH /api/v1/pex/[id]/notes." } }, { status: 410 });
 }

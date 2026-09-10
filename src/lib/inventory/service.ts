@@ -1016,7 +1016,14 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
   const viewCost = canViewInventoryCost(ctx);
   const page = input.page;
   const pageSize = input.pageSize;
-  const where: Prisma.PartWhereInput = { companyId: ctx.companyId };
+  // 2026-09-10 — Stock Levels is now the merged Parts Catalog + stock page,
+  // so it filters out operationalStatus:"HISTORICAL_REFERENCE" the same
+  // way the old Parts Catalog list (listMaster's "parts" case) already
+  // did — those are parts a delete attempt fell back to deactivating
+  // because stock/job history still references them (see deletePart in
+  // master-data/service.ts), not parts a user would expect to keep seeing
+  // in the normal list.
+  const where: Prisma.PartWhereInput = { companyId: ctx.companyId, operationalStatus: "OPERATIONAL" };
   if (input.active === "active") where.active = true;
   else if (input.active === "inactive") where.active = false;
   if (input.q) {
@@ -1038,7 +1045,12 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
   const [parts, total] = await Promise.all([
     prisma.part.findMany({
       where,
-      include: { manufacturer: { select: { name: true } }, stockBalances: stockBalanceWhere ? { where: stockBalanceWhere } : true },
+      include: {
+        manufacturer: { select: { name: true } },
+        taxCode: { select: { code: true } },
+        binLocation: { select: { id: true, code: true, name: true } },
+        stockBalances: stockBalanceWhere ? { where: stockBalanceWhere } : true,
+      },
       orderBy: { partNumber: "asc" },
     }),
     prisma.part.count({ where }),
@@ -1064,7 +1076,19 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         id: p.id,
         partNumber: p.partNumber,
         description: p.description,
+        manufacturerId: p.manufacturerId,
         manufacturerName: p.manufacturer?.name ?? null,
+        manufacturerPartNumber: p.manufacturerPartNumber,
+        category: p.category,
+        unitOfMeasure: p.unitOfMeasure,
+        notes: p.notes,
+        taxCodeId: p.taxCodeId,
+        taxCodeLabel: p.taxCode?.code ?? null,
+        binLocationId: p.binLocationId,
+        binLocationLabel: p.binLocation ? `${p.binLocation.name} (${p.binLocation.code})` : null,
+        reorderMinimum: p.reorderMinimum?.toString() ?? null,
+        reorderMaximum: p.reorderMaximum?.toString() ?? null,
+        reorderQuantity: p.reorderQuantity?.toString() ?? null,
         active: p.active,
         quantityOnHand: totals.onHand.toString(),
         quantityReserved: totals.reserved.toString(),
@@ -1072,6 +1096,7 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         stockState: deriveStockState({ onHand: totals.onHand, reserved: totals.reserved, threshold: p.reorderMinimum, partActive: p.active }),
         locationCount: p.stockBalances.length,
         cost: viewCost ? (p.defaultPurchaseCost?.toString() ?? null) : null,
+        sellingPrice: viewCost ? (p.defaultSellingPrice?.toString() ?? null) : null,
       };
     }),
     total: input.stockState === "ALL" ? total : selected.length,
@@ -1200,6 +1225,7 @@ export async function getInventoryDetail(ctx: RequestContext, partId: string) {
     where: { id: partId, companyId: ctx.companyId },
     include: {
       manufacturer: { select: { name: true } },
+      binLocation: { select: { id: true, code: true, name: true } },
       stockBalances: { include: { location: { select: { id: true, code: true, name: true, type: true } } } },
       stockMovements: {
         take: 25,
@@ -1221,6 +1247,7 @@ export async function getInventoryDetail(ctx: RequestContext, partId: string) {
       category: part.category,
       active: part.active,
       notes: part.notes,
+      binLocationLabel: part.binLocation ? `${part.binLocation.name} (${part.binLocation.code})` : null,
       defaultSellingPrice: viewCost ? (part.defaultSellingPrice?.toString() ?? null) : null,
       reorderMinimum: part.reorderMinimum?.toString() ?? null,
       reorderMaximum: part.reorderMaximum?.toString() ?? null,

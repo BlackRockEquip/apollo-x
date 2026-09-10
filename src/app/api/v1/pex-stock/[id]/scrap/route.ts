@@ -1,14 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireRequestContext } from "@/lib/auth/session";
-import { apiError } from "@/lib/http/errors";
-import { scrapPexStockUnit } from "@/lib/pex/service";
-import { requireSameOrigin } from "@/lib/security/request";
+import { NextResponse } from "next/server";
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    requireSameOrigin(request);
-    return NextResponse.json(await scrapPexStockUnit(await requireRequestContext(), (await params).id, await request.json()));
-  } catch (error) {
-    return apiError(error);
-  }
+// DEPRECATED (2026-09-09) — moved to POST /api/v1/pex/[id]/scrap under the
+// PexRecord replacement (see schema.prisma's PexRecord comment and
+// pex-stock/[id]/quarantine/route.ts's comment for why this file is a dead
+// stub instead of deleted). The id shape also changed: it now addresses a
+// PexRecord, not a PexStockUnit.
+export async function POST() {
+  return NextResponse.json({ error: { code: "GONE", message: "This endpoint moved to POST /api/v1/pex/[id]/scrap." } }, { status: 410 });
 }

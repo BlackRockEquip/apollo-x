@@ -1,116 +1,20 @@
-import { Search, Eye, Plus } from "lucide-react";
-import Link from "next/link";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule } from "@/lib/auth/guards";
-import { listInventoryPositions } from "@/lib/inventory/service";
-import { positionQuery } from "@/lib/inventory/validation";
-import { STOCK_STATE_LABEL, STOCK_STATE_CLASS, type StockState } from "@/lib/inventory/stock-state";
+import { StockLevelsWorkspace } from "@/components/StockLevelsWorkspace";
 
 export const dynamic = "force-dynamic";
 
-// Phase 3 Inventory landing page — compact, dense, Mornay-style layout with Apollo X styling.
-export default async function InventoryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+// 2026-09-10 — thin async server wrapper, same split used for
+// settings/dashboard, users and support: this only needs to gate module
+// access and compute the one server-only permission flag
+// (hasManage/Receive Stock) the client workspace can't check itself; the
+// listing, filters, pagination and the new create/edit/delete drawer all
+// live in StockLevelsWorkspace.tsx so a part can be managed without a full
+// page round-trip. Parts Catalog used to be its own page (/parts) — it's
+// now folded into this one (see StockLevelsWorkspace.tsx header comment).
+export default async function InventoryPage() {
   const ctx = await requireRequestContext();
   requireModule(ctx, "INVENTORY", "READ");
-
-  const sp = await searchParams;
-  const parsed = positionQuery.parse({
-    q: typeof sp.q === "string" ? sp.q : undefined,
-    locationId: typeof sp.locationId === "string" ? sp.locationId : undefined,
-    manufacturerId: typeof sp.manufacturerId === "string" ? sp.manufacturerId : undefined,
-    category: typeof sp.category === "string" ? sp.category : undefined,
-    stockState: typeof sp.stockState === "string" ? sp.stockState : undefined,
-    active: typeof sp.active === "string" ? sp.active : undefined,
-    page: typeof sp.page === "string" ? sp.page : undefined,
-    pageSize: typeof sp.pageSize === "string" ? sp.pageSize : undefined,
-  });
-
-  const data = await listInventoryPositions(ctx, parsed);
-  const { items: rows, total, page, pageSize } = data;
   const hasManage = ["INVENTORY_RECEIVE", "INVENTORY_TRANSFER", "INVENTORY_ISSUE", "INVENTORY_ADJUST"].some((p) => ctx.tenantPermissions.has(p as never));
-
-  return (
-    <div>
-      <div className="page-header compact">
-        <div>
-          <p className="eyebrow">Inventory</p>
-          <h1>Inventory</h1>
-          <p>Stock on hand, location breakdown, reservations, and recent movements.</p>
-        </div>
-      </div>
-
-      <section className="master-panel inventory-panel">
-        <div className="master-toolbar inventory-toolbar">
-          <form id="inventory-filter-form" method="GET" action="/inventory" className="search-control inventory-search-control">
-            <Search size={15} />
-            <input type="text" name="q" placeholder="Search part number, description or manufacturer" defaultValue={parsed.q || ""} />
-          </form>
-        <div className="stock-filters compact">
-          {(["ALL", "OUT_OF_STOCK", "LOW_STOCK", "IN_STOCK"] as const).map((s) => (
-            <label key={s}>
-              <input type="radio" name="stockState" value={s} defaultChecked={parsed.stockState === s} form="inventory-filter-form" />
-              {s === "ALL" ? "All" : STOCK_STATE_LABEL[s as Exclude<StockState, "RESERVED" | "PARTIALLY_RESERVED" | "INACTIVE_PART">]}
-            </label>
-          ))}
-        </div>
-
-          <button type="submit" form="inventory-filter-form" className="quiet-button">Apply</button>
-          <span>{total} item{total === 1 ? "" : "s"}</span>
-          {hasManage && (
-          <button className="gold-button inventory-primary-action" type="button">
-            <Plus size={16} /> Receive Stock
-          </button>
-          )}
-        </div>
-
-      <div className="data-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Part</th>
-              <th>Description</th>
-              <th>Manufacturer</th>
-              <th className="numeric">On Hand</th>
-              <th className="numeric">Reserved</th>
-              <th className="numeric">Available</th>
-              <th>Location(s)</th>
-              <th>State</th>
-              <th className="actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td className="mono">{row.partNumber}</td>
-                <td>{row.description}</td>
-                <td>{row.manufacturerName || "—"}</td>
-                <td className="numeric">{row.quantityOnHand}</td>
-                <td className="numeric">{row.quantityReserved}</td>
-                <td className="numeric">{row.quantityAvailable}</td>
-                <td>{row.locationCount} location{row.locationCount === 1 ? "" : "s"}</td>
-                <td>
-                  <span className={`state-badge ${STOCK_STATE_CLASS[row.stockState as StockState]}`}>{STOCK_STATE_LABEL[row.stockState as StockState]}</span>
-                </td>
-                <td className="actions">
-                  <Link href={`/inventory/parts/${row.id}`} className="action-link" title="View part detail">
-                    <Eye size={15} />
-                  </Link>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="table-state compact-empty-state">
-                  <span>No inventory items match the current filters.</span>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <footer className="table-footer inventory-footer"><span>Showing {total === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}</span></footer>
-      </section>
-    </div>
-  );
+  return <StockLevelsWorkspace hasManage={hasManage} />;
 }

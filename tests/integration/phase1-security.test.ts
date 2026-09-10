@@ -52,13 +52,14 @@ async function addSession(input: { token: string; userId: string; membershipId?:
 }
 
 beforeAll(async () => {
+  const existingBlackRock = await database.company.findUnique({ where: { internalCode: BLACK_ROCK_INTERNAL_CODE }, include: { settings: true } });
   const [a, b, blackRock] = await Promise.all([
     database.company.create({ data: { internalCode: `TENANT_A_${suffix}`, legalName: "Frikkie Test Company", settings: { create: { themeColor: "#111111" } }, entitlements: { create: { module: "QUOTES", source: "MODULE", status: "ACTIVE", effectiveFrom: new Date("2026-01-01"), expiresAt: new Date("2027-01-01") } } }, include: { settings: true } }),
     database.company.create({ data: { internalCode: `TENANT_B_${suffix}`, legalName: "Fanie Test Company", settings: { create: { themeColor: "#222222" } }, entitlements: { create: [
       { module: "QUOTES", source: "MODULE", status: "SUSPENDED", effectiveFrom: new Date("2026-01-01") },
       { module: "DASHBOARD", source: "MODULE", status: "ACTIVE", effectiveFrom: new Date("2026-01-01"), expiresAt: new Date("2027-01-01") },
     ] } }, include: { settings: true } }),
-    database.company.create({ data: { internalCode: BLACK_ROCK_INTERNAL_CODE, legalName: "Black Rock Equipment Test", tradingName: "Black Rock Equipment", settings: { create: {} } }, include: { settings: true } }),
+    existingBlackRock ? Promise.resolve(existingBlackRock) : database.company.create({ data: { internalCode: BLACK_ROCK_INTERNAL_CODE, legalName: "Black Rock Equipment Test", tradingName: "Black Rock Equipment", settings: { create: {} } }, include: { settings: true } }),
   ]);
   Object.assign(fixture, { companyA: a.id, companyB: b.id, blackRock: blackRock.id, settingsA: a.settings!.id, settingsB: b.settings!.id });
 
@@ -86,14 +87,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await database.loginThrottle.deleteMany({});
-  await database.auditEvent.deleteMany({ where: { OR: [{ companyId: { in: [fixture.companyA, fixture.companyB, fixture.blackRock] } }, { correlationId: { contains: suffix } }] } });
-  await database.company.deleteMany({ where: { id: { in: [fixture.companyA, fixture.companyB, fixture.blackRock] } } });
-  await database.userIdentity.deleteMany({ where: { id: { in: [fixture.userA, fixture.userB, fixture.blackRockUser, fixture.operator] } } });
+  const companyIds = [fixture.companyA, fixture.companyB].filter(Boolean);
+  const userIds = [fixture.userA, fixture.userB, fixture.blackRockUser, fixture.operator].filter(Boolean);
+  await database.auditEvent.deleteMany({ where: { OR: [{ companyId: { in: companyIds } }, { correlationId: { contains: suffix } }] } });
+  await database.company.deleteMany({ where: { id: { in: companyIds } } });
+  await database.userIdentity.deleteMany({ where: { id: { in: userIds } } });
   await database.$disconnect();
 });
 
 beforeEach(async () => {
-  await database.userSession.deleteMany({ where: { userId: { in: [fixture.userA, fixture.userB, fixture.blackRockUser, fixture.operator] } } });
+  await database.userSession.deleteMany({ where: { userId: { in: [fixture.userA, fixture.userB, fixture.blackRockUser, fixture.operator].filter(Boolean) } } });
   await database.platformSupportAccess.deleteMany({ where: { operatorId: fixture.operator } });
 });
 

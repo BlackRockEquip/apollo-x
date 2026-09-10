@@ -1,11 +1,123 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
+import { StatusPill } from "@/components/StatusPill";
+import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, JOB_WIP_FILTERS } from "@/lib/jobs/ui";
+import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
+import { JOBS_WIP_COLUMNS, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
 export const dynamic = "force-dynamic";
+
+type JobRow = Awaited<ReturnType<typeof listJobs>>["items"][number];
+
+const COLUMN_LABELS: Record<JobsWipColumnId, string> = Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, c.label])) as Record<JobsWipColumnId, string>;
+
+function fmtDate(value: Date | string | null | undefined): string {
+  if (!value) return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("en-ZA");
+}
+
+function fmtEnum(value: string | null | undefined): string {
+  return value ? value.replaceAll("_", " ") : "—";
+}
+
+// One cell per column id — the jobNumber cell also carries the row's
+// whole-row click target (see .stretched-link/.clickable-row in
+// globals.css, which positions relative to the <tr> so it works from any
+// cell, not just the first one) since jobNumber is the one column that's
+// always shown (see JOBS_WIP_COLUMNS' `locked: true`).
+function renderCell(columnId: JobsWipColumnId, job: JobRow) {
+  switch (columnId) {
+    case "jobNumber":
+      return <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>;
+    case "customerName":
+      return job.customer.name;
+    case "customerTradingName":
+      return job.customer.tradingName || "—";
+    case "customerReference":
+      return job.customerReference || "—";
+    case "customerPo":
+      return job.customerPo || "—";
+    case "type":
+      return JOB_TYPE_LABELS[job.type];
+    case "status":
+      return <StatusPill status={job.status} />;
+    case "dateReceived":
+      return fmtDate(job.dateReceived);
+    case "machineMake":
+      return job.machineMake || "—";
+    case "machineModel":
+      return job.machineModel || "—";
+    case "machineSerial":
+      return job.machineSerial || "—";
+    case "component":
+      return job.component || "—";
+    case "componentType":
+      return job.componentType || "—";
+    case "componentSerial":
+      return job.componentSerial || "—";
+    case "componentPartNumber":
+      return job.componentPartNumber || "—";
+    case "description":
+      return job.description || "—";
+    case "etaDate":
+      return fmtDate(job.etaDate);
+    case "mechanicEtaDate":
+      return fmtDate(job.mechanicEtaDate);
+    case "relationshipNotes":
+      return job.relationshipNotes || "—";
+    case "quoteNumber":
+      return job.quoteNumber || "—";
+    case "quoteDate":
+      return fmtDate(job.quoteDate);
+    case "salesOrderNumber":
+      return job.salesOrderNumber || "—";
+    case "salesOrderDate":
+      return fmtDate(job.salesOrderDate);
+    case "invoiceNumber":
+      return job.invoiceNumber || "—";
+    case "invoiceDate":
+      return fmtDate(job.invoiceDate);
+    case "purchaseOrderNumber":
+      return job.purchaseOrderNumber || "—";
+    case "purchaseOrderDate":
+      return fmtDate(job.purchaseOrderDate);
+    case "purchaseOrderStatus":
+      return fmtEnum(job.purchaseOrderStatus);
+    case "deliveryDate":
+      return fmtDate(job.deliveryDate);
+    case "deliveryType":
+      return fmtEnum(job.deliveryType);
+    case "receivingTransport":
+      return fmtEnum(job.receivingTransport);
+    case "kmsTravelled":
+      return job.kmsTravelled != null ? String(job.kmsTravelled) : "—";
+    case "paymentDateReceived":
+      return fmtDate(job.paymentDateReceived);
+    case "machineHours":
+      return job.machineHours != null ? job.machineHours.toString() : "—";
+    case "plantNumber":
+      return job.plantNumber || "—";
+    case "reportNumber":
+      return job.reportNumber || "—";
+    case "importTrackingNumber":
+      return job.importTrackingNumber || "—";
+    case "previousJobNumber":
+      return job.previousJobNumber || "—";
+    case "salesRepresentative":
+      return job.salesRepresentative || "—";
+    case "createdAt":
+      return fmtDate(job.createdAt);
+    case "updatedAt":
+      return new Date(job.updatedAt).toLocaleString("en-ZA");
+    default:
+      return "—";
+  }
+}
 
 export default async function JobsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
@@ -14,9 +126,21 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const view = typeof sp.view === "string" ? sp.view : "all";
   const q = typeof sp.q === "string" ? sp.q : "";
-  const type = typeof sp.type === "string" ? sp.type : undefined;
-  const status = typeof sp.status === "string" ? sp.status : undefined;
-  const data = await listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, sort: "newest", page: 1, pageSize: 50 });
+  // "" (the unselected-option value on both <select>s below) means "no
+  // filter", same as the param being absent entirely — without this,
+  // submitting the search form with a filter left on "All ..." passed ""
+  // straight through to listJobs's enum validation and threw. See the
+  // matching comment on jobsListQuery in src/lib/jobs/validation.ts.
+  const type = typeof sp.type === "string" && sp.type ? sp.type : undefined;
+  const status = typeof sp.status === "string" && sp.status ? sp.status : undefined;
+  // pageSize is deliberately high, not the usual ~50 — there's no page-number
+  // UI on this list, so it scrolls internally within a fixed-height panel
+  // instead (see .jobs-panel .data-table-wrap in globals.css). 5000 is the
+  // validated ceiling in jobsListQuery; see the comment there.
+  const [data, columns] = await Promise.all([
+    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, sort: "newest", page: 1, pageSize: 5000 }),
+    getJobsWipColumns(ctx),
+  ]);
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
 
   return (
@@ -34,7 +158,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         <div className="master-toolbar jobs-toolbar">
           <form id="jobs-filter-form" method="GET" action="/jobs" className="search-control inventory-search-control">
             <Search size={15} />
-            <input type="text" name="q" placeholder="Search BRE, draft, customer, machine, component or reference" defaultValue={q} />
+            <input type="text" name="q" placeholder="Search BRE, draft, linked job #, customer, machine, component or reference" defaultValue={q} />
             <input type="hidden" name="view" value={view} />
           </form>
           <select name="type" defaultValue={type || ""} form="jobs-filter-form">
@@ -46,6 +170,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <button type="submit" form="jobs-filter-form" className="quiet-button">Apply</button>
+          <JobsWipColumnPicker selected={columns} />
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
         </div>
 
@@ -66,20 +191,15 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
 
         <div className="data-table-wrap">
           <table className="data-table">
-            <thead><tr><th>Job</th><th>Customer</th><th>Machine / component</th><th>Type</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+            <thead><tr>{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}</th>)}<th></th></tr></thead>
             <tbody>
               {data.items.map((job) => (
-                <tr key={job.id}>
-                  <td><strong className="mono">{job.jobNumber || job.draftNumber}</strong><div className="muted small-line">{job.customerReference || job.customerPo || "No customer reference"}</div></td>
-                  <td><div>{job.customer.name}</div><div className="muted small-line">{job.customer.accountCode || job.customer.tradingName || "—"}</div></td>
-                  <td><div>{job.machineModel || "—"}</div><div className="muted small-line">{job.component || job.componentSerial || job.machineSerial || "—"}</div></td>
-                  <td>{JOB_TYPE_LABELS[job.type]}</td>
-                  <td><span className="status-pill">{JOB_STATUS_LABELS[job.status]}</span></td>
-                  <td>{new Date(job.updatedAt).toLocaleString("en-ZA")}</td>
+                <tr key={job.id} className="clickable-row">
+                  {columns.map((id) => <td key={id}>{renderCell(id, job)}</td>)}
                   <td className="actions"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
                 </tr>
               ))}
-              {data.items.length === 0 && <tr><td colSpan={7} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
+              {data.items.length === 0 && <tr><td colSpan={columns.length + 1} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -1,15 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireRequestContext } from "@/lib/auth/session";
-import { apiError } from "@/lib/http/errors";
-import { requireSameOrigin } from "@/lib/security/request";
-import { issueJobAllocationStock } from "@/lib/jobs/service";
+import { NextResponse } from "next/server";
 
-export async function POST(request: NextRequest, context: { params: Promise<unknown> }) {
-  try {
-    requireSameOrigin(request);
-    const p = await context.params as { id: string; allocationId: string };
-    return NextResponse.json(await issueJobAllocationStock(await requireRequestContext(), p.id, p.allocationId, await request.json()), { status: 201 });
-  } catch (error) {
-    return apiError(error);
-  }
+// Removed 2026-09-09 — see ../../[requirementId]/reserve/route.ts's comment.
+// Job part allocations no longer exist; parts are tracked via the job's
+// Parts list (JobPartLine) instead.
+export async function POST() {
+  return NextResponse.json(
+    { error: "GONE", message: "Issuing stock against a job part allocation was removed. Parts are now tracked via the job's Parts list — see POST /api/v1/jobs/[id]/parts/[lineId]/receive." },
+    { status: 410 },
+  );
 }

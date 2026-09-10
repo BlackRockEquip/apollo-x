@@ -22,6 +22,7 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
           <p className="eyebrow">Part Detail</p>
           <h1>{detail.part.partNumber}</h1>
           <p>{detail.part.description}</p>
+          <p className="small-line muted">Bin location: {detail.part.binLocationLabel || "Not assigned"}</p>
         </div>
       </div>
 

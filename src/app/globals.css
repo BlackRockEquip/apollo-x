@@ -77,7 +77,13 @@ a { color: inherit; text-decoration: none; }
 .chevron { opacity: .8; transition: transform .16s ease; }
 .chevron-open { transform: rotate(180deg); }
 .workspace { min-height: 100vh; margin-left: 242px; }
-.topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--ink-150); background: rgba(255,255,255,.92); padding: 0 28px; backdrop-filter: blur(12px); }
+/* Pinned to the top of the viewport — 2026-09-10, user request: "Make the
+   header of the page also no scrollable where the support and sign out
+   button are." z-index 20 sits above a job page's own .job-sticky-header
+   (15) but below dialogs/backdrops (50) and the customer/machine-make
+   search dropdowns (.selector-results, 30). background is already opaque
+   enough (blur + near-white) to occlude content scrolling past underneath. */
+.topbar { display: flex; height: 64px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--ink-150); background: rgba(255,255,255,.92); padding: 0 28px; backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 20; }
 .topbar > div:first-child { display: grid; }
 .topbar strong { font-size: 13px; }
 .topbar span { color: var(--ink-500); font-size: 11px; }
@@ -115,8 +121,64 @@ a { color: inherit; text-decoration: none; }
 .platform-notice p { margin: 3px 0 0; font-size: 12px; }
 .company-list { display: grid; gap: 8px; margin-top: 20px; }
 .company-row { display: grid; grid-template-columns: auto minmax(180px, 1fr) minmax(420px, 1.5fr); align-items: center; gap: 14px; border: 1px solid var(--ink-150); border-radius: 10px; background: white; padding: 13px 15px; }
+.company-row-actions { display: flex; justify-content: flex-end; }
 .company-row > div { display: grid; }
 .company-row span { color: var(--ink-500); font-size: 10px; }
+.support-form-detailed { grid-template-columns: minmax(220px, 280px) 160px 1fr auto; margin-top: 10px; }
+.support-form-heading { display: grid; gap: 2px; align-content: center; }
+.platform-panel { margin-top: 18px; }
+.platform-section { margin-top: 18px; }
+.platform-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+/* 2026-09-10 — align-items:start (grid's default is stretch) so a shorter
+   column doesn't get stretched to match a taller sibling column's height
+   (was happening on the Users tab). Tenant users no longer shares a column
+   with anything (see .compact-form-fields below and UsersWorkspace.tsx) —
+   its table needs full page width, not half, to read comfortably. */
+.platform-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; margin-top: 18px; }
+/* Users tab's Add/Edit user fields (UsersWorkspace.tsx) — the plain
+   .drawer-fields rules elsewhere in this file aren't consistently sized
+   (there are two conflicting definitions from earlier work, one padded for
+   a modal drawer context), so these fields were rendering noticeably
+   larger than every other form in the app. Two classes so this reliably
+   wins regardless of .drawer-fields' own source-order ambiguity, without
+   touching those other (working) usages. */
+.compact-form-fields.drawer-fields { padding: 10px 12px; gap: 8px 10px; }
+.compact-form-fields.drawer-fields label span { font-size: 10px; margin-bottom: 3px; }
+.compact-form-fields.drawer-fields input, .compact-form-fields.drawer-fields select { padding: 6px 8px; font-size: 11px; min-height: 0; }
+.platform-card { border: 1px solid var(--ink-150); border-radius: 12px; background: white; padding: 16px; }
+.platform-shell { min-height: 100vh; display: grid; grid-template-columns: 220px 1fr; }
+.platform-sidebar { display: grid; align-content: start; gap: 18px; padding: 18px; background: linear-gradient(180deg, var(--navy-950), var(--navy-900)); color: white; border-right: 1px solid rgba(255,255,255,.08); }
+.platform-sidebar-brand { display: flex; gap: 12px; align-items: center; }
+.platform-nav { display: grid; gap: 6px; }
+.platform-nav-item { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 9px; color: #dce8f7; }
+.platform-nav-item.active, .platform-nav-item:hover { background: rgba(255,255,255,.08); color: white; }
+.platform-side-note { display: flex; gap: 8px; align-items: flex-start; padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(255,255,255,.04); color: #dce8f7; font-size: 12px; }
+.platform-workspace { display: grid; align-content: start; }
+.platform-header.compact-shell { padding: 20px 24px 8px; }
+.platform-card h3 { margin: 0 0 10px; }
+.platform-company-hero { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; }
+.platform-card-span-2 { grid-column: 1 / -1; }
+.platform-detail-list { display: grid; gap: 10px; margin: 0; }
+.platform-detail-list div { display: grid; gap: 2px; }
+.platform-detail-list dt { font-size: 11px; color: var(--ink-500); }
+.platform-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.platform-form-grid label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: var(--ink-700); }
+.platform-form-grid input, .platform-form-grid select, .platform-form-grid textarea { width: 100%; min-height: 40px; border: 1px solid var(--ink-300); border-radius: 8px; background: white; padding: 9px 11px; color: var(--ink-900); outline: none; }
+.platform-form-grid textarea { min-height: 88px; resize: vertical; }
+.platform-form-grid input:focus, .platform-form-grid select:focus, .platform-form-grid textarea:focus { border-color: var(--blue-600); box-shadow: 0 0 0 3px var(--blue-100); }
+.platform-form-grid .wide { grid-column: 1 / -1; }
+.platform-form-actions { display: flex; justify-content: flex-end; }
+.platform-inline-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.danger-button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--danger); color: white; cursor: pointer; font-weight: 750; }
+.platform-bullet-list { margin: 0; padding-left: 18px; display: grid; gap: 10px; color: var(--ink-700); }
+.platform-inline-note { margin: 0 0 12px; padding: 11px 12px; border-radius: 8px; background: #fff8db; color: #6f5702; font-size: 12px; }
+.compact-top-gap { margin-top: 12px; }
+.platform-user-list { display: grid; gap: 14px; margin-top: 18px; }
+.platform-user-header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+.platform-permission-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.platform-role-grid { display: grid; gap: 12px; }
+.role-assignment-form { grid-template-columns: minmax(220px, 1fr) 180px auto; align-items: end; }
+.platform-detail-list dd { margin: 0; font-weight: 600; }
 .support-form { display: grid; grid-template-columns: 120px 1fr auto; align-items: start; gap: 7px; }
 .support-form input, .support-form select { min-height: 36px; padding: 7px 9px; font-size: 11px; }
 .support-form button { min-height: 36px; border: 0; border-radius: 7px; background: var(--navy-800); padding: 7px 11px; color: white; cursor: pointer; font-size: 11px; font-weight: 700; }
@@ -127,6 +189,18 @@ a { color: inherit; text-decoration: none; }
 .gold-button { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:7px; border:1px solid #a97917; border-radius:7px; background:linear-gradient(#e0b74f,#c39224); padding:8px 13px; color:#17120a; cursor:pointer; font-size:12px; font-weight:800; box-shadow:0 1px 2px rgba(0,0,0,.12); }
 .gold-button:hover { background:#e0b74f; }
 .gold-button:disabled { cursor:wait; opacity:.65; }
+/* A section-header trigger button (e.g. "Add parts to Job", "Record
+   outwork", "Send follow-up", "Request quotes from suppliers") — 2026-09-10,
+   user request: these were using .quiet-button, whose plain-white/thin-border
+   look reads the same as the small per-row .table-action links inside the
+   tables right underneath them ("they look like they form part of the
+   table"). This is a clearly-a-button treatment (tinted background, solid
+   border, more padding) a step down from .gold-button (reserved for the
+   page's single primary action, e.g. Save/New job) but a clear step up from
+   .quiet-button/.table-action, so these read as distinct section controls. */
+.section-action-button { display:inline-flex; min-height:34px; align-items:center; gap:7px; border:1px solid var(--gold-600); border-radius:7px; background:#fbf2d7; padding:7px 12px; color:#5c4109; cursor:pointer; font-size:11.5px; font-weight:750; box-shadow:0 1px 2px rgba(15,23,42,.05); }
+.section-action-button:hover { background:#f7e8bd; }
+.section-action-button:disabled { cursor:wait; opacity:.6; }
 .master-panel { overflow:hidden; border:1px solid var(--ink-150); border-radius:10px; background:white; box-shadow:0 2px 8px rgba(15,23,42,.04); }
 .master-toolbar { display:flex; min-height:52px; align-items:center; gap:9px; border-bottom:1px solid var(--ink-150); padding:10px 13px; flex-wrap:wrap; }
 .master-toolbar > span { margin-left:auto; color:var(--ink-500); font-size:11px; }
@@ -140,6 +214,10 @@ a { color: inherit; text-decoration: none; }
 .data-table th { border-bottom:1px solid var(--ink-150); background:#f8f9fb; padding:8px 11px; color:var(--ink-500); font-size:10px; font-weight:800; letter-spacing:.04em; text-align:left; text-transform:uppercase; white-space:nowrap; }
 .data-table td { max-width:340px; border-bottom:1px solid var(--ink-100); padding:10px 11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .data-table tr:hover td { background:#fffdf7; }
+.data-table tr.clickable-row { position:relative; cursor:pointer; }
+.data-table tr.clickable-row .stretched-link::after { content:""; position:absolute; inset:0; }
+.data-table tr.clickable-row .actions { position:relative; z-index:1; }
+.data-table tr.clickable-row .actions a { position:relative; z-index:1; }
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
 .table-state { display:flex; min-height:140px; align-items:center; justify-content:center; gap:8px; color:var(--ink-500); font-size:12px; }
 .compact-empty-state { min-height: 84px; }
@@ -152,6 +230,21 @@ a { color: inherit; text-decoration: none; }
 .inventory-primary-action { margin-left:auto; }
 .inventory-footer { border:1px solid var(--ink-150); border-top:0; border-radius:0 0 10px 10px; background:#fff; }
 .master-panel .data-table-wrap { overflow:auto; }
+/* Jobs & WIP has no page-number UI — the page now requests up to 5000 rows
+   in one shot (see src/app/(tenant)/jobs/page.tsx) instead of a hard
+   50-row cap that made anything older simply unreachable ("make the job
+   wip table scrollable so i can see older jobs"). Scoped to .jobs-panel
+   only, not the shared .data-table-wrap rule above, since every other
+   table using that class (Customers, Suppliers, Parts, PEX, Inventory,
+   ...) already has its own real pager and isn't meant to grow a fixed-
+   height scroll well. The header row stays pinned (position: sticky,
+   relative to this same scrolling element) so column labels stay visible
+   while scrolling down through older jobs. */
+.jobs-panel .data-table-wrap { max-height: calc(100vh - 330px); overflow-y: auto; }
+.jobs-panel .data-table thead th { position: sticky; top: 0; z-index: 1; }
+.data-table tbody tr.row-click { cursor:pointer; }
+.data-table tbody tr.row-click:hover { background:#fbf6e9; }
+.data-table tbody tr.row-click:focus-visible { outline:2px solid var(--gold-500); outline-offset:-2px; }
 .form-drawer { width:min(760px,92vw); max-height:calc(100vh - 36px); overflow:hidden; display:flex; flex-direction:column; }
 .form-drawer form { min-height:0; display:flex; flex-direction:column; }
 .drawer-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 14px; padding:14px; overflow:auto; }
@@ -164,6 +257,7 @@ a { color: inherit; text-decoration: none; }
 .compact-protected-field { margin-bottom:0; }
 .settings-footer { display:flex; justify-content:flex-end; padding:4px 0 0; }
 .inline-error { border-bottom:1px solid #f4c7c3; background:#fff2f0; padding:9px 13px; color:var(--danger); font-size:11px; }
+.inline-success { border-bottom:1px solid #b7e4cd; background:#eafbf3; padding:9px 13px; color:var(--success); font-size:11px; }
 .table-footer { display:flex; min-height:46px; align-items:center; justify-content:space-between; padding:8px 12px; color:var(--ink-500); font-size:11px; }
 .table-footer div { display:flex; gap:5px; }
 .table-footer button { display:grid; width:30px; height:30px; place-items:center; border:1px solid var(--ink-150); border-radius:6px; background:white; cursor:pointer; }
@@ -179,6 +273,29 @@ a { color: inherit; text-decoration: none; }
 .drawer-fields label:has(input[type=checkbox]) { display:flex; align-items:center; grid-column:1/-1; }
 .drawer-fields textarea { resize:vertical; }
 .form-drawer form > footer { position:sticky; bottom:0; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--ink-150); background:rgba(255,255,255,.95); padding:14px 22px; }
+/* Customer/Supplier "New"/"Edit" drawer (MasterDataWorkspace.tsx) — widened
+   at the user's request ("make the supplier and client form wider (to fill
+   half the screen)") so the inline address/contacts sections have more
+   room. Higher specificity than the plain .form-drawer rules above so it
+   wins regardless of source order; min-width keeps it usable if the
+   window itself is narrow, max-width keeps it from ever exceeding the
+   viewport. */
+.form-drawer.wide-drawer { width:50vw; min-width:min(920px,100vw); max-width:100vw; }
+@media (max-width:960px) { .form-drawer.wide-drawer { width:100vw; min-width:0; } }
+/* Inline "New" contacts table (MasterDataWorkspace.tsx) — bare <input>s in
+   a <td> otherwise keep their browser default width, which forces the
+   table wider than the drawer and makes .data-table-wrap scroll
+   horizontally. min-width:0 lets each cell shrink below that default so
+   the table fits the (now wider, see .wide-drawer above) drawer instead. */
+.data-table td input, .data-table td select { box-sizing:border-box; width:100%; min-width:0; }
+/* The Details/Address/Contacts tab panes above are toggled with the native
+   `hidden` attribute rather than being unmounted (see MasterDataWorkspace's
+   comment on formTab). The browser's own [hidden]{display:none} default is
+   a user-agent style, so any author rule that sets `display` on the same
+   element — .drawer-fields sets display:grid two rules up — silently wins
+   over it and the pane never actually hides. Force it explicitly instead
+   of relying on the UA default. */
+.form-drawer [hidden] { display:none !important; }
 .settings-sheet { overflow:hidden; border:1px solid var(--ink-150); border-radius:10px; background:white; }
 .protected-field { display:flex; align-items:center; gap:10px; border-bottom:1px solid #ebd59b; background:#fffaf0; padding:14px 18px; color:#73520d; }
 .protected-field div { display:grid; gap:2px; }.protected-field span { font-size:10px; }
@@ -207,18 +324,196 @@ a { color: inherit; text-decoration: none; }
 .job-layout{display:grid;gap:16px}.job-workspace .back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ink-700);font-size:12px;font-weight:700}.job-workspace .small-line{font-size:10px}.jobs-filter-strip{display:flex;gap:8px;flex-wrap:wrap;padding:0 18px 14px}.status-chip{display:inline-flex;align-items:center;border:1px solid var(--ink-150);border-radius:999px;padding:7px 10px;background:#fff;font-size:11px;font-weight:700;color:var(--ink-700)}.status-chip.active{background:#eef5ff;border-color:#bfd6fb;color:#0b4da2}.detail-actions{display:flex;justify-content:flex-end;padding:0 16px 16px}.job-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;padding:0 14px 14px}.stack-row{display:flex;gap:8px;align-items:center}.stack-grid{display:grid;gap:8px}.jobs-panel .data-table td strong{font-size:12px}
 .pex-record-list article{grid-template-columns:auto minmax(180px,1fr) auto minmax(200px,1fr) auto}.pex-link-stack,.pex-action-stack{display:grid;gap:6px}.pex-action-stack label{display:grid;gap:4px;font-size:11px;font-weight:700}.pex-action-stack input,.pex-action-stack textarea{min-height:36px;border:1px solid var(--ink-300);border-radius:6px;padding:8px 9px;outline:none}.pex-action-stack input:focus,.pex-action-stack textarea:focus{border-color:var(--gold-500);box-shadow:0 0 0 3px #fbf2d7}
 
+/* Clickable job-status stepper (StatusStepper.tsx) — ported from ModApp's
+   equivalent, restyled to this app's plain-CSS design tokens instead of
+   Tailwind. Click any stage to jump the job's status straight there. */
+.status-stepper { overflow-x: auto; padding: 14px 15px 15px; }
+.status-stepper-track { display: flex; align-items: flex-start; min-width: 560px; }
+.status-stepper-item { display: flex; flex: 1 1 0; align-items: flex-start; }
+.status-stepper-item:last-child { flex: 0 0 auto; }
+.status-stepper-node { display: flex; flex-direction: column; align-items: center; gap: 5px; border: 0; background: transparent; padding: 0; cursor: pointer; }
+.status-stepper-node:disabled { cursor: default; }
+.status-stepper-dot { display: flex; height: 20px; width: 20px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 999px; border: 2px solid var(--ink-300); background: white; color: var(--ink-300); font-size: 10px; font-weight: 800; }
+.status-stepper-node.done .status-stepper-dot { border-color: var(--gold-600); background: var(--gold-600); color: white; }
+.status-stepper-node.current .status-stepper-dot { border-color: var(--gold-600); background: white; color: var(--gold-600); box-shadow: 0 0 0 3px #fbf2d7; }
+.status-stepper-label { max-width: 68px; color: var(--ink-500); font-size: 10px; font-weight: 650; line-height: 1.25; text-align: center; }
+.status-stepper-node.current .status-stepper-label, .status-stepper-node.done .status-stepper-label { color: var(--ink-900); }
+.status-stepper-connector { margin: 9px 5px 0; height: 2px; flex: 1; border-radius: 999px; background: var(--ink-150); }
+.status-stepper-connector.done { background: var(--gold-600); }
+.status-stepper-note { margin: 0; padding: 13px 15px; color: var(--ink-500); font-size: 12px; }
+
+/* Compact bento-style layout for the inline job-edit form (JobWorkspace.tsx
+   jobFormSections) — panels sit side by side instead of stacking full-width,
+   and each panel's own field grid packs as many small fields per row as
+   fit, instead of a fixed 2-column layout. Scoped under .job-edit-grid so
+   it doesn't affect .drawer-fields anywhere else (dialogs, parts forms,
+   field service, warranty, pex sections all keep their existing layout). */
+/* Fixed 4-column grid, not auto-fit. jobFormSections always renders the same
+   4 panels in row 2 (Machine/component + Job details + Commercial-wide[2])
+   which add up to exactly 4 column-tracks — with auto-fit, when the row has
+   fewer items than the number of tracks that mathematically fit a wide
+   screen, the leftover fr space goes to the collapsed empty tracks instead
+   of the visible ones, so everything bunches up on the left with dead space
+   on the right. A fixed track count sidesteps that entirely and always
+   fills the row. min-width: 0 on the panels themselves is the other half of
+   the fix: a grid item's default automatic min-width is its content's
+   min-content size, and native form controls (date inputs especially) have
+   a real intrinsic minimum width — without min-width: 0 that forces each
+   panel wider than its fair 1fr share, which is what was still cramping /
+   overflowing every panel in the row (not just one). */
+.job-edit-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.job-edit-grid .wide-panel { grid-column: span 2; }
+.job-edit-grid .full-row { grid-column: 1 / -1; }
+.job-edit-grid > .detail-panel { min-width: 0; }
+
+/* Customer details spans the full width of the row and has exactly 3
+   fields after the full-width customer selector (Customer reference,
+   Sales representative, Report number). Same fixed-track approach as
+   .commercial-fields below, instead of auto-fill/auto-fit — those need the
+   browser to resolve a definite container width to compute a column count,
+   which is not reliable for a panel nested this deep in the grid, and was
+   producing a broken (stacked, no visible gap) layout here. A fixed count
+   sidesteps that resolution step entirely. */
+.job-edit-grid .drawer-fields.customer-fields { display: grid !important; grid-template-columns: repeat(3, 180px) !important; gap: 8px 10px !important; padding: 10px 13px !important; }
+
+/* Commercial & logistics uses a fixed 4-column grid (not the auto-fill
+   packing every other panel uses) so its fields land in the exact rows
+   requested: row 1 quote/sales-order refs, row 2 invoice + payment, row 3
+   purchase order, row 4 transport/delivery. Each row-break is a zero-height
+   full-width spacer that forces whatever comes next to start a fresh row
+   instead of auto-flowing into that row's remaining empty slot(s). */
+.job-edit-grid .drawer-fields.commercial-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.job-edit-grid .commercial-fields .row-break { grid-column: 1 / -1; height: 0; padding: 0; margin: 0; }
+/* "Payment not applicable" sits inline right next to the payment date
+   input itself (as an N/A checkbox), rather than as its own separate field
+   column. */
+.job-edit-grid .commercial-fields .field-with-check { display: flex; align-items: center; gap: 8px; }
+.job-edit-grid .commercial-fields .field-with-check input[type="date"] { flex: 1; min-width: 0; }
+.job-edit-grid .commercial-fields .inline-check { display: flex !important; flex-direction: row; align-items: center; gap: 4px; white-space: nowrap; color: var(--ink-700); font-size: 10px; font-weight: 700; }
+.job-edit-grid .commercial-fields .inline-check span { margin: 0; }
+.job-edit-grid .commercial-fields .inline-check input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--gold-600); }
+
+/* Generic fallback for .inline-check used outside the commercial-fields
+   grid (e.g. the RFQ panel's "Send email now" checkboxes, added
+   2026-09-09) — same look, without depending on that specific scope. */
+.inline-check { display: flex; flex-direction: row; align-items: center; gap: 4px; white-space: nowrap; color: var(--ink-700); font-size: 11px; font-weight: 600; }
+.inline-check span { margin: 0; }
+.inline-check input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--gold-600); }
+
+/* The job detail page's sections (edit form, parts, notes, activity
+   history, etc.) are siblings inside a React fragment, so they land as
+   direct children of .job-workspace with no wrapper of their own. Without
+   an explicit gap they sit flush against each other. This gives every
+   section consistent breathing room using normal document flow — nothing
+   here is a fixed-height or overflow:auto box, so nothing below customer
+   details scrolls on its own; the page just scrolls as one. */
+.job-workspace { display: flex; flex-direction: column; gap: 18px; }
+/* Descendant selector (not >) — .page-header now sits one level deeper,
+   inside .job-sticky-header below, so a direct-child selector would stop
+   matching. */
+.job-workspace .page-header { margin-bottom: 0; }
+/* The page header, any inline error, and (when applicable) the Job status
+   panel are grouped in .job-sticky-header and pinned to the top of the
+   viewport while everything else in the job page scrolls underneath —
+   "make everything from the top to below the status stepper stationary,
+   non scrollable". The surrounding page background is a uniform
+   var(--canvas), so a plain background here (no negative margins / bleed
+   trick needed) is enough to fully occlude content scrolling past behind
+   it. z-index 15 sits below dialogs/backdrops (z-index 50) and the
+   customer/machine-make search dropdowns (.selector-results, z-index 30)
+   so an open dropdown or dialog still draws over the sticky header, but
+   above ordinary page content. */
+/* top: 64px (not 0) — the app's own .topbar is now sticky at top:0 too
+   (2026-09-10), so this sticks directly below the pinned topbar instead of
+   being covered by it. */
+/* position: fixed (not sticky) — 2026-09-10, user request: sticky still
+   had a brief "catch up" scroll before locking in place (it only sticks
+   once its normal-flow position reaches the pinned offset), and the user
+   wanted zero motion from page load. Fixed elements are pulled out of
+   .page-content's flow (and its 28px padding) entirely, so left/right and
+   horizontal padding are set explicitly here to line back up with it —
+   left: 242px matches .workspace's margin-left (i.e. .sidebar's width);
+   see the 640px/560px breakpoints below for the matching narrow-viewport
+   overrides. JobWorkspace.tsx renders a height-matched spacer right after
+   this element (measured live via ResizeObserver) so removing it from
+   flow doesn't let page content slide up underneath it. padding-top: 16px
+   (2026-09-10) — flush against the topbar's gold border-bottom looked too
+   cramped once this stopped moving at all; the spacer's height tracks
+   this element's offsetHeight automatically, so no JS change was needed
+   to keep the rest of the page correctly pushed down by the extra room. */
+.job-sticky-header { position: fixed; top: 64px; left: 242px; right: 0; z-index: 15; background: var(--canvas); display: flex; flex-direction: column; gap: 18px; padding: 16px 28px 4px; }
+.page-header .header-customer-line { margin: 2px 0 0; font-size: 13px; }
+.page-header .header-customer-line a { color: var(--ink-700); font-weight: 650; text-decoration: none; }
+.page-header .header-customer-line a:hover { color: var(--gold-600); text-decoration: underline; }
+.job-edit-grid .detail-panel > header { padding: 9px 13px; }
+.job-edit-grid .drawer-fields { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px 10px; padding: 10px 13px; min-width: 0; }
+/* Same min-width: 0 fix as .job-edit-grid > .detail-panel above (see its
+   comment), one grid level deeper — 2026-09-10, user report: "when at 100%
+   [browser zoom] the fields overlap/sit on top of each other" (fine at 90%
+   zoom, which — since zooming out hands the page more effective CSS
+   pixels — gave the grid just enough room to hide the problem). Each field
+   label here is itself a grid item of .drawer-fields' row, and native
+   inputs/selects (date inputs especially) carry a real intrinsic min
+   width; without min-width: 0 a label was refusing to shrink below its
+   input's intrinsic size and overflowing past its 1fr track into the next
+   column — at narrower effective widths (a real 100% zoom, a smaller
+   window, or a lower-res screen) that overflow became visible as fields
+   sitting on top of each other. Confirmed live: at 1280px wide the
+   "Purchase order number"/"Purchase order date" labels' rendered inputs
+   were 176px/130px wide inside a 105px track. */
+.job-edit-grid .drawer-fields label { gap: 3px; font-size: 10px; min-width: 0; }
+.job-edit-grid .drawer-fields input, .job-edit-grid .drawer-fields select { min-width: 0; }
+@media (max-width: 900px) {
+  .job-edit-grid { grid-template-columns: 1fr; }
+  .job-edit-grid .wide-panel { grid-column: auto; }
+}
+
 @media (max-width: 950px) {
   .login-page { grid-template-columns: 1fr; }
   .login-story { min-height: 40vh; padding: 48px 32px; }
   .login-story h1 { font-size: 44px; }
   .login-story .eyebrow { margin-top: 24px; }
+  .metric-grid, .metric-grid.compact { grid-template-columns: repeat(2, 1fr); }
+  .company-row { grid-template-columns: auto 1fr; }
+  .company-row .support-form { grid-column: 1 / -1; }
+  .platform-shell { grid-template-columns: 1fr; }
+  .platform-sidebar { position: static; }
+  .platform-grid { grid-template-columns: 1fr; }
+  .platform-card-span-2 { grid-column: auto; }
+  .support-form-detailed { grid-template-columns: 1fr; }
+  .platform-form-grid { grid-template-columns: 1fr; }
+  .platform-form-grid .wide { grid-column: auto; }
+  .platform-user-header { flex-direction: column; }
+  .role-assignment-form { grid-template-columns: 1fr; }
+}
+
+/* 2026-09-10 fix: the tenant .sidebar's collapse-to-inline-block behavior
+   used to live in the 950px breakpoint above, alongside unrelated
+   login-page/platform rules. 950px is well within ordinary un-maximized
+   desktop window widths, so a normal (not phone-sized) browser window
+   was enough to flip .sidebar from position:fixed to position:static.
+   Once that happened, .sidebar (now ~500-600px of stacked nav) sat in
+   normal document flow ABOVE .workspace instead of floating over it, so
+   the whole sidebar had to be scrolled past before .topbar's and
+   .job-sticky-header's own position:sticky offsets were ever reached —
+   this is what the user saw as "the job header/stepper doesn't stay
+   stationary, it only catches once it reaches the top of the Save
+   button" (root-caused live via getComputedStyle() in a narrow browser
+   window: .sidebar computed position was "static", not "fixed", well
+   above what the CSS source's un-mediaed rule specifies). Moving this
+   collapse to a much narrower, genuinely phone-sized breakpoint keeps
+   the sidebar — and therefore the sticky job header — correctly fixed
+   across realistic desktop window widths. */
+@media (max-width: 640px) {
   .sidebar { position: static; width: 100%; min-height: auto; }
   .sidebar nav { display: block; overflow-x: visible; }
   .sidebar-footer { display: block; }
   .workspace { margin-left: 0; }
-  .metric-grid, .metric-grid.compact { grid-template-columns: repeat(2, 1fr); }
-  .company-row { grid-template-columns: auto 1fr; }
-  .company-row .support-form { grid-column: 1 / -1; }
+  /* .job-sticky-header is position:fixed and left:242px normally to clear
+     the fixed sidebar (see its own rule above) — once the sidebar collapses
+     to a static, full-width block at this width, there's no fixed sidebar
+     to clear any more. */
+  .job-sticky-header { left: 0; }
 }
 
 @media (max-width: 560px) {
@@ -226,6 +521,10 @@ a { color: inherit; text-decoration: none; }
   .login-story { padding: 38px 22px; }
   .login-story h1 { font-size: 37px; }
   .page-content, .topbar { padding-left: 16px; padding-right: 16px; }
+  /* .job-sticky-header replicates .page-content's own horizontal padding
+     (it's position:fixed, so it no longer inherits it) — keep them in
+     sync at this breakpoint too. */
+  .job-sticky-header { padding-left: 16px; padding-right: 16px; }
   .metric-grid { grid-template-columns: 1fr; }
   .topbar-user > span { display: none; }
   .support-form { grid-template-columns: 1fr; }
@@ -240,3 +539,77 @@ a { color: inherit; text-decoration: none; }
   .header-tabs { width:100%; justify-content:flex-start; flex-wrap:wrap; }
   .detail-head { align-items:stretch;flex-direction:column }.detail-grid,.brand-grid { grid-template-columns:1fr }.record-list article { grid-template-columns:auto 1fr auto }.record-list article .table-action { grid-column:auto }.history-list article{grid-template-columns:1fr}
 }
+
+/* Header actions + dialogs + job editor drawer */
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/* inset:auto must come BEFORE top/left below — it resets the position/inset
+   longhands inherited from the plain .form-drawer rule above (which sets
+   inset:0 0 0 auto), and since declarations later in the SAME rule win for
+   the same longhand regardless of shorthand vs longhand, putting inset:auto
+   after top/left would silently reset top/left back to auto, leaving the
+   dialog pinned to the fixed-position default (viewport top-left) with the
+   -50%/-50% transform then shoving it further off-screen. */
+.compact-dialog { position: fixed; inset: auto; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, 94vw); max-height: min(680px, 90vh); overflow: auto; border-radius: 12px; box-shadow: 0 24px 64px rgba(3, 10, 20, 0.35); }
+.job-editor-drawer { width: min(880px, 96vw); }
+.job-editor-drawer .job-layout { padding: 14px; gap: 14px; }
+.settings-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+/* 2026-09-10 — the settings tab bar (SettingsTabNav.tsx) now appears on
+   every Settings destination, not just 2 of them, and highlights whichever
+   one the user is currently on — same active treatment .nav-item.active/
+   .nav-subitem.active already use in the sidebar, so "you are here" reads
+   consistently in both places. */
+.settings-nav .quiet-button.active { background: var(--blue-700); border-color: var(--blue-700); color: white; }
+.brand-logo { width: 34px; height: 34px; object-fit: contain; border-radius: 7px; background: #fff; border: 1px solid var(--ink-150, #e2e8f0); display: block; }
+.brand-logo-fallback { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; font-size: 12px; font-weight: 800; color: #fff; background: var(--gold-600, #b45309); }
+.company-settings-grid { grid-template-columns: 1.3fr 1fr; align-items: start; }
+/* 2026-09-10 — branding colour fields (theme/accent/secondary) pair a native
+   colour-picker swatch with the existing hex text input, so users can pick
+   visually instead of typing a # value while still being able to fine-tune
+   or paste an exact hex code. */
+.color-picker-field { display: flex; align-items: center; gap: 8px; }
+.color-picker-field input[type="color"] { width: 36px; height: 32px; padding: 2px; border: 1px solid var(--ink-300); border-radius: 6px; background: white; cursor: pointer; flex: none; }
+.color-picker-field .color-picker-hex { flex: 1; min-width: 0; }
+/* 2026-09-10 — DashboardSettingsWorkspace's widget-picker rows only ever
+   render 2 children per <article> (label, then the checkbox+reorder
+   controls), but .record-list article is a 6-column grid built for a
+   different shape (icon, name/subtitle, badges) — with only 2 children the
+   browser placed them in columns 1 and 2 of that grid, so the label sat in
+   a shrink-to-fit column and the controls landed in a 180px+ flexible
+   column, making the checkbox/arrows drift to wildly different positions
+   depending on label length. Dedicated flex layout keeps the label on the
+   left and the controls in a fixed-width, right-aligned, consistently
+   spaced group on every row. */
+.dashboard-widget-list { display: flex; flex-direction: column; }
+.dashboard-widget-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ink-100); padding: 10px 14px; }
+.dashboard-widget-list article strong { font-size: 11px; }
+.dashboard-widget-list article .stack-row { flex: none; gap: 10px; }
+.dashboard-widget-list article .small-toggle { min-width: 64px; }
+.dashboard-widget-list article .table-action { width: 28px; text-align: center; }
+/* 2026-09-10 — Stock Levels (merged with Parts Catalog) dims a part's row
+   when it's inactive, same opacity treatment .record-list article.inactive
+   already uses elsewhere — covers both a manually-deactivated part and one
+   the new delete-with-fallback flow moved to historical-reference. */
+.data-table tbody tr.inactive { opacity: .6; }
+.brand-preview-panel { display: grid; grid-template-columns: 180px 1fr; min-height: 220px; border: 1px solid var(--ink-150); border-radius: 12px; overflow: hidden; background: white; }
+.brand-preview-sidebar { background: var(--tenant-secondary, var(--navy-950)); color: #fff; padding: 16px; display: grid; align-content: start; gap: 10px; }
+.brand-preview-logo { width: 84px; height: 84px; border-radius: 14px; background: rgba(255,255,255,.08); display: grid; place-items: center; overflow: hidden; }
+.brand-logo-preview { width: 100%; height: 100%; object-fit: contain; }
+.brand-preview-workspace { background: #f7f9fc; padding: 18px; }
+.brand-preview-topbar { height: 38px; border-radius: 9px; background: var(--tenant-theme, var(--blue-700)); margin-bottom: 16px; }
+.brand-preview-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.brand-preview-card-grid > div { min-height: 96px; background: white; border: 1px solid var(--ink-150); border-top: 4px solid var(--tenant-accent, var(--gold-500)); border-radius: 10px; }
+.support-ticket-list article { cursor: pointer; }
+.active-record { outline: 2px solid var(--blue-600); outline-offset: 0; }
+.small-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+/* 2026-09-10 — had no padding at all, so the category labels and pills sat
+   flush against the panel's left edge (and right/bottom) instead of being
+   inset like every other panel body on this page (.drawer-fields uses the
+   same 14px). */
+.module-picker-groups{display:grid;gap:16px;padding:14px}.module-picker-group h3{margin:0 0 8px;font-size:12px}.module-pill-grid{display:flex;flex-wrap:wrap;gap:8px}
+/* 2026-09-10 — these pills never had their own font-size, so they rendered
+   at the browser default (~16px) while every other control in this app is
+   11-13px — that's what made them look oversized/out of place ("make the
+   buttons smaller more appropriate for the design"). Sized and padded down
+   to match .table-action/.quiet-button's scale. */
+.module-pill{display:flex;align-items:center;gap:6px;border:1px solid var(--ink-150);border-radius:999px;background:#fff;padding:6px 10px;font-size:11px;font-weight:650;color:var(--ink-700);cursor:pointer}.module-pill span{font-size:10px}.module-pill.selected{border-color:var(--tenant-theme,var(--blue-700));background:#eef5ff;color:var(--ink-900)}.inner-panel{margin-top:12px}.sidebar-brand-logo-wrap{width:34px;height:34px;display:grid;place-items:center}.tenant-themed-shell .topbar{border-bottom:3px solid var(--tenant-accent,var(--gold-500))}
+.status-pill.tone-green{background:#e8f7ee;color:#1f6b42}.status-pill.tone-blue{background:#e8f0ff;color:#1f4fa3}.status-pill.tone-purple{background:#f1e8ff;color:#6b34a3}.status-pill.tone-orange{background:#fff1e6;color:#b05a14}.status-pill.tone-amber{background:#fff7d6;color:#8a6700}.status-pill.tone-teal{background:#e7fbf8;color:#0f6a66}.status-pill.tone-neutral{background:#eef2f6;color:#49566a}.status-pill.tone-red{background:#fdebec;color:#a22c35}

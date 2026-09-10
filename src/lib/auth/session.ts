@@ -58,8 +58,8 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     where: { tokenHash: hashToken(token) },
     include: {
       user: { include: { platformAssignments: { where: { active: true }, include: { permissions: true } } } },
-      membership: { include: { company: { include: { entitlements: true } }, permissions: true } },
-      supportAccess: { include: { company: { include: { entitlements: true } } } },
+      membership: { include: { company: { include: { entitlements: true, settings: true } }, permissions: true } },
+      supportAccess: { include: { company: { include: { entitlements: true, settings: true } } } },
     },
   });
 
@@ -91,7 +91,10 @@ export async function resolveSessionToken(token: string, database: SessionDataba
 
   const moduleAccess = new Map<ModuleKey, ModuleAccessMode>();
   if (company) {
-    const entitlementMap = new Map(company.entitlements.map((row) => [row.module, row]));
+    // This session-resolution path only ever serves the WORKSHOP product
+    // today — filtered explicitly so a future SPORTS_LEAGUE entitlement row
+    // on the same company can never leak into a Workshop ModuleKey lookup.
+    const entitlementMap = new Map(company.entitlements.filter((row) => row.product === "WORKSHOP").map((row) => [row.module, row]));
     for (const moduleKey of Object.values(ModuleKey)) {
       const row = entitlementMap.get(moduleKey);
       moduleAccess.set(moduleKey, evaluateModuleAccess({
@@ -112,11 +115,16 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     displayName: session.user.displayName,
     companyId: company?.id ?? null,
     companyInternalCode: company?.internalCode ?? null,
+    companyName: company ? (company.tradingName ?? company.legalName) : null,
     tenantRole: session.membership?.role ?? null,
     tenantPermissions,
     platformPermissions,
     supportAccessId: support?.id ?? null,
     supportMode: support?.mode ?? null,
+    themeColor: company?.settings?.themeColor ?? null,
+    accentColor: company?.settings?.accentColor ?? null,
+    secondaryColor: company?.settings?.secondaryColor ?? null,
+    hasCompanyLogo: Boolean(company?.settings?.logoMimeType),
     moduleAccess,
     correlationId: randomUUID(),
   };

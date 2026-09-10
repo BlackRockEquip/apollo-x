@@ -1,0 +1,189 @@
+import { ModuleKey, Prisma, TenantRole } from "@prisma/client";
+import { z } from "zod";
+import type { RequestContext } from "@/lib/auth/context-types";
+import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
+import { DEFAULT_TENANT_PERMISSIONS, TENANT_PERMISSIONS, mergePermissionOverrides } from "@/lib/auth/permissions";
+import { MODULE_LABELS, TENANT_ROLE_LABELS } from "@/lib/constants";
+import { prisma } from "@/lib/prisma";
+import { hashPassword } from "@/lib/security/passwords";
+
+const userInput = z.object({
+  email: z.string().trim().email(),
+  displayName: z.string().trim().min(2).max(120),
+  role: z.nativeEnum(TenantRole),
+  active: z.boolean().optional().default(true),
+  // 2026-09-10 — editing an existing user always submits password:"" (the
+  // field is left blank unless an admin explicitly types a new one — see
+  // UsersWorkspace.tsx's "(leave blank to keep)" hint), but
+  // z.string().min(8) treated "" as a present-but-too-short value rather
+  // than "no change", so it failed validation rather than being skipped by
+  // .optional() (which only accepts undefined, not ""). That made every
+  // Edit-user Save fail with a generic "The request is invalid." regardless
+  // of which user or which modules were involved. Preprocessing "" to
+  // undefined restores "blank = keep existing password"; a real
+  // too-short password is still rejected.
+  password: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(8).max(120).optional()),
+  moduleKeys: z.array(z.nativeEnum(ModuleKey)).optional().default([]),
+  permissionOverrides: z.array(z.object({ permission: z.string(), allowed: z.boolean() })).optional().default([]),
+});
+
+function auth(ctx: RequestContext) {
+  requireTenant(ctx);
+  requireTenantPermission(ctx, "USERS_MANAGE");
+  return ctx.companyId;
+}
+
+const MODULE_CATEGORY: Record<ModuleKey, string> = {
+  DASHBOARD: "Core",
+  CUSTOMERS: "CRM",
+  SUPPLIERS: "CRM",
+  JOBS_WIP: "Workshop",
+  INVENTORY: "Workshop",
+  STORAGE: "Workshop",
+  JOB_KITS: "Workshop",
+  REBUILDS: "Workshop",
+  PEX_STOCK: "Workshop",
+  PEX_TRACKING: "Workshop",
+  PROCUREMENT: "Supply Chain",
+  OUTWORK: "Supply Chain",
+  WARRANTY: "Workshop",
+  FIELD_SERVICE: "Workshop",
+  NOTIFICATIONS: "Core",
+  QUOTES: "Commercial",
+  SALES_ORDERS: "Commercial",
+  INVOICES: "Commercial",
+  PAYMENTS: "Commercial",
+  REPORTS: "Reporting",
+  ATTACHMENTS: "Core",
+  IMPORT_EXPORT: "Core",
+};
+
+async function companyEntitledModules(companyId: string) {
+  const company = await prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { internalCode: true, entitlements: { select: { module: true, status: true } } } });
+  if (company.internalCode === "BLACK_ROCK_EQUIPMENT") return new Set(Object.values(ModuleKey));
+  return new Set(company.entitlements.filter((row) => row.status === "ACTIVE" || row.status === "GRACE_READ_ONLY").map((row) => row.module));
+}
+
+function modulePermissions(moduleKey: ModuleKey) {
+  const prefixMap: Record<ModuleKey, string[]> = {
+    DASHBOARD: ["DASHBOARD_VIEW"],
+    CUSTOMERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("CUSTOMER") || p.startsWith("CUSTOMERS")),
+    SUPPLIERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("SUPPLIER") || p.startsWith("SUPPLIERS")),
+    JOBS_WIP: TENANT_PERMISSIONS.filter((p) => p.startsWith("JOBS_") || p.startsWith("JOB_")),
+    INVENTORY: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVENTORY_") || p.startsWith("PARTS_") || p.startsWith("MANUFACTURERS_")),
+    STORAGE: TENANT_PERMISSIONS.filter((p) => p.startsWith("STORAGE_")),
+    JOB_KITS: TENANT_PERMISSIONS.filter((p) => p.startsWith("JOB_KITS_")),
+    REBUILDS: [],
+    PEX_STOCK: TENANT_PERMISSIONS.filter((p) => p.startsWith("PEX_STOCK")),
+    PEX_TRACKING: TENANT_PERMISSIONS.filter((p) => p.startsWith("PEX_") || p === "PEX_TRACKING_VIEW"),
+    PROCUREMENT: [],
+    OUTWORK: [],
+    WARRANTY: [],
+    FIELD_SERVICE: [],
+    NOTIFICATIONS: ["DASHBOARD_VIEW"],
+    QUOTES: TENANT_PERMISSIONS.filter((p) => p.startsWith("QUOTES_") || p.startsWith("COMMERCIAL_TERMS") || p.startsWith("SERVICES_") || p === "NUMBERING_VIEW" || p === "NUMBERING_EDIT"),
+    SALES_ORDERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("SALES_ORDERS_")),
+    INVOICES: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVOICES_") || p.startsWith("PAYMENTS_") || p.startsWith("FINANCIAL_REPORTS_")),
+    PAYMENTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("PAYMENTS_")),
+    REPORTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("REPORTS_") || p.startsWith("AUDIT_")),
+    ATTACHMENTS: [],
+    IMPORT_EXPORT: TENANT_PERMISSIONS.filter((p) => p.endsWith("_EXPORT")),
+  };
+  return new Set(prefixMap[moduleKey] ?? []);
+}
+
+function computeOverrides(role: TenantRole, allowedModules: ModuleKey[], explicit: Array<{ permission: string; allowed: boolean }>) {
+  const entitledPermissions = new Set<string>();
+  for (const moduleKey of allowedModules) for (const permission of modulePermissions(moduleKey)) entitledPermissions.add(permission);
+  const base = DEFAULT_TENANT_PERMISSIONS[role];
+  const rows = explicit.filter((row) => TENANT_PERMISSIONS.includes(row.permission as never) && (entitledPermissions.has(row.permission) || !row.allowed));
+  const effective = mergePermissionOverrides(base, rows);
+  const autoRevocations = TENANT_PERMISSIONS.filter((permission) => !entitledPermissions.has(permission) && effective.has(permission as never)).map((permission) => ({ permission, allowed: false }));
+  return [...rows, ...autoRevocations];
+}
+
+export async function listTenantUsers(ctx: RequestContext) {
+  const companyId = auth(ctx);
+  const entitledModules = await companyEntitledModules(companyId);
+  const memberships = await prisma.companyMembership.findMany({ where: { companyId }, include: { user: true, permissions: true }, orderBy: [{ role: "asc" }, { createdAt: "asc" }] });
+  return memberships.map((membership) => {
+    const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[membership.role], membership.permissions);
+    const modules = Array.from(entitledModules).filter((moduleKey) => Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission as never)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW")));
+    return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: TENANT_ROLE_LABELS[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions };
+  });
+}
+
+export async function getTenantUserEditorData(ctx: RequestContext, membershipId?: string) {
+  const companyId = auth(ctx);
+  const entitled = Array.from(await companyEntitledModules(companyId)).sort();
+  const availableModules = entitled.map((moduleKey) => ({ moduleKey, label: MODULE_LABELS[moduleKey], category: MODULE_CATEGORY[moduleKey] ?? "Other" }));
+  const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
+  if (membershipId && !editor) throw new Error("NOT_FOUND");
+  const selectedModuleKeys = editor
+    ? entitled.filter((moduleKey) => {
+        const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[editor.role], editor.permissions);
+        return Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission as never)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW"));
+      })
+    : ["DASHBOARD", "JOBS_WIP"].filter((moduleKey) => entitled.includes(moduleKey as ModuleKey));
+  return {
+    availableModules,
+    roles: Object.values(TenantRole).map((role) => ({ role, label: TENANT_ROLE_LABELS[role] })),
+    editor: editor ? { membershipId: editor.id, email: editor.user.email, displayName: editor.user.displayName, role: editor.role, active: editor.user.active, membershipStatus: editor.status, selectedModuleKeys } : null,
+  };
+}
+
+export async function createTenantUser(ctx: RequestContext, raw: unknown) {
+  const companyId = auth(ctx);
+  const input = userInput.parse(raw);
+  const entitled = await companyEntitledModules(companyId);
+  if (input.moduleKeys.some((key) => !entitled.has(key))) throw new Error("UNLICENSED_MODULE_REQUESTED");
+  return prisma.$transaction(async (tx) => {
+    const email = input.email.toLowerCase();
+    let user = await tx.userIdentity.findUnique({ where: { email } });
+    if (!user) {
+      if (!input.password) throw new Error("PASSWORD_REQUIRED");
+      user = await tx.userIdentity.create({ data: { email, displayName: input.displayName, passwordHash: await hashPassword(input.password), active: input.active } });
+    } else {
+      user = await tx.userIdentity.update({ where: { id: user.id }, data: { displayName: input.displayName, active: input.active } });
+    }
+    const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId, role: input.role } });
+    const overrides = computeOverrides(input.role, input.moduleKeys, input.permissionOverrides);
+    if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId: membership.id, permission: row.permission, allowed: row.allowed })), skipDuplicates: true });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membership.id, action: "TENANT_USER_CREATED", correlationId: ctx.correlationId, afterData: { email, role: input.role, moduleKeys: input.moduleKeys } } });
+    return membership;
+  });
+}
+
+export async function updateTenantUser(ctx: RequestContext, membershipId: string, raw: unknown) {
+  const companyId = auth(ctx);
+  const input = userInput.partial({ email: true, displayName: true, role: true, password: true }).parse(raw);
+  const entitled = await companyEntitledModules(companyId);
+  if (input.moduleKeys && input.moduleKeys.some((key) => !entitled.has(key))) throw new Error("UNLICENSED_MODULE_REQUESTED");
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } });
+    if (!before) throw new Error("NOT_FOUND");
+    if (input.displayName || input.active !== undefined || input.password) {
+      await tx.userIdentity.update({ where: { id: before.userId }, data: { ...(input.displayName ? { displayName: input.displayName } : {}), ...(input.active !== undefined ? { active: input.active } : {}), ...(input.password ? { passwordHash: await hashPassword(input.password), sessionVersion: { increment: 1 } } : {}) } });
+    }
+    const membership = await tx.companyMembership.update({ where: { id: membershipId }, data: { ...(input.role ? { role: input.role } : {}), ...(raw && typeof raw === "object" && "membershipStatus" in (raw as Record<string, unknown>) ? { status: String((raw as Record<string, unknown>).membershipStatus) as never } : {}) } });
+    if (input.moduleKeys || input.permissionOverrides) {
+      await tx.membershipPermission.deleteMany({ where: { membershipId } });
+      const overrides = computeOverrides(input.role ?? before.role, input.moduleKeys ?? [], input.permissionOverrides ?? []);
+      if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
+    }
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify(before)) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
+    return membership;
+  });
+}
+
+export async function resetTenantUserSessions(ctx: RequestContext, membershipId: string) {
+  const companyId = auth(ctx);
+  return prisma.$transaction(async (tx) => {
+    const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId } });
+    if (!membership) throw new Error("NOT_FOUND");
+    await tx.userIdentity.update({ where: { id: membership.userId }, data: { sessionVersion: { increment: 1 } } });
+    await tx.userSession.updateMany({ where: { membershipId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_SESSIONS_RESET", correlationId: ctx.correlationId } });
+    return { ok: true };
+  });
+}

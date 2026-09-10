@@ -1,0 +1,1805 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  ENDED
+}
+
+enum TenantRole {
+  COMPANY_ADMIN
+  MANAGER
+  USER
+  STORE_CONTROLLER
+  SALES
+  FINANCE
+}
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+  SUPPORT_READ_ONLY
+  SUPPORT_OPERATOR
+  SECURITY_AUDITOR
+}
+
+enum SupportAccessMode {
+  READ_ONLY
+  READ_WRITE
+}
+
+enum ModuleKey {
+  DASHBOARD
+  CUSTOMERS
+  SUPPLIERS
+  JOBS_WIP
+  INVENTORY
+  STORAGE
+  JOB_KITS
+  REBUILDS
+  PEX_STOCK
+  PEX_TRACKING
+  PROCUREMENT
+  OUTWORK
+  WARRANTY
+  FIELD_SERVICE
+  NOTIFICATIONS
+  QUOTES
+  SALES_ORDERS
+  INVOICES
+  PAYMENTS
+  REPORTS
+  ATTACHMENTS
+  IMPORT_EXPORT
+}
+
+// The platform hosts more than one product line under one shared
+// identity/entitlement/support layer (see the platform merge plan doc) —
+// today only WORKSHOP has real modules built against it. SPORTS_LEAGUE is
+// reserved for the future Sports League product (ported from Ringball)
+// so the entitlement schema doesn't need another breaking migration when
+// that track starts. Every ModuleKey value above is a WORKSHOP module;
+// Sports League will get its own module keys when that work begins.
+enum Product {
+  WORKSHOP
+  SPORTS_LEAGUE
+}
+
+enum EntitlementSource {
+  INTERNAL_FREE
+  PLAN
+  BUNDLE
+  MODULE
+  TRIAL
+  PLATFORM_OVERRIDE
+}
+
+enum EntitlementStatus {
+  ACTIVE
+  SCHEDULED
+  GRACE_READ_ONLY
+  EXPIRED
+  SUSPENDED
+}
+
+enum AuditSource {
+  UI
+  API
+  IMPORT
+  INTEGRATION
+  WORKER
+  PLATFORM
+}
+
+enum AddressType {
+  BILLING
+  DELIVERY
+  PHYSICAL
+  POSTAL
+}
+
+enum TaxCodeType {
+  STANDARD
+  ZERO_RATED
+  EXEMPT
+  NON_TAXABLE
+}
+
+enum CommercialTermType {
+  PAYMENT
+  QUOTE_VALIDITY
+  DELIVERY
+  STANDARD_TEXT
+}
+
+enum StorageLocationType {
+  STORES
+  SHELF
+  BIN
+  WORKSHOP
+  PEX_HOLDING
+  QUARANTINE
+  RECEIVING
+  OTHER
+}
+
+enum StockMovementType {
+  RECEIPT
+  TRANSFER
+  ISSUE
+  RETURN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  RESERVATION
+  RESERVATION_RELEASE
+  PICK
+  UNPICK
+  REVERSAL
+  RECONCILIATION
+  SCRAP
+}
+
+enum StockReferenceType {
+  GENERAL
+  RECEIPT
+  TRANSFER
+  ISSUE
+  RETURN
+  ADJUSTMENT
+  RESERVATION
+  RECONCILIATION
+  SUPPLIER_DELIVERY
+  JOB
+  PEX_REPAIR
+  SALES_ORDER
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  RELEASED
+  CONVERTED
+  EXPIRED
+  CANCELLED
+}
+
+enum StockCountStatus {
+  OPEN
+  COMPLETED
+  APPROVED
+  CANCELLED
+}
+
+enum DocumentSequenceType {
+  JOB
+  PEX_JOB
+  QUOTE
+  SALES_ORDER
+  INVOICE
+  PAYMENT_RECEIPT
+  PROCUREMENT_RFQ
+}
+
+enum JobType {
+  STANDARD_REPAIR
+  PARTIAL_REPAIR
+  PEX_SUPPLY
+  PEX_RETURN
+  OUTRIGHT_SALE
+  FIELD_SERVICE
+  WARRANTY
+}
+
+// One flat status list shared across every job type, same pattern ModApp
+// uses (JobStatus there) — which subset/order is valid for a given job is
+// a pure function of JobType, computed in application code (see
+// src/lib/jobs/ui.ts's flow-family step lists), not a stored column. This
+// enum is additive-only relative to Apollo X's original 13 values (kept
+// exactly as they were, including their names) — the new values below fill
+// in the granularity ModApp's real-world use surfaced that Apollo X didn't
+// have yet: a pre-strip queue state, outwork/paint stages, a payment-wait
+// state distinct per flow, three dedicated field-service stages, two
+// dedicated parts-supply stages, and the reversible "quoted, client
+// declined, returned unrepaired" off-ramp.
+enum JobStatus {
+  DRAFT
+  TO_BE_COLLECTED
+  TO_BE_RECEIVED
+  // Queued for stripping, after receipt but before STRIPPING actually
+  // starts — main workshop flow only.
+  TO_STRIP
+  STRIPPING
+  QUOTE_IN_PROGRESS
+  AWAITING_GO_AHEAD
+  // Waiting on an external supplier/outwork task (e.g. machining,
+  // sandblasting sent out) — main workshop flow only, distinct from
+  // WAITING_FOR_PARTS (internal inventory).
+  AWAIT_OUTWORK
+  WAITING_FOR_PARTS
+  ASSEMBLY
+  TESTING
+  // Paint / wrap finishing stage — main workshop flow only.
+  TO_PAINT_WRAP
+  TO_BE_DELIVERED
+  // Delivered, payment still outstanding — main/parts-supply flows.
+  // Field-service jobs use AWAIT_PAYMENT below instead (kept as a
+  // separate value, matching ModApp's own flow-specific split).
+  DELIVERED_AWAITING_PAYMENT
+  COMPLETE
+  CLOSED
+  CANCELLED
+  // Quoted, client declined and asked for the unit back unrepaired.
+  // Deliberately not part of any flow's ordered step list (it can happen
+  // from several earlier stages, most commonly AWAITING_GO_AHEAD, and
+  // skips everything after it) — reversible back to AWAITING_GO_AHEAD if
+  // the client changes their mind. Main workshop flow only.
+  RETURNED_UNREPAIRED
+
+  // --- Field service flow only ---
+  TO_ATTEND
+  ON_ROUTE
+  IN_PROGRESS
+  AWAIT_PAYMENT
+
+  // --- Parts supply flow only (alongside the shared TO_BE_RECEIVED /
+  // TO_BE_DELIVERED / DELIVERED_AWAITING_PAYMENT / COMPLETE above) ---
+  RECEIVED
+  INSPECTING
+}
+
+enum JobActivityType {
+  JOB_CREATED
+  JOB_REGISTERED
+  STATUS_CHANGED
+  JOB_CLOSED
+  JOB_REOPENED
+  JOB_RETURNED_UNREPAIRED
+  PART_ADDED
+  PART_REMOVED
+  PART_RESERVED
+  RESERVATION_RELEASED
+  PART_ISSUED
+  PART_RETURNED
+  KIT_APPLIED
+  PART_LINE_RECEIVED
+  PART_LINE_RECEIVED_UNDONE
+  PART_LINE_ORDER_UPDATED
+  OUTWORK_SENT
+  OUTWORK_RECEIVED
+  OUTWORK_RECEIVED_UNDONE
+  OUTWORK_EDITED
+  OUTWORK_DELETED
+  PEX_STOCK_TRANSFERRED
+  PEX_STOCK_LINKED
+  PEX_STOCK_UNLINKED
+  PEX_RETURN_AUTO_CREATED
+  PEX_RETURN_REGISTERED
+  PEX_RETURN_RECEIVED
+  PEX_RETURN_RELINKED
+  PEX_SUPPLY_CANCELLED
+  PEX_RETURN_CLOSED_WITHOUT_CORE
+  PEX_STOCK_STATUS_CHANGED
+  NOTE_ADDED
+  FIELD_SERVICE_UPDATED
+  WARRANTY_UPDATED
+}
+
+enum PexStockStatus {
+  AVAILABLE
+  SUPPLIED
+  QUARANTINE
+  SCRAPPED
+}
+
+enum PexReturnStatus {
+  EXPECTED
+  RECEIVED
+  CLOSED_WITHOUT_RETURN
+}
+
+enum JobWarrantyStatus {
+  PENDING
+  GRANTED
+  DECLINED
+}
+
+enum PartLineStatus {
+  PENDING
+  IN_STOCK
+  ON_ORDER
+  // Some, but not all, of the ordered quantity has been received — the
+  // rest is tracked as "outstanding" (quantity - receivedQuantity) and can
+  // still be received in a later click, rather than the line being stuck
+  // once any amount at all comes in.
+  PARTIALLY_RECEIVED
+  RECEIVED
+}
+
+enum OutworkStatus {
+  SENT_OUT
+  RECEIVED
+}
+
+model UserIdentity {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  displayName    String
+  passwordHash   String
+  active         Boolean  @default(true)
+  sessionVersion Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  memberships         CompanyMembership[]
+  platformAssignments PlatformRoleAssignment[]
+  sessions            UserSession[]
+  initiatedSupport    PlatformSupportAccess[]  @relation("SupportInitiator")
+  endedSupport        PlatformSupportAccess[]  @relation("SupportEnder")
+  auditEvents         AuditEvent[]
+  stockMovements      StockMovement[]          @relation("StockMovementActor")
+  stockReservations   StockReservation[]       @relation("StockReservationActor")
+  stockReleases       StockReservation[]       @relation("StockReservationReleaser")
+  stockCountsCounted  StockCount[]             @relation("StockCountCounter")
+  stockCountsApproved StockCount[]             @relation("StockCountApprover")
+  jobsCreated         Job[]                    @relation("JobCreatedBy")
+  jobsUpdated         Job[]                    @relation("JobUpdatedBy")
+  jobsClosed          Job[]                    @relation("JobClosedBy")
+  jobsStripAssigned   Job[]                    @relation("JobStripMechanic")
+  jobsBuildAssigned   Job[]                    @relation("JobBuildMechanic")
+  jobKitsCreated      JobKit[]
+  jobNotes            JobNote[]                @relation("JobNoteAuthor")
+  jobActivities       JobActivity[]            @relation("JobActivityActor")
+  pexStockUnitsCreated PexStockUnit[]          @relation("PexStockUnitCreatedBy")
+  pexStockUnitsUpdated PexStockUnit[]          @relation("PexStockUnitUpdatedBy")
+  pexSupplyLinksCreated PexSupplyLink[]        @relation("PexSupplyLinkCreatedBy")
+  pexSupplyLinksUpdated PexSupplyLink[]        @relation("PexSupplyLinkUpdatedBy")
+  pexReturnsReceived  PexSupplyLink[]          @relation("PexReturnReceivedBy")
+  pexReturnsClosed    PexSupplyLink[]          @relation("PexReturnClosedBy")
+  jobPartLinesCreated JobPartLine[]            @relation("JobPartLineCreatedBy")
+  jobPartLinesUpdated JobPartLine[]            @relation("JobPartLineUpdatedBy")
+  outworkItemsCreated OutworkItem[]            @relation("OutworkItemCreatedBy")
+  outworkItemsUpdated OutworkItem[]            @relation("OutworkItemUpdatedBy")
+  moduleCatalogCreated ModuleCatalogEntry[]    @relation("ModuleCatalogCreatedBy")
+  ticketsReported      SupportTicket[]         @relation("TicketReportedBy")
+  ticketsAssigned      SupportTicket[]         @relation("TicketAssignedSupport")
+  ticketMessages       SupportTicketMessage[]  @relation("TicketMessageAuthor")
+  ticketEvents         SupportTicketEvent[]    @relation("TicketEventActor")
+  ticketAttachmentsUploaded SupportTicketAttachment[] @relation("TicketAttachmentUploadedBy")
+  dashboardConfigs     UserDashboardConfig[]
+}
+
+model Company {
+  id                     String       @id @default(cuid())
+  internalCode           String       @unique
+  legalName              String
+  tradingName            String?
+  status                 TenantStatus @default(ACTIVE)
+  defaultCurrencyCode    String       @default("ZAR")
+  defaultGracePeriodDays Int          @default(30)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  memberships       CompanyMembership[]
+  products          CompanyProduct[]
+  jobTypePresets    JobTypePreset[]
+  entitlements      CompanyModuleEntitlement[]
+  entitlementEvents EntitlementHistory[]
+  supportAccess     PlatformSupportAccess[]
+  auditEvents       AuditEvent[]
+  settings          CompanySettings?
+  stockBalances     StockBalance[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
+  stockCounts       StockCount[]
+  addresses         CompanyAddress[]
+  customers         Customer[]
+  customerBranches  CustomerBranch[]
+  customerContacts  CustomerContact[]
+  customerAddresses CustomerAddress[]
+  suppliers         Supplier[]
+  supplierContacts  SupplierContact[]
+  supplierAddresses SupplierAddress[]
+  manufacturers     Manufacturer[]
+  supplierBrands    SupplierManufacturer[]
+  parts             Part[]
+  storageLocations  StorageLocation[]
+  serviceItems      ServiceItem[]
+  taxCodes          TaxCode[]
+  commercialTerms   CommercialTerm[]
+  documentSequences DocumentNumberSequence[]
+  jobs              Job[]
+  jobComponents     JobComponent[]
+  jobKits           JobKit[]
+  jobKitLines       JobKitLine[]
+  jobPartLines      JobPartLine[]
+  outworkItems      OutworkItem[]
+  jobNotes          JobNote[]
+  jobActivities     JobActivity[]
+  jobFieldServiceReports JobFieldServiceReport[]
+  jobWarranties     JobWarranty[]
+  pexStockUnits     PexStockUnit[]
+  pexSupplyLinks    PexSupplyLink[]
+  supportTickets    SupportTicket[]
+  dashboardConfigs  UserDashboardConfig[]
+}
+
+// The top-level subscription record: which Product(s) an organization is
+// granted access to at all, separate from and above CompanyModuleEntitlement
+// (which gates individual modules *within* a subscribed product). A company
+// with no CompanyProduct row for a given Product should be treated as not
+// subscribed to it, regardless of any module entitlement rows that might
+// exist. Every existing/current company is WORKSHOP-only; SPORTS_LEAGUE
+// subscriptions start appearing once that product track is built.
+model CompanyProduct {
+  id            String            @id @default(cuid())
+  companyId     String
+  product       Product
+  status        EntitlementStatus
+  effectiveFrom DateTime          @default(now())
+  expiresAt     DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, product])
+  @@index([companyId, status])
+}
+
+model CompanyMembership {
+  id        String           @id @default(cuid())
+  userId    String
+  companyId String
+  role      TenantRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user        UserIdentity           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company     Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  permissions MembershipPermission[]
+  sessions    UserSession[]
+
+  @@unique([userId, companyId])
+  @@index([companyId, status])
+}
+
+model MembershipPermission {
+  id           String  @id @default(cuid())
+  membershipId String
+  permission   String
+  allowed      Boolean
+
+  membership CompanyMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, permission])
+}
+
+model PlatformRoleAssignment {
+  id        String       @id @default(cuid())
+  userId    String
+  role      PlatformRole
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user        UserIdentity         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissions PlatformPermission[]
+
+  @@unique([userId, role])
+}
+
+model PlatformPermission {
+  id           String  @id @default(cuid())
+  assignmentId String
+  permission   String
+  allowed      Boolean
+
+  assignment PlatformRoleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, permission])
+}
+
+model PlatformSupportAccess {
+  id         String            @id @default(cuid())
+  operatorId String
+  companyId  String
+  mode       SupportAccessMode
+  reason     String
+  startedAt  DateTime          @default(now())
+  expiresAt  DateTime
+  endedAt    DateTime?
+  endedById  String?
+
+  operator UserIdentity  @relation("SupportInitiator", fields: [operatorId], references: [id])
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  endedBy  UserIdentity? @relation("SupportEnder", fields: [endedById], references: [id])
+  sessions UserSession[]
+
+  @@index([operatorId, expiresAt])
+  @@index([companyId, expiresAt])
+}
+
+model UserSession {
+  id              String    @id @default(cuid())
+  tokenHash       String    @unique
+  userId          String
+  membershipId    String?
+  supportAccessId String?
+  sessionVersion  Int
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  lastSeenAt      DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  user          UserIdentity           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership    CompanyMembership?     @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  supportAccess PlatformSupportAccess? @relation(fields: [supportAccessId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model LoginThrottle {
+  keyHash      String    @id
+  attemptCount Int       @default(0)
+  windowStart  DateTime  @default(now())
+  lockedUntil  DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  @@index([lockedUntil])
+}
+
+model CompanyModuleEntitlement {
+  id                    String            @id @default(cuid())
+  companyId             String
+  product               Product           @default(WORKSHOP)
+  module                ModuleKey
+  source                EntitlementSource
+  status                EntitlementStatus
+  effectiveFrom         DateTime
+  expiresAt             DateTime?
+  gracePeriodDays       Int?
+  readOnlyOverrideUntil DateTime?
+  metadata              Json?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, product, module])
+  @@index([companyId, product, status])
+}
+
+model EntitlementHistory {
+  id             String             @id @default(cuid())
+  companyId      String
+  product        Product            @default(WORKSHOP)
+  module         ModuleKey
+  previousStatus EntitlementStatus?
+  newStatus      EntitlementStatus
+  source         EntitlementSource
+  effectiveAt    DateTime
+  expiresAt      DateTime?
+  reason         String?
+  changedById    String?
+  createdAt      DateTime           @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, product, module, createdAt])
+}
+
+model CompanySettings {
+  id                     String  @id @default(cuid())
+  companyId              String  @unique
+  defaultCurrencyCode    String  @default("ZAR")
+  defaultTaxJurisdiction String  @default("ZA")
+  themeColor             String?
+  logoObjectKey          String?
+  registrationNumber     String?
+  vatNumber              String?
+  mainTelephone          String?
+  mainEmail              String?
+  website                String?
+  defaultTaxCodeId       String?
+  defaultPaymentTermId   String?
+  quoteValidityDays      Int     @default(30)
+  documentHeaderText     String?
+  documentFooterText     String?
+  accentColor            String?
+  secondaryColor         String?
+  logoData               Bytes?
+  logoMimeType           String?
+  logoFileName           String?
+  logoSizeBytes          Int?
+  logoUpdatedAt          DateTime?
+
+  company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  defaultTaxCode     TaxCode?        @relation(fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
+  defaultPaymentTerm CommercialTerm? @relation(fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
+}
+
+model CompanyAddress {
+  id          String      @id @default(cuid())
+  companyId   String
+  type        AddressType
+  label       String?
+  line1       String
+  line2       String?
+  city        String?
+  province    String?
+  postalCode  String?
+  countryCode String      @default("ZA")
+  isPrimary   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, type])
+}
+
+model Customer {
+  id                    String            @id @default(cuid())
+  companyId             String
+  name                  String
+  nameNormalized        String
+  tradingName           String?
+  accountCode           String?
+  accountCodeNormalized String?
+  registrationNumber    String?
+  vatNumber             String?
+  mainTelephone         String?
+  mainEmail             String?
+  website               String?
+  notes                 String?
+  active                Boolean           @default(true)
+  paymentTermId         String?
+  defaultTaxCodeId      String?
+  currencyCode          String            @default("ZAR")
+  creditLimit           Decimal?          @db.Decimal(19, 4)
+  accountOnHold         Boolean           @default(false)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  company               Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  paymentTerm           CommercialTerm?   @relation("CustomerPaymentTerm", fields: [paymentTermId], references: [id], onDelete: SetNull)
+  defaultTaxCode        TaxCode?          @relation("CustomerTaxCode", fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
+  branches              CustomerBranch[]
+  contacts              CustomerContact[]
+  addresses             CustomerAddress[]
+  jobs                  Job[]
+
+  @@unique([companyId, accountCodeNormalized])
+  @@index([companyId, nameNormalized])
+  @@index([companyId, active])
+}
+
+model CustomerBranch {
+  id              String            @id @default(cuid())
+  companyId       String
+  customerId      String
+  name            String
+  code            String?
+  mainTelephone   String?
+  mainEmail       String?
+  notes           String?
+  active          Boolean           @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  contacts        CustomerContact[]
+  addresses       CustomerAddress[]
+
+  @@unique([companyId, customerId, code])
+  @@index([companyId, customerId])
+}
+
+model CustomerContact {
+  id              String          @id @default(cuid())
+  companyId       String
+  customerId      String
+  branchId        String?
+  firstName       String
+  lastName        String?
+  position        String?
+  telephone       String?
+  mobile          String?
+  email           String?
+  notes           String?
+  isPrimary       Boolean         @default(false)
+  active          Boolean         @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch          CustomerBranch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, customerId])
+  @@index([companyId, email])
+}
+
+model CustomerAddress {
+  id              String          @id @default(cuid())
+  companyId       String
+  customerId      String
+  branchId        String?
+  type            AddressType
+  label           String?
+  line1           String
+  line2           String?
+  city            String?
+  province        String?
+  postalCode      String?
+  countryCode     String          @default("ZA")
+  isPrimary       Boolean         @default(false)
+  active          Boolean         @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch          CustomerBranch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, customerId, type])
+}
+
+model Supplier {
+  id                    String                 @id @default(cuid())
+  companyId             String
+  name                  String
+  nameNormalized        String
+  accountCode           String?
+  accountCodeNormalized String?
+  registrationNumber    String?
+  vatNumber             String?
+  mainTelephone         String?
+  mainEmail             String?
+  website               String?
+  notes                 String?
+  active                Boolean                @default(true)
+  paymentTermId         String?
+  currencyCode          String                 @default("ZAR")
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  company               Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  paymentTerm           CommercialTerm?        @relation("SupplierPaymentTerm", fields: [paymentTermId], references: [id], onDelete: SetNull)
+  contacts              SupplierContact[]
+  addresses             SupplierAddress[]
+  manufacturers         SupplierManufacturer[]
+  jobPartLinesOrdered   JobPartLine[]           @relation("JobPartLineOrderedFromSupplier")
+  outworkItems          OutworkItem[]           @relation("OutworkItemSupplier")
+
+  @@unique([companyId, accountCodeNormalized])
+  @@index([companyId, nameNormalized])
+  @@index([companyId, active])
+}
+
+model SupplierContact {
+  id              String    @id @default(cuid())
+  companyId       String
+  supplierId      String
+  firstName       String
+  lastName        String?
+  position        String?
+  telephone       String?
+  mobile          String?
+  email           String?
+  notes           String?
+  isPrimary       Boolean   @default(false)
+  active          Boolean   @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, supplierId])
+}
+
+model SupplierAddress {
+  id              String      @id @default(cuid())
+  companyId       String
+  supplierId      String
+  type            AddressType
+  label           String?
+  line1           String
+  line2           String?
+  city            String?
+  province        String?
+  postalCode      String?
+  countryCode     String      @default("ZA")
+  isPrimary       Boolean     @default(false)
+  active          Boolean     @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, supplierId, type])
+}
+
+model Manufacturer {
+  id             String                 @id @default(cuid())
+  companyId      String
+  name           String
+  nameNormalized String
+  code           String?
+  codeNormalized String?
+  description    String?
+  active         Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  company        Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  parts          Part[]
+  suppliers      SupplierManufacturer[]
+
+  @@unique([companyId, nameNormalized])
+  @@unique([companyId, codeNormalized])
+  @@index([companyId, active])
+}
+
+model SupplierManufacturer {
+  id              String       @id @default(cuid())
+  companyId       String
+  supplierId      String
+  manufacturerId  String
+  createdAt       DateTime     @default(now())
+  active          Boolean      @default(true)
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  company         Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier        Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  manufacturer    Manufacturer @relation(fields: [manufacturerId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, supplierId, manufacturerId])
+  @@index([companyId, manufacturerId])
+}
+
+model Part {
+  id                     String             @id @default(cuid())
+  companyId              String
+  partNumber             String
+  partNumberNormalized   String
+  description            String
+  manufacturerId         String?
+  manufacturerPartNumber String?
+  category               String?
+  operationalStatus     PartOperationalStatus @default(OPERATIONAL)
+  unitOfMeasure          String             @default("EA")
+  notes                  String?
+  active                 Boolean            @default(true)
+  defaultPurchaseCost    Decimal?           @db.Decimal(19, 4)
+  defaultSellingPrice    Decimal?           @db.Decimal(19, 4)
+  taxCodeId              String?
+  reorderMinimum         Decimal?           @db.Decimal(19, 4)
+  reorderMaximum         Decimal?           @db.Decimal(19, 4)
+  reorderQuantity        Decimal?           @db.Decimal(19, 4)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  company                Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  manufacturer           Manufacturer?      @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
+  taxCode                TaxCode?           @relation("PartTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+  stockBalances          StockBalance[]
+  stockMovements         StockMovement[]
+  stockReservations      StockReservation[]
+  jobKitLines        JobKitLine[]
+  stockCountLines        StockCountLine[]
+  jobPartLines           JobPartLine[]
+
+  @@unique([companyId, partNumberNormalized])
+  @@index([companyId, description])
+  @@index([companyId, active])
+}
+
+enum PartOperationalStatus {
+  OPERATIONAL
+  HISTORICAL_REFERENCE
+}
+
+model StorageLocation {
+  id                String              @id @default(cuid())
+  companyId         String
+  code              String
+  codeNormalized    String
+  name              String
+  type              StorageLocationType
+  description       String?
+  parentId          String?
+  active            Boolean             @default(true)
+  sortOrder         Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  company           Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  parent            StorageLocation?    @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children          StorageLocation[]   @relation("LocationHierarchy")
+  stockBalances     StockBalance[]
+  movementsFrom     StockMovement[]     @relation("MovementFrom")
+  movementsTo       StockMovement[]     @relation("MovementTo")
+  stockReservations StockReservation[]
+  stockCounts       StockCount[]
+  pexStockUnits     PexStockUnit[]
+
+  @@unique([companyId, codeNormalized])
+  @@unique([id, companyId])
+  @@index([companyId, parentId, sortOrder])
+}
+
+model StockBalance {
+  id                String    @id @default(cuid())
+  companyId         String
+  partId            String
+  locationId        String
+  quantityOnHand    Decimal   @default(0) @db.Decimal(19, 4)
+  quantityReserved  Decimal   @default(0) @db.Decimal(19, 4)
+  lowStockThreshold Decimal?  @db.Decimal(19, 4)
+  reorderMaximum    Decimal?  @db.Decimal(19, 4)
+  version           Int       @default(1)
+  lastMovementAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company  Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part     Part            @relation(fields: [partId], references: [id], onDelete: Restrict)
+  location StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, partId, locationId])
+  @@index([companyId, partId])
+  @@index([companyId, locationId])
+  @@index([companyId, lastMovementAt])
+}
+
+model StockMovement {
+  id                    String              @id @default(cuid())
+  companyId             String
+  partId                String
+  movementType          StockMovementType
+  quantity              Decimal             @db.Decimal(19, 4)
+  fromLocationId        String?
+  toLocationId          String?
+  referenceType         StockReferenceType?
+  referenceId           String?
+  referenceNumber       String?
+  unitCost              Decimal?            @db.Decimal(19, 4)
+  reason                String?
+  notes                 String?
+  actorId               String?
+  resultingFromQuantity Decimal?            @db.Decimal(19, 4)
+  resultingToQuantity   Decimal?            @db.Decimal(19, 4)
+  idempotencyKey        String?
+  reversalOfId          String?
+  correlationId         String
+  occurredAt            DateTime            @default(now())
+
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part         Part             @relation(fields: [partId], references: [id], onDelete: Restrict)
+  fromLocation StorageLocation? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocation   StorageLocation? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: Restrict)
+  actor        UserIdentity?    @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
+  reversalOf   StockMovement?   @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals    StockMovement[]  @relation("MovementReversal")
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, occurredAt])
+  @@index([companyId, partId, occurredAt])
+  @@index([companyId, movementType, occurredAt])
+  @@index([companyId, fromLocationId, occurredAt])
+  @@index([companyId, toLocationId, occurredAt])
+  @@index([companyId, referenceType, referenceId])
+  @@index([correlationId])
+}
+
+model StockReservation {
+  id              String                 @id @default(cuid())
+  companyId       String
+  partId          String
+  locationId      String
+  quantity        Decimal                @db.Decimal(19, 4)
+  status          StockReservationStatus @default(ACTIVE)
+  referenceType   StockReferenceType?
+  referenceId     String?
+  referenceNumber String?
+  reason          String?
+  notes           String?
+  expiresAt       DateTime?
+  actorId         String?
+  releasedById    String?
+  releasedAt      DateTime?
+  idempotencyKey  String?
+  correlationId   String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part       Part            @relation(fields: [partId], references: [id], onDelete: Restrict)
+  location   StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  actor      UserIdentity?   @relation("StockReservationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  releasedBy UserIdentity?   @relation("StockReservationReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, partId, status])
+  @@index([companyId, locationId, status])
+  @@index([companyId, referenceType, referenceId])
+  @@index([companyId, status, expiresAt])
+}
+
+model StockCount {
+  id              String           @id @default(cuid())
+  companyId       String
+  locationId      String
+  status          StockCountStatus @default(OPEN)
+  referenceNumber String?
+  notes           String?
+  countedById     String?
+  approvedById    String?
+  startedAt       DateTime         @default(now())
+  completedAt     DateTime?
+  approvedAt      DateTime?
+  correlationId   String
+
+  company    Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  location   StorageLocation  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  countedBy  UserIdentity?    @relation("StockCountCounter", fields: [countedById], references: [id], onDelete: SetNull)
+  approvedBy UserIdentity?    @relation("StockCountApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  lines      StockCountLine[]
+
+  @@index([companyId, status])
+  @@index([companyId, locationId, startedAt])
+}
+
+model StockCountLine {
+  id               String  @id @default(cuid())
+  companyId        String
+  countId          String
+  partId           String
+  expectedQuantity Decimal @db.Decimal(19, 4)
+  countedQuantity  Decimal @db.Decimal(19, 4)
+  variance         Decimal @db.Decimal(19, 4)
+  reason           String?
+
+  part  Part       @relation(fields: [partId], references: [id], onDelete: Restrict)
+  count StockCount @relation(fields: [countId], references: [id], onDelete: Restrict)
+
+  @@unique([countId, partId])
+  @@index([companyId, partId])
+}
+
+model ServiceItem {
+  id                  String   @id @default(cuid())
+  companyId           String
+  code                String
+  codeNormalized      String
+  description         String
+  category            String?
+  unitOfMeasure       String   @default("HOUR")
+  defaultCost         Decimal? @db.Decimal(19, 4)
+  defaultSellingPrice Decimal? @db.Decimal(19, 4)
+  taxCodeId           String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  taxCode             TaxCode? @relation("ServiceTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, codeNormalized])
+  @@index([companyId, active])
+}
+
+model TaxCode {
+  id               String            @id @default(cuid())
+  companyId        String
+  code             String
+  codeNormalized   String
+  description      String
+  rate             Decimal           @db.Decimal(9, 6)
+  type             TaxCodeType
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  company          Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customerDefaults Customer[]        @relation("CustomerTaxCode")
+  parts            Part[]            @relation("PartTaxCode")
+  services         ServiceItem[]     @relation("ServiceTaxCode")
+  settingsDefaults CompanySettings[]
+
+  @@unique([companyId, codeNormalized, effectiveFrom])
+  @@index([companyId, active, effectiveFrom])
+}
+
+model CommercialTerm {
+  id               String             @id @default(cuid())
+  companyId        String
+  type             CommercialTermType
+  code             String
+  codeNormalized   String
+  label            String
+  days             Int?
+  termsText        String?
+  active           Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  company          Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customerDefaults Customer[]         @relation("CustomerPaymentTerm")
+  supplierDefaults Supplier[]         @relation("SupplierPaymentTerm")
+  settingsDefaults CompanySettings[]
+
+  @@unique([companyId, type, codeNormalized])
+  @@index([companyId, type, active])
+}
+
+model DocumentNumberSequence {
+  id                      String               @id @default(cuid())
+  companyId               String
+  type                    DocumentSequenceType
+  prefix                  String
+  padding                 Int                  @default(6)
+  nextValue               BigInt               @default(1)
+  includeFinancialYear    Boolean              @default(false)
+  financialYearStartMonth Int                  @default(3)
+  active                  Boolean              @default(true)
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  company                 Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, type])
+  @@index([companyId, active])
+}
+
+model AuditEvent {
+  id              String      @id @default(cuid())
+  companyId       String?
+  actorId         String?
+  supportAccessId String?
+  source          AuditSource
+  module          String
+  entityType      String
+  entityId        String?
+  action          String
+  beforeData      Json?
+  afterData       Json?
+  reason          String?
+  correlationId   String
+  ipAddress       String?
+  userAgent       String?
+  occurredAt      DateTime    @default(now())
+
+  company Company?      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actor   UserIdentity? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@index([correlationId])
+}
+
+// Hybrid job-type model (see the platform merge plan doc): JobType stays a
+// fixed enum because it drives real behavior (which status-flow family a
+// job follows, which ModuleKey gates it — see the flow-family logic in
+// src/lib/jobs/ui.ts) — that's deliberately NOT customizable. What IS
+// customizable, matching ModApp's per-company JobTypeConfig, is the label a
+// company sees and picks from: a JobTypePreset is a company's own named
+// preset (e.g. "Sandblasting", "Hydraulic Rebuild") that declares which
+// fixed JobType it behaves as. Selecting a preset in the UI sets Job.type
+// to `behavesAs`; the preset's own label is just how it's shown and
+// searched in that company's job-type picker.
+model JobTypePreset {
+  id        String   @id @default(cuid())
+  companyId String
+  key       String
+  label     String
+  behavesAs JobType
+  active    Boolean  @default(true)
+  sortOrder Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, key])
+  @@index([companyId, active])
+}
+
+// Matches ModApp's PurchaseOrderStatus exactly (field parity pass, see the
+// platform merge plan doc) — used on Job.purchaseOrderStatus below.
+enum PurchaseOrderStatus {
+  TBA
+  AWAIT_PAYMENT
+  PARTIALLY_PAID
+  PAID
+  NOT_APPLICABLE
+}
+
+// Matches ModApp's DeliveryType exactly — used for both legs of a job's
+// transport (Job.deliveryType for the outbound/return leg,
+// Job.receivingTransport for how the unit originally arrived).
+enum DeliveryType {
+  INTERNAL_BAKKIE
+  INTERNAL_TRUCK
+  INTERNAL_COURIER
+  EXTERNAL_BAKKIE
+  EXTERNAL_TRUCK
+  EXTERNAL_COURIER
+}
+
+model Job {
+  id                  String      @id @default(cuid())
+  companyId           String
+  jobNumber           String?     @unique
+  draftNumber         String      @unique @default(cuid())
+  status              JobStatus   @default(DRAFT)
+  type                JobType
+  customerId          String
+  customerReference   String?
+  customerPo          String?
+  dateReceived        DateTime?
+  machineMake         String?
+  machineModel        String?
+  machineSerial       String?
+  component           String?
+  componentType       String?
+  componentSerial     String?
+  componentPartNumber String?
+  description         String?
+  etaDate             DateTime?
+  // Staff-only ETA a mechanic sets for their own planning, distinct from
+  // the client-facing etaDate above — visible/editable only to
+  // Company Admin / Manager (mirrors ModApp's canEditMechanicEta gate).
+  mechanicEtaDate     DateTime?
+  relationshipNotes   String?
+  relatedJobId        String?
+  stripMechanicId     String?
+  buildMechanicId     String?
+  closingOutcome      String?
+  closingNote         String?
+  closedAt            DateTime?
+  closedById          String?
+  createdById         String
+  updatedById         String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  // --- Field-parity additions (matching ModApp's Job model) ---
+  // Quote / sales-order / invoice / purchase-order references. Plain
+  // string/date fields for now, same as ModApp — become proper foreign
+  // keys once the Quotes/Sales Orders/Invoices modules (still unbuilt,
+  // see ModuleKey) exist.
+  quoteNumber          String?
+  quoteDate            DateTime?
+  salesOrderNumber     String?
+  salesOrderDate       DateTime?
+  invoiceNumber        String?
+  invoiceDate          DateTime?
+  purchaseOrderNumber  String?
+  purchaseOrderDate    DateTime?
+  purchaseOrderStatus  PurchaseOrderStatus @default(NOT_APPLICABLE)
+  // Two independent transport legs — how the unit arrived vs. how it goes
+  // back out — matching ModApp's separate receivingTransport/deliveryType.
+  deliveryDate         DateTime?
+  deliveryType         DeliveryType?
+  receivingTransport   DeliveryType?
+  // Field-service-only: how far the technician travelled to/from site.
+  kmsTravelled         Int?
+  paymentDateReceived  DateTime?
+  // Ticked when no payment is required at all for this job (e.g. a
+  // no-charge warranty repair) — lets a "payment received" guard be
+  // satisfied without a real date, distinguishable from "not paid yet".
+  paymentNotApplicable Boolean   @default(false)
+  machineHours         Decimal?  @db.Decimal(19, 4)
+  plantNumber          String?
+  reportNumber         String?
+  importTrackingNumber String?
+  // Free-text link to a prior job number (e.g. a "ready to go" PEX unit
+  // being redeployed) — kept as a plain field for traceability and for
+  // the historical-data import, even though Apollo X's own PEX linking
+  // (PexStockUnit/PexSupplyLink) is the structured, authoritative version.
+  previousJobNumber    String?
+  salesRepresentative  String?
+
+  company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  relatedJob          Job?          @relation("RelatedJob", fields: [relatedJobId], references: [id], onDelete: SetNull)
+  relatedJobs         Job[]         @relation("RelatedJob")
+  stripMechanic       UserIdentity? @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
+  buildMechanic       UserIdentity? @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
+  createdBy           UserIdentity  @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  components          JobComponent[]
+  partLines           JobPartLine[]
+  outworkItems        OutworkItem[]
+  notes               JobNote[]
+  activities          JobActivity[]
+  fieldServiceReport  JobFieldServiceReport?
+  warranty            JobWarranty?
+  pexSourceStockUnits PexStockUnit[]          @relation("PexStockSourceJob")
+  pexSupplyStockUnits PexStockUnit[]          @relation("PexStockCurrentSupplyJob")
+  pexReturnStockUnits PexStockUnit[]          @relation("PexStockCurrentReturnJob")
+  pexSupplyLinksAsSupply PexSupplyLink[]      @relation("PexSupplyJob")
+  pexSupplyLinksAsReturn PexSupplyLink[]      @relation("PexReturnJob")
+
+  @@unique([id, companyId])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, type, createdAt])
+  @@index([companyId, customerId, createdAt])
+}
+
+model JobComponent {
+  id                  String   @id @default(cuid())
+  companyId           String
+  jobId               String
+  component           String
+  componentType       String?
+  componentSerial     String?
+  componentPartNumber String?
+  createdAt           DateTime @default(now())
+
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  pexStockUnit        PexStockUnit?
+
+  @@unique([id, companyId])
+  @@index([companyId, jobId])
+}
+
+model PexStockUnit {
+  id                  String         @id @default(cuid())
+  companyId           String
+  sourceJobId         String
+  sourceJobComponentId String         @unique
+  currentSupplyJobId  String?
+  currentReturnJobId  String?
+  storageLocationId   String?
+  component           String
+  componentType       String?
+  componentPartNumber String?
+  componentSerial     String?
+  machineModel        String?
+  machineSerial       String?
+  status              PexStockStatus @default(AVAILABLE)
+  notes               String?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  company             Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sourceJob           Job            @relation("PexStockSourceJob", fields: [sourceJobId], references: [id], onDelete: Restrict)
+  sourceJobComponent  JobComponent   @relation(fields: [sourceJobComponentId], references: [id], onDelete: Restrict)
+  currentSupplyJob    Job?           @relation("PexStockCurrentSupplyJob", fields: [currentSupplyJobId], references: [id], onDelete: SetNull)
+  currentReturnJob    Job?           @relation("PexStockCurrentReturnJob", fields: [currentReturnJobId], references: [id], onDelete: SetNull)
+  storageLocation     StorageLocation? @relation(fields: [storageLocationId], references: [id], onDelete: SetNull)
+  createdBy           UserIdentity?  @relation("PexStockUnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy           UserIdentity?  @relation("PexStockUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  supplyLinks         PexSupplyLink[]
+
+  @@unique([id, companyId])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, sourceJobId])
+  @@index([companyId, currentSupplyJobId])
+  @@index([companyId, currentReturnJobId])
+  @@index([companyId, storageLocationId])
+}
+
+model PexSupplyLink {
+  id                        String          @id @default(cuid())
+  companyId                 String
+  supplyJobId               String
+  returnJobId               String
+  pexStockUnitId            String
+  returnStatus              PexReturnStatus @default(EXPECTED)
+  expectedCoreDescription   String?
+  expectedCoreType          String?
+  expectedCorePartNumber    String?
+  expectedCoreSerial        String?
+  returnedCoreDescription   String?
+  returnedCoreType          String?
+  returnedCorePartNumber    String?
+  returnedCoreSerial        String?
+  returnMismatchReason      String?
+  returnedReceivedAt        DateTime?
+  returnedReceivedById      String?
+  closedWithoutReturnReason String?
+  closedWithoutReturnNote   String?
+  closedWithoutReturnAt     DateTime?
+  closedWithoutReturnById   String?
+  active                    Boolean         @default(true)
+  createdById               String?
+  updatedById               String?
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  company                   Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplyJob                 Job             @relation("PexSupplyJob", fields: [supplyJobId], references: [id], onDelete: Restrict)
+  returnJob                 Job             @relation("PexReturnJob", fields: [returnJobId], references: [id], onDelete: Restrict)
+  pexStockUnit              PexStockUnit    @relation(fields: [pexStockUnitId], references: [id], onDelete: Restrict)
+  returnedReceivedBy        UserIdentity?   @relation("PexReturnReceivedBy", fields: [returnedReceivedById], references: [id], onDelete: SetNull)
+  closedWithoutReturnBy     UserIdentity?   @relation("PexReturnClosedBy", fields: [closedWithoutReturnById], references: [id], onDelete: SetNull)
+  createdBy                 UserIdentity?   @relation("PexSupplyLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                 UserIdentity?   @relation("PexSupplyLinkUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([supplyJobId, companyId])
+  @@unique([returnJobId, companyId])
+  @@unique([id, companyId])
+  @@index([companyId, pexStockUnitId, active])
+  @@index([companyId, returnStatus, active])
+}
+
+model JobKit {
+  id             String       @id @default(cuid())
+  companyId      String
+  name           String
+  nameNormalized String
+  description    String?
+  machineMake    String?
+  machineModel   String?
+  componentType  String?
+  active         Boolean      @default(true)
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  company        Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  createdBy      UserIdentity? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  lines          JobKitLine[]
+
+  @@unique([companyId, nameNormalized])
+  @@unique([id, companyId])
+  @@index([companyId, active])
+  @@index([companyId, machineMake])
+  @@index([companyId, machineModel])
+  @@index([companyId, componentType])
+}
+
+model JobKitLine {
+  id              String    @id @default(cuid())
+  companyId       String
+  jobKitId        String
+  partId          String
+  quantityDefault Decimal   @db.Decimal(19, 4)
+  notes           String?
+  operationalStatus StorageOperationalStatus @default(OPERATIONAL)
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobKit          JobKit    @relation(fields: [jobKitId], references: [id], onDelete: Cascade)
+  part            Part      @relation(fields: [partId], references: [id], onDelete: Restrict)
+
+  @@unique([jobKitId, partId])
+  @@unique([id, companyId])
+  @@index([companyId, jobKitId])
+  @@index([companyId, partId])
+}
+
+enum StorageOperationalStatus {
+  OPERATIONAL
+  INTERNAL_ONLY
+}
+
+// Replaces the old JobPartRequirement/JobPartAllocation/JobPartAllocationMovement
+// reserve-issue-return workflow (removed 2026-09-09 at the user's request —
+// "the parts required section in apollo should be removed and the parts
+// list section in modapp should be added"). Mirrors ModApp's JobPartLine: a
+// simple, directly-editable list of parts needed for a job — paste a list,
+// track order number/supplier, mark quantities received — rather than a
+// formal reserve/issue/return chain through the immutable inventory ledger.
+// `partId` is an optional cross-check link to Apollo X's own Part catalog
+// (set automatically when a pasted part number matches one on file, same as
+// ModApp's inventoryItemId); `partNumber` itself stays free text so a line
+// for a part not yet in the catalog can still be recorded.
+model JobPartLine {
+  id                    String          @id @default(cuid())
+  companyId             String
+  jobId                 String
+  partNumber            String
+  description           String?
+  quantity              Decimal         @db.Decimal(19, 4)
+  status                PartLineStatus  @default(PENDING)
+  // How many have actually been confirmed received so far — a delivery
+  // doesn't always match the ordered quantity exactly, and this
+  // accumulates across multiple "mark received" clicks rather than
+  // locking the line after the first partial delivery.
+  receivedQuantity      Decimal?        @db.Decimal(19, 4)
+  // Whatever status this line was in right before receiving started —
+  // restored exactly by "Undo" if "Mark received" was clicked by mistake.
+  previousStatus        PartLineStatus?
+  orderNumber           String?
+  orderedFromSupplierId String?
+  orderedAt             DateTime?
+  partId                String?
+  createdById           String?
+  updatedById           String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  company               Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                   Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  part                  Part?           @relation(fields: [partId], references: [id], onDelete: SetNull)
+  orderedFromSupplier    Supplier?      @relation("JobPartLineOrderedFromSupplier", fields: [orderedFromSupplierId], references: [id], onDelete: SetNull)
+  createdBy              UserIdentity?  @relation("JobPartLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy              UserIdentity?  @relation("JobPartLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, jobId])
+  @@index([companyId, partId])
+  @@index([companyId, orderedFromSupplierId])
+}
+
+// New — added 2026-09-09 alongside the JobPartLine change above, at the
+// user's request ("The outwork section from modapp should also be added to
+// apollo"). Mirrors ModApp's OutworkItem: components sent out to a supplier
+// for outwork (machining, sandblasting, plating, etc.) and tracked until
+// they come back. Deliberately simpler than ModApp's version — no
+// printable delivery-note generation, since Apollo X doesn't have ModApp's
+// document-branding/print-template subsystem yet.
+model OutworkItem {
+  id            String        @id @default(cuid())
+  companyId     String
+  jobId         String
+  supplierId    String
+  description   String
+  quantity      Int           @default(1)
+  status        OutworkStatus @default(SENT_OUT)
+  dateSentOut   DateTime?
+  dateReceived  DateTime?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  supplier      Supplier      @relation("OutworkItemSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy     UserIdentity? @relation("OutworkItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     UserIdentity? @relation("OutworkItemUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, jobId])
+  @@index([companyId, supplierId])
+  @@index([companyId, status])
+}
+
+model JobNote {
+  id          String       @id @default(cuid())
+  companyId   String
+  jobId       String
+  note        String
+  createdById String
+  createdAt   DateTime     @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy   UserIdentity @relation("JobNoteAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([companyId, jobId, createdAt])
+}
+
+model JobActivity {
+  id          String          @id @default(cuid())
+  companyId   String
+  jobId       String
+  type        JobActivityType
+  description String
+  metadata    Json?
+  actorId     String?
+  createdAt   DateTime        @default(now())
+
+  company     Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  actor       UserIdentity?   @relation("JobActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, jobId, createdAt])
+}
+
+model JobFieldServiceReport {
+  id          String   @id @default(cuid())
+  companyId   String
+  jobId       String   @unique
+  site        String?
+  technician  String?
+  vehicle     String?
+  hours       Decimal? @db.Decimal(19, 4)
+  report      String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, jobId])
+}
+
+model JobWarranty {
+  id                     String            @id @default(cuid())
+  companyId              String
+  jobId                  String            @unique
+  status                 JobWarrantyStatus
+  notes                  String?
+  historicalSourceStatus String?
+  updatedById            String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  company                Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                    Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, jobId])
+}
+
+enum ModuleCatalogStatus {
+  ACTIVE
+  INACTIVE
+  PLANNED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+enum TicketMessageKind {
+  REPLY
+  INTERNAL_NOTE
+}
+
+model ModuleCatalogEntry {
+  id                  String              @id @default(cuid())
+  code                String              @unique
+  moduleKey           ModuleKey?          @unique
+  name                String
+  description         String?
+  category            String
+  status              ModuleCatalogStatus @default(ACTIVE)
+  version             String              @default("1.0.0")
+  icon                String?
+  navGroup            String?
+  navOrder            Int?
+  route               String?
+  assignableToTenants Boolean             @default(false)
+  userAssignable      Boolean             @default(true)
+  dependsOn           ModuleKey[]
+  licensingMetadata   Json?
+  createdById         String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  createdBy UserIdentity? @relation("ModuleCatalogCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([category, status])
+}
+
+model PlatformSequence {
+  key       String   @id
+  nextValue BigInt   @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+model SupportTicket {
+  id                String         @id @default(cuid())
+  companyId         String
+  ticketNumber      String         @unique
+  subject           String
+  description       String
+  category          String?
+  priority          TicketPriority @default(NORMAL)
+  status            TicketStatus   @default(OPEN)
+  moduleKey         ModuleKey?
+  pageRoute         String?
+  userAgent         String?
+  appVersion        String?
+  reportedById      String
+  assignedSupportId String?
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reportedBy      UserIdentity  @relation("TicketReportedBy", fields: [reportedById], references: [id], onDelete: Restrict)
+  assignedSupport UserIdentity? @relation("TicketAssignedSupport", fields: [assignedSupportId], references: [id], onDelete: SetNull)
+
+  messages    SupportTicketMessage[]
+  events      SupportTicketEvent[]
+  attachments SupportTicketAttachment[]
+
+  @@index([companyId, status, priority])
+  @@index([status, priority, createdAt])
+  @@index([assignedSupportId, status])
+  @@index([createdAt])
+}
+
+model SupportTicketMessage {
+  id        String            @id @default(cuid())
+  companyId String
+  ticketId  String
+  authorId  String
+  kind      TicketMessageKind
+  body      String
+  createdAt DateTime          @default(now())
+
+  ticket      SupportTicket              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author      UserIdentity               @relation("TicketMessageAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  attachments SupportTicketAttachment[]
+
+  @@index([ticketId, createdAt])
+}
+
+model SupportTicketEvent {
+  id        String   @id @default(cuid())
+  companyId String
+  ticketId  String
+  actorId   String?
+  eventType String
+  fromValue String?
+  toValue   String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  UserIdentity? @relation("TicketEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model SupportTicketAttachment {
+  id           String   @id @default(cuid())
+  companyId    String
+  ticketId     String
+  messageId    String?
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  data         Bytes
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  ticket     SupportTicket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  message    SupportTicketMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy UserIdentity?         @relation("TicketAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+}
+
+model UserDashboardConfig {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  widgets   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    UserIdentity @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}

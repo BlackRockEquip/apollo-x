@@ -65,6 +65,18 @@ enum ModuleKey {
   IMPORT_EXPORT
 }
 
+// The platform hosts more than one product line under one shared
+// identity/entitlement/support layer (see the platform merge plan doc) —
+// today only WORKSHOP has real modules built against it. SPORTS_LEAGUE is
+// reserved for the future Sports League product (ported from Ringball)
+// so the entitlement schema doesn't need another breaking migration when
+// that track starts. Every ModuleKey value above is a WORKSHOP module;
+// Sports League will get its own module keys when that work begins.
+enum Product {
+  WORKSHOP
+  SPORTS_LEAGUE
+}
+
 enum EntitlementSource {
   INTERNAL_FREE
   PLAN
@@ -189,20 +201,61 @@ enum JobType {
   WARRANTY
 }
 
+// One flat status list shared across every job type, same pattern ModApp
+// uses (JobStatus there) — which subset/order is valid for a given job is
+// a pure function of JobType, computed in application code (see
+// src/lib/jobs/ui.ts's flow-family step lists), not a stored column. This
+// enum is additive-only relative to Apollo X's original 13 values (kept
+// exactly as they were, including their names) — the new values below fill
+// in the granularity ModApp's real-world use surfaced that Apollo X didn't
+// have yet: a pre-strip queue state, outwork/paint stages, a payment-wait
+// state distinct per flow, three dedicated field-service stages, two
+// dedicated parts-supply stages, and the reversible "quoted, client
+// declined, returned unrepaired" off-ramp.
 enum JobStatus {
   DRAFT
   TO_BE_COLLECTED
   TO_BE_RECEIVED
+  // Queued for stripping, after receipt but before STRIPPING actually
+  // starts — main workshop flow only.
+  TO_STRIP
   STRIPPING
   QUOTE_IN_PROGRESS
   AWAITING_GO_AHEAD
+  // Waiting on an external supplier/outwork task (e.g. machining,
+  // sandblasting sent out) — main workshop flow only, distinct from
+  // WAITING_FOR_PARTS (internal inventory).
+  AWAIT_OUTWORK
   WAITING_FOR_PARTS
   ASSEMBLY
   TESTING
+  // Paint / wrap finishing stage — main workshop flow only.
+  TO_PAINT_WRAP
   TO_BE_DELIVERED
+  // Delivered, payment still outstanding — main/parts-supply flows.
+  // Field-service jobs use AWAIT_PAYMENT below instead (kept as a
+  // separate value, matching ModApp's own flow-specific split).
+  DELIVERED_AWAITING_PAYMENT
   COMPLETE
   CLOSED
   CANCELLED
+  // Quoted, client declined and asked for the unit back unrepaired.
+  // Deliberately not part of any flow's ordered step list (it can happen
+  // from several earlier stages, most commonly AWAITING_GO_AHEAD, and
+  // skips everything after it) — reversible back to AWAITING_GO_AHEAD if
+  // the client changes their mind. Main workshop flow only.
+  RETURNED_UNREPAIRED
+
+  // --- Field service flow only ---
+  TO_ATTEND
+  ON_ROUTE
+  IN_PROGRESS
+  AWAIT_PAYMENT
+
+  // --- Parts supply flow only (alongside the shared TO_BE_RECEIVED /
+  // TO_BE_DELIVERED / DELIVERED_AWAITING_PAYMENT / COMPLETE above) ---
+  RECEIVED
+  INSPECTING
 }
 
 enum JobActivityType {
@@ -211,6 +264,7 @@ enum JobActivityType {
   STATUS_CHANGED
   JOB_CLOSED
   JOB_REOPENED
+  JOB_RETURNED_UNREPAIRED
   PART_ADDED
   PART_REMOVED
   PART_RESERVED
@@ -218,6 +272,18 @@ enum JobActivityType {
   PART_ISSUED
   PART_RETURNED
   KIT_APPLIED
+  PART_LINE_RECEIVED
+  PART_LINE_RECEIVED_UNDONE
+  PART_LINE_ORDER_UPDATED
+  OUTWORK_SENT
+  OUTWORK_RECEIVED
+  OUTWORK_RECEIVED_UNDONE
+  OUTWORK_EDITED
+  OUTWORK_DELETED
+  RFQ_REQUESTED
+  RFQ_REQUEST_REMOVED
+  RFQ_QUOTE_RECORDED
+  RFQ_PREFERRED_SUPPLIER_SET
   PEX_STOCK_TRANSFERRED
   PEX_STOCK_LINKED
   PEX_STOCK_UNLINKED
@@ -231,19 +297,52 @@ enum JobActivityType {
   NOTE_ADDED
   FIELD_SERVICE_UPDATED
   WARRANTY_UPDATED
+  // Chase email sent to a supplier for outstanding ordered-but-not-yet-
+  // received parts — new 2026-09-09, mirrors ModApp's separate "Parts
+  // follow-up" feature (src/lib/jobs/parts-followup.ts).
+  PARTS_FOLLOWUP_SENT
+  // New 2026-09-09 with the PexRecord full-replace (see PexRecord's own
+  // comment) — mirrors ModApp's own PEX audit action names exactly
+  // (PEX_RETURN_LINKED/PEX_RETURN_UNLINKED/PEX_UNIT_SCRAPPED/
+  // JOB_ALLOCATED_TO_PEX_INVENTORY), used by getPexRecordHistory's
+  // allow-list the same way ModApp's PEX_UNIT_HISTORY_ACTIONS is. The 10
+  // PEX_STOCK_*/PEX_RETURN_*/PEX_SUPPLY_* values above this comment belong
+  // to the retired PexStockUnit/PexSupplyLink model and are left in place,
+  // unused, rather than removed — same "never touch existing rows"
+  // convention as PARTS_FOLLOWUP_SENT above and the Parts list/Outwork
+  // swap before it. A PEX_RETURN job's own status-change history needs no
+  // new value — STATUS_CHANGED above already covers it, exactly like
+  // ModApp relies on its own generic JOB_STATUS_CHANGED for the same
+  // purpose.
+  PEX_RETURN_LINKED
+  PEX_RETURN_UNLINKED
+  PEX_UNIT_SCRAPPED
+  PEX_UNIT_ALLOCATED_TO_INVENTORY
 }
 
-enum PexStockStatus {
-  AVAILABLE
-  SUPPLIED
-  QUARANTINE
-  SCRAPPED
-}
-
-enum PexReturnStatus {
-  EXPECTED
+// Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
+// at the user's explicit request, to match ModApp's simpler single-record
+// PexRecord model exactly — one mutable row per supply/return cycle rather
+// than a separately-tracked stock unit + link. See PexRecord below and
+// src/lib/pex/service.ts for the full behavior this drives.
+//
+// AWAIT_CORE added 2026-09-10, at the user's direct request — a deliberate
+// departure from strict ModApp parity above. A PEX Supply job's
+// deliveryDate is a plain form field, independent of the job's own status
+// stepper, so a unit could be delivered (deliveryDate set) while its
+// PexRecord still showed TO_BE_DELIVERED indefinitely, right up until a
+// return job got linked. AWAIT_CORE fills that gap: once delivered but
+// before a return job exists, the record now reads "awaiting core" (the
+// customer's old/broken unit still owed back), not "to be delivered". See
+// syncPexAwaitCoreFromDeliveryDate in src/lib/pex/service.ts.
+enum PexStatus {
+  TO_BE_DELIVERED
+  AWAIT_CORE
+  OUTSTANDING
   RECEIVED
-  CLOSED_WITHOUT_RETURN
+  IN_REPAIR
+  COMPLETED
+  SCRAPPED
 }
 
 enum JobWarrantyStatus {
@@ -252,14 +351,21 @@ enum JobWarrantyStatus {
   DECLINED
 }
 
-enum JobPartAllocationMovementKind {
-  ISSUE
-  RETURN
+enum PartLineStatus {
+  PENDING
+  IN_STOCK
+  ON_ORDER
+  // Some, but not all, of the ordered quantity has been received — the
+  // rest is tracked as "outstanding" (quantity - receivedQuantity) and can
+  // still be received in a later click, rather than the line being stuck
+  // once any amount at all comes in.
+  PARTIALLY_RECEIVED
+  RECEIVED
 }
 
-enum JobPartReturnDisposition {
-  UNUSED_SURPLUS
-  REQUIREMENT_REMAINS
+enum OutworkStatus {
+  SENT_OUT
+  RECEIVED
 }
 
 model UserIdentity {
@@ -291,12 +397,23 @@ model UserIdentity {
   jobKitsCreated      JobKit[]
   jobNotes            JobNote[]                @relation("JobNoteAuthor")
   jobActivities       JobActivity[]            @relation("JobActivityActor")
-  pexStockUnitsCreated PexStockUnit[]          @relation("PexStockUnitCreatedBy")
-  pexStockUnitsUpdated PexStockUnit[]          @relation("PexStockUnitUpdatedBy")
-  pexSupplyLinksCreated PexSupplyLink[]        @relation("PexSupplyLinkCreatedBy")
-  pexSupplyLinksUpdated PexSupplyLink[]        @relation("PexSupplyLinkUpdatedBy")
-  pexReturnsReceived  PexSupplyLink[]          @relation("PexReturnReceivedBy")
-  pexReturnsClosed    PexSupplyLink[]          @relation("PexReturnClosedBy")
+  pexRecordsCreated   PexRecord[]              @relation("PexRecordCreatedBy")
+  pexRecordsUpdated   PexRecord[]              @relation("PexRecordUpdatedBy")
+  jobPartLinesCreated JobPartLine[]            @relation("JobPartLineCreatedBy")
+  jobPartLinesUpdated JobPartLine[]            @relation("JobPartLineUpdatedBy")
+  outworkItemsCreated OutworkItem[]            @relation("OutworkItemCreatedBy")
+  outworkItemsUpdated OutworkItem[]            @relation("OutworkItemUpdatedBy")
+  rfqRequestsCreated  JobRfqRequest[]          @relation("JobRfqRequestCreatedBy")
+  rfqRequestsUpdated  JobRfqRequest[]          @relation("JobRfqRequestUpdatedBy")
+  rfqQuotesCreated    JobRfqQuote[]            @relation("JobRfqQuoteCreatedBy")
+  moduleCatalogCreated ModuleCatalogEntry[]    @relation("ModuleCatalogCreatedBy")
+  ticketsReported      SupportTicket[]         @relation("TicketReportedBy")
+  ticketsAssigned      SupportTicket[]         @relation("TicketAssignedSupport")
+  ticketMessages       SupportTicketMessage[]  @relation("TicketMessageAuthor")
+  ticketEvents         SupportTicketEvent[]    @relation("TicketEventActor")
+  ticketAttachmentsUploaded SupportTicketAttachment[] @relation("TicketAttachmentUploadedBy")
+  dashboardConfigs     UserDashboardConfig[]
+  tableColumnConfigs   UserTableColumns[]
 }
 
 model Company {
@@ -311,6 +428,8 @@ model Company {
   updatedAt              DateTime     @updatedAt
 
   memberships       CompanyMembership[]
+  products          CompanyProduct[]
+  jobTypePresets    JobTypePreset[]
   entitlements      CompanyModuleEntitlement[]
   entitlementEvents EntitlementHistory[]
   supportAccess     PlatformSupportAccess[]
@@ -340,15 +459,40 @@ model Company {
   jobComponents     JobComponent[]
   jobKits           JobKit[]
   jobKitLines       JobKitLine[]
-  jobPartRequirements JobPartRequirement[]
-  jobPartAllocations JobPartAllocation[]
-  jobPartAllocationMovements JobPartAllocationMovement[]
+  jobPartLines      JobPartLine[]
+  outworkItems      OutworkItem[]
+  rfqRequests       JobRfqRequest[]
   jobNotes          JobNote[]
   jobActivities     JobActivity[]
   jobFieldServiceReports JobFieldServiceReport[]
   jobWarranties     JobWarranty[]
-  pexStockUnits     PexStockUnit[]
-  pexSupplyLinks    PexSupplyLink[]
+  pexRecords        PexRecord[]
+  supportTickets    SupportTicket[]
+  dashboardConfigs  UserDashboardConfig[]
+  tableColumnConfigs UserTableColumns[]
+}
+
+// The top-level subscription record: which Product(s) an organization is
+// granted access to at all, separate from and above CompanyModuleEntitlement
+// (which gates individual modules *within* a subscribed product). A company
+// with no CompanyProduct row for a given Product should be treated as not
+// subscribed to it, regardless of any module entitlement rows that might
+// exist. Every existing/current company is WORKSHOP-only; SPORTS_LEAGUE
+// subscriptions start appearing once that product track is built.
+model CompanyProduct {
+  id            String            @id @default(cuid())
+  companyId     String
+  product       Product
+  status        EntitlementStatus
+  effectiveFrom DateTime          @default(now())
+  expiresAt     DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, product])
+  @@index([companyId, status])
 }
 
 model CompanyMembership {
@@ -457,6 +601,7 @@ model LoginThrottle {
 model CompanyModuleEntitlement {
   id                    String            @id @default(cuid())
   companyId             String
+  product               Product           @default(WORKSHOP)
   module                ModuleKey
   source                EntitlementSource
   status                EntitlementStatus
@@ -470,13 +615,14 @@ model CompanyModuleEntitlement {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  @@unique([companyId, module])
-  @@index([companyId, status])
+  @@unique([companyId, product, module])
+  @@index([companyId, product, status])
 }
 
 model EntitlementHistory {
   id             String             @id @default(cuid())
   companyId      String
+  product        Product            @default(WORKSHOP)
   module         ModuleKey
   previousStatus EntitlementStatus?
   newStatus      EntitlementStatus
@@ -489,7 +635,7 @@ model EntitlementHistory {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  @@index([companyId, module, createdAt])
+  @@index([companyId, product, module, createdAt])
 }
 
 model CompanySettings {
@@ -509,6 +655,27 @@ model CompanySettings {
   quoteValidityDays      Int     @default(30)
   documentHeaderText     String?
   documentFooterText     String?
+  accentColor            String?
+  secondaryColor         String?
+  logoData               Bytes?
+  logoMimeType           String?
+  logoFileName           String?
+  logoSizeBytes          Int?
+  logoUpdatedAt          DateTime?
+
+  // Per-company outbound email (SMTP) — added 2026-09-09 at the user's
+  // request to wire real RFQ-request emails, mirroring ModApp's
+  // per-company SMTP settings (isCompanyEmailConfigured/sendEmail in
+  // lib/email.ts there). smtpPassword is written but never read back to
+  // the client — see company-settings-service.ts's getCompanySettings.
+  smtpHost               String?
+  smtpPort               Int?
+  smtpSecure             Boolean @default(true)
+  smtpUsername           String?
+  smtpPassword           String?
+  smtpFromAddress        String?
+  smtpFromName           String?
+  smtpConfiguredAt       DateTime?
 
   company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   defaultTaxCode     TaxCode?        @relation(fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
@@ -563,6 +730,7 @@ model Customer {
   contacts              CustomerContact[]
   addresses             CustomerAddress[]
   jobs                  Job[]
+  pexRecords            PexRecord[]
 
   @@unique([companyId, accountCodeNormalized])
   @@index([companyId, nameNormalized])
@@ -667,6 +835,9 @@ model Supplier {
   contacts              SupplierContact[]
   addresses             SupplierAddress[]
   manufacturers         SupplierManufacturer[]
+  jobPartLinesOrdered   JobPartLine[]           @relation("JobPartLineOrderedFromSupplier")
+  outworkItems          OutworkItem[]           @relation("OutworkItemSupplier")
+  rfqRequests           JobRfqRequest[]         @relation("JobRfqRequestSupplier")
 
   @@unique([companyId, accountCodeNormalized])
   @@index([companyId, nameNormalized])
@@ -685,6 +856,13 @@ model SupplierContact {
   email           String?
   notes           String?
   isPrimary       Boolean   @default(false)
+  // When true, this contact's email is included as an RFQ recipient
+  // alongside the supplier's mainEmail (see attemptRfqSend in
+  // rfq/service.ts) — added 2026-09-09 at the user's request so an RFQ can
+  // reach a specific buyer/purchasing contact, not just the supplier's
+  // general inbox. Customer-side contacts have no equivalent — RFQs only
+  // ever go out to suppliers.
+  canReceiveRfq   Boolean   @default(false)
   active          Boolean   @default(true)
   deactivatedAt   DateTime?
   deactivatedById String?
@@ -766,12 +944,20 @@ model Part {
   manufacturerId         String?
   manufacturerPartNumber String?
   category               String?
+  operationalStatus     PartOperationalStatus @default(OPERATIONAL)
   unitOfMeasure          String             @default("EA")
   notes                  String?
   active                 Boolean            @default(true)
   defaultPurchaseCost    Decimal?           @db.Decimal(19, 4)
   defaultSellingPrice    Decimal?           @db.Decimal(19, 4)
   taxCodeId              String?
+  // 2026-09-10 — added so the merged Stock Levels page (Parts Catalog is
+  // being folded into it) can assign a default bin/storage location per
+  // part, independent of the per-location StockBalance rows the ledger
+  // already tracks. Optional and SetNull on delete: removing the referenced
+  // StorageLocation should never block, it should just clear the part back
+  // to "no default bin" the same way manufacturerId/taxCodeId already do.
+  binLocationId          String?
   reorderMinimum         Decimal?           @db.Decimal(19, 4)
   reorderMaximum         Decimal?           @db.Decimal(19, 4)
   reorderQuantity        Decimal?           @db.Decimal(19, 4)
@@ -780,17 +966,23 @@ model Part {
   company                Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
   manufacturer           Manufacturer?      @relation(fields: [manufacturerId], references: [id], onDelete: SetNull)
   taxCode                TaxCode?           @relation("PartTaxCode", fields: [taxCodeId], references: [id], onDelete: SetNull)
+  binLocation            StorageLocation?   @relation("PartBinLocation", fields: [binLocationId], references: [id], onDelete: SetNull)
   stockBalances          StockBalance[]
   stockMovements         StockMovement[]
   stockReservations      StockReservation[]
   jobKitLines        JobKitLine[]
   stockCountLines        StockCountLine[]
-  jobPartRequirements    JobPartRequirement[]
-  jobPartAllocations     JobPartAllocation[]
+  jobPartLines           JobPartLine[]
 
   @@unique([companyId, partNumberNormalized])
   @@index([companyId, description])
   @@index([companyId, active])
+  @@index([companyId, binLocationId])
+}
+
+enum PartOperationalStatus {
+  OPERATIONAL
+  HISTORICAL_REFERENCE
 }
 
 model StorageLocation {
@@ -814,8 +1006,7 @@ model StorageLocation {
   movementsTo       StockMovement[]     @relation("MovementTo")
   stockReservations StockReservation[]
   stockCounts       StockCount[]
-  jobPartAllocations JobPartAllocation[]
-  pexStockUnits     PexStockUnit[]
+  partsWithBinHere  Part[]              @relation("PartBinLocation")
 
   @@unique([companyId, codeNormalized])
   @@unique([id, companyId])
@@ -875,7 +1066,6 @@ model StockMovement {
   actor        UserIdentity?    @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
   reversalOf   StockMovement?   @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversals    StockMovement[]  @relation("MovementReversal")
-  jobPartAllocationMovements JobPartAllocationMovement[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, occurredAt])
@@ -913,7 +1103,6 @@ model StockReservation {
   location   StorageLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
   actor      UserIdentity?   @relation("StockReservationActor", fields: [actorId], references: [id], onDelete: SetNull)
   releasedBy UserIdentity?   @relation("StockReservationReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
-  jobAllocations JobPartAllocation[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, partId, status])
@@ -1073,6 +1262,55 @@ model AuditEvent {
   @@index([correlationId])
 }
 
+// Hybrid job-type model (see the platform merge plan doc): JobType stays a
+// fixed enum because it drives real behavior (which status-flow family a
+// job follows, which ModuleKey gates it — see the flow-family logic in
+// src/lib/jobs/ui.ts) — that's deliberately NOT customizable. What IS
+// customizable, matching ModApp's per-company JobTypeConfig, is the label a
+// company sees and picks from: a JobTypePreset is a company's own named
+// preset (e.g. "Sandblasting", "Hydraulic Rebuild") that declares which
+// fixed JobType it behaves as. Selecting a preset in the UI sets Job.type
+// to `behavesAs`; the preset's own label is just how it's shown and
+// searched in that company's job-type picker.
+model JobTypePreset {
+  id        String   @id @default(cuid())
+  companyId String
+  key       String
+  label     String
+  behavesAs JobType
+  active    Boolean  @default(true)
+  sortOrder Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, key])
+  @@index([companyId, active])
+}
+
+// Matches ModApp's PurchaseOrderStatus exactly (field parity pass, see the
+// platform merge plan doc) — used on Job.purchaseOrderStatus below.
+enum PurchaseOrderStatus {
+  TBA
+  AWAIT_PAYMENT
+  PARTIALLY_PAID
+  PAID
+  NOT_APPLICABLE
+}
+
+// Matches ModApp's DeliveryType exactly — used for both legs of a job's
+// transport (Job.deliveryType for the outbound/return leg,
+// Job.receivingTransport for how the unit originally arrived).
+enum DeliveryType {
+  INTERNAL_BAKKIE
+  INTERNAL_TRUCK
+  INTERNAL_COURIER
+  EXTERNAL_BAKKIE
+  EXTERNAL_TRUCK
+  EXTERNAL_COURIER
+}
+
 model Job {
   id                  String      @id @default(cuid())
   companyId           String
@@ -1084,6 +1322,7 @@ model Job {
   customerReference   String?
   customerPo          String?
   dateReceived        DateTime?
+  machineMake         String?
   machineModel        String?
   machineSerial       String?
   component           String?
@@ -1092,6 +1331,10 @@ model Job {
   componentPartNumber String?
   description         String?
   etaDate             DateTime?
+  // Staff-only ETA a mechanic sets for their own planning, distinct from
+  // the client-facing etaDate above — visible/editable only to
+  // Company Admin / Manager (mirrors ModApp's canEditMechanicEta gate).
+  mechanicEtaDate     DateTime?
   relationshipNotes   String?
   relatedJobId        String?
   stripMechanicId     String?
@@ -1105,6 +1348,44 @@ model Job {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
+  // --- Field-parity additions (matching ModApp's Job model) ---
+  // Quote / sales-order / invoice / purchase-order references. Plain
+  // string/date fields for now, same as ModApp — become proper foreign
+  // keys once the Quotes/Sales Orders/Invoices modules (still unbuilt,
+  // see ModuleKey) exist.
+  quoteNumber          String?
+  quoteDate            DateTime?
+  salesOrderNumber     String?
+  salesOrderDate       DateTime?
+  invoiceNumber        String?
+  invoiceDate          DateTime?
+  purchaseOrderNumber  String?
+  purchaseOrderDate    DateTime?
+  purchaseOrderStatus  PurchaseOrderStatus @default(NOT_APPLICABLE)
+  // Two independent transport legs — how the unit arrived vs. how it goes
+  // back out — matching ModApp's separate receivingTransport/deliveryType.
+  deliveryDate         DateTime?
+  deliveryType         DeliveryType?
+  receivingTransport   DeliveryType?
+  // Field-service-only: how far the technician travelled to/from site.
+  kmsTravelled         Int?
+  paymentDateReceived  DateTime?
+  // Ticked when no payment is required at all for this job (e.g. a
+  // no-charge warranty repair) — lets a "payment received" guard be
+  // satisfied without a real date, distinguishable from "not paid yet".
+  paymentNotApplicable Boolean   @default(false)
+  machineHours         Decimal?  @db.Decimal(19, 4)
+  plantNumber          String?
+  reportNumber         String?
+  importTrackingNumber String?
+  // Free-text link to a prior job number (e.g. a "ready to go" PEX unit
+  // being redeployed) — kept as a plain field for traceability and for the
+  // historical-data import. Also the actual mechanism PexRecord redeployment
+  // tracking reads (see syncPexRedeployment in src/lib/pex/service.ts) —
+  // this field IS the "assign to job" UI, matching ModApp exactly.
+  previousJobNumber    String?
+  salesRepresentative  String?
+
   company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
   relatedJob          Job?          @relation("RelatedJob", fields: [relatedJobId], references: [id], onDelete: SetNull)
@@ -1115,17 +1396,22 @@ model Job {
   updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
   components          JobComponent[]
-  partRequirements    JobPartRequirement[]
-  partAllocations     JobPartAllocation[]
+  partLines           JobPartLine[]
+  outworkItems        OutworkItem[]
+  rfqRequests         JobRfqRequest[]
   notes               JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
   warranty            JobWarranty?
-  pexSourceStockUnits PexStockUnit[]          @relation("PexStockSourceJob")
-  pexSupplyStockUnits PexStockUnit[]          @relation("PexStockCurrentSupplyJob")
-  pexReturnStockUnits PexStockUnit[]          @relation("PexStockCurrentReturnJob")
-  pexSupplyLinksAsSupply PexSupplyLink[]      @relation("PexSupplyJob")
-  pexSupplyLinksAsReturn PexSupplyLink[]      @relation("PexReturnJob")
+  // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair —
+  // see PexRecord below. A job is linked to at most one PexRecord on each
+  // of these three independent legs (it created via being the supply job,
+  // being the return job, or by redeploying a "Ready to Go" unit through
+  // its own "Previous job number" field — see syncPexRedeployment in
+  // src/lib/pex/service.ts).
+  pexAsSupply         PexRecord?              @relation("PexSupplyJob")
+  pexAsReturn         PexRecord?              @relation("PexReturnJob")
+  pexConsumedBy       PexRecord?              @relation("PexConsumedByJob")
 
   @@unique([id, companyId])
   @@index([companyId, status, createdAt])
@@ -1145,93 +1431,70 @@ model JobComponent {
 
   company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job                 Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  pexStockUnit        PexStockUnit?
 
   @@unique([id, companyId])
   @@index([companyId, jobId])
 }
 
-model PexStockUnit {
-  id                  String         @id @default(cuid())
-  companyId           String
-  sourceJobId         String
-  sourceJobComponentId String         @unique
-  currentSupplyJobId  String?
-  currentReturnJobId  String?
-  storageLocationId   String?
-  component           String
-  componentType       String?
-  componentPartNumber String?
-  componentSerial     String?
-  machineModel        String?
-  machineSerial       String?
-  status              PexStockStatus @default(AVAILABLE)
-  notes               String?
-  createdById         String?
-  updatedById         String?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+// Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair, at
+// the user's explicit request -- "remove apollo version of pex ... replace
+// entirely like modapp" -- matching ModApp's PexRecord model field-for-field
+// (companyId/clientId->customerId renamed to Apollo's own vocabulary,
+// otherwise the same shape) rather than Apollo X's previous normalized
+// stock-unit + link design. One mutable row per supply/return cycle:
+//  - Created the moment a PEX_SUPPLY job is created/becomes that type
+//    (supplyJobId set, status TO_BE_DELIVERED, no returnJobId yet).
+//  - Moves to AWAIT_CORE once the supply job's own deliveryDate gets set,
+//    still with no returnJobId -- see syncPexAwaitCoreFromDeliveryDate.
+//  - Gets its returnJobId + status (derived from the return job's own
+//    current status, see attachReturnJobTx) + supplyDate once a return job
+//    exists -- automatically when the supply job reaches COMPLETE, via the
+//    manual "Create linked return job now" button, or by linking an
+//    already-existing standalone PEX_RETURN job ("Link PEX return job").
+//  - Once linked, a PEX_RETURN job has no separate PEX status control of
+//    its own -- its own generic job-status stepper IS the PEX status, kept
+//    in sync automatically (see JOB_STATUS_TO_PEX_STATUS in
+//    src/lib/pex/service.ts) every time that job's status changes.
+//  - consumedByJobId/consumedAt track redeployment: any job (of any type)
+//    that types a completed return job's number into its own "Previous job
+//    number" field marks that unit as used, dropping it out of PEX
+//    Inventory's "Ready to Go" list -- see syncPexRedeployment.
+//  - A completed job of ANY type can also be allocated straight to PEX
+//    Inventory with no supply leg at all (supplyJobId left null) -- the job
+//    itself becomes the "return" record.
+// Deliberately has no storage-location tracking (ModApp's PexRecord
+// doesn't either) -- a real loss of the granularity Apollo X's old
+// PexStockUnit had, accepted here in favor of exact ModApp parity per the
+// user's explicit "replace entirely" decision.
+model PexRecord {
+  id              String    @id @default(cuid())
+  companyId       String
+  customerId      String?
+  unitDescription String?
+  supplyJobId     String?   @unique
+  returnJobId     String?   @unique
+  status          PexStatus @default(TO_BE_DELIVERED)
+  supplyDate      DateTime?
+  returnDate      DateTime?
+  notes           String?
+  consumedByJobId String?   @unique
+  consumedAt      DateTime?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  company             Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  sourceJob           Job            @relation("PexStockSourceJob", fields: [sourceJobId], references: [id], onDelete: Restrict)
-  sourceJobComponent  JobComponent   @relation(fields: [sourceJobComponentId], references: [id], onDelete: Restrict)
-  currentSupplyJob    Job?           @relation("PexStockCurrentSupplyJob", fields: [currentSupplyJobId], references: [id], onDelete: SetNull)
-  currentReturnJob    Job?           @relation("PexStockCurrentReturnJob", fields: [currentReturnJobId], references: [id], onDelete: SetNull)
-  storageLocation     StorageLocation? @relation(fields: [storageLocationId], references: [id], onDelete: SetNull)
-  createdBy           UserIdentity?  @relation("PexStockUnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy           UserIdentity?  @relation("PexStockUnitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  supplyLinks         PexSupplyLink[]
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  supplyJob       Job?          @relation("PexSupplyJob", fields: [supplyJobId], references: [id], onDelete: Restrict)
+  returnJob       Job?          @relation("PexReturnJob", fields: [returnJobId], references: [id], onDelete: Restrict)
+  consumedByJob   Job?          @relation("PexConsumedByJob", fields: [consumedByJobId], references: [id], onDelete: SetNull)
+  createdBy       UserIdentity? @relation("PexRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy       UserIdentity? @relation("PexRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@unique([id, companyId])
-  @@index([companyId, status, createdAt])
-  @@index([companyId, sourceJobId])
-  @@index([companyId, currentSupplyJobId])
-  @@index([companyId, currentReturnJobId])
-  @@index([companyId, storageLocationId])
-}
-
-model PexSupplyLink {
-  id                        String          @id @default(cuid())
-  companyId                 String
-  supplyJobId               String
-  returnJobId               String
-  pexStockUnitId            String
-  returnStatus              PexReturnStatus @default(EXPECTED)
-  expectedCoreDescription   String?
-  expectedCoreType          String?
-  expectedCorePartNumber    String?
-  expectedCoreSerial        String?
-  returnedCoreDescription   String?
-  returnedCoreType          String?
-  returnedCorePartNumber    String?
-  returnedCoreSerial        String?
-  returnMismatchReason      String?
-  returnedReceivedAt        DateTime?
-  returnedReceivedById      String?
-  closedWithoutReturnReason String?
-  closedWithoutReturnNote   String?
-  closedWithoutReturnAt     DateTime?
-  closedWithoutReturnById   String?
-  active                    Boolean         @default(true)
-  createdById               String?
-  updatedById               String?
-  createdAt                 DateTime        @default(now())
-  updatedAt                 DateTime        @updatedAt
-
-  company                   Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  supplyJob                 Job             @relation("PexSupplyJob", fields: [supplyJobId], references: [id], onDelete: Restrict)
-  returnJob                 Job             @relation("PexReturnJob", fields: [returnJobId], references: [id], onDelete: Restrict)
-  pexStockUnit              PexStockUnit    @relation(fields: [pexStockUnitId], references: [id], onDelete: Restrict)
-  returnedReceivedBy        UserIdentity?   @relation("PexReturnReceivedBy", fields: [returnedReceivedById], references: [id], onDelete: SetNull)
-  closedWithoutReturnBy     UserIdentity?   @relation("PexReturnClosedBy", fields: [closedWithoutReturnById], references: [id], onDelete: SetNull)
-  createdBy                 UserIdentity?   @relation("PexSupplyLinkCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy                 UserIdentity?   @relation("PexSupplyLinkUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-
-  @@unique([supplyJobId, companyId])
-  @@unique([returnJobId, companyId])
-  @@unique([id, companyId])
-  @@index([companyId, pexStockUnitId, active])
-  @@index([companyId, returnStatus, active])
+  @@index([companyId, status])
+  @@index([companyId, customerId])
 }
 
 model JobKit {
@@ -1267,6 +1530,7 @@ model JobKitLine {
   partId          String
   quantityDefault Decimal   @db.Decimal(19, 4)
   notes           String?
+  operationalStatus StorageOperationalStatus @default(OPERATIONAL)
   sortOrder       Int       @default(0)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -1281,72 +1545,225 @@ model JobKitLine {
   @@index([companyId, partId])
 }
 
-model JobPartRequirement {
-  id                String   @id @default(cuid())
-  companyId         String
-  jobId             String
-  partId            String
-  quantityRequired  Decimal  @db.Decimal(19, 4)
-  notes             String?
-  etaDate           DateTime?
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+enum StorageOperationalStatus {
+  OPERATIONAL
+  INTERNAL_ONLY
+}
 
-  company           Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  job               Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  part              Part     @relation(fields: [partId], references: [id], onDelete: Restrict)
-  allocations       JobPartAllocation[]
+// Replaces the old JobPartRequirement/JobPartAllocation/JobPartAllocationMovement
+// reserve-issue-return workflow (removed 2026-09-09 at the user's request —
+// "the parts required section in apollo should be removed and the parts
+// list section in modapp should be added"). Mirrors ModApp's JobPartLine: a
+// simple, directly-editable list of parts needed for a job — paste a list,
+// track order number/supplier, mark quantities received — rather than a
+// formal reserve/issue/return chain through the immutable inventory ledger.
+// `partId` is an optional cross-check link to Apollo X's own Part catalog
+// (set automatically when a pasted part number matches one on file, same as
+// ModApp's inventoryItemId); `partNumber` itself stays free text so a line
+// for a part not yet in the catalog can still be recorded.
+model JobPartLine {
+  id                    String          @id @default(cuid())
+  companyId             String
+  jobId                 String
+  partNumber            String
+  description           String?
+  quantity              Decimal         @db.Decimal(19, 4)
+  status                PartLineStatus  @default(PENDING)
+  // How many have actually been confirmed received so far — a delivery
+  // doesn't always match the ordered quantity exactly, and this
+  // accumulates across multiple "mark received" clicks rather than
+  // locking the line after the first partial delivery.
+  receivedQuantity      Decimal?        @db.Decimal(19, 4)
+  // Whatever status this line was in right before receiving started —
+  // restored exactly by "Undo" if "Mark received" was clicked by mistake.
+  previousStatus        PartLineStatus?
+  orderNumber           String?
+  orderedFromSupplierId String?
+  orderedAt             DateTime?
+  partId                String?
+  createdById           String?
+  updatedById           String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  company               Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                   Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  part                  Part?           @relation(fields: [partId], references: [id], onDelete: SetNull)
+  orderedFromSupplier    Supplier?      @relation("JobPartLineOrderedFromSupplier", fields: [orderedFromSupplierId], references: [id], onDelete: SetNull)
+  createdBy              UserIdentity?  @relation("JobPartLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy              UserIdentity?  @relation("JobPartLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  rfqQuoteLines          JobRfqQuoteLine[]
 
   @@index([companyId, jobId])
   @@index([companyId, partId])
+  @@index([companyId, orderedFromSupplierId])
 }
 
-model JobPartAllocation {
-  id                 String                     @id @default(cuid())
-  companyId          String
-  jobId              String
-  requirementId      String
-  partId             String
-  locationId         String
-  stockReservationId String?
-  quantityReserved   Decimal                    @default(0) @db.Decimal(19, 4)
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
+// New — added 2026-09-09 alongside the JobPartLine change above, at the
+// user's request ("The outwork section from modapp should also be added to
+// apollo"). Mirrors ModApp's OutworkItem: components sent out to a supplier
+// for outwork (machining, sandblasting, plating, etc.) and tracked until
+// they come back. Deliberately simpler than ModApp's version — no
+// printable delivery-note generation, since Apollo X doesn't have ModApp's
+// document-branding/print-template subsystem yet.
+model OutworkItem {
+  id            String        @id @default(cuid())
+  companyId     String
+  jobId         String
+  supplierId    String
+  description   String
+  quantity      Int           @default(1)
+  status        OutworkStatus @default(SENT_OUT)
+  dateSentOut   DateTime?
+  dateReceived  DateTime?
+  // Every line added together in one "Record outwork" submission shares
+  // the same batchId (a fresh cuid generated per submission, not per
+  // line) — added 2026-09-09 so the historical "View delivery note"
+  // action can show the whole batch an item was sent with, not just that
+  // one line. Nullable so pre-existing rows from before this field
+  // existed still work (their delivery note just falls back to
+  // showing themselves alone).
+  batchId       String?
+  // Free-text note per item — added 2026-09-10 at the user's request ("a
+  // note field next to each item sent out"). Set/edited via the same
+  // outwork edit action as description/quantity/etc; not required.
+  notes         String?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  company            Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  job                Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  requirement        JobPartRequirement         @relation(fields: [requirementId], references: [id], onDelete: Cascade)
-  part               Part                       @relation(fields: [partId], references: [id], onDelete: Restrict)
-  location           StorageLocation            @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  stockReservation   StockReservation?          @relation(fields: [stockReservationId], references: [id], onDelete: SetNull)
-  movements          JobPartAllocationMovement[]
+  company       Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  supplier      Supplier      @relation("OutworkItemSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy     UserIdentity? @relation("OutworkItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     UserIdentity? @relation("OutworkItemUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@unique([requirementId, locationId, stockReservationId])
   @@index([companyId, jobId])
-  @@index([companyId, requirementId])
-  @@index([companyId, partId])
-  @@index([companyId, locationId])
+  @@index([companyId, supplierId])
+  @@index([companyId, status])
+  @@index([companyId, batchId])
 }
 
-model JobPartAllocationMovement {
-  id                String                         @id @default(cuid())
-  companyId         String
-  allocationId      String
-  stockMovementId   String
-  kind              JobPartAllocationMovementKind
-  quantity          Decimal                        @db.Decimal(19, 4)
-  returnDisposition JobPartReturnDisposition?
-  createdAt         DateTime                       @default(now())
+// ----------------------------------------------------------------------------
+// RFQ (request for quote) — new, added 2026-09-09 at the user's request
+// ("add the RFQ from suppliers section of ModApp"). Mirrors ModApp's
+// RfqRequest/RfqQuote/RfqQuoteLine: request pricing from one or more
+// suppliers for a job's parts list, record what each supplier quoted, and
+// compare their prices side by side per part line.
+//
+// Deliberately simplified from ModApp's version: Apollo X has no outbound
+// email infrastructure (no SMTP/nodemailer anywhere in this codebase), so
+// there is no PENDING/SENT/FAILED send cycle here — "requesting" a quote
+// just records that this supplier has been added to the job's comparison
+// list (the same real-world action as ModApp's RfqStatus.SKIPPED path, used
+// there for suppliers who quote by phone or in person rather than email).
+// The user still gets/records pricing outside the system (phone, email,
+// a supplier portal) and enters it here to compare. A fresh upload doesn't
+// attempt to guess prices from the file's contents either, for the same
+// "no extraction infrastructure yet" reason the Parts list paste box has no
+// spreadsheet extraction — prices are entered by hand into an editable
+// table, same end result, just without ModApp's best-effort auto-guess.
+// ----------------------------------------------------------------------------
 
-  company           Company                        @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  allocation        JobPartAllocation              @relation(fields: [allocationId], references: [id], onDelete: Cascade)
-  stockMovement     StockMovement                  @relation(fields: [stockMovementId], references: [id], onDelete: Restrict)
+enum RfqRequestStatus {
+  // Legacy value from before real email sending existed — a request added
+  // with no send attempt at all. Kept (not removed) so any existing rows
+  // stay valid; new "add without emailing" requests use SKIPPED instead
+  // (see requestRfqFromSupplier in rfq/service.ts).
+  REQUESTED
+  // A real RFQ email was sent successfully.
+  SENT
+  // A real RFQ email was attempted and failed — see JobRfqRequest.lastSendError.
+  FAILED
+  // Added to the comparison list on purpose with no email ever attempted —
+  // for suppliers who quote by phone/in person. Mirrors ModApp's
+  // RfqStatus.SKIPPED.
+  SKIPPED
+  QUOTED
+}
 
-  @@unique([allocationId, stockMovementId, kind])
-  @@index([companyId, allocationId])
-  @@index([companyId, stockMovementId])
-  @@index([companyId, kind])
+model JobRfqRequest {
+  id           String            @id @default(cuid())
+  companyId    String
+  jobId        String
+  supplierId   String
+  // Snapshot of the job's parts list at request time, so the record stays
+  // accurate even if the parts list changes afterwards — same purpose as
+  // ModApp's RfqRequest.partsSummary.
+  partsSummary String
+  status       RfqRequestStatus  @default(SKIPPED)
+  // Set when status is FAILED — the error message from the last send
+  // attempt, shown in the RFQ panel so a retry isn't a total guess.
+  lastSendError String?
+  requestedAt  DateTime          @default(now())
+  createdById  String?
+  updatedById  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  company      Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job          Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  supplier     Supplier          @relation("JobRfqRequestSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy    UserIdentity?     @relation("JobRfqRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    UserIdentity?     @relation("JobRfqRequestUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  quote        JobRfqQuote?
+
+  // One active request per supplier per job — re-requesting refreshes the
+  // parts summary/timestamp on the same row rather than piling up
+  // duplicates (ModApp allows repeat RfqRequest rows per supplier since
+  // each one is also an email-send attempt; without a send cycle here
+  // there's nothing distinct about a second "request" from the same
+  // supplier on the same job).
+  @@unique([jobId, supplierId])
+  @@index([companyId, jobId])
+  @@index([companyId, supplierId])
+}
+
+// The supplier's quotation — an optional file for reference (stored inline
+// as bytes, same pattern as SupportTicketAttachment; Apollo X has no
+// separate Attachment model) plus free-text notes. The actual prices used
+// for comparison live in JobRfqQuoteLine below, entered by hand.
+model JobRfqQuote {
+  id            String        @id @default(cuid())
+  rfqRequestId  String        @unique
+  fileName      String?
+  mimeType      String?
+  sizeBytes     Int?
+  data          Bytes?
+  notes         String?
+  receivedAt    DateTime      @default(now())
+  createdById   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  rfqRequest    JobRfqRequest @relation(fields: [rfqRequestId], references: [id], onDelete: Cascade)
+  createdBy     UserIdentity? @relation("JobRfqQuoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lines         JobRfqQuoteLine[]
+}
+
+model JobRfqQuoteLine {
+  id         String      @id @default(cuid())
+  rfqQuoteId String
+  partLineId String
+  unitPrice  Decimal?    @db.Decimal(19, 4)
+  // A supplier's quote sometimes leaves a part out entirely (they don't
+  // stock it) — tracked separately from "no price entered yet" so the
+  // comparison table can show "not quoted" instead of a misleading blank.
+  available  Boolean     @default(true)
+  notes      String?
+  // Manually chosen as "buy this part from this supplier" in the
+  // comparison table — independent of (and doesn't have to agree with) the
+  // automatic cheapest-price highlight. At most one JobRfqQuoteLine per
+  // partLineId across a job's suppliers should ever have this set —
+  // enforced in code (setPreferredQuoteLine in rfq/service.ts clears any
+  // other supplier's flag for the same part first), same as ModApp.
+  preferred  Boolean     @default(false)
+
+  rfqQuote   JobRfqQuote @relation(fields: [rfqQuoteId], references: [id], onDelete: Cascade)
+  partLine   JobPartLine @relation(fields: [partLineId], references: [id], onDelete: Cascade)
+
+  @@unique([rfqQuoteId, partLineId])
 }
 
 model JobNote {
@@ -1415,4 +1832,183 @@ model JobWarranty {
   job                    Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([companyId, jobId])
+}
+
+enum ModuleCatalogStatus {
+  ACTIVE
+  INACTIVE
+  PLANNED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+enum TicketMessageKind {
+  REPLY
+  INTERNAL_NOTE
+}
+
+model ModuleCatalogEntry {
+  id                  String              @id @default(cuid())
+  code                String              @unique
+  moduleKey           ModuleKey?          @unique
+  name                String
+  description         String?
+  category            String
+  status              ModuleCatalogStatus @default(ACTIVE)
+  version             String              @default("1.0.0")
+  icon                String?
+  navGroup            String?
+  navOrder            Int?
+  route               String?
+  assignableToTenants Boolean             @default(false)
+  userAssignable      Boolean             @default(true)
+  dependsOn           ModuleKey[]
+  licensingMetadata   Json?
+  createdById         String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  createdBy UserIdentity? @relation("ModuleCatalogCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([category, status])
+}
+
+model PlatformSequence {
+  key       String   @id
+  nextValue BigInt   @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+model SupportTicket {
+  id                String         @id @default(cuid())
+  companyId         String
+  ticketNumber      String         @unique
+  subject           String
+  description       String
+  category          String?
+  priority          TicketPriority @default(NORMAL)
+  status            TicketStatus   @default(OPEN)
+  moduleKey         ModuleKey?
+  pageRoute         String?
+  userAgent         String?
+  appVersion        String?
+  reportedById      String
+  assignedSupportId String?
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reportedBy      UserIdentity  @relation("TicketReportedBy", fields: [reportedById], references: [id], onDelete: Restrict)
+  assignedSupport UserIdentity? @relation("TicketAssignedSupport", fields: [assignedSupportId], references: [id], onDelete: SetNull)
+
+  messages    SupportTicketMessage[]
+  events      SupportTicketEvent[]
+  attachments SupportTicketAttachment[]
+
+  @@index([companyId, status, priority])
+  @@index([status, priority, createdAt])
+  @@index([assignedSupportId, status])
+  @@index([createdAt])
+}
+
+model SupportTicketMessage {
+  id        String            @id @default(cuid())
+  companyId String
+  ticketId  String
+  authorId  String
+  kind      TicketMessageKind
+  body      String
+  createdAt DateTime          @default(now())
+
+  ticket      SupportTicket              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author      UserIdentity               @relation("TicketMessageAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  attachments SupportTicketAttachment[]
+
+  @@index([ticketId, createdAt])
+}
+
+model SupportTicketEvent {
+  id        String   @id @default(cuid())
+  companyId String
+  ticketId  String
+  actorId   String?
+  eventType String
+  fromValue String?
+  toValue   String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  UserIdentity? @relation("TicketEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model SupportTicketAttachment {
+  id           String   @id @default(cuid())
+  companyId    String
+  ticketId     String
+  messageId    String?
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  data         Bytes
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  ticket     SupportTicket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  message    SupportTicketMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy UserIdentity?         @relation("TicketAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+}
+
+model UserDashboardConfig {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  widgets   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    UserIdentity @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+// A user's own chosen set of visible columns for one customizable table —
+// same shape/purpose as UserDashboardConfig above (a small owned-JSON
+// preference row per {user, company}), just keyed by an extra `tableKey`
+// so more than one table can use this same model instead of getting a
+// dedicated one each (first consumer: the Jobs & WIP list, tableKey
+// "jobs-wip" — see JOBS_WIP_TABLE_KEY in src/lib/jobs/wip-columns.ts).
+model UserTableColumns {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  tableKey  String
+  columns   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    UserIdentity @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId, tableKey])
 }

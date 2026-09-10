@@ -1,1 +1,18 @@
-import { MasterDataRoute } from "@/components/MasterDataRoute"; export default function Page(){return <MasterDataRoute kind="commercial-terms"/>;}
+import { requireRequestContext } from "@/lib/auth/session";
+import { SettingsTabNav } from "@/components/SettingsTabNav";
+import { MasterDataRoute } from "@/components/MasterDataRoute";
+import { masterConfigs } from "@/lib/master-data/ui-config";
+
+const config = masterConfigs["commercial-terms"];
+
+// 2026-09-10 — see tax-codes/page.tsx for why this now renders its own
+// heading above the tab bar instead of letting MasterDataWorkspace render
+// one below it.
+export default async function Page() {
+  const ctx = await requireRequestContext();
+  return <>
+    <header className="page-header compact"><div><p className="eyebrow">Settings</p><h1>{config.title}</h1><p>{config.description}</p></div></header>
+    <SettingsTabNav ctx={ctx} current="commercial-terms" />
+    <MasterDataRoute kind="commercial-terms" hideHeader />
+  </>;
+}
