@@ -12,6 +12,30 @@ function normalizeOrigin(value: string) {
   return `${url.protocol}//${hostname}:${port}`;
 }
 
+// 2026-09-14 (first Render deploy) — request.nextUrl.origin reflects what
+// Next.js itself was connected to, not what the browser actually used.
+// Render (like effectively every PaaS/reverse proxy) terminates TLS at its
+// edge and forwards to this app over plain HTTP internally, so
+// request.nextUrl.protocol reports "http:" even for a real
+// "https://apollox-staging.onrender.com" request — a guaranteed mismatch
+// against the browser's Origin header on EVERY mutation, not something
+// specific to any one device or browser. This never showed up before
+// because this app had only ever run directly (next dev / next start on
+// the user's own PC), with no proxy in front of it at all. The fix: trust
+// x-forwarded-proto/x-forwarded-host when present, same as Next.js's own
+// built-in Server Actions origin check does (see
+// https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions#allowedorigins)
+// — safe here because Render's router is the only thing that can reach
+// this app's internal port; a client can't forge these by hitting the app
+// directly the way it could if the app were exposed without a proxy.
+function publicOrigin(request: NextRequest): string {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || request.nextUrl.protocol.replace(":", "");
+  const host = forwardedHost || request.nextUrl.host;
+  return normalizeOrigin(`${protocol}://${host}`);
+}
+
 // 2026-09-14 — a teammate on the workshop LAN could load pages fine after
 // next.config.ts's allowedDevOrigins fix, but every mutation (add a user,
 // add an RFQ, etc.) still failed with "Cross-origin mutation rejected.".
@@ -31,7 +55,7 @@ export function requireSameOrigin(request: NextRequest) {
   let expectedOrigin: string;
   try {
     originUrl = new URL(origin);
-    expectedOrigin = normalizeOrigin(request.nextUrl.origin);
+    expectedOrigin = publicOrigin(request);
   } catch {
     throw new AuthorizationError("Cross-origin mutation rejected.");
   }
