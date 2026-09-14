@@ -113,6 +113,14 @@ export const jobNoteCreateInput = z.object({
   note: z.string().trim().min(2).max(4000),
 });
 
+// 2026-09-14 — user request: "Notes need to be editable once created."
+// Same length bounds as jobNoteCreateInput; noteId identifies which of the
+// job's existing notes to update (see updateJobNote in service.ts).
+export const jobNoteUpdateInput = z.object({
+  noteId: z.string().min(1),
+  note: z.string().trim().min(2).max(4000),
+});
+
 export const jobFieldServiceInput = z.object({
   site: optionalText,
   technician: optionalText,
@@ -208,6 +216,16 @@ export const outworkEditInput = z.object({
 export const outworkReceiveInput = z.object({
   itemIds: z.array(z.string().cuid()).min(1, "Select at least one item."),
   receivedDate: optionalDate,
+});
+
+// Job attachments — new 2026-09-14 (see JobAttachment in schema.prisma).
+// fileName/mimeType/contentBase64 travel together, same convention as
+// rfqQuoteRecordInput in rfq/validation.ts.
+export const attachmentUploadInput = z.object({
+  fileName: z.string().trim().min(1).max(160),
+  mimeType: z.string().trim().min(3).max(120),
+  contentBase64: z.string().min(4),
+  notes: optionalText,
 });
 
 // The unselected option on the Jobs & WIP filter dropdowns has value="" —

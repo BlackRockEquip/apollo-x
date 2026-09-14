@@ -104,18 +104,30 @@ function mergeMapping(existing: Record<string, string>, headers: string[], field
   return { ...guessMapping(headers, fields), ...preserved };
 }
 
-function ImportModule({
+// Exported (2026-09-14) so Stock Levels' "Add or Import Part" popup can
+// reuse this exact same upload/column-mapping/confirm flow for its Import
+// tab, instead of a second, divergent copy of the parts-import wizard —
+// see StockLevelsWorkspace.tsx.
+export function ImportModule({
   kind,
   moduleLabel,
   rowLabelHeader,
   fields,
   helperText,
+  checkNewLocations,
 }: {
   kind: ImportExportKind;
   moduleLabel: string;
   rowLabelHeader: string;
   fields: ImportFieldDef[];
   helperText?: string;
+  // 2026-09-11 — Parts only. Before running the real import, checks
+  // whether the mapped "Bin location" column has any codes that don't
+  // match a Storage Location on file yet, and — if so — shows a
+  // confirmation box listing them before creating anything, rather than
+  // either silently leaving them unmapped (the old behavior) or silently
+  // creating them (the way an unmatched manufacturer name already does).
+  checkNewLocations?: boolean;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [contentBase64, setContentBase64] = useState("");
@@ -130,6 +142,8 @@ function ImportModule({
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
+  const [checkingLocations, setCheckingLocations] = useState(false);
+  const [pendingNewLocations, setPendingNewLocations] = useState<string[] | null>(null);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportSummary | null>(null);
   const [showResults, setShowResults] = useState(false);
@@ -203,6 +217,7 @@ function ImportModule({
     setMapping({});
     setError("");
     setResult(null);
+    setPendingNewLocations(null);
     setInputResetKey((k) => k + 1);
   }
 
@@ -223,20 +238,21 @@ function ImportModule({
   // updates it immediately.
   const columnStatus = headers.map((h) => ({ header: h, matchedField: fields.find((f) => mapping[f.key] === h) ?? null }));
 
-  async function handleImport() {
+  // The actual import call — shared by the direct path (no new bin
+  // locations to confirm) and the confirmed path (the "Create N locations
+  // and import" button in the dialog below). createMissingLocations only
+  // does anything on the server when this module checks locations at all
+  // and a Bin location column is actually mapped; harmless otherwise.
+  async function runImport() {
     if (!file) return;
-    if (missingRequired.length > 0) {
-      setError(`Link a column for: ${missingRequired.map((f) => f.label).join(", ")} before importing.`);
-      return;
-    }
-    setError("");
     setImporting(true);
+    setError("");
     try {
       const encoded = contentBase64 || (await fileToBase64(file));
       const response = await fetch(`/api/v1/import-export/${kind}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileName: file.name, mimeType: file.type || "text/csv", contentBase64: encoded, mapping, sheetNames: selectedSheets }),
+        body: JSON.stringify({ fileName: file.name, mimeType: file.type || "text/csv", contentBase64: encoded, mapping, sheetNames: selectedSheets, createMissingLocations: Boolean(checkNewLocations) }),
       });
       if (!response.ok) throw new Error(await readErrorMessage(response, "Unable to import that file."));
       const body = (await response.json()) as ImportSummary;
@@ -246,7 +262,40 @@ function ImportModule({
       setError(e instanceof Error ? e.message : "Unable to import that file.");
     } finally {
       setImporting(false);
+      setPendingNewLocations(null);
     }
+  }
+
+  async function handleImport() {
+    if (!file) return;
+    if (missingRequired.length > 0) {
+      setError(`Link a column for: ${missingRequired.map((f) => f.label).join(", ")} before importing.`);
+      return;
+    }
+    setError("");
+    if (checkNewLocations && mapping.binLocationCode) {
+      setCheckingLocations(true);
+      try {
+        const encoded = contentBase64 || (await fileToBase64(file));
+        const response = await fetch(`/api/v1/import-export/parts/preview-locations`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ fileName: file.name, mimeType: file.type || "text/csv", contentBase64: encoded, mapping, sheetNames: selectedSheets }),
+        });
+        if (!response.ok) throw new Error(await readErrorMessage(response, "Unable to check bin locations."));
+        const body = (await response.json()) as { newLocationCodes: string[] };
+        setCheckingLocations(false);
+        if (body.newLocationCodes.length > 0) {
+          setPendingNewLocations(body.newLocationCodes);
+          return; // wait for the confirm dialog below rather than importing yet
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Unable to check bin locations.");
+        setCheckingLocations(false);
+        return;
+      }
+    }
+    await runImport();
   }
 
   return (
@@ -358,13 +407,51 @@ function ImportModule({
           )}
 
           <div className="stack-row" style={{ marginTop: 12 }}>
-            <button type="button" className="gold-button" disabled={importing} onClick={() => void handleImport()}>
-              <Upload size={14} /> {importing ? "Importing…" : "Import"}
+            <button type="button" className="gold-button" disabled={importing || checkingLocations} onClick={() => void handleImport()}>
+              <Upload size={14} /> {checkingLocations ? "Checking bin locations…" : importing ? "Importing…" : "Import"}
             </button>
-            <button type="button" className="quiet-button" disabled={importing} onClick={handleCancel}>
+            <button type="button" className="quiet-button" disabled={importing || checkingLocations} onClick={handleCancel}>
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {pendingNewLocations && (
+        <div className="drawer-backdrop" role="dialog" aria-modal="true">
+          <aside className="form-drawer compact-dialog">
+            <header>
+              <div>
+                <p className="eyebrow">Import</p>
+                <h2>New bin locations</h2>
+              </div>
+              <button type="button" onClick={() => setPendingNewLocations(null)} aria-label="Close dialog">
+                <X size={18} />
+              </button>
+            </header>
+            <div style={{ padding: "4px 0 14px" }}>
+              <p style={{ fontSize: 12, marginBottom: 10, color: "var(--ink-700)" }}>
+                This file has {pendingNewLocations.length} bin location{pendingNewLocations.length === 1 ? "" : "s"} that{" "}
+                {pendingNewLocations.length === 1 ? "doesn't" : "don't"} exist yet under Storage Locations. Create{" "}
+                {pendingNewLocations.length === 1 ? "it" : "them"} now (as type &quot;Bin&quot;) so this import can assign stock to{" "}
+                {pendingNewLocations.length === 1 ? "it" : "them"} — or cancel and set {pendingNewLocations.length === 1 ? "it" : "them"} up
+                yourself first under Settings &gt; Storage Locations if you&apos;d rather pick a different type or a parent location.
+              </p>
+              <ul style={{ margin: "0 0 4px", paddingLeft: 18, fontSize: 12, color: "var(--ink-700)", maxHeight: 180, overflow: "auto" }}>
+                {pendingNewLocations.map((code) => (
+                  <li key={code}>{code}</li>
+                ))}
+              </ul>
+            </div>
+            <footer className="detail-actions">
+              <button type="button" className="quiet-button" disabled={importing} onClick={() => setPendingNewLocations(null)}>
+                Cancel
+              </button>
+              <button type="button" className="gold-button" disabled={importing} onClick={() => void runImport()}>
+                {importing ? "Importing…" : `Create ${pendingNewLocations.length} location${pendingNewLocations.length === 1 ? "" : "s"} and import`}
+              </button>
+            </footer>
+          </aside>
         </div>
       )}
 
@@ -519,7 +606,7 @@ export function ImportExportWorkspace() {
         <div style={{ padding: 14 }}>
           <ExportControl kind="parts" moduleLabel="parts catalog" />
           <div style={{ marginTop: 14 }}>
-            <ImportModule kind="parts" moduleLabel="part" rowLabelHeader="Part number" fields={PART_IMPORT_FIELDS} />
+            <ImportModule kind="parts" moduleLabel="part" rowLabelHeader="Part number" fields={PART_IMPORT_FIELDS} checkNewLocations />
           </div>
         </div>
       </section>

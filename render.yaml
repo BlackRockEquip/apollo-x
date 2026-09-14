@@ -1,0 +1,98 @@
+# Render Blueprint — Apollo X staging environment.
+#
+# Deploys a Node web service (this Next.js app) plus a managed Postgres
+# database, matching the two decisions confirmed with the user on
+# 2026-09-14 (see claude/workshop-track-progress-2026-09-14-storage-
+# architecture-and-render-prep.md): staging/test first (not production),
+# and Render's own managed Postgres (not an external provider).
+#
+# To use: in the Render dashboard, "New +" > "Blueprint", point it at this
+# repo's GitHub remote (https://github.com/BlackRockEquip/apollo-x.git,
+# branch main). Render reads this file and creates both resources below in
+# one go. Every envVar marked `sync: false` prompts for a value in the
+# dashboard at creation time instead of being committed here — several of
+# those are genuine secrets and must never be typed into this file.
+#
+# IMPORTANT — do NOT add JOBS_SYNC_FILE_PATH / JOBS_SYNC_COMPANY_NAME /
+# JOBS_SYNC_USE_POLLING to this service's env vars. Leaving them unset here
+# is exactly what keeps src/instrumentation.ts's in-process Excel-sync
+# watcher correctly disabled on Render (it has no access to a file on the
+# user's PC anyway) — see scripts/excel-sync-bridge.ts for the replacement,
+# which runs on the user's own machine instead and only needs
+# EXCEL_SYNC_API_KEY (below, shared with this service) and its own
+# EXCEL_SYNC_TARGET_URL (set locally, points AT this deployed service — not
+# a var this service itself needs).
+
+databases:
+  - name: apollox-staging-db
+    plan: 0.5c-1g
+    # NOT "free": Render's free Postgres tier auto-expires (and deletes the
+    # database) after 30 days, which would silently wipe a staging
+    # environment mid-use. 0.5c-1g is Render's smallest persistent paid
+    # tier as of 2026-09; bump this in the dashboard later if staging load
+    # grows.
+    region: oregon
+    databaseName: apollox_staging
+    user: apollox
+    postgresMajorVersion: "17"
+
+services:
+  - type: web
+    name: apollox-staging
+    runtime: node
+    plan: free
+    # Free web service tier spins down after inactivity (slow first request
+    # after idle) — acceptable for a staging/test environment that isn't
+    # being hit continuously. Bump to a paid compute plan (e.g. 0.5c-512mb)
+    # in the dashboard if the cold-start delay becomes annoying.
+    region: oregon
+    branch: main
+    buildCommand: npm ci && npx prisma generate && npm run build
+    # Runs after buildCommand but before the new instance starts serving
+    # traffic — applies any pending migrations (this repo's own
+    # hand-written migration.sql files, same as `npx prisma migrate dev`
+    # applies locally) against DATABASE_URL below. Render only routes
+    # traffic to the new instance once this succeeds, so a bad migration
+    # blocks the deploy instead of taking a half-migrated app live.
+    preDeployCommand: npx prisma migrate deploy
+    startCommand: npx next start -p $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: apollox-staging-db
+          property: connectionString
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: BOOTSTRAP_PLATFORM_EMAIL
+        sync: false
+      - key: BOOTSTRAP_PLATFORM_PASSWORD
+        sync: false
+      # Object storage — the platform-wide default bucket (used by any
+      # company without its own per-company override on Platform >
+      # Companies > [company] > Storage location). Must be filled in before
+      # first deploy: with nothing configured, production throws
+      # STORAGE_NOT_CONFIGURED rather than silently falling back to
+      # local-disk storage (which wouldn't survive a redeploy anyway, and
+      # can't scale past one instance). "R2" | "B2" | "S3_COMPATIBLE".
+      - key: STORAGE_PROVIDER_DEFAULT
+        sync: false
+      - key: STORAGE_S3_BUCKET
+        sync: false
+      - key: STORAGE_S3_REGION
+        value: auto
+      - key: STORAGE_S3_ENDPOINT
+        sync: false
+      - key: STORAGE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_S3_SECRET_ACCESS_KEY
+        sync: false
+      # Shared secret for the Excel-sync bridge script (scripts/excel-sync-
+      # bridge.ts) running on the user's own PC — generateValue creates a
+      # random 256-bit value on first deploy. Copy it from this service's
+      # Environment tab in the Render dashboard into EXCEL_SYNC_API_KEY in
+      # the bridge script's own local .env (same value on both sides).
+      - key: EXCEL_SYNC_API_KEY
+        generateValue: true

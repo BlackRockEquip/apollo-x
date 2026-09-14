@@ -183,6 +183,17 @@ export const PART_IMPORT_FIELDS: ImportFieldDef[] = [
   { key: "manufacturerPartNumber", label: "Manufacturer part number", aliases: ["Mfr Part Number", "OEM Part Number", "Manufacturer Part #"] },
   { key: "category", label: "Category", aliases: [] },
   { key: "unitOfMeasure", label: "Unit of measure", aliases: ["UOM", "Unit"] },
+  // 2026-09-11 — user request: importing parts had no way to seed opening
+  // stock, so every imported part landed with zero stock everywhere until
+  // someone went and received it by hand afterward. "Bin location" is
+  // looked up against this company's existing Storage Locations by exact
+  // code (same tier of matching "Tax code" below gets — never
+  // auto-created, since a location carries its own required type a
+  // spreadsheet cell can't safely infer). "Quantity" is only posted as
+  // opening stock when a matching bin location was found for that row;
+  // see importParts in service.ts for what happens when it isn't.
+  { key: "binLocationCode", label: "Bin location", aliases: ["Bin Location", "Location", "Location Code", "Storage Location", "Bin"] },
+  { key: "quantity", label: "Quantity on hand", aliases: ["Qty", "Quantity", "Stock Qty", "Quantity On Hand", "On Hand", "Opening Stock", "Stock On Hand"] },
   { key: "defaultPurchaseCost", label: "Purchase cost", aliases: ["Cost Price", "Purchase Price", "Cost"] },
   { key: "defaultSellingPrice", label: "Selling price", aliases: ["Sell Price", "Selling Price", "Price"] },
   { key: "taxCode", label: "Tax code", aliases: ["Tax Code", "VAT Code"] },

@@ -70,7 +70,13 @@ function modulePermissions(moduleKey: ModuleKey) {
     CUSTOMERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("CUSTOMER") || p.startsWith("CUSTOMERS")),
     SUPPLIERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("SUPPLIER") || p.startsWith("SUPPLIERS")),
     JOBS_WIP: TENANT_PERMISSIONS.filter((p) => p.startsWith("JOBS_") || p.startsWith("JOB_")),
-    INVENTORY: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVENTORY_") || p.startsWith("PARTS_") || p.startsWith("MANUFACTURERS_")),
+    // 2026-09-11 — STOCK_MOVEMENTS_VIEW doesn't start with "INVENTORY_"
+    // (it's its own permission, granted by default to STORE_CONTROLLER
+    // and FINANCE — see DEFAULT_TENANT_PERMISSIONS in permissions.ts) but
+    // it's the Inventory module's stock-ledger view, so it belongs here.
+    // Leaving it out meant it could never be re-entitled once
+    // computeOverrides' auto-revocation swept it — see that fix below.
+    INVENTORY: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVENTORY_") || p.startsWith("PARTS_") || p.startsWith("MANUFACTURERS_") || p === "STOCK_MOVEMENTS_VIEW"),
     STORAGE: TENANT_PERMISSIONS.filter((p) => p.startsWith("STORAGE_")),
     JOB_KITS: TENANT_PERMISSIONS.filter((p) => p.startsWith("JOB_KITS_")),
     REBUILDS: [],
@@ -83,7 +89,11 @@ function modulePermissions(moduleKey: ModuleKey) {
     NOTIFICATIONS: ["DASHBOARD_VIEW"],
     QUOTES: TENANT_PERMISSIONS.filter((p) => p.startsWith("QUOTES_") || p.startsWith("COMMERCIAL_TERMS") || p.startsWith("SERVICES_") || p === "NUMBERING_VIEW" || p === "NUMBERING_EDIT"),
     SALES_ORDERS: TENANT_PERMISSIONS.filter((p) => p.startsWith("SALES_ORDERS_")),
-    INVOICES: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVOICES_") || p.startsWith("PAYMENTS_") || p.startsWith("FINANCIAL_REPORTS_")),
+    // TAX_CODES_* has its own prefix (not "INVOICES_") but the tax-codes
+    // master-data kind is policy-gated behind the INVOICES module (see
+    // MASTER_DATA_POLICY in master-data/service.ts) — same class of gap
+    // as STOCK_MOVEMENTS_VIEW above.
+    INVOICES: TENANT_PERMISSIONS.filter((p) => p.startsWith("INVOICES_") || p.startsWith("PAYMENTS_") || p.startsWith("FINANCIAL_REPORTS_") || p.startsWith("TAX_CODES_")),
     PAYMENTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("PAYMENTS_")),
     REPORTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("REPORTS_") || p.startsWith("AUDIT_")),
     ATTACHMENTS: [],
@@ -92,13 +102,49 @@ function modulePermissions(moduleKey: ModuleKey) {
   return new Set(prefixMap[moduleKey] ?? []);
 }
 
+// 2026-09-11 — the full set of permissions that belong to at least one
+// module, across every ModuleKey (not just whichever modules a given user
+// has selected). USERS_MANAGE, SETTINGS_MANAGE, COMPANY_SETTINGS_VIEW and
+// COMPANY_SETTINGS_EDIT are real, actively-checked permissions (see
+// requireTenantPermission call sites in this file and in
+// company-settings-service.ts / repositories/company-settings.ts) but
+// there is no "Users" or "Settings" entry in the ModuleKey enum for them
+// to live under, so no module selection can ever grant them. Scoping
+// computeOverrides' auto-revocation to only this covered set (below) is
+// what stops those permissions from being swept on literally every Users
+// tab Save — see that fix for the bug this caused.
+const MODULE_COVERED_PERMISSIONS = new Set<string>(
+  (Object.values(ModuleKey) as ModuleKey[]).flatMap((moduleKey) => Array.from(modulePermissions(moduleKey))),
+);
+
+// 2026-09-11 — "i see my permissions have been removed again": every save
+// on the Users tab (create OR edit — see createTenantUser/updateTenantUser
+// below) recomputes this membership's full override row set from scratch.
+// The auto-revocation pass used to run over ALL of TENANT_PERMISSIONS, so
+// any permission that no module's modulePermissions() happens to cover —
+// regardless of which modules were selected — got an explicit
+// {allowed:false} row written every single time, for every role including
+// COMPANY_ADMIN. USERS_MANAGE/SETTINGS_MANAGE/COMPANY_SETTINGS_VIEW/
+// COMPANY_SETTINGS_EDIT have no module at all (see
+// MODULE_COVERED_PERMISSIONS above), so that was a one-way ratchet: saving
+// any user — including a COMPANY_ADMIN saving themselves — silently
+// stripped their own ability to manage users or settings, with no way to
+// re-grant it since no module checkbox could ever cover it again.
+// STOCK_MOVEMENTS_VIEW and TAX_CODES_* were hit the same way whenever the
+// covering module (INVENTORY / INVOICES) was mapped by prefix and missed
+// them — now fixed above, so those two are back to normal
+// module-entitlement behavior. Restricting this sweep to
+// MODULE_COVERED_PERMISSIONS leaves every module-less permission alone,
+// governed only by the role default and any explicit override.
 function computeOverrides(role: TenantRole, allowedModules: ModuleKey[], explicit: Array<{ permission: string; allowed: boolean }>) {
   const entitledPermissions = new Set<string>();
   for (const moduleKey of allowedModules) for (const permission of modulePermissions(moduleKey)) entitledPermissions.add(permission);
   const base = DEFAULT_TENANT_PERMISSIONS[role];
   const rows = explicit.filter((row) => TENANT_PERMISSIONS.includes(row.permission as never) && (entitledPermissions.has(row.permission) || !row.allowed));
   const effective = mergePermissionOverrides(base, rows);
-  const autoRevocations = TENANT_PERMISSIONS.filter((permission) => !entitledPermissions.has(permission) && effective.has(permission as never)).map((permission) => ({ permission, allowed: false }));
+  const autoRevocations = TENANT_PERMISSIONS.filter(
+    (permission) => MODULE_COVERED_PERMISSIONS.has(permission) && !entitledPermissions.has(permission) && effective.has(permission as never),
+  ).map((permission) => ({ permission, allowed: false }));
   return [...rows, ...autoRevocations];
 }
 

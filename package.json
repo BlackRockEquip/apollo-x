@@ -17,6 +17,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:validate": "prisma validate",
     "seed": "tsx prisma/seed.ts",
+    "excel-sync:bridge": "tsx scripts/excel-sync-bridge.ts",
     "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-db.ps1",
     "db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-db.ps1",
     "db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status-db.ps1"
@@ -34,8 +35,11 @@
     "unrs-resolver@1.12.2": true
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.1",
+    "@aws-sdk/s3-request-presigner": "^3.658.1",
     "@prisma/client": "5.22.0",
     "argon2": "^0.44.0",
+    "chokidar": "^4.0.0",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.8.0",
     "next": "16.3.4",

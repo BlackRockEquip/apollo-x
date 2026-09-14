@@ -67,14 +67,33 @@ export function UsersWorkspace() {
     setForm({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: editorSeed?.availableModules.slice(0, 2).map((m) => m.moduleKey) ?? [] });
   }
 
+  // 2026-09-14 — "module selection keeps jumping around not staying on the
+  // modules when save is clicked": this used to call resetForm()
+  // unconditionally right after every successful save, whether adding a
+  // new user or editing an existing one. resetForm() sets
+  // selectedModuleKeys back to a generic default (the company's first two
+  // available modules) — so the moment an admin edited someone's modules
+  // and hit Save, the picker visibly snapped to a different selection,
+  // even though the save itself had already gone through correctly with
+  // what was actually chosen. Now an edit re-syncs the form from the
+  // server's confirmed state (via startEdit) instead of resetting to
+  // defaults — Add still resets to a blank form afterwards, since that's
+  // the expected next step there.
   async function saveUser() {
     setSaving(true); setError("");
     try {
       const payload = { ...form, moduleKeys: form.selectedModuleKeys };
-      const response = await fetch(editingId ? `/api/v1/users/${editingId}` : "/api/v1/users", { method: editingId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const wasEditingId = editingId;
+      const response = await fetch(wasEditingId ? `/api/v1/users/${wasEditingId}` : "/api/v1/users", { method: wasEditingId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to save user.");
-      resetForm();
+      if (wasEditingId) {
+        await startEdit(wasEditingId);
+        setNotice("User updated.");
+      } else {
+        resetForm();
+        setNotice("User added.");
+      }
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to save user."); }
     finally { setSaving(false); }

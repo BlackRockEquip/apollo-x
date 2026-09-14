@@ -2,6 +2,7 @@ import { Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { StatusPill } from "@/components/StatusPill";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
+import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
@@ -14,6 +15,12 @@ export const dynamic = "force-dynamic";
 type JobRow = Awaited<ReturnType<typeof listJobs>>["items"][number];
 
 const COLUMN_LABELS: Record<JobsWipColumnId, string> = Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, c.label])) as Record<JobsWipColumnId, string>;
+const COLUMN_DEFAULT_WIDTHS: Record<JobsWipColumnId, number | undefined> = Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, c.defaultWidth])) as Record<JobsWipColumnId, number | undefined>;
+// Drag-to-resize (2026-09-14, user request) reads/writes this same
+// localStorage key regardless of which columns are currently visible —
+// see JobsWipColumnResize.tsx's own header comment for why this is
+// per-browser rather than synced through wip-columns-service.ts.
+const JOBS_WIP_COLUMN_WIDTHS_STORAGE_KEY = "apollox.jobsWipColumnWidths";
 
 function fmtDate(value: Date | string | null | undefined): string {
   if (!value) return "—";
@@ -169,9 +176,16 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             <option value="">All statuses</option>
             {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
+          {/* 2026-09-14 — "Move the custom column button selctor and apply
+              button to the far right" (explicit request). The item-count
+              span already carries the shared .master-toolbar > span rule's
+              margin-left:auto, which pushes it — and, in DOM/flex order,
+              everything placed after it — to the toolbar's right edge. So
+              Apply/Columns moved to after the count span rather than before
+              it (their previous position, immediately after the filters). */}
+          <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
           <button type="submit" form="jobs-filter-form" className="quiet-button">Apply</button>
           <JobsWipColumnPicker selected={columns} />
-          <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
         </div>
 
         <div className="jobs-filter-strip">
@@ -190,8 +204,18 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         </div>
 
         <div className="data-table-wrap">
-          <table className="data-table">
-            <thead><tr>{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}</th>)}<th></th></tr></thead>
+          {/* Drag-to-resize (2026-09-14, user request: "Make the job wip
+              view table columns custom sizable") — table-layout: fixed
+              (see .jobs-wip-resizable in globals.css) so each <col>'s width
+              actually governs its column; JobsWipColumnResize wires up the
+              per-<th> .col-resize-handle drag against these <col>s and
+              restores any previously dragged widths from localStorage. */}
+          <table id="jobs-wip-table" className="data-table jobs-wip-resizable">
+            <colgroup>
+              {columns.map((id) => <col key={id} data-col-id={id} style={{ width: `${COLUMN_DEFAULT_WIDTHS[id] ?? 140}px` }} />)}
+              <col data-col-id="__actions" style={{ width: "70px" }} />
+            </colgroup>
+            <thead><tr>{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}<th></th></tr></thead>
             <tbody>
               {data.items.map((job) => (
                 <tr key={job.id} className="clickable-row">
@@ -202,6 +226,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               {data.items.length === 0 && <tr><td colSpan={columns.length + 1} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
             </tbody>
           </table>
+          <JobsWipColumnResize tableId="jobs-wip-table" storageKey={JOBS_WIP_COLUMN_WIDTHS_STORAGE_KEY} columns={columns} />
         </div>
       </section>
     </div>

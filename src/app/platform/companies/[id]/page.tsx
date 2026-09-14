@@ -5,7 +5,7 @@ import { getRequestContext } from "@/lib/auth/session";
 import { getPlatformCompanyDetail } from "@/lib/platform/admin-service";
 import { MODULE_LABELS } from "@/lib/constants";
 import { SupportContextForm } from "@/components/SupportContextForm";
-import { setCompanyStatusAction, updateCompanyAction, updateEntitlementAction } from "@/app/platform/actions";
+import { setCompanyStatusAction, updateCompanyAction, updateCompanyStorageProfileAction, updateEntitlementAction } from "@/app/platform/actions";
 import { EntitlementSource, EntitlementStatus, ModuleKey } from "@prisma/client";
 
 type CompanyDetail = Awaited<ReturnType<typeof getPlatformCompanyDetail>>;
@@ -91,6 +91,33 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
               <div className="platform-form-actions"><button type="submit" className="quiet-button">Update status</button></div>
             </form>
           )}
+        </article>
+
+        <article className="platform-card">
+          <h3>Storage location</h3>
+          <p className="muted small-line">
+            {company.settings?.storageProvider
+              ? `Custom: ${company.settings.storageProvider} · ${company.settings.storageBucket}${company.settings.storageRegion ? ` (${company.settings.storageRegion})` : ""}`
+              : "Using the platform default bucket."}
+          </p>
+          <p className="muted small-line">Controls where this company's files (attachments, logos, future exports) are stored — not where its core records live, which always stays in the shared database.</p>
+          <form action={updateCompanyStorageProfileAction} className="platform-form-grid compact-top-gap">
+            <input type="hidden" name="companyId" value={company.id} />
+            <label><span>Provider</span>
+              <select name="provider" defaultValue={company.settings?.storageProvider ?? ""}>
+                <option value="">Platform default</option>
+                <option value="R2">Cloudflare R2</option>
+                <option value="B2">Backblaze B2</option>
+                <option value="S3_COMPATIBLE">Other S3-compatible</option>
+              </select>
+            </label>
+            <label><span>Bucket</span><input name="bucket" defaultValue={company.settings?.storageBucket ?? ""} /></label>
+            <label><span>Region</span><input name="region" defaultValue={company.settings?.storageRegion ?? ""} placeholder="auto" /></label>
+            <label><span>Endpoint</span><input name="endpoint" defaultValue={company.settings?.storageEndpoint ?? ""} placeholder="Required for R2 / B2 / MinIO" /></label>
+            <label><span>Access key ID</span><input name="accessKeyId" defaultValue={company.settings?.storageAccessKeyId ?? ""} /></label>
+            <label><span>Secret access key</span><input name="secretAccessKey" type="password" placeholder={company.settings?.storageConfiguredAt ? "Unchanged" : ""} /></label>
+            <div className="platform-form-actions"><button type="submit" className="quiet-button">Save storage location</button></div>
+          </form>
         </article>
 
         <article className="platform-card platform-card-span-2">

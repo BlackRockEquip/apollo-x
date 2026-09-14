@@ -110,7 +110,26 @@ export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: st
     for(const k of ["creditLimit","defaultPurchaseCost","defaultSellingPrice","reorderMinimum","reorderMaximum","reorderQuantity","defaultCost","rate"]) if(data[k]!=null) data[k]=new Prisma.Decimal(data[k] as string);
     delete data.manufacturerIds;
     const updated=await (delegate as never as {update(a:unknown):Promise<Record<string,unknown>&{id:string}>}).update({where:{id},data});
-    if(kind==="suppliers"&&"manufacturerIds" in input){ await tx.supplierManufacturer.deleteMany({where:{companyId,supplierId:id}}); await tx.supplierManufacturer.createMany({data:(input.manufacturerIds as string[]).map(manufacturerId=>({companyId,supplierId:id,manufacturerId})),skipDuplicates:true}); }
+    // 2026-09-14 — bug fix found while wiring up the "Brands supplied" field
+    // on the New Supplier form: this used to check `"manufacturerIds" in
+    // input` — `input` is the *parsed* zod output, and supplierInput
+    // defaults manufacturerIds to `[]` (schema: `.default([])`), so that key
+    // is ALWAYS present on the parsed object regardless of whether the
+    // caller's request actually included it. Every ordinary supplier edit
+    // (e.g. just changing a phone number) was therefore silently wiping the
+    // supplier's entire brand list on every save, since the merge fell back
+    // to the empty default. Fixed by checking the caller's own raw payload
+    // instead — brands are only touched when the request actually named
+    // that field (which only the New Supplier form's create-only submit and
+    // any future explicit "edit brands" caller would do).
+    // The `&&"manufacturerIds" in input` clause (added alongside this
+    // 2026-09-14 type fix) is redundant at runtime — every suppliers-schema
+    // parse always has the key, per the .default([]) note above — but it's
+    // what lets tsc narrow `input`'s type (a union across every MasterKind's
+    // schema output, most of which have no such field) down to the branch
+    // that does, so `input.manufacturerIds` below type-checks without an
+    // unsafe cast standing in for it.
+    if(kind==="suppliers"&&"manufacturerIds" in (raw as Record<string,unknown>)&&"manufacturerIds" in input){ await tx.supplierManufacturer.deleteMany({where:{companyId,supplierId:id}}); await tx.supplierManufacturer.createMany({data:input.manufacturerIds.map(manufacturerId=>({companyId,supplierId:id,manufacturerId})),skipDuplicates:true}); }
     await tx.auditEvent.create({data:audit(ctx,kind,id,"UPDATE",JSON.parse(JSON.stringify(before,(_,x)=>typeof x==="bigint"?x.toString():x)),JSON.parse(JSON.stringify(updated,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return updated;
   });
 }

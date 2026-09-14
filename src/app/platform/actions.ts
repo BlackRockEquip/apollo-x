@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
-import { createPlatformCompany, grantPlatformAuthority, setPlatformCompanyStatus, updatePlatformAuthority, updatePlatformCompany, updatePlatformEntitlement } from "@/lib/platform/admin-service";
+import { createPlatformCompany, grantPlatformAuthority, setPlatformCompanyStatus, updatePlatformAuthority, updatePlatformCompany, updatePlatformCompanyStorageProfile, updatePlatformEntitlement } from "@/lib/platform/admin-service";
 
 export async function createCompanyAction(formData: FormData) {
   const context = await getRequestContext();
@@ -63,6 +63,21 @@ export async function setCompanyStatusAction(formData: FormData) {
   const companyId = String(formData.get("companyId") ?? "");
   await setPlatformCompanyStatus(context, companyId, String(formData.get("status") ?? "ACTIVE") as "ACTIVE" | "SUSPENDED");
   revalidatePath("/platform");
+  revalidatePath(`/platform/companies/${companyId}`);
+}
+
+export async function updateCompanyStorageProfileAction(formData: FormData) {
+  const context = await getRequestContext();
+  if (!context) redirect("/login");
+  const companyId = String(formData.get("companyId") ?? "");
+  await updatePlatformCompanyStorageProfile(context, companyId, {
+    provider: String(formData.get("provider") ?? "") as "" | "R2" | "B2" | "S3_COMPATIBLE",
+    bucket: String(formData.get("bucket") ?? ""),
+    region: String(formData.get("region") ?? ""),
+    endpoint: String(formData.get("endpoint") ?? ""),
+    accessKeyId: String(formData.get("accessKeyId") ?? ""),
+    secretAccessKey: String(formData.get("secretAccessKey") ?? ""),
+  });
   revalidatePath(`/platform/companies/${companyId}`);
 }
 

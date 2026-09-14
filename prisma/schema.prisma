@@ -318,6 +318,9 @@ enum JobActivityType {
   PEX_RETURN_UNLINKED
   PEX_UNIT_SCRAPPED
   PEX_UNIT_ALLOCATED_TO_INVENTORY
+  // Job attachments — new 2026-09-14 (see JobAttachment's own comment).
+  ATTACHMENT_UPLOADED
+  ATTACHMENT_DELETED
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
@@ -368,6 +371,51 @@ enum OutworkStatus {
   RECEIVED
 }
 
+// Per-company override for where a company's space-heavy files (attachments,
+// exports, logos) get stored — added 2026-09-14 per
+// claude/decision-storage-architecture-render-plus-object-storage.md. A
+// company with no storageProvider set (the default) uses the platform-wide
+// default bucket configured via STORAGE_* env vars — see
+// src/lib/storage/index.ts. This governs file storage ONLY; core tenant
+// data (Job/Customer/Inventory/etc.) always stays in the single shared
+// Postgres, companyId-scoped, as already designed — per-tenant database
+// sharding is a deliberately separate, much larger decision (see the
+// decision doc's own reasoning) and is not what this enum is for.
+enum StorageProviderType {
+  R2
+  B2
+  S3_COMPATIBLE
+}
+
+// Every attachment/file this platform stores now goes through one generic
+// model rather than a one-off Bytes column per feature (CompanySettings
+// logo, JobRfqQuote, JobAttachment, SupportTicketAttachment all did this
+// separately before). COMPANY_LOGO is the first owner type actually wired
+// through this path (see company-settings-service.ts) — the others still
+// use their own inline Bytes columns for now and are expected to migrate
+// to this model feature-by-feature; see the decision doc for the plan.
+enum AttachmentOwnerType {
+  JOB
+  RFQ_QUOTE
+  SUPPORT_TICKET
+  COMPANY_LOGO
+  GENERAL_RFQ
+}
+
+// PENDING exists for a future direct-to-bucket presigned-upload flow (the
+// object write and the DB row aren't in the same transaction, so a status
+// column plus a sweep job is the standard pattern — see the decision doc's
+// "Transactional integrity" open question). The current upload path writes
+// the object then creates the row as COMMITTED in one server-side call, so
+// PENDING rows shouldn't normally occur yet; ORPHANED is for a future sweep
+// job (not yet built) to mark a COMMITTED row whose object turned out
+// missing.
+enum AttachmentStatus {
+  PENDING
+  COMMITTED
+  ORPHANED
+}
+
 model UserIdentity {
   id             String   @id @default(cuid())
   email          String   @unique
@@ -401,11 +449,23 @@ model UserIdentity {
   pexRecordsUpdated   PexRecord[]              @relation("PexRecordUpdatedBy")
   jobPartLinesCreated JobPartLine[]            @relation("JobPartLineCreatedBy")
   jobPartLinesUpdated JobPartLine[]            @relation("JobPartLineUpdatedBy")
+  pickSlipsCreated    PickSlip[]               @relation("PickSlipCreatedBy")
   outworkItemsCreated OutworkItem[]            @relation("OutworkItemCreatedBy")
   outworkItemsUpdated OutworkItem[]            @relation("OutworkItemUpdatedBy")
   rfqRequestsCreated  JobRfqRequest[]          @relation("JobRfqRequestCreatedBy")
   rfqRequestsUpdated  JobRfqRequest[]          @relation("JobRfqRequestUpdatedBy")
   rfqQuotesCreated    JobRfqQuote[]            @relation("JobRfqQuoteCreatedBy")
+  // General RFQs — added 2026-09-14 alongside the Suppliers screen's
+  // Outwork/RFQ tabs, for an RFQ raised with no job at all (see
+  // GeneralRfqRequest below).
+  generalRfqsCreated  GeneralRfqRequest[]      @relation("GeneralRfqRequestCreatedBy")
+  generalRfqsUpdated  GeneralRfqRequest[]      @relation("GeneralRfqRequestUpdatedBy")
+  // Job attachments — added 2026-09-14 at the user's request ("Attachments
+  // to be able to download via job view, have a attachments section,
+  // view/delete"). Stored inline (see JobAttachment below), same pattern
+  // as JobRfqQuote/SupportTicketAttachment — real object storage is
+  // deferred (see decision-storage-architecture doc).
+  jobAttachmentsCreated JobAttachment[]        @relation("JobAttachmentCreatedBy")
   moduleCatalogCreated ModuleCatalogEntry[]    @relation("ModuleCatalogCreatedBy")
   ticketsReported      SupportTicket[]         @relation("TicketReportedBy")
   ticketsAssigned      SupportTicket[]         @relation("TicketAssignedSupport")
@@ -414,6 +474,9 @@ model UserIdentity {
   ticketAttachmentsUploaded SupportTicketAttachment[] @relation("TicketAttachmentUploadedBy")
   dashboardConfigs     UserDashboardConfig[]
   tableColumnConfigs   UserTableColumns[]
+  // Generic object-storage-backed attachments — added 2026-09-14, see
+  // Attachment model below.
+  attachmentsUploaded  Attachment[]            @relation("AttachmentUploadedBy")
 }
 
 model Company {
@@ -461,7 +524,11 @@ model Company {
   jobKitLines       JobKitLine[]
   jobPartLines      JobPartLine[]
   outworkItems      OutworkItem[]
+  pickSlips         PickSlip[]
   rfqRequests       JobRfqRequest[]
+  generalRfqRequests GeneralRfqRequest[]
+  jobAttachments    JobAttachment[]
+  attachments       Attachment[]
   jobNotes          JobNote[]
   jobActivities     JobActivity[]
   jobFieldServiceReports JobFieldServiceReport[]
@@ -677,6 +744,21 @@ model CompanySettings {
   smtpFromName           String?
   smtpConfiguredAt       DateTime?
 
+  // Per-company file-storage override — added 2026-09-14, Super Admin
+  // (Platform > Companies > [company]) setting only, not editable by the
+  // company's own Company Admin. Null storageProvider means "use the
+  // platform-wide default bucket" (STORAGE_* env vars — see
+  // src/lib/storage/index.ts). storageSecretAccessKey is write-only, same
+  // convention as smtpPassword above: never returned to any client, and an
+  // update with it blank leaves the stored value unchanged.
+  storageProvider        StorageProviderType?
+  storageBucket          String?
+  storageRegion          String?
+  storageEndpoint        String?
+  storageAccessKeyId     String?
+  storageSecretAccessKey String?
+  storageConfiguredAt    DateTime?
+
   company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   defaultTaxCode     TaxCode?        @relation(fields: [defaultTaxCodeId], references: [id], onDelete: SetNull)
   defaultPaymentTerm CommercialTerm? @relation(fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
@@ -838,6 +920,7 @@ model Supplier {
   jobPartLinesOrdered   JobPartLine[]           @relation("JobPartLineOrderedFromSupplier")
   outworkItems          OutworkItem[]           @relation("OutworkItemSupplier")
   rfqRequests           JobRfqRequest[]         @relation("JobRfqRequestSupplier")
+  generalRfqRequests    GeneralRfqRequest[]     @relation("GeneralRfqRequestSupplier")
 
   @@unique([companyId, accountCodeNormalized])
   @@index([companyId, nameNormalized])
@@ -973,6 +1056,7 @@ model Part {
   jobKitLines        JobKitLine[]
   stockCountLines        StockCountLine[]
   jobPartLines           JobPartLine[]
+  pickSlipLines          PickSlipLine[]
 
   @@unique([companyId, partNumberNormalized])
   @@index([companyId, description])
@@ -1007,6 +1091,7 @@ model StorageLocation {
   stockReservations StockReservation[]
   stockCounts       StockCount[]
   partsWithBinHere  Part[]              @relation("PartBinLocation")
+  pickSlipLines     PickSlipLine[]
 
   @@unique([companyId, codeNormalized])
   @@unique([id, companyId])
@@ -1386,6 +1471,24 @@ model Job {
   previousJobNumber    String?
   salesRepresentative  String?
 
+  // 2026-09-14 — WIP Excel auto-sync's per-field conflict protection ("if
+  // changes on the system have been made, spreadsheet must not overwrite
+  // them"). One flat JSON object, keyed by Job column name, holding the
+  // value the sync engine itself last wrote for every field it treats as a
+  // straight overwrite (dates, status, type, customerId, the "never guess"
+  // enums, kmsTravelled/machineHours, previousJobNumber — see
+  // OVERWRITE_FIELDS in src/lib/jobs/excel-sync.ts; the free-text fields it
+  // already only appends to, never overwrites, aren't tracked here at all).
+  // On each sync run, a field whose LIVE value no longer matches its entry
+  // here is assumed to have been changed by a person in Apollo X since the
+  // last sync and is left alone — its entry here is then deliberately left
+  // stale (not refreshed to the live value), so protection persists on
+  // every future run regardless of what the spreadsheet says, rather than
+  // only holding for one cycle. Null/absent entirely for a job the sync
+  // has never written to. Purely internal bookkeeping — never read or
+  // written by anything user-facing, and never surfaced in the API/UI.
+  excelSyncSnapshot   Json?
+
   company             Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
   relatedJob          Job?          @relation("RelatedJob", fields: [relatedJobId], references: [id], onDelete: SetNull)
@@ -1398,7 +1501,9 @@ model Job {
   components          JobComponent[]
   partLines           JobPartLine[]
   outworkItems        OutworkItem[]
+  pickSlips           PickSlip[]
   rfqRequests         JobRfqRequest[]
+  attachments         JobAttachment[]
   notes               JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
@@ -1599,6 +1704,69 @@ model JobPartLine {
   @@index([companyId, orderedFromSupplierId])
 }
 
+// New — added 2026-09-14 at the user's explicit request ("create a picking
+// slip, which can be allocated to a job, printed, saved") — mirrors
+// ModApp's PickSlip model (a lightweight grouping record; the individual
+// picked parts live on their own line rows) but adapted to Apollo X's
+// multi-location stock model: ModApp's InventoryItem carries one flat
+// quantity, so its PickSlip just tags JobPartLine rows directly. Apollo X's
+// stock is companyId+partId+locationId-scoped (StockBalance), so a picked
+// line needs its own row (PickSlipLine below) recording exactly which part,
+// quantity and bin location were actually issued — the JobPartLine it also
+// creates (status RECEIVED, mirroring "picked immediately from stock", vs.
+// PENDING for anything backordered) stays the job's own parts-list record,
+// same as every other way a JobPartLine gets created in this app.
+//
+// Creating a pick slip is real stock movement, not just a document: each
+// picked line posts a real ISSUE StockMovement (referenceType "JOB") via
+// the same issueStock/buildMovement machinery every other outbound stock
+// change in this app uses — see createPickSlip in inventory/service.ts.
+// A selection made entirely of backordered/out-of-stock parts still adds
+// PENDING JobPartLine rows to the job, but creates no PickSlip at all
+// (nothing was actually picked) — same "nullable pick slip" behavior
+// ModApp's generatePickSlip has.
+model PickSlip {
+  id          String   @id @default(cuid())
+  companyId   String
+  jobId       String
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy   UserIdentity? @relation("PickSlipCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lines       PickSlipLine[]
+
+  @@index([companyId, jobId])
+  @@index([companyId, createdAt])
+}
+
+// One row per part actually picked onto a given PickSlip. partNumber/
+// description/binLocation are captured at pick time (not just joined live
+// through partId/binLocationId) so a reprint from Picking Slip History
+// still shows exactly what was on the slip even if the part is later
+// renamed or its default bin location changes — same "snapshot the
+// printable facts, keep the FK for traceability" approach JobPartLine
+// already uses for partNumber/description alongside its own optional
+// partId link.
+model PickSlipLine {
+  id            String   @id @default(cuid())
+  pickSlipId    String
+  partId        String
+  partNumber    String
+  description   String
+  binLocationId String?
+  quantity      Decimal  @db.Decimal(19, 4)
+  createdAt     DateTime @default(now())
+
+  pickSlip      PickSlip         @relation(fields: [pickSlipId], references: [id], onDelete: Cascade)
+  part          Part             @relation(fields: [partId], references: [id], onDelete: Restrict)
+  binLocation   StorageLocation? @relation(fields: [binLocationId], references: [id], onDelete: SetNull)
+
+  @@index([pickSlipId])
+  @@index([partId])
+}
+
 // New — added 2026-09-09 alongside the JobPartLine change above, at the
 // user's request ("The outwork section from modapp should also be added to
 // apollo"). Mirrors ModApp's OutworkItem: components sent out to a supplier
@@ -1696,6 +1864,17 @@ model JobRfqRequest {
   // Set when status is FAILED — the error message from the last send
   // attempt, shown in the RFQ panel so a retry isn't a total guess.
   lastSendError String?
+  // Optional file attached when THIS RFQ is sent out (a drawing, spec
+  // sheet or photo for the supplier) — added 2026-09-14 at the user's
+  // request. Distinct from JobRfqQuote.data below, which is the
+  // supplier's quote file coming back in the other direction. Inline
+  // Bytes, same convention as JobRfqQuote/JobAttachment; excluded from
+  // the job-detail query's default selection (see jobs/service.ts) so
+  // the raw bytes are only ever fetched by the dedicated download route.
+  attachmentFileName  String?
+  attachmentMimeType  String?
+  attachmentSizeBytes Int?
+  attachmentData      Bytes?
   requestedAt  DateTime          @default(now())
   createdById  String?
   updatedById  String?
@@ -1764,6 +1943,89 @@ model JobRfqQuoteLine {
   partLine   JobPartLine @relation(fields: [partLineId], references: [id], onDelete: Cascade)
 
   @@unique([rfqQuoteId, partLineId])
+}
+
+// A "general" RFQ — added 2026-09-14 for the Suppliers screen's new RFQ tab
+// ("Add RFQ" button that can link to a job but isn't required to). Every
+// RFQ above (JobRfqRequest) is built around a specific job: it snapshots
+// that job's parts list and its quote lines tie back to JobPartLine rows,
+// so there's no way to represent an RFQ with no job in that model. This is
+// deliberately a separate, simpler shape for that case — free-text
+// parts/notes instead of a snapshot, a hand-entered outstanding quantity
+// instead of derived part lines, and a three-state status
+// (sent/received/skipped) instead of the full email-driven
+// RfqRequestStatus lifecycle. The Suppliers > RFQ tab lists rows from both
+// models side by side; when the "Add RFQ" button is used with a job
+// selected, a normal JobRfqRequest is created instead (see rfq/service.ts)
+// — this model exists purely for the job-less case.
+enum GeneralRfqStatus {
+  SENT
+  RECEIVED
+  SKIPPED
+}
+
+model GeneralRfqRequest {
+  id                  String            @id @default(cuid())
+  companyId           String
+  supplierId          String
+  // Free-text description of what's being quoted — there's no job parts
+  // list to snapshot.
+  partsDescription    String
+  // "Parts outstanding" qty shown on the RFQ tab — hand-entered, since
+  // there are no JobPartLine rows to derive it from.
+  quantityOutstanding Int?
+  status              GeneralRfqStatus  @default(SENT)
+  notes                String?
+  // Optional file attached when this job-less RFQ is sent out — same
+  // purpose and convention as JobRfqRequest.attachmentData above. Added
+  // 2026-09-14.
+  attachmentFileName  String?
+  attachmentMimeType  String?
+  attachmentSizeBytes Int?
+  attachmentData      Bytes?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  supplier            Supplier          @relation("GeneralRfqRequestSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy           UserIdentity?     @relation("GeneralRfqRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy           UserIdentity?     @relation("GeneralRfqRequestUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, supplierId])
+  @@index([companyId, status])
+}
+
+// Job attachments — added 2026-09-14 at the user's request ("Attachments to
+// be able to download via job view, have a attachments section,
+// view/delete ... Jobs are saved as Job number in a folder called Jobs with
+// all attachments, parts lists created, etc"). Stored inline as bytes, same
+// pattern as JobRfqQuote/SupportTicketAttachment/CompanySettings.logoData —
+// per the user's explicit choice not to stand up real object storage yet
+// (see decision-storage-architecture-render-plus-object-storage.md, still
+// "Not yet implemented"). The "Jobs folder, organized by job number" framing
+// is satisfied by this being scoped to `jobId` and shown on that job's own
+// Attachments section — there's no literal filesystem folder, every job's
+// documents (attachments here, plus its parts list / outwork / RFQs) are
+// simply everything scoped to that job's id.
+model JobAttachment {
+  id          String        @id @default(cuid())
+  companyId   String
+  jobId       String
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  data        Bytes
+  notes       String?
+  createdById String?
+  createdAt   DateTime      @default(now())
+
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy   UserIdentity? @relation("JobAttachmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, jobId])
 }
 
 model JobNote {
@@ -1976,6 +2238,48 @@ model SupportTicketAttachment {
   uploadedBy UserIdentity?         @relation("TicketAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
 
   @@index([ticketId])
+}
+
+// Generic object-storage-backed attachment — added 2026-09-14 per
+// claude/decision-storage-architecture-render-plus-object-storage.md,
+// replacing the one-off-Bytes-column-per-feature pattern above (
+// JobRfqQuote.data / JobAttachment.data / SupportTicketAttachment.data /
+// CompanySettings.logoData) going forward. Only COMPANY_LOGO is actually
+// wired through this model today (see company-settings-service.ts); the
+// others keep their own inline Bytes columns until each is migrated
+// feature-by-feature — see the decision doc's "migration of existing
+// inline blobs" open question. ownerId is a plain scoped string, not a
+// hard foreign key, the same way AuditEvent.entityId already works here —
+// a real FK isn't possible across the different owner tables ownerType
+// can point at.
+model Attachment {
+  id           String              @id @default(cuid())
+  companyId    String
+  ownerType    AttachmentOwnerType
+  ownerId      String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  // Which storage backend actually holds the bytes — "R2" | "B2" |
+  // "S3_COMPATIBLE" | "LOCAL_DEV" (the last is the non-production
+  // filesystem fallback in src/lib/storage/local-disk-backend.ts and is
+  // never selected outside NODE_ENV !== "production" — see
+  // src/lib/storage/index.ts). Plain String rather than
+  // StorageProviderType so the dev-only backend doesn't need a place in
+  // that enum.
+  provider     String
+  objectKey    String
+  status       AttachmentStatus    @default(PENDING)
+  notes        String?
+  uploadedById String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  company    Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  uploadedBy UserIdentity? @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, ownerType, ownerId])
+  @@index([status])
 }
 
 model UserDashboardConfig {

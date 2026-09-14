@@ -61,8 +61,15 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   TO_BE_DELIVERED: "To be delivered",
   DELIVERED_AWAITING_PAYMENT: "Delivered awaiting payment",
   COMPLETE: "Completed",
-  CLOSED: "Closed",
-  CANCELLED: "Cancelled",
+  // 2026-09-14 — user request: when a job is cancelled or closed, the
+  // status shown everywhere (status pill, header line, Jobs WIP table)
+  // should read "Completed / Closed" or "Completed / Cancelled" rather
+  // than the bare "Closed"/"Cancelled" — purely a label change, the
+  // underlying CLOSED/CANCELLED enum values and JOB_WIP_FILTERS'
+  // "completed" filter grouping (which already read "Completed / closed")
+  // are untouched.
+  CLOSED: "Completed / Closed",
+  CANCELLED: "Completed / Cancelled",
   RETURNED_UNREPAIRED: "Returned unrepaired",
   TO_ATTEND: "To attend",
   ON_ROUTE: "On route",

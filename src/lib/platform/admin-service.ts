@@ -203,6 +203,15 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           defaultTaxJurisdiction: true,
           documentHeaderText: true,
           documentFooterText: true,
+          // Storage location (Super Admin setting) — never select
+          // storageSecretAccessKey here, same write-only convention as
+          // smtpPassword.
+          storageProvider: true,
+          storageBucket: true,
+          storageRegion: true,
+          storageEndpoint: true,
+          storageAccessKeyId: true,
+          storageConfiguredAt: true,
         },
       },
       entitlements: {
@@ -308,6 +317,73 @@ export async function updatePlatformCompany(ctx: RequestContext, companyId: stri
       },
     });
     return company;
+  });
+}
+
+type CompanyStorageProfileInput = {
+  // "" clears the override so this company falls back to the platform
+  // default bucket (see src/lib/storage/index.ts's resolution order).
+  provider: "" | "R2" | "B2" | "S3_COMPATIBLE";
+  bucket?: string;
+  region?: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  // Write-only, same convention as CompanySettings.smtpPassword — blank
+  // means "leave the stored secret unchanged", never returned to any
+  // client.
+  secretAccessKey?: string;
+};
+
+// Super Admin-only setting — see claude/decision-storage-architecture-render-plus-object-storage.md.
+// Deliberately lives in admin-service.ts (platform-permission-gated), not
+// company-settings-service.ts (tenant-permission-gated): a company's own
+// Company Admin can edit their branding/SMTP but must not be able to
+// redirect where their files are stored.
+export async function updatePlatformCompanyStorageProfile(ctx: RequestContext, companyId: string, input: CompanyStorageProfileInput) {
+  requirePlatformPermission(ctx, "PLATFORM_CONFIGURATION_MANAGE");
+  if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.company.findUnique({ where: { id: companyId }, include: { settings: true } });
+    if (!before) throw new Error("RESOURCE_NOT_FOUND");
+    const clearingOverride = input.provider === "";
+    if (!clearingOverride) {
+      if (!input.bucket?.trim()) throw new Error("STORAGE_BUCKET_REQUIRED");
+      if (!input.accessKeyId?.trim()) throw new Error("STORAGE_ACCESS_KEY_REQUIRED");
+      const willHaveSecret = !!(input.secretAccessKey?.trim() || before.settings?.storageSecretAccessKey);
+      if (!willHaveSecret) throw new Error("STORAGE_SECRET_KEY_REQUIRED");
+    }
+    const settings = await tx.companySettings.update({
+      where: { companyId },
+      data: clearingOverride
+        ? { storageProvider: null, storageBucket: null, storageRegion: null, storageEndpoint: null, storageAccessKeyId: null, storageSecretAccessKey: null, storageConfiguredAt: null }
+        : {
+            // Safe: clearingOverride is false here, so input.provider (validated
+            // above alongside bucket/accessKeyId) is never "" in this branch —
+            // TS just can't correlate that across the two separate consts.
+            storageProvider: input.provider as "R2" | "B2" | "S3_COMPATIBLE",
+            storageBucket: input.bucket!.trim(),
+            storageRegion: asNullable(input.region) ?? "auto",
+            storageEndpoint: asNullable(input.endpoint),
+            storageAccessKeyId: input.accessKeyId!.trim(),
+            ...(input.secretAccessKey?.trim() ? { storageSecretAccessKey: input.secretAccessKey.trim() } : {}),
+            storageConfiguredAt: new Date(),
+          },
+    });
+    await tx.auditEvent.create({
+      data: {
+        companyId,
+        actorId: ctx.userId,
+        source: "PLATFORM",
+        module: "PLATFORM",
+        entityType: "CompanySettings",
+        entityId: settings.id,
+        action: "PLATFORM_COMPANY_STORAGE_PROFILE_UPDATED",
+        correlationId: ctx.correlationId,
+        beforeData: JSON.parse(JSON.stringify({ ...before.settings, storageSecretAccessKey: undefined })) as Prisma.InputJsonValue,
+        afterData: JSON.parse(JSON.stringify({ ...settings, storageSecretAccessKey: undefined })) as Prisma.InputJsonValue,
+      },
+    });
+    return { ...settings, storageSecretAccessKey: undefined };
   });
 }
 

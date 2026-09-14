@@ -16,6 +16,7 @@ import {
   jobCloseInput,
   jobReopenInput,
   jobNoteCreateInput,
+  jobNoteUpdateInput,
   jobFieldServiceInput,
   jobWarrantyInput,
   jobPartLineBulkAddInput,
@@ -25,6 +26,7 @@ import {
   outworkAddInput,
   outworkEditInput,
   outworkReceiveInput,
+  attachmentUploadInput,
   jobMarkReturnedUnrepairedInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
@@ -184,7 +186,26 @@ async function getJobScoped(companyId: string, id: string) {
       // the bytes themselves are only fetched by the dedicated download
       // route (see rfq/[rfqId]/quote/file/route.ts).
       rfqRequests: {
-        include: {
+        // select (not include) at this level — same reason as quote below:
+        // JobRfqRequest now also carries an outbound attachmentData Bytes
+        // column (added 2026-09-14), and a bare `include` would pull every
+        // attached file's raw bytes into every job-detail load. Listing
+        // the scalar fields explicitly (minus attachmentData) keeps this
+        // to metadata only; the bytes are fetched on demand by the
+        // dedicated route (GET /api/v1/jobs/[id]/rfq?rfqId=...).
+        select: {
+          id: true,
+          jobId: true,
+          supplierId: true,
+          partsSummary: true,
+          status: true,
+          lastSendError: true,
+          requestedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          attachmentFileName: true,
+          attachmentMimeType: true,
+          attachmentSizeBytes: true,
           supplier: { select: { id: true, name: true, mainEmail: true } },
           quote: {
             select: {
@@ -199,6 +220,15 @@ async function getJobScoped(companyId: string, id: string) {
           },
         },
         orderBy: [{ requestedAt: "desc" }],
+      },
+      // Attachments — new (see schema.prisma's JobAttachment comment).
+      // Same convention as rfqRequests.quote above: metadata only here so
+      // the UI can list/download-link without pulling every file's raw
+      // bytes down on every job load — the bytes themselves are only
+      // fetched by the dedicated download route.
+      attachments: {
+        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+        orderBy: { createdAt: "desc" },
       },
     },
   });
@@ -720,6 +750,31 @@ export async function addJobNote(ctx: RequestContext, jobId: string, raw: unknow
   return note;
 }
 
+// 2026-09-14 — user request: "Notes need to be editable once created."
+// Mirrors addJobNote's transaction/audit shape. Reuses the NOTE_ADDED
+// activity type for the history entry rather than adding a new
+// JobActivityType enum value (NOTE_UPDATED) for what's a minor audit-log
+// wording nicety — the description text below is what actually
+// distinguishes an edit from a new note in the activity feed.
+export async function updateJobNote(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobNoteUpdateInput.parse(raw);
+  await getJobScoped(companyId, jobId);
+  const existing = await prisma.jobNote.findFirst({ where: { id: input.noteId, jobId, companyId } });
+  if (!existing) notFound();
+  const note = await prisma.$transaction(async (tx) => {
+    const updated = await tx.jobNote.update({
+      where: { id: existing.id },
+      data: { note: input.note },
+      include: { createdBy: { select: { id: true, displayName: true, email: true } } },
+    });
+    await addActivity(tx, ctx, jobId, "NOTE_ADDED", "Note updated on job.", { noteId: updated.id, edited: true });
+    return updated;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobNote", entityId: note.id, action: "UPDATE", afterData: { jobId, noteId: note.id } });
+  return note;
+}
+
 export async function upsertJobFieldService(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobFieldServiceInput.parse(raw);
@@ -995,6 +1050,21 @@ export async function removePartLine(ctx: RequestContext, jobId: string, lineId:
   await prisma.$transaction(async (tx) => {
     await tx.jobPartLine.delete({ where: { id: line.id } });
     await addActivity(tx, ctx, jobId, "PART_REMOVED", `Part line removed: ${line.partNumber}.`, { lineId: line.id, partNumber: line.partNumber });
+
+    // 2026-09-14 — user request: "When deleting a part number in jobs
+    // view, make sure that the RFQ if not sent is also deleted, if sent
+    // then must stay." A JobRfqRequest snapshots the job's whole parts
+    // list (there's no per-line link), so "not sent" here means any RFQ
+    // still sitting in REQUESTED (legacy, no send ever attempted)/
+    // FAILED/SKIPPED — no email actually reached the supplier for those,
+    // so their now-stale parts snapshot is safe to clear out. SENT and
+    // QUOTED requests (a real email went out, or a quote already came
+    // back) are left untouched — the supplier already has that.
+    const unsentRfqs = await tx.jobRfqRequest.findMany({ where: { companyId, jobId, status: { in: ["REQUESTED", "FAILED", "SKIPPED"] } }, include: { supplier: { select: { name: true } } } });
+    for (const rfq of unsentRfqs) {
+      await tx.jobRfqRequest.delete({ where: { id: rfq.id } });
+      await addActivity(tx, ctx, jobId, "RFQ_REQUEST_REMOVED", `Quote request to ${rfq.supplier.name} removed — never sent, and a part was deleted from the list.`, { rfqRequestId: rfq.id, reason: "PART_LINE_DELETED", partNumber: line.partNumber });
+    }
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: line.id, action: "DELETE", afterData: { jobId, lineId, partNumber: line.partNumber } });
@@ -1128,5 +1198,81 @@ export async function deleteOutworkItem(ctx: RequestContext, jobId: string, item
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "OutworkItem", entityId: item.id, action: "DELETE", afterData: { jobId, itemId } });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Attachments — new. Added 2026-09-14 at the user's request ("Attachments
+// to be able to download via job view, have a attachments section,
+// view/delete"). Stored inline as bytes, same convention as
+// JobRfqQuote/SupportTicketAttachment — see JobAttachment's schema.prisma
+// comment for why (the user's explicit choice, real object storage
+// deliberately deferred).
+// ---------------------------------------------------------------------------
+
+const ALLOWED_ATTACHMENT_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "text/plain",
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/zip",
+];
+const MAX_ATTACHMENT_BYTES = 8_000_000;
+
+async function getJobAttachmentScoped(companyId: string, jobId: string, attachmentId: string) {
+  const attachment = await prisma.jobAttachment.findFirst({ where: { id: attachmentId, companyId, jobId } });
+  if (!attachment) notFound();
+  return attachment;
+}
+
+// Uploads a new attachment — 8MB cap, allow-listed mime types, same shape
+// as the RFQ quote file upload (see decodeQuoteFile in rfq/service.ts).
+export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = attachmentUploadInput.parse(raw);
+  await getJobScoped(companyId, jobId);
+
+  if (!ALLOWED_ATTACHMENT_MIME_TYPES.includes(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+  const data = Buffer.from(input.contentBase64, "base64");
+  if (data.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+  const fileName = input.fileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
+
+  const attachment = await prisma.$transaction(async (tx) => {
+    const record = await tx.jobAttachment.create({
+      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+    });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment uploaded: ${fileName}.`, { attachmentId: record.id, fileName });
+    return record;
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: data.length } });
+  return attachment;
+}
+
+// Hands back the file as base64 so the client can build a data: URL to
+// view/download it — same convention as getRfqQuoteFile.
+export async function getJobAttachmentFile(ctx: RequestContext, jobId: string, attachmentId: string) {
+  const companyId = requireJobsRead(ctx);
+  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+  return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: attachment.data.toString("base64") };
+}
+
+export async function deleteJobAttachment(ctx: RequestContext, jobId: string, attachmentId: string) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.jobAttachment.delete({ where: { id: attachment.id } });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_DELETED", `Attachment removed: ${attachment.fileName}.`, { attachmentId: attachment.id, fileName: attachment.fileName });
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "DELETE", afterData: { jobId, attachmentId } });
   return { ok: true };
 }

@@ -19,6 +19,9 @@ import type {
   movementQuery,
   positionQuery,
   countQuery,
+  pickSlipCreateInput,
+  pickSlipQuery,
+  bulkPartSearchInput,
 } from "@/lib/inventory/validation";
 import { deriveStockState } from "@/lib/inventory/stock-state";
 
@@ -1027,11 +1030,20 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
   if (input.active === "active") where.active = true;
   else if (input.active === "inactive") where.active = false;
   if (input.q) {
+    // 2026-09-14 — extended to search across Bin location (code and name)
+    // and Manufacturer name too, per explicit request ("Search function
+    // across Part number, Description, Bin, manufacturer") — previously
+    // only partNumber/description/manufacturerPartNumber were searched,
+    // which meant typing a bin code or a manufacturer's actual name (as
+    // opposed to their part number) found nothing.
     where.OR = [
       { partNumber: { contains: input.q, mode: "insensitive" } },
       { partNumberNormalized: { contains: input.q, mode: "insensitive" } },
       { description: { contains: input.q, mode: "insensitive" } },
       { manufacturerPartNumber: { contains: input.q, mode: "insensitive" } },
+      { manufacturer: { name: { contains: input.q, mode: "insensitive" } } },
+      { binLocation: { code: { contains: input.q, mode: "insensitive" } } },
+      { binLocation: { name: { contains: input.q, mode: "insensitive" } } },
     ];
   }
   if (input.locationId) {
@@ -1302,5 +1314,223 @@ export async function getLocationDetail(ctx: RequestContext, locationId: string)
       quantityReserved: b.quantityReserved.toString(),
       quantityAvailable: b.quantityOnHand.minus(b.quantityReserved).toString(),
     })),
+  };
+}
+
+// ============================================================
+// Bulk part-number search ("Check stock" on Stock Levels) — paste a list
+// of part numbers, see what's on hand for each. Read-only: nothing here
+// ever creates, updates, or moves stock. Matches by partNumber, exact and
+// case-insensitive (same convention the rest of this app's part-number
+// lookups use, e.g. import-export's manufacturer/tax-code resolution) —
+// not a fuzzy `contains`, since a bulk check is about confirming specific
+// part numbers exist, not discovering new ones.
+// ============================================================
+
+export async function searchPartsByNumbers(ctx: RequestContext, input: z.infer<typeof bulkPartSearchInput>) {
+  requireInventory(ctx, "INVENTORY_VIEW", "READ");
+
+  // Preserves first-seen order while de-duplicating (same input part number
+  // pasted twice only needs one lookup / one result row).
+  const requested = Array.from(new Set(input.partNumbers.map((p) => p.trim()).filter(Boolean)));
+
+  const parts = requested.length
+    ? await prisma.part.findMany({
+        where: {
+          companyId: ctx.companyId,
+          operationalStatus: "OPERATIONAL",
+          OR: requested.map((partNumber) => ({ partNumber: { equals: partNumber, mode: "insensitive" as const } })),
+        },
+        include: { binLocation: { select: { code: true, name: true } }, stockBalances: true },
+      })
+    : [];
+  const byPartNumber = new Map(parts.map((p) => [p.partNumber.toLowerCase(), p]));
+
+  return {
+    rows: requested.map((partNumber) => {
+      const part = byPartNumber.get(partNumber.toLowerCase()) ?? null;
+      if (!part) {
+        return { partNumber, found: false, partId: null, description: null, binLocationLabel: null, quantityAvailable: "0" };
+      }
+      const totals = sumBalances(part.stockBalances);
+      return {
+        partNumber: part.partNumber,
+        found: true,
+        partId: part.id,
+        description: part.description,
+        binLocationLabel: part.binLocation ? `${part.binLocation.name} (${part.binLocation.code})` : null,
+        quantityAvailable: totals.onHand.minus(totals.reserved).toString(),
+      };
+    }),
+  };
+}
+
+// ============================================================
+// Picking slips — "create a picking slip, which can be allocated to a job,
+// printed, saved" (explicit request). Apollo X's stock is companyId +
+// partId + locationId scoped (StockBalance), unlike ModApp's flat
+// per-part quantity, so picking works against each selected part's own
+// default bin location (Part.binLocationId — the same location every
+// other part-scoped stock figure on Stock Levels already aggregates
+// around, and the one receiveStock/import already post against). A part
+// with no default bin, or insufficient stock there, has its shortfall
+// added to the job's parts list as a PENDING (backordered) line instead of
+// failing the whole request — same "in-stock picks immediately,
+// out-of-stock backorders" behavior ModApp's own picking flow has.
+// ============================================================
+
+export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof pickSlipCreateInput>) {
+  requireInventory(ctx, "INVENTORY_ISSUE");
+
+  const job = await prisma.job.findFirst({ where: { id: input.jobId, companyId: ctx.companyId }, include: { customer: true } });
+  if (!job) notFound();
+
+  // Merge duplicate partIds in the request into one line — a UI shouldn't
+  // send the same part twice, but this keeps the transaction below correct
+  // (one StockBalance lock per part) even if it does.
+  const merged = new Map<string, Quantity>();
+  for (const line of input.lines) {
+    merged.set(line.partId, (merged.get(line.partId) ?? new D(0)).plus(new D(line.quantity)));
+  }
+
+  type PickedLine = { partId: string; partNumber: string; description: string; binLocationId: string; binLocationLabel: string; quantity: Quantity };
+
+  const result = await prisma.$transaction(async (tx) => {
+    const picked: PickedLine[] = [];
+    let backorderCount = 0;
+
+    for (const [partId, requestedQty] of merged) {
+      const part = await requirePart(tx, ctx, partId);
+      const location = part.binLocationId ? await tx.storageLocation.findFirst({ where: { id: part.binLocationId, companyId: ctx.companyId } }) : null;
+      const balance = location ? await lockBalance(tx, ctx.companyId, part.id, location.id) : null;
+      const available = balance ? balance.onHand.minus(balance.reserved) : new D(0);
+      const pickQty = available.gt(0) ? D.min(requestedQty, available) : new D(0);
+      const backorderQty = requestedQty.minus(pickQty);
+
+      if (pickQty.gt(0) && location && balance) {
+        assertOperable(part, location);
+        const nextOnHand = balance.onHand.minus(pickQty);
+        await tx.stockMovement.create({
+          data: buildMovement({
+            companyId: ctx.companyId,
+            partId: part.id,
+            movementType: "ISSUE",
+            quantity: pickQty,
+            fromLocationId: location.id,
+            referenceType: "JOB",
+            referenceId: job.id,
+            referenceNumber: job.jobNumber ?? job.draftNumber,
+            reason: "Pick slip",
+            actorId: ctx.userId,
+            resultingFromQuantity: nextOnHand,
+            correlationId: ctx.correlationId,
+          }),
+        });
+        await saveBalance(tx, balance, { onHand: nextOnHand });
+        picked.push({
+          partId: part.id,
+          partNumber: part.partNumber,
+          description: part.description,
+          binLocationId: location.id,
+          binLocationLabel: `${location.name} (${location.code})`,
+          quantity: pickQty,
+        });
+        await tx.jobPartLine.create({
+          data: {
+            companyId: ctx.companyId,
+            jobId: job.id,
+            partId: part.id,
+            partNumber: part.partNumber,
+            description: part.description,
+            quantity: pickQty,
+            status: "RECEIVED",
+            receivedQuantity: pickQty,
+            createdById: ctx.userId,
+          },
+        });
+      }
+
+      if (backorderQty.gt(0)) {
+        backorderCount += 1;
+        await tx.jobPartLine.create({
+          data: {
+            companyId: ctx.companyId,
+            jobId: job.id,
+            partId: part.id,
+            partNumber: part.partNumber,
+            description: part.description,
+            quantity: backorderQty,
+            status: "PENDING",
+            createdById: ctx.userId,
+          },
+        });
+      }
+    }
+
+    if (picked.length === 0) return { pickSlipId: null, picked, backorderCount };
+
+    const pickSlip = await tx.pickSlip.create({ data: { companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
+    await tx.pickSlipLine.createMany({
+      data: picked.map((l) => ({ pickSlipId: pickSlip.id, partId: l.partId, partNumber: l.partNumber, description: l.description, binLocationId: l.binLocationId, quantity: l.quantity })),
+    });
+    return { pickSlipId: pickSlip.id, picked, backorderCount };
+  });
+
+  await recordAudit(ctx, {
+    source: "UI",
+    module: "INVENTORY",
+    entityType: "PickSlip",
+    entityId: result.pickSlipId ?? job.id,
+    action: "PICK_SLIP_CREATED",
+    afterData: { jobId: job.id, pickedLines: result.picked.length, backorderLines: result.backorderCount },
+  });
+
+  const customerName = job.customer?.tradingName || job.customer?.name || null;
+  return {
+    pickSlip:
+      result.pickSlipId == null
+        ? null
+        : {
+            id: result.pickSlipId,
+            jobId: job.id,
+            jobNumber: job.jobNumber ?? job.draftNumber,
+            customerName,
+            createdAt: new Date().toISOString(),
+            lines: result.picked.map((l) => ({ partNumber: l.partNumber, description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
+          },
+    pickedCount: result.picked.length,
+    backorderCount: result.backorderCount,
+  };
+}
+
+export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof pickSlipQuery>) {
+  requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  const [slips, total] = await Promise.all([
+    prisma.pickSlip.findMany({
+      where: { companyId: ctx.companyId },
+      include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } } } } },
+      orderBy: { createdAt: "desc" },
+      skip: (input.page - 1) * input.pageSize,
+      take: input.pageSize,
+    }),
+    prisma.pickSlip.count({ where: { companyId: ctx.companyId } }),
+  ]);
+  return {
+    items: slips.map((ps) => ({
+      id: ps.id,
+      jobId: ps.jobId,
+      jobNumber: ps.job.jobNumber ?? ps.job.draftNumber,
+      customerName: ps.job.customer?.tradingName || ps.job.customer?.name || null,
+      createdAt: ps.createdAt.toISOString(),
+      lines: ps.lines.map((l) => ({
+        partNumber: l.partNumber,
+        description: l.description,
+        quantity: l.quantity.toString(),
+        binLocationLabel: l.binLocation ? `${l.binLocation.name} (${l.binLocation.code})` : null,
+      })),
+    })),
+    total,
+    page: input.page,
+    pageSize: input.pageSize,
   };
 }

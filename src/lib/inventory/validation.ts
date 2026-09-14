@@ -136,6 +136,37 @@ export const countQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+// 2026-09-14 — picking slips (see createPickSlip/listPickSlips in
+// service.ts). One quantity per partId — the actual pick/backorder split,
+// and which location it's issued from, is worked out server-side against
+// current stock (the part's own default bin location, same location every
+// other part-scoped stock figure on Stock Levels already aggregates
+// around), not trusted from the client the way a raw stock movement is.
+export const pickSlipCreateInput = z.object({
+  jobId: z.string().cuid(),
+  lines: z
+    .array(z.object({ partId: z.string().cuid(), quantity: qty }))
+    .min(1, "Select at least one part.")
+    .max(200),
+});
+
+export const pickSlipQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+// Bulk stock check / "multiple part number search" (Stock Levels toolbar) —
+// paste a list of part numbers and see what's on hand for each, without
+// touching the catalog. Quantities aren't accepted here (unlike ModApp's
+// paste box) since this box is a lookup only; a found row can still be
+// carried straight into the pick selection at whatever quantity the user
+// sets there.
+export const bulkPartSearchInput = z.object({
+  partNumbers: z.array(z.string().trim().min(1).max(100)).min(1).max(500),
+});
+
 export type PositionQueryInput = z.infer<typeof positionQuery>;
 export type MovementQueryInput = z.infer<typeof movementQuery>;
 export type CountQueryInput = z.infer<typeof countQuery>;
+export type PickSlipCreateInput = z.infer<typeof pickSlipCreateInput>;
+export type BulkPartSearchInput = z.infer<typeof bulkPartSearchInput>;

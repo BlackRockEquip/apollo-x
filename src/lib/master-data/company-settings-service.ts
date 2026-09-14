@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
+import { deleteAttachment, storeAttachment } from "@/lib/attachments/service";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -54,13 +55,45 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
   });
 }
 
+// 2026-09-14 — migrated to object storage (see
+// claude/decision-storage-architecture-render-plus-object-storage.md): the
+// logo's bytes now live in whichever backend getStorageBackendForCompany
+// resolves for this company (Super Admin per-company override, else the
+// platform default bucket, else — dev only — local disk), not in
+// logoData. logoMimeType/logoFileName/logoSizeBytes are still kept in sync
+// on CompanySettings purely so every existing "does this company have a
+// logo" check (getCompanySettings, the Platform company-detail page,
+// context-types.ts's hasCompanyLogo) keeps working unchanged.
+// logoObjectKey now holds the backing Attachment row's id.
+async function findLogoAttachment(companyId: string) {
+  return prisma.attachment.findFirst({ where: { companyId, ownerType: "COMPANY_LOGO", ownerId: companyId } });
+}
+
 export async function updateCompanyLogo(ctx: RequestContext, input: { fileName: string; mimeType: string; contentBase64: string } | null) {
   const companyId = auth(ctx, "WRITE");
+  const existing = await findLogoAttachment(companyId);
   if (input === null) {
+    if (existing) await deleteAttachment(existing);
     return prisma.companySettings.update({ where: { companyId }, data: { logoData: null, logoMimeType: null, logoFileName: null, logoSizeBytes: null, logoUpdatedAt: new Date(), logoObjectKey: null } });
   }
-  if (!/^image\/(png|jpeg|webp)$/.test(input.mimeType)) throw new Error("INVALID_LOGO_TYPE");
-  const data = Buffer.from(input.contentBase64, "base64");
-  if (data.length > 2_500_000) throw new Error("LOGO_TOO_LARGE");
-  return prisma.companySettings.update({ where: { companyId }, data: { logoData: data, logoMimeType: input.mimeType, logoFileName: input.fileName, logoSizeBytes: data.length, logoUpdatedAt: new Date(), logoObjectKey: null } });
+  if (existing) await deleteAttachment(existing);
+  const attachment = await storeAttachment({
+    companyId,
+    ownerType: "COMPANY_LOGO",
+    ownerId: companyId,
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    contentBase64: input.contentBase64,
+    uploadedById: ctx.userId,
+    maxSizeBytes: 2_500_000,
+    allowedMimePattern: /^image\/(png|jpeg|webp)$/,
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "INVALID_ATTACHMENT_TYPE") throw new Error("INVALID_LOGO_TYPE");
+    if (error instanceof Error && error.message === "ATTACHMENT_TOO_LARGE") throw new Error("LOGO_TOO_LARGE");
+    throw error;
+  });
+  return prisma.companySettings.update({
+    where: { companyId },
+    data: { logoData: null, logoMimeType: attachment.mimeType, logoFileName: attachment.fileName, logoSizeBytes: attachment.sizeBytes, logoUpdatedAt: new Date(), logoObjectKey: attachment.id },
+  });
 }

@@ -1,10 +1,10 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
+import { Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
 import type { ModuleKey } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { TENANT_ROLE_LABELS } from "@/lib/constants";
@@ -55,6 +55,14 @@ const NAV_GROUPS: NavGroup[] = [
 export function AppShell({ context, companyName, logoSrc: initialLogoSrc, children }: { context: RequestContext; companyName: string; logoSrc?: string | null; children: React.ReactNode }) {
   const pathname = usePathname();
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
+  // Off-canvas mobile nav — new 2026-09-14, mobile/phone pass ("make sure
+  // the UI works well on phones"). Below 640px the sidebar is a
+  // position:fixed drawer that stays off-screen until toggled (see
+  // .mobile-nav-toggle / .sidebar.mobile-nav-open in globals.css); closing
+  // it on every route change means it never stays open across a
+  // navigation by accident.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => { setMobileNavOpen(false); }, [pathname]);
   const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => (context.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED") })), [context.moduleAccess]);
   const topGroups = groups.filter((group) => !group.footer && group.items.length > 0);
   const footerGroups = groups.filter((group) => group.footer && group.items.length > 0);
@@ -63,7 +71,8 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
   function toggleGroup(key: string) { setExpandedGroupKey((current) => current === key ? null : key); }
   return (
     <div className="app-frame tenant-themed-shell" style={shellStyle}>
-      <aside className="sidebar">
+      {mobileNavOpen && <div className="sidebar-backdrop" onClick={() => setMobileNavOpen(false)} />}
+      <aside className={mobileNavOpen ? "sidebar mobile-nav-open" : "sidebar"}>
         <div className="sidebar-brand">
           <div className="sidebar-brand-logo-wrap">
             {logoSrc ? <Image src={logoSrc} alt={`${companyName} logo`} className="brand-logo" width={34} height={34} unoptimized /> : <div className="brand-logo-fallback">AX</div>}
@@ -76,7 +85,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
       </aside>
       <div className="workspace">
         {context.supportAccessId && <div className="support-banner"><strong>Platform support context</strong><span>{companyName} · {context.supportMode === "READ_ONLY" ? "Read-only access" : "Read-write access"}</span><Link href="/platform" className="table-action"><ShieldCheck size={14} /> Platform Admin</Link><SupportExitButton /></div>}
-        <header className="topbar"><div><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div><div className="topbar-user"><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><LogoutButton /></div></header>
+        <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div></div><div className="topbar-user"><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><LogoutButton /></div></header>
         <main className="page-content">{children}</main>
       </div>
     </div>

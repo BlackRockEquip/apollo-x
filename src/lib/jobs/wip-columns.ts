@@ -74,6 +74,16 @@ export type JobsWipColumnDef = {
   // "Reset to default") — chosen to land as close to this table's
   // original fixed 7-column set as an atomic-per-field picker allows.
   defaultVisible?: boolean;
+  // Starting pixel width before a user drags a column wider/narrower
+  // (2026-09-14, user request: "Make the job wip view table columns
+  // custom sizable" — see JobsWipColumnResize.tsx). Only a starting
+  // point: table-layout is fixed so every column needs *some* width for
+  // the initial render to look reasonable, but the actual persisted width
+  // (per browser, via localStorage — deliberately not synced to the
+  // account like column visibility is) always wins once a user has ever
+  // resized that column. Falls back to 140 in page.tsx for any column
+  // without one set here.
+  defaultWidth?: number;
 };
 
 // Every scalar Job field worth showing as its own column — deliberately the
@@ -85,47 +95,47 @@ export type JobsWipColumnDef = {
 // change in lockstep, but are worded to match wherever the same field is
 // named elsewhere in the app.
 export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
-  { id: "jobNumber", label: "Job #", locked: true, defaultVisible: true },
-  { id: "customerName", label: "Customer", defaultVisible: true },
-  { id: "customerTradingName", label: "Customer trading name" },
-  { id: "customerReference", label: "Customer reference" },
-  { id: "customerPo", label: "Customer PO" },
-  { id: "type", label: "Job type", defaultVisible: true },
-  { id: "status", label: "Status", defaultVisible: true },
-  { id: "dateReceived", label: "Date received" },
-  { id: "machineMake", label: "Machine make" },
-  { id: "machineModel", label: "Machine model", defaultVisible: true },
-  { id: "machineSerial", label: "Machine serial" },
-  { id: "component", label: "Component", defaultVisible: true },
-  { id: "componentType", label: "Component type" },
-  { id: "componentSerial", label: "Component serial" },
-  { id: "componentPartNumber", label: "Component part number" },
-  { id: "description", label: "Description" },
-  { id: "etaDate", label: "Client ETA" },
-  { id: "mechanicEtaDate", label: "Mechanic ETA" },
-  { id: "relationshipNotes", label: "Notes" },
-  { id: "quoteNumber", label: "Quote number" },
-  { id: "quoteDate", label: "Quote date" },
-  { id: "salesOrderNumber", label: "Sales order number" },
-  { id: "salesOrderDate", label: "Sales order date" },
-  { id: "invoiceNumber", label: "Invoice number" },
-  { id: "invoiceDate", label: "Invoice date" },
-  { id: "purchaseOrderNumber", label: "Purchase order number" },
-  { id: "purchaseOrderDate", label: "Purchase order date" },
-  { id: "purchaseOrderStatus", label: "Purchase order status" },
-  { id: "deliveryDate", label: "Delivery date" },
-  { id: "deliveryType", label: "Delivery transport" },
-  { id: "receivingTransport", label: "Receiving transport" },
-  { id: "kmsTravelled", label: "Kms travelled" },
-  { id: "paymentDateReceived", label: "Payment date received" },
-  { id: "machineHours", label: "Machine hours" },
-  { id: "plantNumber", label: "Plant number" },
-  { id: "reportNumber", label: "Report number" },
-  { id: "importTrackingNumber", label: "Import tracking number" },
-  { id: "previousJobNumber", label: "Previous job number" },
-  { id: "salesRepresentative", label: "Sales representative" },
-  { id: "createdAt", label: "Created" },
-  { id: "updatedAt", label: "Updated", defaultVisible: true },
+  { id: "jobNumber", label: "Job #", locked: true, defaultVisible: true, defaultWidth: 110 },
+  { id: "customerName", label: "Customer", defaultVisible: true, defaultWidth: 170 },
+  { id: "customerTradingName", label: "Customer trading name", defaultWidth: 170 },
+  { id: "customerReference", label: "Customer reference", defaultWidth: 150 },
+  { id: "customerPo", label: "Customer PO", defaultWidth: 130 },
+  { id: "type", label: "Job type", defaultVisible: true, defaultWidth: 130 },
+  { id: "status", label: "Status", defaultVisible: true, defaultWidth: 160 },
+  { id: "dateReceived", label: "Date received", defaultWidth: 110 },
+  { id: "machineMake", label: "Machine make", defaultWidth: 130 },
+  { id: "machineModel", label: "Machine model", defaultVisible: true, defaultWidth: 140 },
+  { id: "machineSerial", label: "Machine serial", defaultWidth: 130 },
+  { id: "component", label: "Component", defaultVisible: true, defaultWidth: 140 },
+  { id: "componentType", label: "Component type", defaultWidth: 130 },
+  { id: "componentSerial", label: "Component serial", defaultWidth: 130 },
+  { id: "componentPartNumber", label: "Component part number", defaultWidth: 150 },
+  { id: "description", label: "Description", defaultWidth: 220 },
+  { id: "etaDate", label: "Client ETA", defaultWidth: 110 },
+  { id: "mechanicEtaDate", label: "Mechanic ETA", defaultWidth: 110 },
+  { id: "relationshipNotes", label: "Notes", defaultWidth: 200 },
+  { id: "quoteNumber", label: "Quote number", defaultWidth: 130 },
+  { id: "quoteDate", label: "Quote date", defaultWidth: 110 },
+  { id: "salesOrderNumber", label: "Sales order number", defaultWidth: 150 },
+  { id: "salesOrderDate", label: "Sales order date", defaultWidth: 130 },
+  { id: "invoiceNumber", label: "Invoice number", defaultWidth: 130 },
+  { id: "invoiceDate", label: "Invoice date", defaultWidth: 110 },
+  { id: "purchaseOrderNumber", label: "Purchase order number", defaultWidth: 150 },
+  { id: "purchaseOrderDate", label: "Purchase order date", defaultWidth: 130 },
+  { id: "purchaseOrderStatus", label: "Purchase order status", defaultWidth: 140 },
+  { id: "deliveryDate", label: "Delivery date", defaultWidth: 110 },
+  { id: "deliveryType", label: "Delivery transport", defaultWidth: 140 },
+  { id: "receivingTransport", label: "Receiving transport", defaultWidth: 140 },
+  { id: "kmsTravelled", label: "Kms travelled", defaultWidth: 110 },
+  { id: "paymentDateReceived", label: "Payment date received", defaultWidth: 150 },
+  { id: "machineHours", label: "Machine hours", defaultWidth: 110 },
+  { id: "plantNumber", label: "Plant number", defaultWidth: 120 },
+  { id: "reportNumber", label: "Report number", defaultWidth: 130 },
+  { id: "importTrackingNumber", label: "Import tracking number", defaultWidth: 150 },
+  { id: "previousJobNumber", label: "Previous job number", defaultWidth: 150 },
+  { id: "salesRepresentative", label: "Sales representative", defaultWidth: 150 },
+  { id: "createdAt", label: "Created", defaultWidth: 110 },
+  { id: "updatedAt", label: "Updated", defaultVisible: true, defaultWidth: 140 },
 ];
 
 const VALID_COLUMN_IDS = new Set<string>(JOBS_WIP_COLUMNS.map((c) => c.id));

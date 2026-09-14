@@ -88,13 +88,33 @@ a { color: inherit; text-decoration: none; }
 .topbar strong { font-size: 13px; }
 .topbar span { color: var(--ink-500); font-size: 11px; }
 .topbar-user { display: flex; align-items: center; gap: 14px; }
+/* Hamburger toggle for the off-canvas sidebar (AppShell.tsx) — hidden at
+   desktop widths, shown at <=640px by the media query near .sidebar's own
+   mobile rules below. */
+.mobile-nav-toggle { display: none; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--ink-150); border-radius: 7px; background: white; color: var(--ink-700); cursor: pointer; margin-right: 10px; }
 .quiet-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ink-150); border-radius: 7px; background: white; padding: 7px 9px; color: var(--ink-700); cursor: pointer; font-size: 11px; font-weight: 650; }
 .support-banner { display: flex; align-items: center; gap: 12px; min-height: 40px; background: #fff4d6; padding: 7px 28px; color: #684c00; font-size: 11px; }
 .support-banner span { flex: 1; }
 .support-exit { border: 1px solid #d3a731; border-radius: 6px; background: #fffaf0; padding: 5px 8px; color: #684c00; cursor: pointer; font-size: 10px; font-weight: 750; }
 .page-content { padding: 28px; }
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; gap: 14px; }
+/* 2026-09-14 — "Make all headings non-scrollable" (explicit request,
+   covering both page titles and table column headers — see the matching
+   .data-table-wrap change further down). Every page's own heading/toolbar
+   area now stays pinned directly below the already-sticky .topbar (64px
+   tall) while that page's content scrolls underneath it — the same
+   top:64px stacking .job-sticky-header already established for the Job
+   detail page specifically (see its own comment below); this generalizes
+   the same idea to .page-header itself so every other page gets it too,
+   with no per-page change needed. background matches body's own canvas so
+   scrolled-under content doesn't show through; z-index sits below dialogs
+   (50) and below .topbar (20) but above ordinary page content. */
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; gap: 14px; position: sticky; top: 64px; z-index: 10; background: var(--canvas); padding-bottom: 2px; }
 .page-header.compact { margin-bottom: 14px; }
+/* The Job detail page already wraps its own .page-header in
+   .job-sticky-header (position:fixed, same top:64px idea, but also pinning
+   the status stepper/inline error below the title) — left as its own
+   fully-worked-out solution rather than double-applying sticky here too. */
+.job-sticky-header .page-header { position: static; top: auto; z-index: auto; background: transparent; padding-bottom: 0; }
 .page-header h1 { margin: 0; font-size: 26px; letter-spacing: -.03em; }
 .page-header p:last-child { margin: 4px 0 0; color: var(--ink-500); font-size: 12.5px; }
 .header-tabs { display:flex; gap:8px; align-items:center; }
@@ -102,6 +122,12 @@ a { color: inherit; text-decoration: none; }
 .metric-grid.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .metric-card { position: relative; display: grid; min-height: 145px; border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; padding: 18px; box-shadow: 0 2px 7px rgba(15,23,42,.035); }
 .metric-card.compact { min-height: 108px; padding: 14px; }
+/* 2026-09-14 — dashboard widget cards became <Link>s ("make it clickable to
+   take a user to the relevant place"); .metric-card itself stays generic
+   (still used for a couple of non-clickable cards) so this is a
+   :hover/cursor affordance layered on only the ones that are actual links. */
+a.metric-card.clickable-metric-card { cursor: pointer; transition: box-shadow .12s ease, border-color .12s ease; }
+a.metric-card.clickable-metric-card:hover { border-color: var(--gold-500); box-shadow: 0 4px 14px rgba(15,23,42,.08); }
 .metric-card svg { color: var(--blue-600); }
 .metric-card span { align-self: end; color: var(--ink-500); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .metric-card strong { font-size: 18px; letter-spacing: -.025em; }
@@ -229,19 +255,32 @@ a { color: inherit; text-decoration: none; }
 .stock-filters.compact label { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--ink-200); border-radius:999px; padding:5px 8px; background:#fff; font-size:11px; }
 .inventory-primary-action { margin-left:auto; }
 .inventory-footer { border:1px solid var(--ink-150); border-top:0; border-radius:0 0 10px 10px; background:#fff; }
-.master-panel .data-table-wrap { overflow:auto; }
-/* Jobs & WIP has no page-number UI — the page now requests up to 5000 rows
-   in one shot (see src/app/(tenant)/jobs/page.tsx) instead of a hard
-   50-row cap that made anything older simply unreachable ("make the job
-   wip table scrollable so i can see older jobs"). Scoped to .jobs-panel
-   only, not the shared .data-table-wrap rule above, since every other
-   table using that class (Customers, Suppliers, Parts, PEX, Inventory,
-   ...) already has its own real pager and isn't meant to grow a fixed-
-   height scroll well. The header row stays pinned (position: sticky,
-   relative to this same scrolling element) so column labels stay visible
-   while scrolling down through older jobs. */
-.jobs-panel .data-table-wrap { max-height: calc(100vh - 330px); overflow-y: auto; }
-.jobs-panel .data-table thead th { position: sticky; top: 0; z-index: 1; }
+/* 2026-09-14 — generalized from what used to be a .jobs-panel-only fix
+   ("make the job wip table scrollable so i can see older jobs") to every
+   .data-table-wrap in the app, per the broader "make all headings non-
+   scrollable" request: every data table now scrolls within its own bounded
+   box instead of growing the whole page, with its header row pinned
+   (position: sticky, relative to this same scrolling element — a plain
+   `overflow: auto` box is the nearest scrolling ancestor a sticky child
+   looks for, so this needs no extra wiring) so column labels stay visible
+   while scrolling down through a long list. Harmless on a short table —
+   max-height only ever caps the box, it doesn't force it taller than the
+   content needs. */
+.data-table-wrap { max-height: calc(100vh - 300px); overflow-y: auto; }
+.data-table-wrap .data-table thead th { position: sticky; top: 0; z-index: 1; }
+/* Jobs & WIP keeps its own slightly-shorter height override — it has one
+   extra toolbar row (the status filter-chip strip) above the table that
+   the generic 300px budget above doesn't account for. */
+.jobs-panel .data-table-wrap { max-height: calc(100vh - 330px); }
+/* 2026-09-14 — "Make the job number column smaller" (explicit request).
+   Job # (JobsWipColumnId "jobNumber") is @@locked and always the table's
+   first column (see JOBS_WIP_COLUMNS/normalizeColumns in wip-columns.ts),
+   so it's targeted structurally via :first-child rather than a class —
+   there's no per-column class hook on these dynamically-rendered <td>s.
+   The shared .data-table td already caps at max-width:340px; this just
+   caps this one column much tighter, since a BRE/draft number is short
+   and was otherwise claiming as much width as any other column. */
+.jobs-panel .data-table th:first-child, .jobs-panel .data-table td:first-child { max-width: 108px; width: 108px; }
 .data-table tbody tr.row-click { cursor:pointer; }
 .data-table tbody tr.row-click:hover { background:#fbf6e9; }
 .data-table tbody tr.row-click:focus-visible { outline:2px solid var(--gold-500); outline-offset:-2px; }
@@ -468,6 +507,47 @@ a { color: inherit; text-decoration: none; }
   .job-edit-grid .wide-panel { grid-column: auto; }
 }
 
+/* Notes panel beside Customer details (2026-09-14, user request: "Move
+   notes section next to Client Details on the right that it is visible as
+   soon as you open a job"). Same .wide-panel (span 2) as Customer details
+   itself in detail mode — see JobWorkspace.tsx's jobFormSections. Capped
+   height + its own scroll so a job that's accumulated a lot of notes over
+   time doesn't push the rest of the page down every time one's added. */
+.job-notes-panel .job-notes-list { max-height: 260px; overflow-y: auto; }
+/* The inline note-edit textarea (JobWorkspace.tsx's job-notes-list) isn't
+   inside a .drawer-fields wrapper — same base look as .drawer-fields
+   textarea (see the shared rule above) so it doesn't look unstyled next to
+   every other input/textarea on the page. */
+.job-notes-list textarea { width: 100%; min-height: 64px; border: 1px solid var(--ink-300); border-radius: 6px; background: white; padding: 7px 8px; color: var(--ink-900); font-size: 11px; outline: none; resize: vertical; }
+.job-notes-list textarea:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fbf2d7; }
+
+/* Autosave status indicator (2026-09-14, user request: "autosaves all
+   changes without having to click save button") — replaces the Save
+   button in the job header's .header-actions once a job is no longer a
+   fresh draft. Plain status text, not a button — there's nothing to click,
+   only something to notice if it turns red. */
+.autosave-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px; color: var(--ink-500); font-size: 11px; font-weight: 700; }
+.autosave-indicator.saving { color: var(--ink-700); }
+.autosave-indicator.error { color: var(--danger); }
+
+/* Jobs & WIP list — drag-to-resize columns (2026-09-14, user request:
+   "Make the job wip view table columns custom sizable"). table-layout:
+   fixed makes each <col>'s width (set by page.tsx from
+   JOBS_WIP_COLUMNS/defaultWidth, then overridden client-side by
+   JobsWipColumnResize.tsx once a user drags) actually govern that column,
+   instead of the browser sizing columns to fit content — cells clip with
+   an ellipsis instead of wrapping/overflowing, which is what makes a fixed
+   column width mean anything. */
+.jobs-wip-resizable { table-layout: fixed; }
+.jobs-wip-resizable th, .jobs-wip-resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; }
+.jobs-wip-resizable .col-resize-handle { position: absolute; top: 0; right: -4px; width: 8px; height: 100%; cursor: col-resize; z-index: 2; }
+.jobs-wip-resizable .col-resize-handle:hover { background: var(--gold-500); opacity: .5; }
+/* Applied to <body> for the duration of a drag (JobsWipColumnResize.tsx) so
+   the resize cursor and a clean drag (no accidental text selection) hold
+   even if the pointer briefly leaves the handle mid-drag. */
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gold-500); opacity: .5; }
+
 @media (max-width: 950px) {
   .login-page { grid-template-columns: 1fr; }
   .login-story { min-height: 40vh; padding: 48px 32px; }
@@ -504,15 +584,27 @@ a { color: inherit; text-decoration: none; }
    collapse to a much narrower, genuinely phone-sized breakpoint keeps
    the sidebar — and therefore the sticky job header — correctly fixed
    across realistic desktop window widths. */
+/* 2026-09-14 — replaced the old "collapse the sidebar into a full-width
+   static block above the page content" approach with a real off-canvas
+   drawer, as part of the mobile/phone pass ("make sure the UI works well
+   on phones"). The old approach left a ~500-600px tall nav block (every
+   group, expanded or not) sitting above the page on every single
+   navigation on a phone — functional, but meant scrolling past the whole
+   nav before reaching any actual content each time. Below this width the
+   sidebar now stays position:fixed (same as desktop) but pushed off-screen
+   via `left`, and slides in over the page (rather than pushing it) when
+   .mobile-nav-toggle (AppShell.tsx) is pressed — .workspace keeps
+   margin-left:0 throughout since the sidebar no longer participates in
+   document flow at this width either way. */
 @media (max-width: 640px) {
-  .sidebar { position: static; width: 100%; min-height: auto; }
-  .sidebar nav { display: block; overflow-x: visible; }
-  .sidebar-footer { display: block; }
+  .sidebar { position: fixed; left: -272px; top: 0; width: 260px; min-height: 100vh; z-index: 45; transition: left .2s ease; box-shadow: 16px 0 40px rgba(3,10,20,.3); }
+  .sidebar.mobile-nav-open { left: 0; }
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: 44; background: rgba(3,10,20,.48); }
+  .mobile-nav-toggle { display: inline-flex; }
   .workspace { margin-left: 0; }
   /* .job-sticky-header is position:fixed and left:242px normally to clear
-     the fixed sidebar (see its own rule above) — once the sidebar collapses
-     to a static, full-width block at this width, there's no fixed sidebar
-     to clear any more. */
+     the fixed sidebar (see its own rule above) — the sidebar is off-canvas
+     by default at this width now, so there's no fixed column to clear. */
   .job-sticky-header { left: 0; }
 }
 
@@ -538,6 +630,11 @@ a { color: inherit; text-decoration: none; }
   .settings-grid { grid-template-columns:1fr; }
   .header-tabs { width:100%; justify-content:flex-start; flex-wrap:wrap; }
   .detail-head { align-items:stretch;flex-direction:column }.detail-grid,.brand-grid { grid-template-columns:1fr }.record-list article { grid-template-columns:auto 1fr auto }.record-list article .table-action { grid-column:auto }.history-list article{grid-template-columns:1fr}
+  /* Platform Admin screens — same "single column, stack everything"
+     treatment as the tenant-facing grids above, for the mobile pass. Lower
+     traffic on phones than the rest of the app, but cheap to cover. */
+  .company-settings-grid,.platform-grid,.platform-form-grid,.company-row,.support-form-detailed,.role-assignment-form { grid-template-columns:1fr; }
+  .platform-form-grid .wide,.platform-card-span-2 { grid-column:auto; }
 }
 
 /* Header actions + dialogs + job editor drawer */
@@ -612,4 +709,68 @@ a { color: inherit; text-decoration: none; }
    buttons smaller more appropriate for the design"). Sized and padded down
    to match .table-action/.quiet-button's scale. */
 .module-pill{display:flex;align-items:center;gap:6px;border:1px solid var(--ink-150);border-radius:999px;background:#fff;padding:6px 10px;font-size:11px;font-weight:650;color:var(--ink-700);cursor:pointer}.module-pill span{font-size:10px}.module-pill.selected{border-color:var(--tenant-theme,var(--blue-700));background:#eef5ff;color:var(--ink-900)}.inner-panel{margin-top:12px}.sidebar-brand-logo-wrap{width:34px;height:34px;display:grid;place-items:center}.tenant-themed-shell .topbar{border-bottom:3px solid var(--tenant-accent,var(--gold-500))}
+
+/* 2026-09-14 — table conventions (.mono, .numeric, .action-link,
+   .state-badge, th/td.actions) are referenced across several existing
+   pages (inventory parts/locations detail, jobs list, PEX workspaces,
+   job kits) but were never actually defined here, so those cells have
+   always rendered with plain browser defaults. Stock Levels leans on all
+   of them heavily (part numbers, on-hand/reserved/available columns, the
+   stock-state pill, the "view part" icon link), so defining them properly
+   now fixes that gap everywhere they're already used, not just here. */
+.mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 11.5px; }
+td.numeric, th.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+td.actions, th.actions { text-align: right; white-space: nowrap; }
+td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
+.action-link { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--ink-150); border-radius: 6px; background: white; color: var(--ink-700); }
+.action-link:hover { background: #fbf2d7; border-color: var(--gold-500); color: #5c4109; }
+.state-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 10px; font-weight: 800; text-transform: uppercase; white-space: nowrap; background: var(--ink-100); color: var(--ink-700); }
+.state-badge.tone-green, .state-badge.bg-emerald-500\/15 { background: #e8f7ee; color: #1f6b42; }
+.state-badge.tone-amber, .state-badge.bg-amber-500\/15 { background: #fff7d6; color: #8a6700; }
+.state-badge.tone-red, .state-badge.bg-red-500\/15 { background: #fdebec; color: #a22c35; }
+.state-badge.tone-blue, .state-badge.bg-sky-500\/15 { background: #e8f0ff; color: #1f4fa3; }
+.state-badge.tone-indigo, .state-badge.bg-indigo-500\/15 { background: #f1e8ff; color: #6b34a3; }
+.state-badge.tone-neutral, .state-badge.bg-zinc-500\/15 { background: var(--ink-100); color: var(--ink-500); }
+
+/* Stock Levels — "make the stock levels page work the similar as modapp,
+   one page that does all" (2026-09-14). Tab strip (Stock / Picking Slip
+   History), the pick checkbox+qty cell and floating pick bar, the
+   backorder notice banner, the job-picker results list, and the Add/Import
+   choice cards. Styled to match this app's existing gold-accented drawer
+   and table conventions (.form-drawer, .drawer-fields, .gold-button,
+   .quiet-button) rather than introducing a new visual language. */
+.tab-strip { display: flex; gap: 4px; border-bottom: 1px solid var(--ink-150); margin-bottom: 14px; }
+.tab-strip button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 9px 4px; margin-right: 18px; color: var(--ink-500); cursor: pointer; font-size: 12.5px; font-weight: 750; }
+.tab-strip button.active { border-color: var(--gold-500); color: #79560e; }
+.hint-text { margin: 0 0 10px; color: var(--ink-500); font-size: 11px; line-height: 1.5; }
+.drawer-body { padding: 16px 22px; overflow: auto; display: grid; gap: 14px; }
+.drawer-body label { display: grid; gap: 6px; color: var(--ink-700); font-size: 11px; font-weight: 700; }
+.drawer-body input, .drawer-body select, .drawer-body textarea { width: 100%; min-height: 38px; border: 1px solid var(--ink-300); border-radius: 7px; background: white; padding: 8px 10px; color: var(--ink-900); outline: none; font-size: 12px; }
+.drawer-body input:focus, .drawer-body select:focus, .drawer-body textarea:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fbf2d7; }
+.drawer-body textarea.mono { font-size: 11.5px; }
+.pick-cell { display: flex; align-items: center; gap: 6px; }
+.pick-qty-input { width: 58px !important; min-height: 30px !important; padding: 4px 6px !important; font-size: 11.5px !important; }
+.pick-review { max-height: 260px; overflow: auto; border: 1px solid var(--ink-150); border-radius: 8px; }
+.pick-review .data-table { font-size: 11.5px; }
+.job-picker-results { list-style: none; margin: 0; max-height: 220px; overflow: auto; border: 1px solid var(--ink-150); border-radius: 8px; padding: 4px; display: grid; gap: 2px; }
+.job-picker-results li { display: block; }
+.job-picker-results button { display: block; width: 100%; border: 0; border-radius: 6px; background: transparent; padding: 8px 9px; color: var(--ink-900); cursor: pointer; text-align: left; font-size: 12px; }
+.job-picker-results button:hover { background: #fbf2d7; }
+.job-picker-results button.active { background: #fbf2d7; color: #5c4109; font-weight: 700; }
+.job-picker-results li.hint-text { padding: 8px 9px; margin: 0; }
+.add-import-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.add-import-choice { display: grid; justify-items: start; gap: 8px; border: 1px solid var(--ink-150); border-radius: 10px; background: white; padding: 18px; color: var(--ink-900); cursor: pointer; text-align: left; }
+.add-import-choice:hover { border-color: var(--gold-500); background: #fffaf0; }
+.add-import-choice svg { color: var(--gold-600); }
+.add-import-choice span { font-size: 13px; font-weight: 750; }
+.add-import-choice p { margin: 0; color: var(--ink-500); font-size: 11px; line-height: 1.5; }
+@media (max-width: 640px) { .add-import-choices { grid-template-columns: 1fr; } }
+.pick-bar { position: fixed; left: 50%; bottom: 22px; z-index: 60; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; border-radius: 999px; background: var(--navy-950); padding: 10px 12px 10px 18px; color: white; box-shadow: 0 18px 40px rgba(3,10,20,.35); }
+.pick-bar span { font-size: 12px; font-weight: 650; color: #dce8f7; white-space: nowrap; }
+.pick-bar .quiet-button { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.16); color: #dce8f7; }
+.pick-bar .quiet-button:hover { background: rgba(255,255,255,.16); }
+.pick-notice { position: fixed; right: 22px; bottom: 22px; z-index: 60; display: flex; align-items: flex-start; gap: 10px; max-width: 380px; border: 1px solid #bdd6fa; border-radius: 10px; background: #eff6ff; padding: 12px 14px; color: #164c92; box-shadow: 0 18px 40px rgba(3,10,20,.18); }
+.pick-notice p { margin: 0; font-size: 11.5px; line-height: 1.5; }
+.pick-notice button { flex: none; border: 0; background: transparent; color: #164c92; cursor: pointer; }
+@media (max-width: 640px) { .pick-bar { left: 12px; right: 12px; transform: none; bottom: 12px; justify-content: space-between; } .pick-notice { left: 12px; right: 12px; max-width: none; } }
 .status-pill.tone-green{background:#e8f7ee;color:#1f6b42}.status-pill.tone-blue{background:#e8f0ff;color:#1f4fa3}.status-pill.tone-purple{background:#f1e8ff;color:#6b34a3}.status-pill.tone-orange{background:#fff1e6;color:#b05a14}.status-pill.tone-amber{background:#fff7d6;color:#8a6700}.status-pill.tone-teal{background:#e7fbf8;color:#0f6a66}.status-pill.tone-neutral{background:#eef2f6;color:#49566a}.status-pill.tone-red{background:#fdebec;color:#a22c35}

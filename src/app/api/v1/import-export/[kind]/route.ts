@@ -28,7 +28,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const k = kind((await params).kind);
     const { format } = exportFormatQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     const { buffer, fileName, mimeType } = await exportModuleData(ctx, k, format);
-    return new NextResponse(buffer, {
+    // Node's Buffer<ArrayBufferLike> isn't assignable to fetch's BodyInit
+    // type as-is (a generic-parameter mismatch against Uint8Array<ArrayBuffer>,
+    // not a real runtime issue — Buffer already is a Uint8Array). Copying into
+    // a plain Uint8Array satisfies BodyInit without changing the bytes sent.
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "content-type": mimeType,
         "content-disposition": `attachment; filename="${fileName}"`,

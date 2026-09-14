@@ -5,6 +5,8 @@ import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { createMaster } from "@/lib/master-data/service";
+import { receiveStock } from "@/lib/inventory/service";
+import { receiptInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
 import { ALL_JOB_STATUSES } from "@/lib/jobs/validation";
@@ -255,7 +257,14 @@ function rawMappedValue(row: Record<string, unknown>, mapping: RowMapping, field
 // Excel's date epoch is Dec 30, 1899 (serial 0) — the same "1900 was a leap
 // year" compatibility quirk every spreadsheet program replicates, and the
 // same conversion SheetJS's own cellDates option performs internally.
-function excelSerialToDate(serial: number): Date | null {
+// 2026-09-14 — exported (was module-private) so the new WIP Excel
+// auto-sync watcher (src/lib/jobs/excel-sync.ts) can reuse this exact
+// date/enum/name-matching logic instead of re-implementing it — same
+// reasoning that already had this manual importer share createDraftJob/
+// registerJob/updateJob/createMaster with the rest of the app. See
+// excelSerialToDate / normalizeEnumValue / NameCandidate / findBestNameMatch
+// below, all now exported for that one caller.
+export function excelSerialToDate(serial: number): Date | null {
   if (!Number.isFinite(serial)) return null;
   const utcMs = Math.round((serial - 25569) * 86400 * 1000);
   const date = new Date(utcMs);
@@ -298,7 +307,7 @@ function mappedNumber(row: Record<string, unknown>, mapping: RowMapping, fieldKe
 // Prisma enum's real values, so a spreadsheet doesn't have to spell things
 // exactly the app's internal enum-case way. Returns null (never a guess) if
 // nothing matches.
-function normalizeEnumValue<T extends string>(raw: string, allowed: readonly T[]): T | null {
+export function normalizeEnumValue<T extends string>(raw: string, allowed: readonly T[]): T | null {
   const normalized = raw.trim().toUpperCase().replace(/[\s-]+/g, "_").replace(/[^A-Z0-9_]/g, "");
   return (allowed as readonly string[]).includes(normalized) ? (normalized as T) : null;
 }
@@ -311,7 +320,7 @@ function normalizeEnumValue<T extends string>(raw: string, allowed: readonly T[]
 // works for Apollo X's Customer shape without a second copy.
 // ---------------------------------------------------------------------------
 
-type NameCandidate = { id: string; name: string; tradingName: string | null };
+export type NameCandidate = { id: string; name: string; tradingName: string | null };
 const COMPANY_SUFFIX_RE = /\b(pty ltd|proprietary limited|ltd|limited|inc|incorporated|cc|corp|corporation|co|llc)\b/g;
 
 function normalizeCompanyName(raw: string): string {
@@ -340,7 +349,7 @@ function nameSimilarity(a: string, b: string): number {
 
 const FUZZY_NAME_MATCH_THRESHOLD = 0.82;
 
-function findBestNameMatch(rawName: string, candidates: NameCandidate[]): { id: string; name: string; fuzzy: boolean } | null {
+export function findBestNameMatch(rawName: string, candidates: NameCandidate[]): { id: string; name: string; fuzzy: boolean } | null {
   const trimmed = rawName.trim();
   if (!trimmed || candidates.length === 0) return null;
   const lower = trimmed.toLowerCase();
@@ -554,6 +563,35 @@ export async function importSuppliers(ctx: RequestContext, raw: unknown): Promis
 // Import — Parts catalog
 // ---------------------------------------------------------------------------
 
+// 2026-09-11 — user request: rather than a bin location code with nothing
+// to match silently staying unmapped (or, worse, auto-creating locations
+// nobody asked for), the client calls this first once the column mapping
+// is confirmed and shows a confirmation box listing exactly which codes
+// are new before the real import runs. Read-only — creates nothing itself,
+// just tells the caller what would need creating. Deduplicated (a code
+// repeated across many rows is only listed once) and keeps each code's
+// original casing for display, even though the actual matching (here and
+// in importParts) is case-insensitive.
+export async function previewNewBinLocations(ctx: RequestContext, raw: unknown): Promise<{ newLocationCodes: string[] }> {
+  const companyId = authorize(ctx, "parts", "WRITE");
+  const input = importRowsInput.parse(raw);
+  if (!input.mapping.binLocationCode) return { newLocationCodes: [] };
+  const rows = await readUploadedRows(input);
+  const locations = await prisma.storageLocation.findMany({ where: { companyId, active: true }, select: { code: true } });
+  const known = new Set(locations.map((l) => l.code.trim().toLowerCase()));
+  const seen = new Set<string>();
+  const newLocationCodes: string[] = [];
+  for (const row of rows) {
+    const code = mappedValue(row, input.mapping, "binLocationCode");
+    if (!code) continue;
+    const normalizedCode = code.trim().toLowerCase();
+    if (known.has(normalizedCode) || seen.has(normalizedCode)) continue;
+    seen.add(normalizedCode);
+    newLocationCodes.push(code);
+  }
+  return { newLocationCodes };
+}
+
 export async function importParts(ctx: RequestContext, raw: unknown): Promise<ImportSummary> {
   const companyId = authorize(ctx, "parts", "WRITE");
   // A row whose "Manufacturer" name doesn't match anyone on file gets a new
@@ -584,6 +622,36 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   // exact, case-insensitive lookup by this company's own tax code.
   const taxCodes = await prisma.taxCode.findMany({ where: { companyId, active: true }, select: { id: true, code: true } });
   const taxCodeByNormalizedCode = new Map(taxCodes.map((t) => [t.code.trim().toLowerCase(), t.id]));
+
+  // 2026-09-11 — user request: parts import had no way to seed opening
+  // stock or a bin location, so every imported part landed with zero stock
+  // everywhere until someone went and received it by hand afterward. "Bin
+  // location" is matched the same way "Tax code" above is — an exact,
+  // case-insensitive lookup against this company's own Storage Locations,
+  // never auto-created (a location carries its own required `type`, which
+  // a spreadsheet cell can't safely infer). "Quantity" only gets posted as
+  // opening stock when a matching location was found for that row; see the
+  // per-row handling below for what happens when it isn't.
+  const locations = await prisma.storageLocation.findMany({ where: { companyId, active: true }, select: { id: true, code: true } });
+  const locationByNormalizedCode = new Map(locations.map((l) => [l.code.trim().toLowerCase(), l.id]));
+  // Only demanded when the sheet actually has a Quantity column mapped — a
+  // catalog-only import (no stock column linked) shouldn't need
+  // INVENTORY_RECEIVE on top of the PARTS_CREATE already checked above.
+  if (input.mapping.quantity) requireTenantPermission(ctx, "INVENTORY_RECEIVE");
+  // 2026-09-11 — user request: locations often aren't set up yet before a
+  // first parts import, so an unmatched bin location code should be
+  // offered as "create it" rather than just "left unmapped" forever. Never
+  // auto-created unconditionally, though (unlike an unmatched manufacturer
+  // name) — the client calls previewNewBinLocations first, shows the user
+  // exactly which codes are new, and only sets this flag on the real
+  // import once they've confirmed. Checked once up front, same pattern as
+  // MANUFACTURERS_CREATE/INVENTORY_RECEIVE above, so a user who confirmed
+  // creating locations but lacks STORAGE_LOCATIONS_CREATE fails the whole
+  // import cleanly instead of partway through the file.
+  if (input.createMissingLocations && input.mapping.binLocationCode) {
+    requireModule(ctx, "STORAGE", "WRITE");
+    requireTenantPermission(ctx, "STORAGE_LOCATIONS_CREATE");
+  }
 
   let created = 0;
   let skipped = 0;
@@ -644,6 +712,33 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     const taxCodeId = taxCodeRaw ? taxCodeByNormalizedCode.get(taxCodeRaw.trim().toLowerCase()) : undefined;
     const taxCodeNote = taxCodeRaw && !taxCodeId ? ` — tax code "${taxCodeRaw}" wasn't found, left unmapped.` : "";
 
+    // Resolved up front (not just when posting opening stock below) so a
+    // matched bin location also becomes the part's own default bin — the
+    // same field the Stock Levels drawer's bin-location picker sets —
+    // regardless of whether a quantity was also given for this row.
+    const binLocationCode = mappedValue(row, input.mapping, "binLocationCode");
+    let binLocationId = binLocationCode ? locationByNormalizedCode.get(binLocationCode.trim().toLowerCase()) : undefined;
+    let binLocationNote = "";
+    if (binLocationCode && !binLocationId) {
+      if (input.createMissingLocations) {
+        try {
+          // Same createMaster call the "New location" form uses. Defaulted
+          // to type "Bin" (name set to the code itself) since a spreadsheet
+          // cell can't tell us which of the other seven location types it
+          // should be — the user can retype/rename it afterward from the
+          // Storage Locations tab like any other location.
+          const newLocation = (await createMaster(ctx, "storage-locations", { code: binLocationCode, name: binLocationCode, type: "BIN" })) as { id: string };
+          binLocationId = newLocation.id;
+          locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), newLocation.id);
+          binLocationNote = ` — "${binLocationCode}" wasn't on file, so it was added as a new bin location (type: Bin).`;
+        } catch (err) {
+          binLocationNote = ` — bin location "${binLocationCode}" couldn't be created — ${describeRowError(err)}`;
+        }
+      } else {
+        binLocationNote = ` — bin location "${binLocationCode}" wasn't found, left unmapped.`;
+      }
+    }
+
     const payload: Record<string, unknown> = {
       partNumber,
       description,
@@ -652,6 +747,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       category: mappedValue(row, input.mapping, "category") || undefined,
       unitOfMeasure: mappedValue(row, input.mapping, "unitOfMeasure") || undefined,
       notes: mappedValue(row, input.mapping, "notes") || undefined,
+      binLocationId,
       defaultPurchaseCost: mappedNumber(row, input.mapping, "defaultPurchaseCost") ?? undefined,
       defaultSellingPrice: mappedNumber(row, input.mapping, "defaultSellingPrice") ?? undefined,
       taxCodeId,
@@ -660,14 +756,40 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       reorderQuantity: mappedNumber(row, input.mapping, "reorderQuantity") ?? undefined,
     };
 
+    let newPart: { id: string };
     try {
-      await createMaster(ctx, "parts", payload);
-      created++;
-      rowResults.push({ label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}` });
+      newPart = await createMaster(ctx, "parts", payload);
     } catch (err) {
       skipped++;
       rowResults.push({ label: partNumber, status: "skipped", detail: describeRowError(err) });
+      continue;
     }
+    created++;
+
+    // Opening stock is posted as a real RECEIPT movement through the same
+    // receiveStock() every manual "Receive stock" action uses — not a raw
+    // StockBalance write — so it shows up on the part's own movement
+    // history instead of appearing out of nowhere. Best-effort: a part
+    // that was successfully created still counts as created even if its
+    // opening stock couldn't be posted (no bin location match, or some
+    // other failure) — the row's detail explains why rather than the row
+    // failing outright over a secondary step.
+    let stockNote = "";
+    const quantity = mappedNumber(row, input.mapping, "quantity");
+    if (quantity != null && quantity > 0) {
+      if (!binLocationId) {
+        stockNote = " — quantity not imported: no bin location was resolved for this row.";
+      } else {
+        try {
+          await receiveStock(ctx, receiptInput.parse({ partId: newPart.id, locationId: binLocationId, quantity, referenceNumber: "Import", notes: "Opening stock from import" }));
+          stockNote = ` — opening stock of ${quantity} posted to ${binLocationCode}.`;
+        } catch (err) {
+          stockNote = ` — part created, but opening stock couldn't be posted: ${describeRowError(err)}`;
+        }
+      }
+    }
+
+    rowResults.push({ label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` });
   }
 
   return { total: rows.length, created, updated: 0, skipped, rows: rowResults };
@@ -968,8 +1090,20 @@ export async function exportModuleData(ctx: RequestContext, kind: ImportExportKi
     const parts = await prisma.part.findMany({
       where: { companyId },
       orderBy: { partNumber: "asc" },
-      include: { manufacturer: { select: { name: true } }, taxCode: { select: { code: true } } },
+      include: { manufacturer: { select: { name: true } }, taxCode: { select: { code: true } }, binLocation: { select: { code: true } } },
     });
+    // 2026-09-11 — "Bin location"/"Quantity on hand" added alongside the
+    // import-side fields (see PART_IMPORT_FIELDS) so an exported sheet
+    // still doubles as a working template for reimport (per this file's
+    // header comment). Bin location exports the part's own default bin
+    // (Part.binLocationId, the same field the Stock Levels drawer sets) —
+    // not "wherever it has the most stock" — since that's the one place a
+    // part keeps a single location of its own; a part stocked across
+    // several locations still only exports one. Quantity exports the true
+    // total on hand across every location, via one grouped query rather
+    // than N StockBalance lookups.
+    const balances = await prisma.stockBalance.groupBy({ by: ["partId"], where: { companyId, partId: { in: parts.map((p) => p.id) } }, _sum: { quantityOnHand: true } });
+    const onHandByPartId = new Map(balances.map((b) => [b.partId, b._sum.quantityOnHand ?? new Prisma.Decimal(0)]));
     rows = parts.map((p) =>
       toExportRow(PART_IMPORT_FIELDS, {
         partNumber: p.partNumber,
@@ -978,6 +1112,8 @@ export async function exportModuleData(ctx: RequestContext, kind: ImportExportKi
         manufacturerPartNumber: p.manufacturerPartNumber ?? "",
         category: p.category ?? "",
         unitOfMeasure: p.unitOfMeasure,
+        binLocationCode: p.binLocation?.code ?? "",
+        quantity: (onHandByPartId.get(p.id) ?? new Prisma.Decimal(0)).toString(),
         defaultPurchaseCost: p.defaultPurchaseCost ? p.defaultPurchaseCost.toString() : "",
         defaultSellingPrice: p.defaultSellingPrice ? p.defaultSellingPrice.toString() : "",
         taxCode: p.taxCode?.code ?? "",

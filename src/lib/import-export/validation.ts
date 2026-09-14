@@ -35,6 +35,17 @@ export const importFileInput = z.object({
 // it alone" convention the rest of this import uses.
 export const importMapping = z.record(z.string(), z.string());
 
-export const importRowsInput = importFileInput.extend({ mapping: importMapping });
+// 2026-09-11 — "createMissingLocations" (Parts import only — see
+// importParts/previewNewBinLocations in service.ts): a bin location code
+// that doesn't match this company's existing Storage Locations is left
+// unmapped by default, same as an unmatched tax code. This flag opts into
+// auto-creating it instead (as a new "Bin" location) — set only once the
+// user has confirmed the specific new codes via the preview-locations
+// check, never on by default, since silently creating master data the
+// user hasn't seen a list of first isn't the same tradeoff as an
+// unmatched manufacturer name (which already auto-creates unconditionally
+// elsewhere in this file). Harmless for every other import kind, which
+// simply never reads it.
+export const importRowsInput = importFileInput.extend({ mapping: importMapping, createMissingLocations: z.boolean().optional().default(false) });
 
 export const exportFormatQuery = z.object({ format: z.enum(["xlsx", "csv"]).default("xlsx") });

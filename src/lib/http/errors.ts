@@ -18,6 +18,15 @@ export function apiError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") return NextResponse.json({ error: { code: "NOT_FOUND", message: "The requested tenant record was not found." } }, { status: 404 });
   if (error instanceof Error && ["NOT_FOUND", "PARENT_NOT_FOUND", "SEQUENCE_NOT_FOUND"].includes(error.message)) return NextResponse.json({ error: { code: "NOT_FOUND", message: "The requested tenant record was not found." } }, { status: 404 });
   if (error instanceof Error && error.message === "AUTHENTICATION_REQUIRED") return NextResponse.json({ error: { code: "UNAUTHENTICATED", message: "Authentication is required." } }, { status: 401 });
+  // Attachment/object-storage errors (src/lib/attachments/service.ts,
+  // company-settings-service.ts's updateCompanyLogo) — added 2026-09-14
+  // alongside the storage-architecture work.
+  if (error instanceof Error && error.message === "INVALID_LOGO_TYPE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Logo must be a PNG, JPEG or WebP image." } }, { status: 400 });
+  if (error instanceof Error && error.message === "LOGO_TOO_LARGE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Logo must be 2.5MB or smaller." } }, { status: 400 });
+  if (error instanceof Error && error.message === "INVALID_ATTACHMENT_TYPE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "That file type is not allowed." } }, { status: 400 });
+  if (error instanceof Error && error.message === "ATTACHMENT_TOO_LARGE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "File is too large." } }, { status: 400 });
+  if (error instanceof Error && error.message === "EMPTY_ATTACHMENT") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "File is empty." } }, { status: 400 });
+  if (error instanceof Error && error.message === "STORAGE_NOT_CONFIGURED") return NextResponse.json({ error: { code: "STORAGE_NOT_CONFIGURED", message: "File storage is not configured for this environment yet." } }, { status: 503 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }

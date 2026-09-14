@@ -9,8 +9,14 @@ type PexJobRef = Row & { id: string; jobNumber?: string | null; draftNumber?: st
 type TrackingRow = Row & {
   status: string;
   unitDescription?: string | null;
-  supplyDate?: string | null;
-  returnDate?: string | null;
+  // Date, not just string: `initial` comes straight from the server
+  // component's Prisma read (listPexTracking), and a Date crossing the
+  // React Server Component boundary into this client component arrives as
+  // a real Date instance, not a JSON string — unlike the History drawer's
+  // fetch()+.json() payload below (HistoryCycle), which genuinely is a
+  // string. dateText() already handles either via `new Date(String(value))`.
+  supplyDate?: string | Date | null;
+  returnDate?: string | Date | null;
   customer?: Row & { name?: string | null; tradingName?: string | null } | null;
   supplyJob?: PexJobRef | null;
   returnJob?: PexJobRef | null;

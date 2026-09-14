@@ -18,6 +18,10 @@ coverage/
 .test-postgres/
 pg_log/
 
+# Local-disk storage backend fallback (dev only — see
+# src/lib/storage/local-disk-backend.ts). Never used in production.
+.local-storage/
+
 # Logs
 *.log
 npm-debug.log*

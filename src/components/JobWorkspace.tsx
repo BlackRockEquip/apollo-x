@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Download, FileText, Loader2, Mail, Plus, RefreshCw, Save, Search, Star, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill } from "@/components/StatusPill";
@@ -67,6 +67,10 @@ type RfqRequestRow = Row & {
   requestedAt?: string | null;
   partsSummary?: string | null;
   quote?: RfqQuoteRow | null;
+  // Outbound attachment metadata (the file sent WITH the RFQ, e.g. a
+  // drawing or spec sheet) — added 2026-09-14. Bytes fetched on demand via
+  // viewRfqAttachment below, same pattern as the quote file.
+  attachmentFileName?: string | null;
 };
 type JobKitOption = Row & { name: string; machineMake?: string | null; machineModel?: string | null; componentType?: string | null; lineCount?: unknown; active?: boolean };
 // PexRecord — replaces the old PexStockUnit/PexSupplyLink pair entirely (see
@@ -106,6 +110,17 @@ type PexHistoryResponse = {
   previousCycles: PexHistoryCycle[];
 };
 type JobComponentRow = Row & { component?: string | null; componentType?: string | null; componentPartNumber?: string | null; componentSerial?: string | null };
+// Attachments — new (see schema.prisma's JobAttachment comment). Metadata
+// only, same as RfqQuoteRow above — the file's bytes are fetched on demand
+// by the dedicated download route (see viewAttachment below).
+type JobAttachmentRow = Row & {
+  fileName: string;
+  mimeType?: string | null;
+  sizeBytes?: unknown;
+  notes?: string | null;
+  createdAt?: string | null;
+  createdBy?: Row & { displayName?: string | null };
+};
 type JobDetail = Row & {
   jobNumber?: string | null;
   draftNumber: string;
@@ -125,6 +140,7 @@ type JobDetail = Row & {
   partLines: PartLineRow[];
   outworkItems: OutworkItemRow[];
   rfqRequests: RfqRequestRow[];
+  attachments: JobAttachmentRow[];
   // Company-wide — whether SMTP is set up under Settings. Gates the "Send
   // RFQ email" / "Send follow-up" actions; when false they fall back to
   // record-only (SKIPPED) instead of silently failing.
@@ -313,6 +329,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // panel's own showRfqPopup pattern below. The items table itself stays
   // inline, only the add-form is a modal now.
   const [showOutworkPopup, setShowOutworkPopup] = useState(false);
+  // Attachments — new (see schema.prisma's JobAttachment comment).
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [attachmentNotes, setAttachmentNotes] = useState("");
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
   // Activity history hidden behind a toggle instead of shown by default —
   // 2026-09-10, user request ("Active history also only to be visible on
   // click, not visible from beginning").
@@ -358,6 +378,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [rfqNewSupplierName, setRfqNewSupplierName] = useState("");
   const [rfqNewSupplierEmail, setRfqNewSupplierEmail] = useState("");
   const [rfqNewSupplierSendEmail, setRfqNewSupplierSendEmail] = useState(true);
+  // Outbound RFQ attachment (a drawing, spec sheet or photo sent WITH the
+  // request) — added 2026-09-14. One file input shared by both the
+  // "existing supplier" and "new supplier" request-quote actions below,
+  // since only one of those is used per click.
+  const [rfqAttachmentFile, setRfqAttachmentFile] = useState<File | null>(null);
   const [rfqQuoteEditId, setRfqQuoteEditId] = useState("");
   const [rfqQuoteNotes, setRfqQuoteNotes] = useState("");
   const [rfqQuoteFile, setRfqQuoteFile] = useState<File | null>(null);
@@ -378,6 +403,35 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [pexHistory, setPexHistory] = useState<PexHistoryResponse | null>(null);
   const [pexHistoryLoading, setPexHistoryLoading] = useState(false);
   const [dialog, setDialog] = useState<null | "register" | "close" | "reopen" | "returned-unrepaired" | "pex-scrap">(null);
+  // Inline note editing (2026-09-14, user request: "Notes need to be
+  // editable once created") — editingNoteId tracks which of job.notes is
+  // currently open for editing (its own textarea replaces the plain
+  // display row; see the Notes panel in jobFormSections), editingNoteText
+  // holds that in-progress edit separately from the "add a new note"
+  // textarea (form.note), so editing an existing note never clobbers a
+  // draft of a brand new one.
+  const [editingNoteId, setEditingNoteId] = useState("");
+  const [editingNoteText, setEditingNoteText] = useState("");
+  const [savingNoteEdit, setSavingNoteEdit] = useState(false);
+  // Full autosave (2026-09-14, user request: "make it that it autosaves
+  // all changes without having to click save button" — the Save button is
+  // removed entirely in detail/edit mode, see header-actions below).
+  // "idle"/"saving"/"error" mirrors whether the debounced PATCH below is
+  // caught up, in flight, or the last attempt failed; the Back-link click
+  // handler (handleBackClick) only interrupts navigation for the latter
+  // two, per the user's own scoping of when the "unsaved changes" popup
+  // should fire.
+  const [autosaveState, setAutosaveState] = useState<"idle" | "saving" | "error">("idle");
+  // Every load() (initial fetch, or the reload after a postAction/
+  // patchAction elsewhere on the page) repopulates `form` from the
+  // server's own values — without this guard, that repopulation would
+  // itself look like a user edit to the autosave effect below and fire a
+  // redundant, harmless-but-wasteful PATCH echoing back what the server
+  // just sent. Set to true right before every setForm in load(); the
+  // autosave effect consumes and clears it on the very next run instead of
+  // scheduling a save.
+  const skipNextAutosave = useRef(true);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
@@ -445,6 +499,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load job.");
       setJob(body);
+      // See skipNextAutosave's own comment above — this repopulation is
+      // the server echoing back what's already saved, not a new edit.
+      skipNextAutosave.current = true;
       setForm((current) => ({
         ...current,
         customerId: body.customerId || "",
@@ -603,62 +660,149 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  // Every scalar Job field the edit form itself can set — factored out of
+  // submitDraft (2026-09-14) so the new autosave path below can build the
+  // exact same payload shape without a second, drifting copy of this list.
+  function buildJobPayload() {
+    return {
+      customerId: form.customerId,
+      dateReceived: form.dateReceived || null,
+      customerReference: form.customerReference || null,
+      customerPo: form.purchaseOrderNumber || null,
+      machineMake: form.machineMake || null,
+      machineModel: form.machineModel || null,
+      machineSerial: form.machineSerial || null,
+      component: form.component || null,
+      componentType: form.componentType || null,
+      componentSerial: form.componentSerial || null,
+      componentPartNumber: form.componentPartNumber || null,
+      description: form.description || null,
+      type: form.type,
+      etaDate: form.etaDate || null,
+      mechanicEtaDate: form.mechanicEtaDate || null,
+      relationshipNotes: form.relationshipNotes || null,
+      quoteNumber: form.quoteNumber || null,
+      quoteDate: form.quoteDate || null,
+      salesOrderNumber: form.salesOrderNumber || null,
+      salesOrderDate: form.salesOrderDate || null,
+      invoiceNumber: form.invoiceNumber || null,
+      invoiceDate: form.invoiceDate || null,
+      purchaseOrderNumber: form.purchaseOrderNumber || null,
+      purchaseOrderDate: form.purchaseOrderDate || null,
+      purchaseOrderStatus: form.purchaseOrderStatus || null,
+      deliveryDate: form.deliveryDate || null,
+      deliveryType: form.deliveryType || null,
+      receivingTransport: form.receivingTransport || null,
+      kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null,
+      paymentDateReceived: form.paymentDateReceived || null,
+      paymentNotApplicable: form.paymentNotApplicable === "true",
+      machineHours: form.machineHours || null,
+      plantNumber: form.plantNumber || null,
+      reportNumber: form.reportNumber || null,
+      importTrackingNumber: form.importTrackingNumber || null,
+      previousJobNumber: form.previousJobNumber || null,
+      salesRepresentative: form.salesRepresentative || null,
+    };
+  }
+
   async function submitDraft(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // In detail mode the job-edit-grid's fields autosave on their own (see
+    // the effect below) and the Save button is gone — this handler stays
+    // wired to the <form>'s onSubmit only so that pressing Enter inside a
+    // text field harmlessly does nothing instead of falling through to the
+    // browser's default form submission.
+    if (mode !== "create") return;
     setSaving(true); setError("");
     try {
-      const payload = {
-        customerId: form.customerId,
-        dateReceived: form.dateReceived || null,
-        customerReference: form.customerReference || null,
-        customerPo: form.purchaseOrderNumber || null,
-        machineMake: form.machineMake || null,
-        machineModel: form.machineModel || null,
-        machineSerial: form.machineSerial || null,
-        component: form.component || null,
-        componentType: form.componentType || null,
-        componentSerial: form.componentSerial || null,
-        componentPartNumber: form.componentPartNumber || null,
-        description: form.description || null,
-        type: form.type,
-        etaDate: form.etaDate || null,
-        mechanicEtaDate: form.mechanicEtaDate || null,
-        relationshipNotes: form.relationshipNotes || null,
-        quoteNumber: form.quoteNumber || null,
-        quoteDate: form.quoteDate || null,
-        salesOrderNumber: form.salesOrderNumber || null,
-        salesOrderDate: form.salesOrderDate || null,
-        invoiceNumber: form.invoiceNumber || null,
-        invoiceDate: form.invoiceDate || null,
-        purchaseOrderNumber: form.purchaseOrderNumber || null,
-        purchaseOrderDate: form.purchaseOrderDate || null,
-        purchaseOrderStatus: form.purchaseOrderStatus || null,
-        deliveryDate: form.deliveryDate || null,
-        deliveryType: form.deliveryType || null,
-        receivingTransport: form.receivingTransport || null,
-        kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null,
-        paymentDateReceived: form.paymentDateReceived || null,
-        paymentNotApplicable: form.paymentNotApplicable === "true",
-        machineHours: form.machineHours || null,
-        plantNumber: form.plantNumber || null,
-        reportNumber: form.reportNumber || null,
-        importTrackingNumber: form.importTrackingNumber || null,
-        previousJobNumber: form.previousJobNumber || null,
-        salesRepresentative: form.salesRepresentative || null,
-      };
-      const r = await fetch(mode === "create" ? "/api/v1/jobs" : `/api/v1/jobs/${jobId}`, {
-        method: mode === "create" ? "POST" : "PATCH",
+      const r = await fetch("/api/v1/jobs", {
+        method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildJobPayload()),
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
-      if (mode === "create") router.push(`/jobs/${b.id}`);
-      else await load();
+      router.push(`/jobs/${b.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save job.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Debounced full autosave for the job-edit-grid fields (2026-09-14, user
+  // request — see autosaveState's own comment above for the skip-echo
+  // guard this relies on). Deliberately does NOT check the shared `saving`
+  // flag before firing — postAction/patchAction calls elsewhere on the
+  // page already reload the job afterwards, which itself sets
+  // skipNextAutosave and would just cancel out a same-tick autosave
+  // attempt harmlessly; gating on `saving` risked a real edit's autosave
+  // getting silently dropped instead of retried.
+  async function runAutosave() {
+    if (!jobId) return;
+    setAutosaveState("saving");
+    setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(buildJobPayload()),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
+      setAutosaveState("idle");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save job.");
+      setAutosaveState("error");
+    }
+  }
+
+  useEffect(() => {
+    if (mode !== "detail" || !jobId) return;
+    if (skipNextAutosave.current) { skipNextAutosave.current = false; return; }
+    if (!form.customerId) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => { void runAutosave(); }, 1200);
+    return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
+    // Deliberately only the job-edit-grid's own fields (matches
+    // buildJobPayload above) — note/dialog/field-service/warranty/pex
+    // fields on the same `form` object have their own explicit save
+    // actions and must not trigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mode, jobId, form.customerId, form.dateReceived, form.customerReference, form.machineMake, form.machineModel,
+    form.machineSerial, form.component, form.componentType, form.componentSerial, form.componentPartNumber,
+    form.description, form.type, form.etaDate, form.mechanicEtaDate, form.relationshipNotes, form.quoteNumber,
+    form.quoteDate, form.salesOrderNumber, form.salesOrderDate, form.invoiceNumber, form.invoiceDate,
+    form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
+    form.receivingTransport, form.kmsTravelled, form.paymentDateReceived, form.paymentNotApplicable, form.machineHours,
+    form.plantNumber, form.reportNumber, form.importTrackingNumber, form.previousJobNumber, form.salesRepresentative,
+  ]);
+
+  // Backs up the "Save failed — retrying" wording in the header (above)
+  // with an actual retry — otherwise a save that failed once (e.g. a
+  // dropped connection) would just sit there until the person happened to
+  // touch a field again.
+  useEffect(() => {
+    if (autosaveState !== "error") return;
+    const timer = setTimeout(() => { void runAutosave(); }, 5000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runAutosave closes over the latest `form`/`jobId` on every render; only autosaveState should re-arm this timer.
+  }, [autosaveState]);
+
+  // Back-link guard (2026-09-14, user request: "make a popup if any
+  // unsaved info will be lost"). Narrowed to autosave's own in-flight/
+  // failed states rather than a general dirty-check, per the user's
+  // explicit choice ("Full autosave, Save button removed") — with
+  // autosave on, "unsaved changes" should only be a real possibility while
+  // a save is actually in the air or just failed.
+  function handleBackClick(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (mode !== "detail") return;
+    if (autosaveState === "saving" && !window.confirm("Your changes are still saving. Leave this job anyway?")) {
+      e.preventDefault();
+    } else if (autosaveState === "error" && !window.confirm("Your last change failed to save. Leave anyway and lose it?")) {
+      e.preventDefault();
     }
   }
 
@@ -933,6 +1077,53 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await deleteAction(`/api/v1/jobs/${jobId}/outwork/${itemId}`, {});
   }
 
+  // Attachments — new (see schema.prisma's JobAttachment comment). Upload
+  // uses the same fileToBase64 helper as the parts-list import / RFQ quote
+  // file uploads above; view/download opens a data: URL in a new tab, same
+  // convention as viewQuoteFile below.
+  async function uploadAttachment() {
+    if (!jobId || !attachmentFile) return;
+    setAttachmentUploading(true); setError("");
+    try {
+      const contentBase64 = await fileToBase64(attachmentFile);
+      const r = await fetch(`/api/v1/jobs/${jobId}/attachments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fileName: attachmentFile.name, mimeType: attachmentFile.type || "application/octet-stream", contentBase64, notes: attachmentNotes.trim() || null }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to upload attachment.");
+      setAttachmentFile(null); setAttachmentNotes("");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to upload attachment.");
+    } finally {
+      setAttachmentUploading(false);
+    }
+  }
+
+  async function viewAttachment(attachmentId: string) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/attachments/${attachmentId}/file`, { cache: "no-store" });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to open attachment.");
+      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
+      if (!win) setError("Enable pop-ups to view/download the attachment.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to open attachment.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteAttachment(attachmentId: string) {
+    if (!jobId) return;
+    if (!window.confirm("Remove this attachment?")) return;
+    await deleteAction(`/api/v1/jobs/${jobId}/attachments/${attachmentId}`, {});
+  }
+
   function startEditOutwork(item: OutworkItemRow) {
     setEditingOutworkId(String(item.id));
     setEditOutworkSupplierId(item.supplier?.id ? String(item.supplier.id) : "");
@@ -1048,6 +1239,62 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     win.print();
   }
 
+  // Mechanic's job card (2026-09-14, user request: "Create a job card
+  // button which prints related fields for inhouse mechanics, do not
+  // include client name"). Same unpersisted, on-demand print-window
+  // pattern as printDeliveryNote above. Field scope is the user's own
+  // answer to the clarifying question this feature raised — "Date in,
+  // machine component details, job details" — deliberately excludes the
+  // customer/client name (the explicit instruction), and also excludes
+  // notes, the parts list and outwork/RFQ status, none of which the user
+  // picked. "Date in" is form.dateReceived — the only field on the page
+  // actually labelled "Date in" (Customer details panel).
+  function printJobCard() {
+    if (!job) return;
+    const win = window.open("", "_blank");
+    if (!win) { setError("Enable pop-ups to print the job card."); return; }
+    const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
+    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
+    win.document.write(`<!doctype html><html><head><title>Job card ${escapeHtml(String(job.jobNumber || job.draftNumber || ""))}</title><meta charset="utf-8" /><style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
+      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
+      h1{font-size:18px;margin:0 0 12px}
+      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      .job-number{font-size:16px;font-weight:bold;text-align:right}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
+      th{width:38%;background:#f6f6f6;font-weight:600}
+      .description{white-space:pre-wrap}
+    </style></head><body>
+      <div class="note-head">
+        <h1>Job card — for workshop use</h1>
+        <div class="job-number">Job ${escapeHtml(String(job.jobNumber || job.draftNumber || "—"))}</div>
+      </div>
+      <h2>Date in</h2>
+      <table>${rows([["Date in", fmt(form.dateReceived)]])}</table>
+      <h2>Machine / component details</h2>
+      <table>${rows([
+        ["Machine make", form.machineMake],
+        ["Machine model", form.machineModel],
+        ["Machine serial", form.machineSerial],
+        ["Component", form.component],
+        ["Component type", form.componentType],
+        ["Component serial", form.componentSerial],
+        ["Part number", form.componentPartNumber],
+        ["Plant number", form.plantNumber],
+        ["Machine hours", form.machineHours],
+      ])}</table>
+      <h2>Job details</h2>
+      <table>
+        ${rows([["Job type", JOB_TYPE_LABELS[job.type]]])}
+        <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
+      </table>
+    </body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
   // RFQ (request for quote) — see schema.prisma's JobRfqRequest comment for
   // scope: no email is sent, prices are entered by hand from what the
   // supplier came back with (phone, email, PDF — however it arrived).
@@ -1066,16 +1313,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   async function requestRfq() {
     if (!jobId || !rfqSupplierId) return;
-    await postAction(`/api/v1/jobs/${jobId}/rfq`, { supplierId: rfqSupplierId, sendEmail: rfqSendEmail });
-    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSendEmail(true);
+    const attachment = rfqAttachmentFile
+      ? { attachmentFileName: rfqAttachmentFile.name, attachmentMimeType: rfqAttachmentFile.type || "application/octet-stream", attachmentContentBase64: await fileToBase64(rfqAttachmentFile) }
+      : {};
+    await postAction(`/api/v1/jobs/${jobId}/rfq`, { supplierId: rfqSupplierId, sendEmail: rfqSendEmail, ...attachment });
+    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSendEmail(true); setRfqAttachmentFile(null);
   }
 
   // Inline "create a new supplier" from the RFQ panel — added 2026-09-09
   // (user request: "No inline 'create new supplier' from the RFQ panel").
   async function addNewSupplierAndRequestRfq() {
     if (!jobId || !rfqNewSupplierName.trim()) return;
-    await postAction(`/api/v1/jobs/${jobId}/rfq/new-supplier`, { supplierName: rfqNewSupplierName.trim(), supplierEmail: rfqNewSupplierEmail.trim() || null, sendEmail: rfqNewSupplierSendEmail });
-    setRfqNewSupplierName(""); setRfqNewSupplierEmail(""); setRfqNewSupplierSendEmail(true); setShowRfqNewSupplierForm(false);
+    const attachment = rfqAttachmentFile
+      ? { attachmentFileName: rfqAttachmentFile.name, attachmentMimeType: rfqAttachmentFile.type || "application/octet-stream", attachmentContentBase64: await fileToBase64(rfqAttachmentFile) }
+      : {};
+    await postAction(`/api/v1/jobs/${jobId}/rfq/new-supplier`, { supplierName: rfqNewSupplierName.trim(), supplierEmail: rfqNewSupplierEmail.trim() || null, sendEmail: rfqNewSupplierSendEmail, ...attachment });
+    setRfqNewSupplierName(""); setRfqNewSupplierEmail(""); setRfqNewSupplierSendEmail(true); setShowRfqNewSupplierForm(false); setRfqAttachmentFile(null);
   }
 
   // Retries (or sends for the first time) the RFQ email for a request that
@@ -1214,6 +1467,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // Views the OUTBOUND attachment sent with an RFQ (a drawing/spec sheet),
+  // not the supplier's quote file — see viewQuoteFile above for that. Added
+  // 2026-09-14.
+  async function viewRfqAttachment(rfqRequestId: string) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/rfq?rfqId=${rfqRequestId}`, { cache: "no-store" });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "No attachment on record.");
+      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
+      if (!win) setError("Enable pop-ups to view the attachment.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to open attachment.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // Parts follow-up — added 2026-09-09 (user request: "ModApp's separate
   // 'Parts follow-up' chase-email feature wasn't built"). One bulk action:
   // email every supplier with outstanding ordered parts on this job.
@@ -1300,6 +1572,30 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // 2026-09-14, user request: "Notes need to be editable once created."
+  // Separate saving flag (not the shared `saving`) so editing a note
+  // doesn't grey out unrelated buttons elsewhere on the page, and doesn't
+  // get tangled up with the job-edit-grid's own autosave indicator.
+  async function saveNoteEdit(noteId: string) {
+    if (!job) return;
+    setSavingNoteEdit(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${job.id}/notes`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ noteId, note: editingNoteText }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save the note.");
+      setEditingNoteId(""); setEditingNoteText("");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the note.");
+    } finally {
+      setSavingNoteEdit(false);
+    }
+  }
+
   // Fetch-on-click PEX cycle history — mirrors ModApp's PexUnitHistoryButton,
   // but renders Apollo's own JobActivity.description directly (no
   // field/oldValue/newValue mapping needed; see pex/service.ts's
@@ -1323,7 +1619,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const jobFormSections = (
     <>
       <div className="job-edit-grid">
-        <section className="detail-panel full-row">
+        {/* 2026-09-14, user request: "Move notes section next to Client
+            Details on the right that it is visible as soon as you open a
+            job". Customer details only shrinks to half-width (wide-panel)
+            in detail mode, where there's a job (and its notes) to show
+            beside it — in create mode there's no job yet, so it keeps the
+            full-width layout it always had. */}
+        <section className={`detail-panel ${job && mode === "detail" ? "wide-panel" : "full-row"}`}>
           <header><div><h2>Customer details</h2></div></header>
           <div className="drawer-fields customer-fields">
             <label className="wide party-selector">
@@ -1366,6 +1668,43 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
           </div>
         </section>
+
+        {job && mode === "detail" && (
+          <section className="detail-panel wide-panel job-notes-panel">
+            <header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header>
+            <div className="drawer-fields"><label className="wide"><span>New note</span><textarea rows={3} value={form.note} onChange={(e) => updateField("note", e.target.value)} /></label></div>
+            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || form.note.trim().length < 2} onClick={async () => { await postAction(`/api/v1/jobs/${job.id}/notes`, { note: form.note }); updateField("note", ""); }}>Add note</button></footer>
+            <div className="record-list job-notes-list">
+              {job.notes.map((note) => {
+                const noteId = String(note.id);
+                const isEditing = editingNoteId === noteId;
+                return (
+                  <article key={noteId}>
+                    <div className="record-icon"><Plus size={14} /></div>
+                    <div>
+                      {isEditing ? (
+                        <textarea rows={3} value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)} />
+                      ) : (
+                        <strong>{text(note.note)}</strong>
+                      )}
+                      <span>{note.createdBy?.displayName || "System"}</span>
+                    </div>
+                    <span>{new Date(String(note.createdAt)).toLocaleString("en-ZA")}</span>
+                    {isEditing ? (
+                      <div className="stack-row">
+                        <button type="button" className="quiet-button" disabled={savingNoteEdit} onClick={() => { setEditingNoteId(""); setEditingNoteText(""); }}>Cancel</button>
+                        <button type="button" className="gold-button" disabled={savingNoteEdit || editingNoteText.trim().length < 2} onClick={() => void saveNoteEdit(noteId)}>{savingNoteEdit ? "Saving…" : "Save"}</button>
+                      </div>
+                    ) : (
+                      <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingNoteId(noteId); setEditingNoteText(String(note.note || "")); }}><Pencil size={13} /></button>
+                    )}
+                  </article>
+                );
+              })}
+              {job.notes.length === 0 && <p className="table-state compact-empty-state">No notes yet.</p>}
+            </div>
+          </section>
+        )}
 
         <section className="detail-panel">
           <header><div><h2>Machine / component details</h2></div></header>
@@ -1440,7 +1779,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div className="job-sticky-header" ref={setStickyHeaderNode}>
         <header className="page-header compact">
           <div>
-            <Link href="/jobs" className="back-link"><ArrowLeft size={15} /> Back to jobs</Link>
+            <Link href="/jobs" className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
             <p className="eyebrow">Jobs</p>
             <h1>{title}</h1>
             {mode === "detail" && job?.customer && (
@@ -1449,9 +1788,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <p>{mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : `${JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]} · ${JOB_STATUS_LABELS[(job?.status || "DRAFT") as keyof typeof JOB_STATUS_LABELS]}`}</p>
           </div>
           <div className="header-actions">
-            <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Saving…" : mode === "create" ? "Create draft" : "Save changes"}</button>
+            {mode === "create" ? (
+              <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create draft"}</button>
+            ) : (
+              // Save button removed in detail mode (2026-09-14, user
+              // request) — every field autosaves on its own (see the
+              // effect above); this just reflects that status back to the
+              // person instead of asking them to trigger it.
+              <span className={`autosave-indicator ${autosaveState}`}>
+                {autosaveState === "saving" ? <><Loader2 className="spin" size={13} /> Saving…</> : autosaveState === "error" ? "Save failed — retrying" : <><Save size={13} /> All changes saved</>}
+              </span>
+            )}
             {job && mode === "detail" && (
               <>
+                <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>
                 {job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
                 {canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
                 {!["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { if (window.confirm("Cancel this job?")) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }}>Cancel job</button>}
@@ -1699,6 +2049,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </div>
               </label>
               <label><span>&nbsp;</span><button type="button" className="quiet-button" onClick={() => setShowRfqNewSupplierForm((v) => !v)}><Plus size={15} /> {showRfqNewSupplierForm ? "Cancel new supplier" : "New supplier"}</button></label>
+              <label className="wide"><span>Attachment (optional)</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <input type="file" onChange={(e) => setRfqAttachmentFile(e.target.files?.[0] || null)} />
+                  {rfqAttachmentFile && <button type="button" className="quiet-button" onClick={() => setRfqAttachmentFile(null)}><X size={13} /> {rfqAttachmentFile.name}</button>}
+                </div>
+                <p className="muted small-line">Sent with the RFQ email (a drawing, spec sheet or photo) — applies to whichever supplier you request a quote from below.</p>
+              </label>
             </div>
 
             {showRfqNewSupplierForm && (
@@ -1715,7 +2072,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
             )}
 
-            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Supplier</th><th>Status</th><th>Requested</th><th>Quote file</th><th></th></tr></thead><tbody>
+            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Supplier</th><th>Status</th><th>Requested</th><th>Attachment sent</th><th>Quote file</th><th></th></tr></thead><tbody>
               {job.rfqRequests.map((request) => {
                 const status = String(request.status || "SKIPPED");
                 const tone = status === "QUOTED" ? "tone-green" : status === "SENT" ? "tone-blue" : status === "FAILED" ? "tone-red" : "neutral";
@@ -1726,6 +2083,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {status === "FAILED" && request.lastSendError ? <div className="muted small-line">{text(request.lastSendError)}</div> : null}
                   </td>
                   <td>{request.requestedAt ? new Date(String(request.requestedAt)).toLocaleDateString("en-ZA") : "—"}</td>
+                  <td>{request.attachmentFileName ? <button type="button" className="table-action" onClick={() => void viewRfqAttachment(String(request.id))}>{text(request.attachmentFileName)}</button> : "—"}</td>
                   <td>{request.quote?.fileName ? <button type="button" className="table-action" onClick={() => void viewQuoteFile(String(request.id))}>{text(request.quote.fileName)}</button> : "—"}</td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1736,7 +2094,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   </td>
                 </tr>;
               })}
-              {job.rfqRequests.length === 0 && <tr><td colSpan={5} className="table-state compact-empty-state">No suppliers have been asked to quote this job yet.</td></tr>}
+              {job.rfqRequests.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No suppliers have been asked to quote this job yet.</td></tr>}
             </tbody></table></div>
 
             {rfqQuoteEditId && (() => {
@@ -1915,6 +2273,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </tbody></table></div>
           </section>
 
+          <section className="detail-panel">
+            <header>
+              <div><h2>Attachments</h2><p>Photos, documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
+            </header>
+            <div className="drawer-fields">
+              <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
+              <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
+              <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment()}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
+            </div>
+            <div className="record-list">
+              {job.attachments.length === 0 && <div className="table-state compact-empty-state">No attachments uploaded yet.</div>}
+              {job.attachments.map((file) => (
+                <article key={file.id}>
+                  <div className="record-icon"><FileText size={14} /></div>
+                  <div>
+                    <strong><button type="button" className="table-action" onClick={() => void viewAttachment(String(file.id))}>{text(file.fileName)}</button></strong>
+                    <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}{file.notes ? ` · ${text(file.notes)}` : ""}</span>
+                  </div>
+                  <span>{file.createdAt ? new Date(String(file.createdAt)).toLocaleDateString("en-ZA") : "—"}</span>
+                  <button type="button" className="table-action" onClick={() => void viewAttachment(String(file.id))}><Download size={14} /> Download</button>
+                  <button type="button" className="table-action danger" onClick={() => void deleteAttachment(String(file.id))}>Delete</button>
+                </article>
+              ))}
+            </div>
+          </section>
+
           {deliveryNote && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
               <aside className="form-drawer compact-dialog">
@@ -1984,7 +2368,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {})}>Send to PEX Inventory</button></footer>
           </section>}
 
-          <section className="detail-panel"><header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header><div className="drawer-fields"><label className="wide"><span>New note</span><textarea rows={4} value={form.note} onChange={(e) => updateField("note", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || form.note.trim().length < 2} onClick={async () => { await postAction(`/api/v1/jobs/${job.id}/notes`, { note: form.note }); updateField("note", ""); }}>Add note</button></footer><div className="record-list">{job.notes.map((note) => <article key={note.id}><div className="record-icon"><Plus size={14} /></div><div><strong>{text(note.note)}</strong><span>{note.createdBy?.displayName || "System"}</span></div><span>{new Date(String(note.createdAt)).toLocaleString("en-ZA")}</span></article>)}</div></section>
+          {/* Notes now render beside Customer details, at the top of
+              jobFormSections above — see the job-notes-panel section
+              there (2026-09-14, user request: "Move notes section next to
+              Client Details on the right that it is visible as soon as
+              you open a job"). */}
 
           <section className="detail-panel">
             <header>
