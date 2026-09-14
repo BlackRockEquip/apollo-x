@@ -47,14 +47,19 @@ services:
     # in the dashboard if the cold-start delay becomes annoying.
     region: oregon
     branch: main
-    buildCommand: npm ci && npx prisma generate && npm run build
-    # Runs after buildCommand but before the new instance starts serving
-    # traffic — applies any pending migrations (this repo's own
-    # hand-written migration.sql files, same as `npx prisma migrate dev`
-    # applies locally) against DATABASE_URL below. Render only routes
-    # traffic to the new instance once this succeeds, so a bad migration
-    # blocks the deploy instead of taking a half-migrated app live.
-    preDeployCommand: npx prisma migrate deploy
+    # preDeployCommand (Render's release-phase hook — runs after build,
+    # before the new instance takes traffic, so a bad migration blocks the
+    # deploy instead of going live half-migrated) is NOT available on the
+    # free plan — Render's dashboard rejects it outright ("pre-deploy
+    # command is not supported for free tier services"). So on `free`,
+    # `prisma migrate deploy` runs as the last step of buildCommand
+    # instead. This is slightly less safe (migrations apply even if
+    # `next build` itself then fails) but is the only option without
+    # upgrading off the free web service plan. If/when this service moves
+    # to a paid plan, move `npx prisma migrate deploy` out of buildCommand
+    # and into a `preDeployCommand:` line instead — safer, and the
+    # buildCommand below should then end at `npm run build`.
+    buildCommand: npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
     startCommand: npx next start -p $PORT
     healthCheckPath: /api/v1/health
     envVars:
