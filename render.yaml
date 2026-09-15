@@ -59,7 +59,14 @@ services:
     # to a paid plan, move `npx prisma migrate deploy` out of buildCommand
     # and into a `preDeployCommand:` line instead — safer, and the
     # buildCommand below should then end at `npm run build`.
-    buildCommand: npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
+    # `--include=dev` is required here: NODE_ENV=production (set below) is
+    # also present during the build step, and npm's default behavior is to
+    # skip devDependencies entirely when NODE_ENV=production — which broke
+    # the first deploy attempt (`next build`'s own TypeScript check needs
+    # `typescript`/`@types/react`/`@types/node`, all devDependencies, to
+    # even run). This flag forces them to install anyway; NODE_ENV=production
+    # still applies to the actual `next build`/`next start` process itself.
+    buildCommand: npm ci --include=dev && npx prisma generate && npx prisma migrate deploy && npm run build
     startCommand: npx next start -p $PORT
     healthCheckPath: /api/v1/health
     envVars:
