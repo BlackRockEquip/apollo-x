@@ -18,6 +18,7 @@
     "prisma:validate": "prisma validate",
     "seed": "tsx prisma/seed.ts",
     "excel-sync:bridge": "tsx scripts/excel-sync-bridge.ts",
+    "excel-sync:task:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-excel-sync-task.ps1",
     "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-db.ps1",
     "db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-db.ps1",
     "db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status-db.ps1"

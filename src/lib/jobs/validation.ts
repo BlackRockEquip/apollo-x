@@ -121,6 +121,14 @@ export const jobNoteUpdateInput = z.object({
   note: z.string().trim().min(2).max(4000),
 });
 
+// 2026-09-15 — user request: "Notes section, allow a user to delete notes."
+// Identifies which note to remove the same way jobNoteUpdateInput identifies
+// which note to edit — DELETE on the existing shallow jobs/[id]/notes route,
+// noteId carried in the request body (see deleteJobNote in service.ts).
+export const jobNoteDeleteInput = z.object({
+  noteId: z.string().min(1),
+});
+
 export const jobFieldServiceInput = z.object({
   site: optionalText,
   technician: optionalText,
@@ -225,6 +233,14 @@ export const attachmentUploadInput = z.object({
   fileName: z.string().trim().min(1).max(160),
   mimeType: z.string().trim().min(3).max(120),
   contentBase64: z.string().min(4),
+  notes: optionalText,
+});
+
+// 2026-09-15 — user request: "once a note is added [to an attachment],
+// allow a user to edit it as well." Mirrors the attachment-upload note
+// field's own bounds; the file itself is immutable, only its note changes
+// (see updateJobAttachmentNotes in service.ts).
+export const jobAttachmentNotesUpdateInput = z.object({
   notes: optionalText,
 });
 

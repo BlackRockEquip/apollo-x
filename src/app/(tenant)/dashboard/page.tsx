@@ -1,11 +1,12 @@
 "use client";
 
 /* eslint-disable react-hooks/set-state-in-effect -- async dashboard resource loading intentionally mirrors existing workspace patterns */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 type Widget = { key: string; enabled: boolean; order: number };
-type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: Array<{ id: string }>; pexStatus: Record<string, number>; supportTickets: Record<string, number> };
+type OutstandingPartLine = { id: string; job: { id: string; jobNumber: string | null; customer: { name: string } | null } | null };
+type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; pexStatus: Record<string, number>; supportTickets: Record<string, number> };
 
 // 2026-09-14 — "Update the dashboard and make it clickable to take a user
 // to the relevant place" (explicit request). Every widget card is now a
@@ -64,6 +65,24 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [widgets, setWidgets] = useState<Widget[]>([]);
   const [data, setData] = useState<DashboardData | null>(null);
+  // 2026-09-15, user request: "Dashboard, when clicking to outstandings
+  // parts, list the jobs its referring to." The outstanding-parts widget
+  // used to just link to the generic WIP jobs list like every other
+  // widget; the backend (dashboard/service.ts) already fetches each
+  // outstanding line's job (id/jobNumber/customer name), it just wasn't
+  // shown anywhere — so this toggles an inline panel of the distinct jobs
+  // instead of navigating away.
+  const [showOutstandingJobs, setShowOutstandingJobs] = useState(false);
+  const outstandingJobs = useMemo(() => {
+    const byJob = new Map<string, { id: string; jobNumber: string | null; customerName: string | null; count: number }>();
+    for (const line of data?.outstandingParts || []) {
+      if (!line.job) continue;
+      const existing = byJob.get(line.job.id);
+      if (existing) existing.count += 1;
+      else byJob.set(line.job.id, { id: line.job.id, jobNumber: line.job.jobNumber, customerName: line.job.customer?.name ?? null, count: 1 });
+    }
+    return Array.from(byJob.values());
+  }, [data]);
 
   async function load() {
     setLoading(true);
@@ -86,13 +105,33 @@ export default function DashboardPage() {
     {loading ? <div className="table-state">Loading dashboard…</div> : <>
       <section className="metric-grid compact">
         {ordered.filter((widget) => widget.enabled).map((widget) => {
-          const href = WIDGET_HREF[widget.key];
           const card = <><span>{widget.key.replaceAll("-", " ")}</span><strong>{widgetValue(widget.key, data)}</strong></>;
+          // "Outstanding parts" is a toggle (see outstandingJobs above),
+          // not a navigation link like every other widget.
+          if (widget.key === "outstanding-parts") {
+            return <button key={widget.key} type="button" className="metric-card compact clickable-metric-card" onClick={() => setShowOutstandingJobs((v) => !v)}>{card}</button>;
+          }
+          const href = WIDGET_HREF[widget.key];
           return href
             ? <Link key={widget.key} href={href} className="metric-card compact clickable-metric-card">{card}</Link>
             : <article key={widget.key} className="metric-card compact">{card}</article>;
         })}
       </section>
+      {showOutstandingJobs && (
+        <section className="detail-panel" style={{ marginTop: 12 }}>
+          <header><div><h2>Jobs with outstanding parts</h2><p>From the {(data?.outstandingParts || []).length} most recently updated outstanding part lines.</p></div></header>
+          <div className="record-list">
+            {outstandingJobs.length === 0 && <div className="table-state compact-empty-state">No outstanding parts.</div>}
+            {outstandingJobs.map((j) => (
+              <article key={j.id}>
+                <div className="record-icon">PT</div>
+                <div><strong><Link href={`/jobs/${j.id}`}>{j.jobNumber || "—"}</Link></strong><span>{j.customerName || "—"}</span></div>
+                <span>{j.count} part line{j.count === 1 ? "" : "s"}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </>}
   </div>;
 }

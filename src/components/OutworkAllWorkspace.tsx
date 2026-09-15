@@ -15,6 +15,20 @@ function text(v: unknown) { return v == null || v === "" ? "—" : String(v); }
 function jobRef(job: { jobNumber: string | null; draftNumber: string | null }) { return job.jobNumber || job.draftNumber || "—"; }
 function fmtDate(v: string | null) { return v ? new Date(v).toLocaleDateString("en-ZA") : "—"; }
 
+// 2026-09-15, user request: "On outwork tab by Suppliers, add column for
+// days outstanding." Same calculation as JobWorkspace.tsx's own
+// outworkDaysOutstanding — counted from the date it went out to the date
+// it came back, or to today while still out; nothing to count from if it
+// was never marked sent out.
+function daysOutstanding(item: { dateSentOut: string | null; dateReceived: string | null }): string {
+  if (!item.dateSentOut) return "—";
+  const start = new Date(item.dateSentOut);
+  if (Number.isNaN(start.getTime())) return "—";
+  const end = item.dateReceived ? new Date(item.dateReceived) : new Date();
+  const days = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
+  return String(days);
+}
+
 // New — 2026-09-14, Suppliers screen's Outwork tab (see that route's
 // comment). A read list across every job's OutworkItem rows, plus a
 // "Create outwork" popup that picks a job first (typeahead, same pattern
@@ -33,6 +47,15 @@ export function OutworkAllWorkspace() {
   const [supplierQuery, setSupplierQuery] = useState("");
   const [supplierOptions, setSupplierOptions] = useState<Option[]>([]);
   const [supplierId, setSupplierId] = useState("");
+  // 2026-09-15 — same double-click-to-select glitch fixed on
+  // JobWorkspace.tsx's supplier pickers: selecting an option changes the
+  // query to the full supplier name, which re-arms this debounced search
+  // and re-fetches (usually re-matching that same supplier), reopening the
+  // dropdown right after the first click closed it — so the pick had
+  // already registered, but it looked like it hadn't until a second click
+  // closed the reopened list for good. Gate the search on an explicit
+  // "picker is open" flag that selecting an option turns off directly.
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [dateSentOut, setDateSentOut] = useState("");
   const [lines, setLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
 
@@ -60,6 +83,7 @@ export function OutworkAllWorkspace() {
   }, [jobQuery]);
 
   useEffect(() => {
+    if (!supplierPickerOpen) { setSupplierOptions([]); return; }
     const q = supplierQuery.trim();
     if (q.length < 2) { setSupplierOptions([]); return; }
     const timer = setTimeout(async () => {
@@ -68,14 +92,14 @@ export function OutworkAllWorkspace() {
       setSupplierOptions(b.items || []);
     }, 200);
     return () => clearTimeout(timer);
-  }, [supplierQuery]);
+  }, [supplierQuery, supplierPickerOpen]);
 
   function addLine() { setLines((rows) => [...rows, { id: `row-${rows.length + 1}-${Date.now()}`, description: "", quantity: "1" }]); }
   function removeLine(id: string) { setLines((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows)); }
   function updateLine(id: string, field: "description" | "quantity", value: string) { setLines((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r))); }
 
   function resetForm() {
-    setJobId(""); setJobQuery(""); setSupplierId(""); setSupplierQuery(""); setDateSentOut("");
+    setJobId(""); setJobQuery(""); setSupplierId(""); setSupplierQuery(""); setSupplierOptions([]); setSupplierPickerOpen(false); setDateSentOut("");
     setLines([{ id: "row-1", description: "", quantity: "1" }]);
   }
 
@@ -108,8 +132,8 @@ export function OutworkAllWorkspace() {
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Create outwork</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
-    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th></th></tr></thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={8} className="table-state">No outwork recorded yet.</td></tr> : rows.map((row) => (
+    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th>Days outstanding</th><th></th></tr></thead><tbody>
+      {rows.length === 0 ? <tr><td colSpan={9} className="table-state">No outwork recorded yet.</td></tr> : rows.map((row) => (
         <tr key={row.id}>
           <td><Link href={`/jobs/${row.job.id}`}>{jobRef(row.job)}</Link></td>
           <td>{text(row.supplier.name)}</td>
@@ -118,6 +142,7 @@ export function OutworkAllWorkspace() {
           <td><span className={`status-pill ${row.status === "RECEIVED" ? "" : "neutral"}`}>{row.status === "RECEIVED" ? "Received" : "Sent out"}</span></td>
           <td>{fmtDate(row.dateSentOut)}</td>
           <td>{fmtDate(row.dateReceived)}</td>
+          <td>{daysOutstanding(row)}</td>
           <td className="actions"><Link className="table-action" href={`/jobs/${row.job.id}`}>View job</Link></td>
         </tr>
       ))}
@@ -131,9 +156,9 @@ export function OutworkAllWorkspace() {
             <button key={o.id} type="button" onClick={() => { setJobId(o.id); setJobQuery(jobRef({ jobNumber: o.jobNumber ?? null, draftNumber: o.draftNumber ?? null })); setJobOptions([]); }}><strong>{jobRef({ jobNumber: o.jobNumber ?? null, draftNumber: o.draftNumber ?? null })}</strong></button>
           ))}</div>}
         </label>
-        <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); }} placeholder="Search active supplier" /></div>
-          {supplierOptions.length > 0 && <div className="selector-results">{supplierOptions.map((o) => (
-            <button key={o.id} type="button" onClick={() => { setSupplierId(o.id); setSupplierQuery(o.name || ""); setSupplierOptions([]); }}><strong>{o.name}</strong></button>
+        <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); setSupplierPickerOpen(true); }} onFocus={() => setSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>
+          {supplierPickerOpen && supplierOptions.length > 0 && <div className="selector-results">{supplierOptions.map((o) => (
+            <button key={o.id} type="button" onClick={() => { setSupplierId(o.id); setSupplierQuery(o.name || ""); setSupplierOptions([]); setSupplierPickerOpen(false); }}><strong>{o.name}</strong></button>
           ))}</div>}
         </label>
         <label><span>Date sent out</span><input type="date" value={dateSentOut} onChange={(e) => setDateSentOut(e.target.value)} /></label>

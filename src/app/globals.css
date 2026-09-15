@@ -244,6 +244,24 @@ a.metric-card.clickable-metric-card:hover { border-color: var(--gold-500); box-s
 .data-table tr.clickable-row .stretched-link::after { content:""; position:absolute; inset:0; }
 .data-table tr.clickable-row .actions { position:relative; z-index:1; }
 .data-table tr.clickable-row .actions a { position:relative; z-index:1; }
+/* 2026-09-15, user request: "Compare parts table spacing and sizing to be
+   corrected, all cluttered on screen." The RFQ quote-comparison table packs
+   a two-tier header (supplier name over Unit/Total sub-columns) plus a
+   preferred-price star button into the same tight padding/font every other
+   data-table uses — fine for a plain list, cramped once there are several
+   suppliers each contributing two columns of currency figures. Scoped to
+   this table only via .quote-comparison-table so no other table's spacing
+   changes: a bit more breathing room per cell, numbers right-aligned
+   (currency reads far better right-aligned than the default left), and a
+   left border on the first column of each supplier's block
+   (.supplier-group-start, applied to header/body/footer alike) so the
+   column groups are visually separated instead of blurring together. */
+.quote-comparison-table th, .quote-comparison-table td { padding:10px 14px; }
+.quote-comparison-table th:not(:first-child), .quote-comparison-table td:not(:first-child) { text-align:right; }
+.quote-comparison-table td:first-child { white-space:normal; }
+.quote-comparison-table .supplier-group-start { border-left:2px solid var(--ink-150); }
+.quote-comparison-table tbody .table-action { display:inline-flex; align-items:center; gap:4px; }
+
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
 .table-state { display:flex; min-height:140px; align-items:center; justify-content:center; gap:8px; color:var(--ink-500); font-size:12px; }
 .compact-empty-state { min-height: 84px; }

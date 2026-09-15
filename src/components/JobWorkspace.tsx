@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, X } from "lucide-react";
+import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill } from "@/components/StatusPill";
@@ -168,6 +168,28 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
 
+// 2026-09-15 — fixes "once added, a user can not view the file, it says
+// blocked" (job attachments; the exact same bug also affected RFQ quote
+// files and RFQ attachments below, which used the identical pattern).
+// Root cause: `window.open(\`data:${mime};base64,...\`, "_blank")` — modern
+// Chrome refuses to navigate a top-level frame straight to a data: URL
+// ("Not allowed to navigate top frame to data URL") and shows exactly a
+// blocked page instead of the file. Fix: decode the base64 into a Blob and
+// open an object URL (blob:) instead — Chrome allows top-level navigation
+// to those. The object URL is revoked after a delay long enough for the
+// new tab to finish loading it.
+function openFileInNewTab(mimeType: string, base64: string): boolean {
+  const byteChars = atob(base64);
+  const byteNumbers = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (!win) { URL.revokeObjectURL(url); return false; }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return true;
+}
+
 // Days outstanding — added 2026-09-10 at the user's request ("Days
 // outstanding which counts the days the outwork is out"). Counted from the
 // date it went out to the date it came back, or to today while it's still
@@ -305,20 +327,56 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [showRfqPopup, setShowRfqPopup] = useState(false);
   const [receivingLineId, setReceivingLineId] = useState("");
   const [receiveQty, setReceiveQty] = useState("");
+  // 2026-09-15 — orderEditLineId now marks which part-line row's supplier
+  // typeahead is currently focused/open (see the "Supplier" column below),
+  // not "which row is in a Save/Cancel edit form" — the "Change supplier"
+  // button and the old combined order+supplier edit form it opened are
+  // gone (user request: "make that the supplier field is also editable
+  // without clicking the change supplier button").
   const [orderEditLineId, setOrderEditLineId] = useState("");
-  const [orderNumberDraft, setOrderNumberDraft] = useState("");
   const [orderSupplierQuery, setOrderSupplierQuery] = useState("");
   const [orderSupplierOptions, setOrderSupplierOptions] = useState<SupplierOption[]>([]);
   const [orderSupplierId, setOrderSupplierId] = useState("");
+  // Bulk update — 2026-09-15, user request: "Parts list table, make it
+  // that bulk update can be done on the parts to add supplier and order
+  // number, instead of one at a time." A lightweight toolbar (not a new
+  // backend endpoint): selected line ids get the same PATCH
+  // /api/v1/jobs/[id]/parts/[lineId] call the single-row inline edits
+  // already use, fired once per selected line.
+  const [bulkEditMode, setBulkEditMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOrderNumber, setBulkOrderNumber] = useState("");
+  const [bulkSupplierId, setBulkSupplierId] = useState("");
+  const [bulkSupplierQuery, setBulkSupplierQuery] = useState("");
+  const [bulkSupplierOptions, setBulkSupplierOptions] = useState<SupplierOption[]>([]);
+  const [bulkSupplierPickerOpen, setBulkSupplierPickerOpen] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
   const [outworkSupplierQuery, setOutworkSupplierQuery] = useState("");
   const [outworkSupplierOptions, setOutworkSupplierOptions] = useState<SupplierOption[]>([]);
   const [outworkSupplierId, setOutworkSupplierId] = useState("");
+  // 2026-09-15 — fixes "on parts table, when clicking a supplier, there is
+  // a glitch as i have to click twice before it actually selects the
+  // supplier, also when adding outwork": see openFileInNewTab's neighbour
+  // fix note above for a different bug — this one is separate. Selecting a
+  // supplier sets the query to that supplier's full name; since these
+  // search effects only gated on "query long enough", the query CHANGING
+  // (even to the just-picked name) re-armed the 200ms debounce and
+  // re-fetched, which almost always matches that same supplier and
+  // re-opens the dropdown a moment after the first click closed it — so
+  // the selection had actually already registered, but it looked like
+  // nothing happened until a second click closed the reopened dropdown for
+  // good (a second click doesn't change the query, so nothing re-fires).
+  // Fix: gate each debounce effect on an explicit "picker is open" flag
+  // that a selection turns off directly, instead of inferring "closed"
+  // from an empty options array that a stale in-flight fetch can refill.
+  const [outworkSupplierPickerOpen, setOutworkSupplierPickerOpen] = useState(false);
   const [outworkDateSentOut, setOutworkDateSentOut] = useState("");
   const [outworkLines, setOutworkLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
   const [editingOutworkId, setEditingOutworkId] = useState("");
   const [editOutworkSupplierQuery, setEditOutworkSupplierQuery] = useState("");
   const [editOutworkSupplierOptions, setEditOutworkSupplierOptions] = useState<SupplierOption[]>([]);
   const [editOutworkSupplierId, setEditOutworkSupplierId] = useState("");
+  const [editOutworkSupplierPickerOpen, setEditOutworkSupplierPickerOpen] = useState(false);
   const [editOutworkDescription, setEditOutworkDescription] = useState("");
   const [editOutworkQuantity, setEditOutworkQuantity] = useState("1");
   const [editOutworkDateSentOut, setEditOutworkDateSentOut] = useState("");
@@ -333,6 +391,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [attachmentNotes, setAttachmentNotes] = useState("");
   const [attachmentUploading, setAttachmentUploading] = useState(false);
+  // 2026-09-15, user request: "once a note is added [to an attachment],
+  // allow a user to edit it as well." Mirrors the job-notes inline-edit
+  // pattern (editingNoteId/editingNoteText/savingNoteEdit) below.
+  const [editingAttachmentId, setEditingAttachmentId] = useState("");
+  const [editingAttachmentNotes, setEditingAttachmentNotes] = useState("");
+  const [savingAttachmentNotes, setSavingAttachmentNotes] = useState(false);
   // Activity history hidden behind a toggle instead of shown by default —
   // 2026-09-10, user request ("Active history also only to be visible on
   // click, not visible from beginning").
@@ -373,6 +437,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [rfqSupplierQuery, setRfqSupplierQuery] = useState("");
   const [rfqSupplierOptions, setRfqSupplierOptions] = useState<SupplierOption[]>([]);
   const [rfqSupplierId, setRfqSupplierId] = useState("");
+  const [rfqSupplierPickerOpen, setRfqSupplierPickerOpen] = useState(false);
   const [rfqSendEmail, setRfqSendEmail] = useState(true);
   const [showRfqNewSupplierForm, setShowRfqNewSupplierForm] = useState(false);
   const [rfqNewSupplierName, setRfqNewSupplierName] = useState("");
@@ -596,6 +661,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }, [orderSupplierQuery, orderEditLineId]);
 
   useEffect(() => {
+    if (!outworkSupplierPickerOpen) { setOutworkSupplierOptions([]); return; }
     const q = outworkSupplierQuery.trim();
     if (q.length < 2) { setOutworkSupplierOptions([]); return; }
     const timer = setTimeout(async () => {
@@ -604,10 +670,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setOutworkSupplierOptions(b.items || []);
     }, 200);
     return () => clearTimeout(timer);
-  }, [outworkSupplierQuery]);
+  }, [outworkSupplierQuery, outworkSupplierPickerOpen]);
 
   useEffect(() => {
-    if (!editingOutworkId) { setEditOutworkSupplierOptions([]); return; }
+    if (!editingOutworkId || !editOutworkSupplierPickerOpen) { setEditOutworkSupplierOptions([]); return; }
     const q = editOutworkSupplierQuery.trim();
     if (q.length < 2) { setEditOutworkSupplierOptions([]); return; }
     const timer = setTimeout(async () => {
@@ -616,9 +682,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setEditOutworkSupplierOptions(b.items || []);
     }, 200);
     return () => clearTimeout(timer);
-  }, [editOutworkSupplierQuery, editingOutworkId]);
+  }, [editOutworkSupplierQuery, editingOutworkId, editOutworkSupplierPickerOpen]);
 
   useEffect(() => {
+    if (!rfqSupplierPickerOpen) { setRfqSupplierOptions([]); return; }
     const q = rfqSupplierQuery.trim();
     if (q.length < 2) { setRfqSupplierOptions([]); return; }
     const timer = setTimeout(async () => {
@@ -627,7 +694,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setRfqSupplierOptions(b.items || []);
     }, 200);
     return () => clearTimeout(timer);
-  }, [rfqSupplierQuery]);
+  }, [rfqSupplierQuery, rfqSupplierPickerOpen]);
+
+  // Bulk part-line update — see bulkEditMode's declaration above.
+  useEffect(() => {
+    if (!bulkSupplierPickerOpen) { setBulkSupplierOptions([]); return; }
+    const q = bulkSupplierQuery.trim();
+    if (q.length < 2) { setBulkSupplierOptions([]); return; }
+    const timer = setTimeout(async () => {
+      const r = await fetch(`/api/v1/master-data/suppliers?q=${encodeURIComponent(q)}&status=active&pageSize=20`, { cache: "no-store" });
+      const b = await r.json();
+      setBulkSupplierOptions(b.items || []);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [bulkSupplierQuery, bulkSupplierPickerOpen]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -978,32 +1058,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await patchAction(`/api/v1/jobs/${jobId}/parts/${lineId}`, { description });
   }
 
-  async function savePartLineOrder(lineId: string) {
-    if (!jobId) return;
-    setSaving(true); setError("");
-    try {
-      const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ orderNumber: orderNumberDraft || null, orderedFromSupplierId: orderSupplierId || null }),
-      });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to save order details.");
-      setOrderEditLineId(""); setOrderNumberDraft(""); setOrderSupplierId(""); setOrderSupplierQuery("");
-      await load(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to save order details.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // Editing the Order # cell directly in the table — matches ModApp's
   // PartLineOrderNumberField (always an editable input, no separate "edit
   // mode" click needed first). Keeps the currently-assigned supplier as-is
   // (the API resets orderedFromSupplierId to null whenever it isn't passed,
-  // so it's always sent back unchanged here) — use "Change supplier" to
-  // update that part.
+  // so it's always sent back unchanged here).
   async function saveOrderNumberInline(lineId: string, currentSupplierId: string, value: string) {
     if (!jobId) return;
     setSaving(true); setError("");
@@ -1020,6 +1079,70 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setError(e instanceof Error ? e.message : "Unable to save order number.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // 2026-09-15, user request: "make that the supplier field is also
+  // editable without clicking the change supplier button." Mirrors
+  // saveOrderNumberInline exactly, the other way round: always resends the
+  // line's *current* order number unchanged so picking a supplier never
+  // clobbers a typed-in PO number. Closes the row's picker (orderEditLineId)
+  // on completion — see that state's declaration above for why this also
+  // matters for the double-click glitch fix.
+  async function saveSupplierInline(lineId: string, currentOrderNumber: string, supplierId: string) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderNumber: currentOrderNumber || null, orderedFromSupplierId: supplierId || null }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save supplier.");
+      setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save supplier.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Bulk part-line update — 2026-09-15, user request: "Parts list table,
+  // make it that bulk update can be done on the parts to add supplier and
+  // order number, instead of one at a time." Fires the same PATCH the
+  // single-row inline edits use, once per selected line, in parallel.
+  // Leaving either field blank on the toolbar leaves that field unchanged
+  // on every selected line (never clears it) — this is a "fill in what's
+  // missing across many rows at once" tool, not a bulk-clear.
+  async function applyBulkPartUpdate() {
+    if (!jobId || bulkSelectedIds.size === 0) return;
+    if (!bulkOrderNumber.trim() && !bulkSupplierId) { setError("Enter an order number and/or pick a supplier to apply."); return; }
+    setBulkApplying(true); setError("");
+    try {
+      const ids = Array.from(bulkSelectedIds);
+      const results = await Promise.all(ids.map(async (lineId) => {
+        const line = job?.partLines.find((l) => String(l.id) === lineId);
+        const body: Record<string, unknown> = {};
+        if (bulkOrderNumber.trim()) body.orderNumber = bulkOrderNumber.trim();
+        if (bulkSupplierId) body.orderedFromSupplierId = bulkSupplierId;
+        // Always resend whichever of the two fields wasn't set on the
+        // toolbar, unchanged, same "never omit means clear" API contract
+        // the single-row inline edits work around.
+        if (body.orderNumber === undefined) body.orderNumber = line?.orderNumber || null;
+        if (body.orderedFromSupplierId === undefined) body.orderedFromSupplierId = line?.orderedFromSupplier?.id || null;
+        const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        return r.ok;
+      }));
+      const failed = results.filter((ok) => !ok).length;
+      if (failed > 0) setError(`${failed} of ${ids.length} selected part line${ids.length === 1 ? "" : "s"} could not be updated.`);
+      setBulkSelectedIds(new Set()); setBulkOrderNumber(""); setBulkSupplierId(""); setBulkSupplierQuery(""); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false);
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to apply the bulk update.");
+    } finally {
+      setBulkApplying(false);
     }
   }
 
@@ -1051,7 +1174,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to record outwork.");
       setDeliveryNote({ jobNumber: job?.jobNumber || job?.draftNumber || "—", supplierName: outworkSupplierQuery || "—", dateSentOut: outworkDateSentOut || null, items: lines });
-      setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1" }]);
+      setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1" }]);
       setShowOutworkPopup(false);
       await load(true);
     } catch (e) {
@@ -1109,8 +1232,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const r = await fetch(`/api/v1/jobs/${jobId}/attachments/${attachmentId}/file`, { cache: "no-store" });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to open attachment.");
-      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
-      if (!win) setError("Enable pop-ups to view/download the attachment.");
+      if (!openFileInNewTab(b.mimeType, b.contentBase64)) setError("Enable pop-ups to view/download the attachment.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to open attachment.");
     } finally {
@@ -1124,11 +1246,35 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await deleteAction(`/api/v1/jobs/${jobId}/attachments/${attachmentId}`, {});
   }
 
+  // 2026-09-15, user request: "once a note is added [to an attachment],
+  // allow a user to edit it as well." Separate savingAttachmentNotes flag
+  // (not the shared `saving`), same reasoning as note-editing above.
+  async function saveAttachmentNotes(attachmentId: string) {
+    if (!jobId) return;
+    setSavingAttachmentNotes(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/attachments/${attachmentId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ notes: editingAttachmentNotes.trim() || null }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save the note.");
+      setEditingAttachmentId(""); setEditingAttachmentNotes("");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the note.");
+    } finally {
+      setSavingAttachmentNotes(false);
+    }
+  }
+
   function startEditOutwork(item: OutworkItemRow) {
     setEditingOutworkId(String(item.id));
     setEditOutworkSupplierId(item.supplier?.id ? String(item.supplier.id) : "");
     setEditOutworkSupplierQuery(item.supplier?.name ? String(item.supplier.name) : "");
     setEditOutworkSupplierOptions([]);
+    setEditOutworkSupplierPickerOpen(false);
     setEditOutworkDescription(item.description || "");
     setEditOutworkQuantity(decimalText(item.quantity));
     setEditOutworkDateSentOut(item.dateSentOut ? String(item.dateSentOut).slice(0, 10) : "");
@@ -1136,7 +1282,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }
 
   function cancelEditOutwork() {
-    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkNotes("");
+    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkNotes("");
   }
 
   async function saveOutworkEdit(itemId: string) {
@@ -1317,7 +1463,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       ? { attachmentFileName: rfqAttachmentFile.name, attachmentMimeType: rfqAttachmentFile.type || "application/octet-stream", attachmentContentBase64: await fileToBase64(rfqAttachmentFile) }
       : {};
     await postAction(`/api/v1/jobs/${jobId}/rfq`, { supplierId: rfqSupplierId, sendEmail: rfqSendEmail, ...attachment });
-    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSendEmail(true); setRfqAttachmentFile(null);
+    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); setRfqSendEmail(true); setRfqAttachmentFile(null);
   }
 
   // Inline "create a new supplier" from the RFQ panel — added 2026-09-09
@@ -1458,8 +1604,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const r = await fetch(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/quote/file`, { cache: "no-store" });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "No quote file on record.");
-      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
-      if (!win) setError("Enable pop-ups to view the quote file.");
+      if (!openFileInNewTab(b.mimeType, b.contentBase64)) setError("Enable pop-ups to view the quote file.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to open quote file.");
     } finally {
@@ -1477,8 +1622,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const r = await fetch(`/api/v1/jobs/${jobId}/rfq?rfqId=${rfqRequestId}`, { cache: "no-store" });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "No attachment on record.");
-      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
-      if (!win) setError("Enable pop-ups to view the attachment.");
+      if (!openFileInNewTab(b.mimeType, b.contentBase64)) setError("Enable pop-ups to view the attachment.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to open attachment.");
     } finally {
@@ -1596,6 +1740,29 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // 2026-09-15, user request: "Notes section, allow a user to delete
+  // notes." Same savingNoteEdit flag as editing (not the shared `saving`)
+  // so this doesn't grey out unrelated buttons elsewhere on the page.
+  async function deleteNote(noteId: string) {
+    if (!job) return;
+    if (!window.confirm("Delete this note?")) return;
+    setSavingNoteEdit(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${job.id}/notes`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ noteId }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to delete the note.");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to delete the note.");
+    } finally {
+      setSavingNoteEdit(false);
+    }
+  }
+
   // Fetch-on-click PEX cycle history — mirrors ModApp's PexUnitHistoryButton,
   // but renders Apollo's own JobActivity.description directly (no
   // field/oldValue/newValue mapping needed; see pex/service.ts's
@@ -1696,7 +1863,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         <button type="button" className="gold-button" disabled={savingNoteEdit || editingNoteText.trim().length < 2} onClick={() => void saveNoteEdit(noteId)}>{savingNoteEdit ? "Saving…" : "Save"}</button>
                       </div>
                     ) : (
-                      <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingNoteId(noteId); setEditingNoteText(String(note.note || "")); }}><Pencil size={13} /></button>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingNoteId(noteId); setEditingNoteText(String(note.note || "")); }}><Pencil size={13} /></button>
+                        <button type="button" className="table-action danger" title="Delete note" aria-label="Delete note" disabled={savingNoteEdit} onClick={() => void deleteNote(noteId)}><Trash2 size={13} /></button>
+                      </div>
                     )}
                   </article>
                 );
@@ -1932,7 +2102,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <section className="detail-panel">
             <header>
               <div><h2>Parts list</h2><p>Track ordering and receiving for this job&apos;s parts.</p></div>
-              <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {job.partLines.length > 0 && (
+                  <button type="button" className="quiet-button" onClick={() => { setBulkEditMode((v) => !v); setBulkSelectedIds(new Set()); }}>{bulkEditMode ? "Cancel bulk update" : "Bulk update"}</button>
+                )}
+                <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
+              </div>
             </header>
             {showAddParts && (
               <>
@@ -1952,74 +2127,91 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !bulkPartLines.trim()} onClick={() => void addPartLines()}><Plus size={15} /> Add / cross-check with stock</button></footer>
               </>
             )}
-            <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Qty</th><th>Order</th><th>Status</th><th></th></tr></thead><tbody>
+            {/* 2026-09-15, user request: "Parts list table, make it that
+                bulk update can be done on the parts to add supplier and
+                order number, instead of one at a time." A row checkbox
+                column appears while this toolbar is open; leaving a field
+                blank here leaves it unchanged on every selected line. */}
+            {bulkEditMode && (
+              <div className="drawer-fields" style={{ padding: "10px 14px", background: "#fbf8f0", borderBottom: "1px solid var(--ink-150)" }}>
+                <label><span>Order number (optional)</span><input value={bulkOrderNumber} onChange={(e) => setBulkOrderNumber(e.target.value)} placeholder="Applies to every selected row" /></label>
+                <label className="party-selector"><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
+                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button></label>
+              </div>
+            )}
+            <div className="data-table-wrap"><table className="data-table"><thead><tr>
+              {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === job.partLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(job.partLines.map((l) => String(l.id))) : new Set())} /></th>}
+              <th>Part</th><th>Qty</th><th>Order</th><th>Supplier</th><th>Status</th><th></th>
+            </tr></thead><tbody>
               {job.partLines.map((line) => {
+                const lineId = String(line.id);
                 const quantity = decimalText(line.quantity);
                 const received = decimalText(line.receivedQuantity ?? 0);
                 const outstanding = Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0));
                 const hasReceivedSome = Number(line.receivedQuantity ?? 0) > 0;
                 const fullyReceived = line.status === "RECEIVED";
+                const supplierPickerOpenHere = orderEditLineId === lineId;
                 return <tr key={line.id}>
+                  {bulkEditMode && <td><input type="checkbox" aria-label={`Select ${line.partNumber}`} checked={bulkSelectedIds.has(lineId)} onChange={(e) => setBulkSelectedIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(lineId); else next.delete(lineId); return next; })} /></td>}
                   <td>
                     <strong>{text(line.partNumber)}</strong>
-                    <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(String(line.id))}>Add description</button>}</div>
+                    <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
                   </td>
                   <td>
                     {quantity}{hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
-                    {receivingLineId === String(line.id) && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                    {receivingLineId === lineId && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                       <input type="number" min={1} max={outstanding} value={receiveQty} onChange={(e) => setReceiveQty(e.target.value)} style={{ width: 80 }} />
-                      <button type="button" className="quiet-button" disabled={saving || !receiveQty} onClick={() => void receivePartLine(String(line.id))}>Confirm</button>
+                      <button type="button" className="quiet-button" disabled={saving || !receiveQty} onClick={() => void receivePartLine(lineId)}>Confirm</button>
                       <button type="button" className="quiet-button" disabled={saving} onClick={() => { setReceivingLineId(""); setReceiveQty(""); }}>Cancel</button>
                     </div>}
                   </td>
                   <td>
-                    {orderEditLineId === String(line.id) ? (
-                      <div className="stack-grid">
-                        <label><span>Order number</span><input value={orderNumberDraft} onChange={(e) => setOrderNumberDraft(e.target.value)} /></label>
-                        <label className="party-selector"><span>Ordered from supplier</span><div><Search size={15} /><input value={orderSupplierQuery} onChange={(e) => { setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }} placeholder="Search active supplier" /></div>{orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOrderSupplierId(s.id); setOrderSupplierQuery(s.name); setOrderSupplierOptions([]); }}><strong>{s.name}</strong></button>)}</div>}</label>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button type="button" className="quiet-button" disabled={saving} onClick={() => void savePartLineOrder(String(line.id))}>Save</button>
-                          <button type="button" className="quiet-button" disabled={saving} onClick={() => { setOrderEditLineId(""); setOrderNumberDraft(""); setOrderSupplierId(""); setOrderSupplierQuery(""); }}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      // Always an editable input, matching ModApp's
-                      // PartLineOrderNumberField — no need to click "Order
-                      // details" first. Uncontrolled (defaultValue, not
-                      // value) since it's one of many rows and doesn't need
-                      // to re-render on every keystroke; saves on blur, same
-                      // as ModApp. Supplier is still changed via "Order
-                      // details" below (a full supplier search), but this
-                      // never resets it — the current supplier id is always
-                      // sent back unchanged.
-                      <>
-                        <input
-                          key={String(line.id)}
-                          defaultValue={line.orderNumber ? String(line.orderNumber) : ""}
-                          placeholder="PO / order #"
-                          disabled={saving}
-                          onBlur={(e) => {
-                            const next = e.target.value.trim();
-                            if (next === (line.orderNumber ? String(line.orderNumber).trim() : "")) return;
-                            void saveOrderNumberInline(String(line.id), line.orderedFromSupplier?.id ? String(line.orderedFromSupplier.id) : "", next);
-                          }}
-                        />
-                        {line.orderedFromSupplier?.name ? <div className="muted small-line">{text(line.orderedFromSupplier.name)}</div> : null}
-                      </>
-                    )}
+                    {/* Always an editable input, matching ModApp's
+                        PartLineOrderNumberField — no need to click a
+                        button first. Uncontrolled (defaultValue, not
+                        value) since it's one of many rows and doesn't need
+                        to re-render on every keystroke; saves on blur. */}
+                    <input
+                      key={lineId}
+                      defaultValue={line.orderNumber ? String(line.orderNumber) : ""}
+                      placeholder="PO / order #"
+                      disabled={saving}
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (next === (line.orderNumber ? String(line.orderNumber).trim() : "")) return;
+                        void saveOrderNumberInline(lineId, line.orderedFromSupplier?.id ? String(line.orderedFromSupplier.id) : "", next);
+                      }}
+                    />
+                  </td>
+                  <td className="party-selector">
+                    {/* 2026-09-15, user request: "make that the supplier
+                        field is also editable without clicking the change
+                        supplier button." Always an editable typeahead, no
+                        "Change supplier" click first — mirrors the Order #
+                        cell's always-inline pattern. orderEditLineId marks
+                        which row's picker is open (see its declaration
+                        above for the double-click-glitch fix this also
+                        relies on). */}
+                    <div><Search size={13} /><input
+                      value={supplierPickerOpenHere ? orderSupplierQuery : (line.orderedFromSupplier?.name || "")}
+                      onFocus={() => { setOrderEditLineId(lineId); setOrderSupplierQuery(line.orderedFromSupplier?.name || ""); setOrderSupplierId(""); }}
+                      onChange={(e) => { setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }}
+                      placeholder="Search active supplier"
+                      disabled={saving}
+                    /></div>
+                    {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void saveSupplierInline(lineId, line.orderNumber ? String(line.orderNumber) : "", s.id)}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td><span className={`status-pill ${fullyReceived ? "" : "neutral"}`}>{text(line.status).replaceAll("_", " ")}</span></td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(String(line.id))}>Undo receive</button>}
-                      {outstanding > 0 && receivingLineId !== String(line.id) && <button type="button" className="table-action" disabled={saving} onClick={() => { setReceivingLineId(String(line.id)); setReceiveQty(String(outstanding)); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
-                      {orderEditLineId !== String(line.id) && <button type="button" className="table-action" disabled={saving} onClick={() => { setOrderEditLineId(String(line.id)); setOrderNumberDraft(line.orderNumber || ""); setOrderSupplierId(""); setOrderSupplierQuery(line.orderedFromSupplier?.name || ""); }}>Change supplier</button>}
-                      <button type="button" className="table-action danger" onClick={() => void removePartLineRow(String(line.id))}>Remove</button>
+                      {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(lineId)}>Undo receive</button>}
+                      {outstanding > 0 && receivingLineId !== lineId && <button type="button" className="table-action" disabled={saving} onClick={() => { setReceivingLineId(lineId); setReceiveQty(String(outstanding)); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
+                      <button type="button" className="table-action danger" onClick={() => void removePartLineRow(lineId)}>Remove</button>
                     </div>
                   </td>
                 </tr>;
               })}
-              {job.partLines.length === 0 && <tr><td colSpan={5} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
+              {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 7 : 6} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
             </tbody></table></div>
             {job.partLines.length > 0 && (
               <div className="detail-actions" style={{ borderTop: "1px solid var(--ink-150)" }}>
@@ -2040,7 +2232,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
 
             <div className="drawer-fields">
-              <label className="wide party-selector"><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); }} placeholder="Search active supplier" /></div>{rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); }}><strong>{s.name}</strong></button>)}</div>}</label>
+              <label className="wide party-selector"><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); setRfqSupplierPickerOpen(true); }} onFocus={() => setRfqSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{rfqSupplierPickerOpen && rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
               <label>
                 <span>&nbsp;</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2135,13 +2327,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <h3>Quote comparison</h3>
                   <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
                 </div>
-                <div className="data-table-wrap"><table className="data-table"><thead>
+                <div className="data-table-wrap"><table className="data-table quote-comparison-table"><thead>
                   <tr>
                     <th rowSpan={2}>Part</th>
-                    {quotedRequests.map((r) => <th key={r.id} colSpan={2}>{text(r.supplier.name)}</th>)}
+                    {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
                   </tr>
                   <tr>
-                    {quotedRequests.map((r) => <Fragment key={r.id}><th>Unit</th><th>Total</th></Fragment>)}
+                    {quotedRequests.map((r) => <Fragment key={r.id}><th className="supplier-group-start">Unit</th><th>Total</th></Fragment>)}
                   </tr>
                 </thead><tbody>
                   {job.partLines.map((line) => {
@@ -2158,7 +2350,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         const unit = quoted ? Number(quoteLine!.unitPrice) : null;
                         const cellStyle = isCheapest ? { background: "rgba(59,130,246,0.1)" } : undefined;
                         return <Fragment key={request.id}>
-                          <td style={cellStyle}>
+                          <td className="supplier-group-start" style={cellStyle}>
                             {quoteLine && quoteLine.available === false ? <span className="muted small-line">Unavailable</span> : quoted ? (
                               <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => void togglePreferred(String(line.id), String(quote.id))}>
                                 <Star size={12} fill={isPreferred ? "currentColor" : "none"} /> R{unit!.toFixed(2)}
@@ -2173,10 +2365,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </tbody><tfoot>
                   <tr>
                     <td><strong>Quote total</strong></td>
-                    {quotedRequests.map((request) => <Fragment key={request.id}><td /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
+                    {quotedRequests.map((request) => <Fragment key={request.id}><td className="supplier-group-start" /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
+                  </tr>
+                  {/* 2026-09-15, user request: "add total field to compare
+                      parts table" — the per-supplier "Quote total" row
+                      above already existed; this adds the combined total
+                      across whichever supplier's price is picked per part
+                      (the star toggle), previously only shown as plain
+                      text below the table, now also as a row in the table
+                      itself. */}
+                  <tr>
+                    <td><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
+                    <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
                   </tr>
                 </tfoot></table></div>
-                <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier. Preferred purchase total: <strong>R{preferredTotal.toFixed(2)}</strong> ({pickedCount} of {job.partLines.length} parts picked).</p>
+                <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier.</p>
               </div>;
             })()}
           </aside>
@@ -2186,6 +2389,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <section className="detail-panel">
             <header><div><h2>Parts follow-up</h2><p>Chase every supplier with outstanding ordered parts on this job — one email per supplier listing everything still outstanding from them.</p></div></header>
             <footer className="detail-actions"><button type="button" className="section-action-button" disabled={saving} onClick={() => void sendPartsFollowup()}><Mail size={15} /> Send follow-up to outstanding suppliers</button></footer>
+            {/* 2026-09-15, user request: "error message when clicking
+                button is not noticeable, make red text to get attention to
+                it." The shared `error` state already renders once at the
+                very top of the page (well above this section, easy to
+                miss after clicking a button down here) — repeated here,
+                bold and right next to the button that triggered it. */}
+            {error && <p style={{ color: "var(--danger)", fontWeight: 700, marginTop: 8 }}>{error}</p>}
             {partsFollowupResult && (
               <div className="drawer-fields" style={{ marginTop: 8 }}>
                 {partsFollowupResult.sent.length > 0 && <p className="muted small-line wide">Sent to: {partsFollowupResult.sent.map((s) => s.supplierName).join(", ")}.</p>}
@@ -2205,7 +2415,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <aside className="form-drawer compact-dialog job-editor-drawer">
                   <header><div><h2>Record outwork</h2><p>Send components out to a supplier for outwork.</p></div><button type="button" onClick={() => setShowOutworkPopup(false)} aria-label="Close dialog"><X size={18} /></button></header>
                   <div className="drawer-fields">
-                    <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); }} placeholder="Search active supplier" /></div>{outworkSupplierOptions.length > 0 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); }}><strong>{s.name}</strong></button>)}</div>}</label>
+                    <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); setOutworkSupplierPickerOpen(true); }} onFocus={() => setOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{outworkSupplierPickerOpen && outworkSupplierOptions.length > 0 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
                     <label><span>Date sent out</span><input type="date" value={outworkDateSentOut} onChange={(e) => setOutworkDateSentOut(e.target.value)} /></label>
                     <div className="wide">
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2234,7 +2444,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   return <tr key={item.id}>
                     <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /></td>
                     <td><input type="number" min={1} value={editOutworkQuantity} onChange={(e) => setEditOutworkQuantity(e.target.value)} style={{ width: 70 }} /></td>
-                    <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); }} placeholder="Search active supplier" /></div>{editOutworkSupplierOptions.length > 0 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); }}><strong>{s.name}</strong></button>)}</div>}</td>
+                    <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierOptions.length > 0 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</td>
                     <td><input type="date" value={editOutworkDateSentOut} onChange={(e) => setEditOutworkDateSentOut(e.target.value)} /></td>
                     <td>{outworkDaysOutstanding(item)}</td>
                     <td><span className={`status-pill ${item.status === "RECEIVED" ? "" : "neutral"}`}>{text(item.status).replaceAll("_", " ")}</span></td>
@@ -2284,18 +2494,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
             <div className="record-list">
               {job.attachments.length === 0 && <div className="table-state compact-empty-state">No attachments uploaded yet.</div>}
-              {job.attachments.map((file) => (
-                <article key={file.id}>
+              {job.attachments.map((file) => {
+                const fileId = String(file.id);
+                const isEditingNote = editingAttachmentId === fileId;
+                return (
+                <article key={fileId}>
                   <div className="record-icon"><FileText size={14} /></div>
                   <div>
-                    <strong><button type="button" className="table-action" onClick={() => void viewAttachment(String(file.id))}>{text(file.fileName)}</button></strong>
-                    <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}{file.notes ? ` · ${text(file.notes)}` : ""}</span>
+                    <strong><button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}>{text(file.fileName)}</button></strong>
+                    <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}</span>
+                    {isEditingNote ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                        <input value={editingAttachmentNotes} onChange={(e) => setEditingAttachmentNotes(e.target.value)} placeholder="What is this file?" style={{ flex: 1 }} />
+                        <button type="button" className="quiet-button" disabled={savingAttachmentNotes} onClick={() => { setEditingAttachmentId(""); setEditingAttachmentNotes(""); }}>Cancel</button>
+                        <button type="button" className="gold-button" disabled={savingAttachmentNotes} onClick={() => void saveAttachmentNotes(fileId)}>{savingAttachmentNotes ? "Saving…" : "Save"}</button>
+                      </div>
+                    ) : (
+                      <span>{file.notes ? text(file.notes) : <em className="muted">No note</em>} <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingAttachmentId(fileId); setEditingAttachmentNotes(file.notes ? String(file.notes) : ""); }}><Pencil size={12} /></button></span>
+                    )}
                   </div>
                   <span>{file.createdAt ? new Date(String(file.createdAt)).toLocaleDateString("en-ZA") : "—"}</span>
-                  <button type="button" className="table-action" onClick={() => void viewAttachment(String(file.id))}><Download size={14} /> Download</button>
-                  <button type="button" className="table-action danger" onClick={() => void deleteAttachment(String(file.id))}>Delete</button>
+                  <button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}><Download size={14} /> Download</button>
+                  <button type="button" className="table-action danger" onClick={() => void deleteAttachment(fileId)}>Delete</button>
                 </article>
-              ))}
+                );
+              })}
             </div>
           </section>
 

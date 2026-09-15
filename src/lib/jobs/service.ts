@@ -17,6 +17,7 @@ import {
   jobReopenInput,
   jobNoteCreateInput,
   jobNoteUpdateInput,
+  jobNoteDeleteInput,
   jobFieldServiceInput,
   jobWarrantyInput,
   jobPartLineBulkAddInput,
@@ -27,6 +28,7 @@ import {
   outworkEditInput,
   outworkReceiveInput,
   attachmentUploadInput,
+  jobAttachmentNotesUpdateInput,
   jobMarkReturnedUnrepairedInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
@@ -775,6 +777,26 @@ export async function updateJobNote(ctx: RequestContext, jobId: string, raw: unk
   return note;
 }
 
+// 2026-09-15 — user request: "Notes section, allow a user to delete
+// notes." Mirrors updateJobNote's existence-check/transaction/audit shape.
+// Reuses the NOTE_ADDED activity type for the history entry (same
+// reuse-rather-than-add-an-enum-value approach updateJobNote already took
+// for edits) rather than a new NOTE_DELETED value, which would need its
+// own migration for a one-line history entry.
+export async function deleteJobNote(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobNoteDeleteInput.parse(raw);
+  await getJobScoped(companyId, jobId);
+  const existing = await prisma.jobNote.findFirst({ where: { id: input.noteId, jobId, companyId } });
+  if (!existing) notFound();
+  await prisma.$transaction(async (tx) => {
+    await tx.jobNote.delete({ where: { id: existing.id } });
+    await addActivity(tx, ctx, jobId, "NOTE_ADDED", "Note removed from job.", { noteId: existing.id, deleted: true });
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobNote", entityId: existing.id, action: "DELETE", afterData: { jobId, noteId: existing.id } });
+  return { ok: true };
+}
+
 export async function upsertJobFieldService(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobFieldServiceInput.parse(raw);
@@ -1262,6 +1284,29 @@ export async function getJobAttachmentFile(ctx: RequestContext, jobId: string, a
   const companyId = requireJobsRead(ctx);
   const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
   return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: attachment.data.toString("base64") };
+}
+
+// 2026-09-15 — user request: "once a note is added [to an attachment],
+// allow a user to edit it as well." The file itself is immutable (upload a
+// new attachment to replace it); only the note text changes. Reuses
+// ATTACHMENT_UPLOADED for the history entry with an `edited: true` flag,
+// same reuse-rather-than-add-an-enum-value approach used for job notes
+// above — avoids a migration for a one-line history entry.
+export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: string, attachmentId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobAttachmentNotesUpdateInput.parse(raw);
+  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+  const updated = await prisma.$transaction(async (tx) => {
+    const record = await tx.jobAttachment.update({
+      where: { id: attachment.id },
+      data: { notes: input.notes || null },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+    });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment note updated: ${attachment.fileName}.`, { attachmentId: attachment.id, edited: true });
+    return record;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "UPDATE", afterData: { jobId, attachmentId } });
+  return updated;
 }
 
 export async function deleteJobAttachment(ctx: RequestContext, jobId: string, attachmentId: string) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { requireSameOrigin } from "@/lib/security/request";
-import { addJobNote, updateJobNote } from "@/lib/jobs/service";
+import { addJobNote, updateJobNote, deleteJobNote } from "@/lib/jobs/service";
 
 export async function POST(request: NextRequest, context: { params: Promise<unknown> }) {
   try {
@@ -25,6 +25,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<unk
     requireSameOrigin(request);
     const { id } = await context.params as { id: string };
     return NextResponse.json(await updateJobNote(await requireRequestContext(), id, await request.json()));
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+// 2026-09-15 — user request: "Notes section, allow a user to delete
+// notes." Same shallow-route-extension approach as PATCH above (noteId in
+// the body, not a nested .../notes/[noteId] route) rather than a new file.
+export async function DELETE(request: NextRequest, context: { params: Promise<unknown> }) {
+  try {
+    requireSameOrigin(request);
+    const { id } = await context.params as { id: string };
+    return NextResponse.json(await deleteJobNote(await requireRequestContext(), id, await request.json()));
   } catch (error) {
     return apiError(error);
   }

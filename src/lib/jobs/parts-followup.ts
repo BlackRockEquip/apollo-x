@@ -49,19 +49,36 @@ function buildFollowupEmailBody(job: { jobNumber: string | null; draftNumber: st
   return { subject, text };
 }
 
-// Groups every ordered-but-not-fully-received part line by the supplier it
-// was ordered from, and sends one chase email per supplier. Lines with no
-// orderedFromSupplierId (nothing ordered yet) are excluded — there's no
-// one to chase. A supplier with no email on file, or when the company
-// hasn't configured SMTP under Settings, is reported back as skipped
-// rather than silently dropped, so the person knows to follow up by phone.
+// Synthetic bucket id for part lines with no orderedFromSupplierId at all —
+// 2026-09-15 user request: "add suppliers to list even though order number
+// not filled in, if no supplier is added put under 'Unknown' supplier
+// name." Never collides with a real Prisma cuid.
+const UNKNOWN_SUPPLIER_ID = "unknown";
+
+// Groups every not-yet-fully-received part line by the supplier it was
+// ordered from, and sends one chase email per supplier. Originally this
+// only picked up ON_ORDER/PARTIALLY_RECEIVED lines that already had a
+// supplier assigned — but a line only reaches ON_ORDER once BOTH a
+// supplier AND an order number are saved (see updatePartLineOrder in
+// service.ts: `status: orderNumber && line.status === "PENDING" ?
+// "ON_ORDER" : line.status`), so a part with a supplier picked but no PO
+// number typed in yet stayed PENDING and silently never showed up here —
+// exactly the gap the user flagged. Now: every not-yet-received,
+// not-already-in-stock line is considered (PENDING/ON_ORDER/
+// PARTIALLY_RECEIVED — IN_STOCK is excluded, nothing to chase for a part
+// already on the shelf), and a line with no supplier assigned at all is
+// grouped under a synthetic "Unknown" bucket instead of being dropped, so
+// it's visible (in the skipped list, with a reason) rather than invisible.
+// A supplier with no email on file, or when the company hasn't configured
+// SMTP under Settings, is likewise reported back as skipped rather than
+// silently dropped, so the person knows to follow up by phone.
 export async function sendPartsFollowup(ctx: RequestContext, jobId: string) {
   const companyId = requireJobsWrite(ctx);
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
   if (!job) notFound();
 
   const lines = await prisma.jobPartLine.findMany({
-    where: { companyId, jobId, status: { in: ["ON_ORDER", "PARTIALLY_RECEIVED"] }, orderedFromSupplierId: { not: null } },
+    where: { companyId, jobId, status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"] } },
     include: { orderedFromSupplier: { select: { id: true, name: true, mainEmail: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -71,12 +88,13 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string) {
   const bySupplier = new Map<string, { supplierId: string; supplierName: string; mainEmail: string | null; lines: { partNumber: string; description: string | null; outstandingQty: string }[] }>();
   for (const line of lines) {
     const supplier = line.orderedFromSupplier;
-    if (!supplier) continue;
     const outstandingQty = new Prisma.Decimal(line.quantity).minus(line.receivedQuantity ? new Prisma.Decimal(line.receivedQuantity) : 0);
     if (!outstandingQty.greaterThan(0)) continue;
-    const entry = bySupplier.get(supplier.id) ?? { supplierId: supplier.id, supplierName: supplier.name, mainEmail: supplier.mainEmail, lines: [] };
+    const supplierId = supplier?.id ?? UNKNOWN_SUPPLIER_ID;
+    const supplierName = supplier?.name ?? "Unknown";
+    const entry = bySupplier.get(supplierId) ?? { supplierId, supplierName, mainEmail: supplier?.mainEmail ?? null, lines: [] };
     entry.lines.push({ partNumber: line.partNumber, description: line.description, outstandingQty: outstandingQty.toString() });
-    bySupplier.set(supplier.id, entry);
+    bySupplier.set(supplierId, entry);
   }
 
   const emailConfigured = await isCompanyEmailConfigured(companyId);
@@ -84,6 +102,10 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string) {
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 
   for (const entry of bySupplier.values()) {
+    if (entry.supplierId === UNKNOWN_SUPPLIER_ID) {
+      skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: "No supplier assigned to these parts yet — assign a supplier on the parts list, or follow up manually." });
+      continue;
+    }
     if (!emailConfigured) {
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: "Email is not configured for this company yet — set it up under Settings." });
       continue;
