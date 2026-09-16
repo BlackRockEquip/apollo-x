@@ -72,7 +72,18 @@ const UNKNOWN_SUPPLIER_ID = "unknown";
 // A supplier with no email on file, or when the company hasn't configured
 // SMTP under Settings, is likewise reported back as skipped rather than
 // silently dropped, so the person knows to follow up by phone.
-export async function sendPartsFollowup(ctx: RequestContext, jobId: string) {
+//
+// 2026-09-16 — user request: "Parts Follow up still does not show suppliers
+// that have outstanding parts, like ModApp." This action always sent blind
+// to every outstanding supplier at once with nothing shown beforehand — see
+// JobWorkspace.tsx's Parts follow-up section, which now computes and
+// displays the same per-supplier breakdown client-side from job.partLines
+// (ModApp's PartsFollowUpButton.tsx does this with a card per supplier).
+// To let a person chase just one supplier from that breakdown instead of
+// emailing everyone, `onlySupplierId` narrows this to a single supplier's
+// group; omitted (or the "unknown" bucket, which never has an email to
+// send to) keeps the original send-to-everyone behavior.
+export async function sendPartsFollowup(ctx: RequestContext, jobId: string, onlySupplierId?: string) {
   const companyId = requireJobsWrite(ctx);
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
   if (!job) notFound();
@@ -101,7 +112,8 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string) {
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 
-  for (const entry of bySupplier.values()) {
+  const entries = onlySupplierId ? Array.from(bySupplier.values()).filter((e) => e.supplierId === onlySupplierId) : Array.from(bySupplier.values());
+  for (const entry of entries) {
     if (entry.supplierId === UNKNOWN_SUPPLIER_ID) {
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: "No supplier assigned to these parts yet — assign a supplier on the parts list, or follow up manually." });
       continue;

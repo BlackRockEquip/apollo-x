@@ -1415,6 +1415,16 @@ model Job {
   componentSerial     String?
   componentPartNumber String?
   description         String?
+  // 2026-09-16 — user request: "make the Notes field like the Job
+  // description field... notes will stay in the field as you type."
+  // Replaces the old add/edit/delete list of separately-timestamped
+  // JobNote entries with one shared free-text field, autosaved exactly
+  // like description. The migration that adds this column backfills it
+  // from existing JobNote rows so nothing already typed is lost; the
+  // `noteEntries` relation below (renamed from `notes` to make room for
+  // this column) is left in place but unused going forward, rather than
+  // dropping the JobNote table and losing that history outright.
+  notes               String?
   etaDate             DateTime?
   // Staff-only ETA a mechanic sets for their own planning, distinct from
   // the client-facing etaDate above — visible/editable only to
@@ -1504,7 +1514,7 @@ model Job {
   pickSlips           PickSlip[]
   rfqRequests         JobRfqRequest[]
   attachments         JobAttachment[]
-  notes               JobNote[]
+  noteEntries         JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
   warranty            JobWarranty?

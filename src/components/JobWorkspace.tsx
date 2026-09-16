@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, X } from "lucide-react";
+import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill } from "@/components/StatusPill";
@@ -129,7 +129,7 @@ type JobDetail = Row & {
   customerId: string;
   customer: CustomerSelection & { contacts?: Row[]; addresses?: Row[]; branches?: Row[] };
   company?: Row & { legalName?: string | null; tradingName?: string | null };
-  notes: Array<Row & { createdBy?: { displayName?: string | null } | null }>;
+  notes?: string | null;
   activities: Array<Row & { actor?: { displayName?: string | null } | null }>;
   fieldServiceReport?: Row | null;
   warranty?: Row | null;
@@ -401,8 +401,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [attachmentNotes, setAttachmentNotes] = useState("");
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   // 2026-09-15, user request: "once a note is added [to an attachment],
-  // allow a user to edit it as well." Mirrors the job-notes inline-edit
-  // pattern (editingNoteId/editingNoteText/savingNoteEdit) below.
+  // allow a user to edit it as well." (Job notes themselves later moved
+  // to a single autosaving field on 2026-09-16 and no longer use this
+  // inline-edit pattern — attachments still do.)
   const [editingAttachmentId, setEditingAttachmentId] = useState("");
   const [editingAttachmentNotes, setEditingAttachmentNotes] = useState("");
   const [savingAttachmentNotes, setSavingAttachmentNotes] = useState(false);
@@ -477,16 +478,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [pexHistory, setPexHistory] = useState<PexHistoryResponse | null>(null);
   const [pexHistoryLoading, setPexHistoryLoading] = useState(false);
   const [dialog, setDialog] = useState<null | "register" | "close" | "reopen" | "returned-unrepaired" | "pex-scrap">(null);
-  // Inline note editing (2026-09-14, user request: "Notes need to be
-  // editable once created") — editingNoteId tracks which of job.notes is
-  // currently open for editing (its own textarea replaces the plain
-  // display row; see the Notes panel in jobFormSections), editingNoteText
-  // holds that in-progress edit separately from the "add a new note"
-  // textarea (form.note), so editing an existing note never clobbers a
-  // draft of a brand new one.
-  const [editingNoteId, setEditingNoteId] = useState("");
-  const [editingNoteText, setEditingNoteText] = useState("");
-  const [savingNoteEdit, setSavingNoteEdit] = useState(false);
   // Full autosave (2026-09-14, user request: "make it that it autosaves
   // all changes without having to click save button" — the Save button is
   // removed entirely in detail/edit mode, see header-actions below).
@@ -577,7 +568,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     reopenStatus: "TO_BE_RECEIVED",
     reopenReason: "",
     returnedUnrepairedReason: "",
-    note: "",
+    notes: "",
     fieldSite: "",
     fieldTechnician: "",
     fieldVehicle: "",
@@ -620,6 +611,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         componentSerial: body.componentSerial || "",
         componentPartNumber: body.componentPartNumber || "",
         description: body.description || "",
+        notes: body.notes || "",
         type: body.type || "STANDARD_REPAIR",
         etaDate: body.etaDate ? String(body.etaDate).slice(0, 10) : "",
         mechanicEtaDate: body.mechanicEtaDate ? String(body.mechanicEtaDate).slice(0, 10) : "",
@@ -796,6 +788,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       componentSerial: form.componentSerial || null,
       componentPartNumber: form.componentPartNumber || null,
       description: form.description || null,
+      notes: form.notes || null,
       type: form.type,
       etaDate: form.etaDate || null,
       mechanicEtaDate: form.mechanicEtaDate || null,
@@ -892,7 +885,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }, [
     mode, jobId, form.customerId, form.dateReceived, form.customerReference, form.machineMake, form.machineModel,
     form.machineSerial, form.component, form.componentType, form.componentSerial, form.componentPartNumber,
-    form.description, form.type, form.etaDate, form.mechanicEtaDate, form.relationshipNotes, form.quoteNumber,
+    form.description, form.notes, form.type, form.etaDate, form.mechanicEtaDate, form.relationshipNotes, form.quoteNumber,
     form.quoteDate, form.salesOrderNumber, form.salesOrderDate, form.invoiceNumber, form.invoiceDate,
     form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
     form.receivingTransport, form.kmsTravelled, form.paymentDateReceived, form.paymentNotApplicable, form.machineHours,
@@ -1040,6 +1033,52 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </style></head><body>
       <h1>Pick slip — Job ${esc(result.jobNumber || "")}</h1>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
+    </body></html>`;
+    w.document.write(html);
+    w.document.close();
+    const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
+    w.onload = doPrint;
+    setTimeout(doPrint, 400);
+  }
+
+  // 2026-09-16 — user request: "Add a Print Parts List button which
+  // prints the complete parts lists table, with all headings." Mirrors
+  // printJobPickSlip's own print-window pattern, but for the whole Parts
+  // list table as it stands on screen (same columns/headings: Part
+  // number, Description, Qty, Received, Order number, Supplier, Status)
+  // rather than just what a pick slip picked.
+  function printPartsList() {
+    if (!job) return;
+    const w = window.open("", "_blank", "width=900,height=900");
+    if (!w) return; // popup blocked — nothing more we can do here
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
+    const jobLabel = job.jobNumber || job.draftNumber || "";
+    const rows = job.partLines
+      .map((line) => {
+        const quantity = decimalText(line.quantity);
+        const received = decimalText(line.receivedQuantity ?? 0);
+        const status = String(line.status || "").replaceAll("_", " ");
+        return `<tr>
+          <td>${esc(String(line.partNumber || ""))}</td>
+          <td>${esc(String(line.description || ""))}</td>
+          <td class="qty">${esc(quantity)}</td>
+          <td class="qty">${esc(received)}</td>
+          <td>${esc(String(line.orderNumber || ""))}</td>
+          <td>${esc(String(line.orderedFromSupplier?.name || ""))}</td>
+          <td>${esc(status)}</td>
+        </tr>`;
+      })
+      .join("");
+    const html = `<!doctype html><html><head><title>Parts list - ${esc(jobLabel)}</title><meta charset="utf-8" /><style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
+      h1{font-size:20px;margin:0 0 4px;color:#7a5c14;border-bottom:3px solid #7a5c14;padding-bottom:10px}
+      table{width:100%;border-collapse:collapse;font-size:12px;margin-top:18px}
+      th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left}
+      th{background:#f9fafb;border-bottom:2px solid #7a5c14}
+      td.qty{text-align:center;font-weight:600}
+    </style></head><body>
+      <h1>Parts list — Job ${esc(jobLabel)}</h1>
+      <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(html);
     w.document.close();
@@ -1230,6 +1269,38 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to apply the bulk update.");
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  // 2026-09-16 — user request: "Bulk update on parts in jobs, add a bulk
+  // update to marking parts received." Same shape as applyBulkPartUpdate
+  // above (fires the existing single-line action once per selected line,
+  // in parallel) but calls the /receive endpoint each row's own "Mark
+  // received" button already uses, defaulting to that line's full
+  // outstanding quantity — same default the single-row button starts
+  // with before anyone touches the quantity field. A line with nothing
+  // outstanding (already fully received) is skipped, not treated as a
+  // failure.
+  async function applyBulkMarkReceived() {
+    if (!jobId || bulkSelectedIds.size === 0) return;
+    setBulkApplying(true); setError("");
+    try {
+      const ids = Array.from(bulkSelectedIds);
+      const results = await Promise.all(ids.map(async (lineId) => {
+        const line = job?.partLines.find((l) => String(l.id) === lineId);
+        const outstanding = Math.max(0, Number(line?.quantity ?? 0) - Number(line?.receivedQuantity ?? 0));
+        if (outstanding <= 0) return true;
+        const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}/receive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receivedQty: outstanding }) });
+        return r.ok;
+      }));
+      const failed = results.filter((ok) => !ok).length;
+      if (failed > 0) setError(`${failed} of ${ids.length} selected part line${ids.length === 1 ? "" : "s"} could not be marked received.`);
+      setBulkSelectedIds(new Set());
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to mark the selected part lines received.");
     } finally {
       setBulkApplying(false);
     }
@@ -1722,11 +1793,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Parts follow-up — added 2026-09-09 (user request: "ModApp's separate
   // 'Parts follow-up' chase-email feature wasn't built"). One bulk action:
   // email every supplier with outstanding ordered parts on this job.
-  async function sendPartsFollowup() {
+  // 2026-09-16 — accepts an optional supplierId so the per-supplier
+  // breakdown below (partsFollowupGroups) can offer a "Follow up" button
+  // for just one supplier, not only "send to everyone".
+  async function sendPartsFollowup(supplierId?: string) {
     if (!jobId) return;
     setSaving(true); setError(""); setPartsFollowupResult(null);
     try {
-      const r = await fetch(`/api/v1/jobs/${jobId}/parts-followup`, { method: "POST" });
+      const r = await fetch(`/api/v1/jobs/${jobId}/parts-followup`, {
+        method: "POST",
+        ...(supplierId ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ supplierId }) } : {}),
+      });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to send follow-up.");
       setPartsFollowupResult({ sent: b.sent || [], skipped: b.skipped || [] });
@@ -1737,6 +1814,39 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setSaving(false);
     }
   }
+
+  // Per-supplier breakdown of outstanding ordered parts, computed straight
+  // from job.partLines (already loaded for the Parts list table below) —
+  // 2026-09-16 user request: "Parts Follow up still does not show suppliers
+  // that have outstanding parts, like ModApp." Mirrors ModApp's
+  // PartsFollowUpButton.tsx grouping (by orderedFromSupplier, one card per
+  // supplier, an "Unknown" bucket for lines with no supplier assigned yet,
+  // and an overdue flag once a line has sat on order for a week or more) so
+  // the same list is visible here before anything is sent, not just in the
+  // sent/skipped result after the fact.
+  const partsFollowupGroups = useMemo(() => {
+    const groups = new Map<string, { supplierId: string; supplierName: string; count: number; overdueDays: number }>();
+    for (const line of job?.partLines ?? []) {
+      const status = String(line.status ?? "");
+      if (!["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"].includes(status)) continue;
+      const outstanding = Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0);
+      if (!(outstanding > 0)) continue;
+      const supplier = line.orderedFromSupplier as (Row & { name?: string | null }) | undefined;
+      const supplierId = supplier?.id ? String(supplier.id) : "unknown";
+      const supplierName = supplier?.name ? String(supplier.name) : "Unknown";
+      const entry = groups.get(supplierId) ?? { supplierId, supplierName, count: 0, overdueDays: 0 };
+      entry.count += 1;
+      const orderedAt = line.orderedAt ? new Date(String(line.orderedAt)) : null;
+      if (orderedAt && !Number.isNaN(orderedAt.getTime())) {
+        const days = Math.floor((Date.now() - orderedAt.getTime()) / (24 * 60 * 60 * 1000));
+        if (days > entry.overdueDays) entry.overdueDays = days;
+      }
+      groups.set(supplierId, entry);
+    }
+    const named = Array.from(groups.values()).filter((g) => g.supplierId !== "unknown").sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+    const unknown = groups.get("unknown");
+    return unknown ? [...named, unknown] : named;
+  }, [job?.partLines]);
 
   // CSV export of the quote comparison table — Blob + BOM, mirrors
   // ModApp's QuoteComparisonSection handleExportCsv().
@@ -1802,53 +1912,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setError(e instanceof Error ? e.message : "Action failed.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  // 2026-09-14, user request: "Notes need to be editable once created."
-  // Separate saving flag (not the shared `saving`) so editing a note
-  // doesn't grey out unrelated buttons elsewhere on the page, and doesn't
-  // get tangled up with the job-edit-grid's own autosave indicator.
-  async function saveNoteEdit(noteId: string) {
-    if (!job) return;
-    setSavingNoteEdit(true); setError("");
-    try {
-      const r = await fetch(`/api/v1/jobs/${job.id}/notes`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ noteId, note: editingNoteText }),
-      });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to save the note.");
-      setEditingNoteId(""); setEditingNoteText("");
-      await load(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to save the note.");
-    } finally {
-      setSavingNoteEdit(false);
-    }
-  }
-
-  // 2026-09-15, user request: "Notes section, allow a user to delete
-  // notes." Same savingNoteEdit flag as editing (not the shared `saving`)
-  // so this doesn't grey out unrelated buttons elsewhere on the page.
-  async function deleteNote(noteId: string) {
-    if (!job) return;
-    if (!window.confirm("Delete this note?")) return;
-    setSavingNoteEdit(true); setError("");
-    try {
-      const r = await fetch(`/api/v1/jobs/${job.id}/notes`, {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ noteId }),
-      });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to delete the note.");
-      await load(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to delete the note.");
-    } finally {
-      setSavingNoteEdit(false);
     }
   }
 
@@ -1927,41 +1990,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
         {job && mode === "detail" && (
           <section className="detail-panel wide-panel job-notes-panel">
+            {/* 2026-09-16 — user request: "make the Notes field like the Job
+                description field, remove the add note button, notes will
+                stay in the field as you type." Replaced the old
+                add/edit/delete list of separately-timestamped JobNote
+                entries with one shared free-text field that autosaves
+                exactly like Description (same buildJobPayload/runAutosave
+                path — see form.notes above). Existing per-entry notes were
+                merged into this field (oldest first) by the migration that
+                added it; the JobNote rows themselves are left in the
+                database, just no longer read or written here. */}
             <header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header>
-            <div className="drawer-fields"><label className="wide"><span>New note</span><textarea rows={3} value={form.note} onChange={(e) => updateField("note", e.target.value)} /></label></div>
-            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || form.note.trim().length < 2} onClick={async () => { await postAction(`/api/v1/jobs/${job.id}/notes`, { note: form.note }); updateField("note", ""); }}>Add note</button></footer>
-            <div className="record-list job-notes-list">
-              {job.notes.map((note) => {
-                const noteId = String(note.id);
-                const isEditing = editingNoteId === noteId;
-                return (
-                  <article key={noteId}>
-                    <div className="record-icon"><Plus size={14} /></div>
-                    <div>
-                      {isEditing ? (
-                        <textarea rows={3} value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)} />
-                      ) : (
-                        <strong>{text(note.note)}</strong>
-                      )}
-                      <span>{note.createdBy?.displayName || "System"}</span>
-                    </div>
-                    <span>{new Date(String(note.createdAt)).toLocaleString("en-ZA")}</span>
-                    {isEditing ? (
-                      <div className="stack-row">
-                        <button type="button" className="quiet-button" disabled={savingNoteEdit} onClick={() => { setEditingNoteId(""); setEditingNoteText(""); }}>Cancel</button>
-                        <button type="button" className="gold-button" disabled={savingNoteEdit || editingNoteText.trim().length < 2} onClick={() => void saveNoteEdit(noteId)}>{savingNoteEdit ? "Saving…" : "Save"}</button>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingNoteId(noteId); setEditingNoteText(String(note.note || "")); }}><Pencil size={13} /></button>
-                        <button type="button" className="table-action danger" title="Delete note" aria-label="Delete note" disabled={savingNoteEdit} onClick={() => void deleteNote(noteId)}><Trash2 size={13} /></button>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-              {job.notes.length === 0 && <p className="table-state compact-empty-state">No notes yet.</p>}
-            </div>
+            <div className="drawer-fields"><label className="wide"><span>Notes</span><textarea rows={4} value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label></div>
           </section>
         )}
 
@@ -2198,6 +2238,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
                 )}
+                {job.partLines.length > 0 && (
+                  <button type="button" className="quiet-button" onClick={printPartsList}><Printer size={14} /> Print Parts List</button>
+                )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
             </header>
@@ -2248,6 +2291,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <label><span>Order number (optional)</span><input value={bulkOrderNumber} onChange={(e) => setBulkOrderNumber(e.target.value)} placeholder="Applies to every selected row" /></label>
                 <label className="party-selector"><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
                 <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button></label>
+                <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button></label>
               </div>
             )}
             <div className="data-table-wrap"><table className="data-table"><thead><tr>
@@ -2502,7 +2546,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           <section className="detail-panel">
             <header><div><h2>Parts follow-up</h2><p>Chase every supplier with outstanding ordered parts on this job — one email per supplier listing everything still outstanding from them.</p></div></header>
-            <footer className="detail-actions"><button type="button" className="section-action-button" disabled={saving} onClick={() => void sendPartsFollowup()}><Mail size={15} /> Send follow-up to outstanding suppliers</button></footer>
+            {/* 2026-09-16, user request: "Parts Follow up still does not show
+                suppliers that have outstanding parts, like ModApp." Lists the
+                same per-supplier breakdown ModApp's PartsFollowUpButton.tsx
+                shows as a card per supplier, before anything is sent, with a
+                per-supplier "Follow up" button alongside the bulk one below. */}
+            {partsFollowupGroups.length > 0 && (
+              <div className="drawer-fields" style={{ marginTop: 4 }}>
+                {partsFollowupGroups.map((g) => (
+                  <div key={g.supplierId} className="wide" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                    <span>
+                      <strong>{g.supplierName}</strong> — {g.count} line{g.count === 1 ? "" : "s"} outstanding
+                      {g.overdueDays >= 7 && <span style={{ color: "var(--danger)", fontWeight: 700, marginLeft: 8 }}>Overdue — ordered {g.overdueDays} day{g.overdueDays === 1 ? "" : "s"} ago</span>}
+                    </span>
+                    {g.supplierId !== "unknown" && <button type="button" className="quiet-button" disabled={saving} onClick={() => void sendPartsFollowup(g.supplierId)}><Mail size={13} /> Follow up</button>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <footer className="detail-actions"><button type="button" className="section-action-button" disabled={saving || partsFollowupGroups.length === 0} onClick={() => void sendPartsFollowup()}><Mail size={15} /> Send follow-up to outstanding suppliers</button></footer>
             {/* 2026-09-15, user request: "error message when clicking
                 button is not noticeable, make red text to get attention to
                 it." The shared `error` state already renders once at the
@@ -2701,7 +2763,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void patchAction(`/api/v1/pex/${job.pexAsReturn?.id}/notes`, { notes: form.pexNotes || null })}>Save PEX notes</button></footer>
           </section>}
 
-          {job.status === "COMPLETE" && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Any completed job's unit can be allocated directly into PEX Inventory, without a supply/return chain — matches ModApp's manual stock intake.</p></div></header>
+          {/* 2026-09-16 — user request: was gated on COMPLETE, moved to
+              Delivered - awaiting payment (matches allocateJobToPexInventory's
+              own gate in pex/service.ts) — the unit's physically done and
+              ready to shelve well before payment/closing catches up. */}
+          {job.status === "DELIVERED_AWAITING_PAYMENT" && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Any job Delivered - awaiting payment can have its unit allocated directly into PEX Inventory, without a supply/return chain — matches ModApp's manual stock intake.</p></div></header>
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {})}>Send to PEX Inventory</button></footer>
             {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
                 not showing" on PEX Stock. The shared `error` state from

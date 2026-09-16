@@ -1,44 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireRequestContext } from "@/lib/auth/session";
-import { apiError } from "@/lib/http/errors";
-import { requireSameOrigin } from "@/lib/security/request";
-import { addJobNote, updateJobNote, deleteJobNote } from "@/lib/jobs/service";
+import { NextResponse } from "next/server";
 
-export async function POST(request: NextRequest, context: { params: Promise<unknown> }) {
-  try {
-    requireSameOrigin(request);
-    const { id } = await context.params as { id: string };
-    return NextResponse.json(await addJobNote(await requireRequestContext(), id, await request.json()), { status: 201 });
-  } catch (error) {
-    return apiError(error);
-  }
+// 2026-09-16 — Notes moved to a single field on Job itself (see
+// jobs/service.ts's updateJob and the `notes` field on jobUpdateInput),
+// replacing the old add/edit/delete JobNote list this route used to
+// serve via addJobNote/updateJobNote/deleteJobNote (both now removed
+// from jobs/service.ts). Nothing in the app calls this route any more.
+// Left in place (returning 410) rather than deleted, since this session
+// has no way to delete files on disk — safe to delete this file by hand
+// whenever convenient.
+function gone() {
+  return NextResponse.json(
+    { error: { message: "This endpoint has been removed — job notes are now saved as part of the job itself." } },
+    { status: 410 },
+  );
 }
 
-// 2026-09-14 — user request: "Notes need to be editable once created."
-// Extends this existing shallow route with a PATCH rather than adding a
-// new nested jobs/[id]/notes/[noteId]/route.ts — same call this app has
-// made elsewhere (e.g. RFQ attachment downloads) for a one-off edit action
-// that doesn't need its own resource path; the note being edited is
-// identified by noteId in the body (see jobNoteUpdateInput).
-export async function PATCH(request: NextRequest, context: { params: Promise<unknown> }) {
-  try {
-    requireSameOrigin(request);
-    const { id } = await context.params as { id: string };
-    return NextResponse.json(await updateJobNote(await requireRequestContext(), id, await request.json()));
-  } catch (error) {
-    return apiError(error);
-  }
-}
-
-// 2026-09-15 — user request: "Notes section, allow a user to delete
-// notes." Same shallow-route-extension approach as PATCH above (noteId in
-// the body, not a nested .../notes/[noteId] route) rather than a new file.
-export async function DELETE(request: NextRequest, context: { params: Promise<unknown> }) {
-  try {
-    requireSameOrigin(request);
-    const { id } = await context.params as { id: string };
-    return NextResponse.json(await deleteJobNote(await requireRequestContext(), id, await request.json()));
-  } catch (error) {
-    return apiError(error);
-  }
-}
+export const POST = gone;
+export const PATCH = gone;
+export const DELETE = gone;

@@ -277,6 +277,15 @@ a.metric-card.clickable-metric-card:hover { border-color: var(--gold-500); box-s
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
 .table-state { display:flex; min-height:140px; align-items:center; justify-content:center; gap:8px; color:var(--ink-500); font-size:12px; }
 .compact-empty-state { min-height: 84px; }
+/* 2026-09-16 — a colSpan empty-state <td> (e.g. "No PEX units in
+   inventory match the current filters.") is still a <td> inside
+   .data-table, so the generic .data-table td rule's max-width:340px +
+   white-space:nowrap + ellipsis was clipping the message even though the
+   cell visually spans the whole table. Undo those constraints wherever
+   .table-state is used as a table cell's own class — this is the shared
+   empty-state class every data table's "no results" row uses, so the fix
+   applies app-wide, not just PEX Stock. */
+.data-table td.table-state { max-width: none; overflow: visible; white-space: normal; text-overflow: clip; }
 .table-footer { display:flex; align-items:center; justify-content:space-between; padding:10px 13px; border-top:1px solid var(--ink-100); color:var(--ink-500); font-size:11px; }
 .inventory-panel { overflow:hidden; }
 .inventory-toolbar { justify-content:space-between; }

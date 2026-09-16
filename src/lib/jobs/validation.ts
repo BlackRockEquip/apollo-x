@@ -45,6 +45,7 @@ export const jobCreateDraftInput = z.object({
   componentSerial: optionalText,
   componentPartNumber: optionalText,
   description: longText,
+  notes: longText,
   type: jobTypeEnum,
   etaDate: optionalDate,
   mechanicEtaDate: optionalDate,
@@ -109,25 +110,11 @@ export const jobMarkReturnedUnrepairedInput = z.object({
   reason: z.string().trim().min(2).max(500),
 });
 
-export const jobNoteCreateInput = z.object({
-  note: z.string().trim().min(2).max(4000),
-});
-
-// 2026-09-14 — user request: "Notes need to be editable once created."
-// Same length bounds as jobNoteCreateInput; noteId identifies which of the
-// job's existing notes to update (see updateJobNote in service.ts).
-export const jobNoteUpdateInput = z.object({
-  noteId: z.string().min(1),
-  note: z.string().trim().min(2).max(4000),
-});
-
-// 2026-09-15 — user request: "Notes section, allow a user to delete notes."
-// Identifies which note to remove the same way jobNoteUpdateInput identifies
-// which note to edit — DELETE on the existing shallow jobs/[id]/notes route,
-// noteId carried in the request body (see deleteJobNote in service.ts).
-export const jobNoteDeleteInput = z.object({
-  noteId: z.string().min(1),
-});
+// 2026-09-16 — jobNoteCreateInput/jobNoteUpdateInput/jobNoteDeleteInput
+// (for the old add/edit/delete JobNote list) removed here — Notes is now
+// the plain `notes` field on jobCreateDraftInput/jobUpdateInput above,
+// autosaved exactly like description. See jobs/service.ts's matching
+// comment where addJobNote/updateJobNote/deleteJobNote were removed.
 
 export const jobFieldServiceInput = z.object({
   site: optionalText,

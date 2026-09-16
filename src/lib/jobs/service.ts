@@ -15,9 +15,6 @@ import {
   jobStatusChangeInput,
   jobCloseInput,
   jobReopenInput,
-  jobNoteCreateInput,
-  jobNoteUpdateInput,
-  jobNoteDeleteInput,
   jobFieldServiceInput,
   jobWarrantyInput,
   jobPartLineBulkAddInput,
@@ -148,7 +145,10 @@ async function getJobScoped(companyId: string, id: string) {
       closedBy: true,
       stripMechanic: true,
       buildMechanic: true,
-      notes: { include: { createdBy: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
+      // 2026-09-16 — kept for any historical reference, but the JobWorkspace
+      // UI no longer reads this list (see the plain `notes` scalar column
+      // added on Job itself, replacing the old add/edit/delete note list).
+      noteEntries: { include: { createdBy: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
       activities: { include: { actor: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
       fieldServiceReport: true,
       warranty: true,
@@ -466,6 +466,7 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
         componentSerial: input.componentSerial,
         componentPartNumber: input.componentPartNumber,
         description: input.description,
+        notes: input.notes,
         type: input.type as JobType,
         etaDate: input.etaDate,
         mechanicEtaDate: input.mechanicEtaDate,
@@ -564,6 +565,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.componentSerial !== undefined ? { componentSerial: input.componentSerial } : {}),
         ...(input.componentPartNumber !== undefined ? { componentPartNumber: input.componentPartNumber } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.type !== undefined ? { type: input.type as JobType } : {}),
         ...(input.etaDate !== undefined ? { etaDate: input.etaDate } : {}),
         ...(input.mechanicEtaDate !== undefined ? { mechanicEtaDate: input.mechanicEtaDate } : {}),
@@ -625,6 +627,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
     await syncPexAwaitCoreFromDeliveryDate(tx, ctx, companyId, job);
     if (input.status !== undefined && input.status !== existing.status) {
       await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
+      if (RESERVATION_RELEASE_STATUSES.includes(job.status)) await releaseJobPartReservationsTx(tx, ctx, companyId, job.id);
     }
     return job;
   });
@@ -680,6 +683,7 @@ export async function changeJobStatus(ctx: RequestContext, id: string, raw: unkn
     const job = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
     await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", `Status changed from ${existing.status} to ${input.status}.`, { from: existing.status, to: input.status, reason: input.reason ?? null });
     await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
+    if (RESERVATION_RELEASE_STATUSES.includes(job.status)) await releaseJobPartReservationsTx(tx, ctx, companyId, job.id);
     return job;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "STATUS_CHANGE", afterData: { from: existing.status, to: updated.status } });
@@ -694,6 +698,7 @@ export async function closeJob(ctx: RequestContext, id: string, raw: unknown) {
     const closed = await tx.job.update({ where: { id: existing.id }, data: { status: "CLOSED", closingOutcome: input.outcome, closingNote: input.closingNote, closedAt: new Date(), closedById: ctx.userId, updatedById: ctx.userId } });
     await addActivity(tx, ctx, existing.id, "JOB_CLOSED", `Job closed. Outcome: ${input.outcome}.`, { outcome: input.outcome });
     await syncPexStatusFromJobStatus(tx, ctx, companyId, closed, closed.status as JobStatus);
+    await releaseJobPartReservationsTx(tx, ctx, companyId, closed.id);
     return closed;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "CLOSE", afterData: { status: updated.status, outcome: updated.closingOutcome } });
@@ -740,63 +745,16 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
   return updated;
 }
 
-export async function addJobNote(ctx: RequestContext, jobId: string, raw: unknown) {
-  const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobNoteCreateInput.parse(raw);
-  await getJobScoped(companyId, jobId);
-  const note = await prisma.$transaction(async (tx) => {
-    const created = await tx.jobNote.create({ data: { companyId, jobId, note: input.note, createdById: ctx.userId }, include: { createdBy: { select: { id: true, displayName: true, email: true } } } });
-    await addActivity(tx, ctx, jobId, "NOTE_ADDED", "Note added to job.", { noteId: created.id });
-    return created;
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobNote", entityId: note.id, action: "CREATE", afterData: { jobId, noteId: note.id } });
-  return note;
-}
-
-// 2026-09-14 — user request: "Notes need to be editable once created."
-// Mirrors addJobNote's transaction/audit shape. Reuses the NOTE_ADDED
-// activity type for the history entry rather than adding a new
-// JobActivityType enum value (NOTE_UPDATED) for what's a minor audit-log
-// wording nicety — the description text below is what actually
-// distinguishes an edit from a new note in the activity feed.
-export async function updateJobNote(ctx: RequestContext, jobId: string, raw: unknown) {
-  const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobNoteUpdateInput.parse(raw);
-  await getJobScoped(companyId, jobId);
-  const existing = await prisma.jobNote.findFirst({ where: { id: input.noteId, jobId, companyId } });
-  if (!existing) notFound();
-  const note = await prisma.$transaction(async (tx) => {
-    const updated = await tx.jobNote.update({
-      where: { id: existing.id },
-      data: { note: input.note },
-      include: { createdBy: { select: { id: true, displayName: true, email: true } } },
-    });
-    await addActivity(tx, ctx, jobId, "NOTE_ADDED", "Note updated on job.", { noteId: updated.id, edited: true });
-    return updated;
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobNote", entityId: note.id, action: "UPDATE", afterData: { jobId, noteId: note.id } });
-  return note;
-}
-
-// 2026-09-15 — user request: "Notes section, allow a user to delete
-// notes." Mirrors updateJobNote's existence-check/transaction/audit shape.
-// Reuses the NOTE_ADDED activity type for the history entry (same
-// reuse-rather-than-add-an-enum-value approach updateJobNote already took
-// for edits) rather than a new NOTE_DELETED value, which would need its
-// own migration for a one-line history entry.
-export async function deleteJobNote(ctx: RequestContext, jobId: string, raw: unknown) {
-  const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobNoteDeleteInput.parse(raw);
-  await getJobScoped(companyId, jobId);
-  const existing = await prisma.jobNote.findFirst({ where: { id: input.noteId, jobId, companyId } });
-  if (!existing) notFound();
-  await prisma.$transaction(async (tx) => {
-    await tx.jobNote.delete({ where: { id: existing.id } });
-    await addActivity(tx, ctx, jobId, "NOTE_ADDED", "Note removed from job.", { noteId: existing.id, deleted: true });
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobNote", entityId: existing.id, action: "DELETE", afterData: { jobId, noteId: existing.id } });
-  return { ok: true };
-}
+// 2026-09-16 — addJobNote/updateJobNote/deleteJobNote (the old
+// add/edit/delete list of separately-timestamped JobNote entries) and
+// the /api/v1/jobs/[id]/notes route that called them were removed here
+// — Notes is now one shared field on Job itself (see `notes` in
+// updateJob above), autosaved exactly like description. Nothing else in
+// the app read from these functions (confirmed before removing). The
+// JobNote model/table itself is left in the schema — see schema.prisma's
+// Job.notes comment — since the migration that added Job.notes
+// backfilled it from those rows and they're kept as historical record,
+// just no longer written to or read from here.
 
 export async function upsertJobFieldService(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
@@ -893,7 +851,8 @@ export type AddPartLinesResult = { addedFromPaste: number; addedFromFile: number
 export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: unknown): Promise<AddPartLinesResult> {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobPartLineBulkAddInput.parse(raw);
-  await getJobScoped(companyId, jobId);
+  const job = await getJobScoped(companyId, jobId);
+  const jobNumberLabel = job.jobNumber ?? job.draftNumber;
 
   const pasteRows = (input.bulkLines ?? "")
     .split("\n")
@@ -963,8 +922,12 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
               quantity: String(row.quantity),
               referenceType: "JOB",
               referenceId: created.id,
-              referenceNumber: null,
-              reason: "Reserved for job part line",
+              // 2026-09-16 — user request: the reservation's reason (shown
+              // on the Part detail page's Recent Movements) should include
+              // the job number so it's traceable at a glance, not just
+              // "Reserved for job part line" with no way to tell which job.
+              referenceNumber: jobNumberLabel,
+              reason: `Reserved for job ${jobNumberLabel}`,
               notes: null,
               expiresAt: null,
               idempotencyKey: undefined,
@@ -1091,6 +1054,34 @@ export async function updatePartLineDescription(ctx: RequestContext, jobId: stri
   const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { description: input.description, updatedById: ctx.userId } });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_DESCRIPTION", afterData: { jobId, lineId } });
   return updated;
+}
+
+// 2026-09-16 — follow-up to addPartLinesBulk's stock reservation (user
+// request: reserve stock when a part is added so another job can't take
+// it). That reservation is only ever released by "Create picking slip"
+// consuming it or the line being individually removed (see
+// removePartLine below) — a line that stays IN_STOCK and never goes
+// through either would otherwise leave its units locked out of Stock
+// Levels' available pool forever. Once the job reaches a status where no
+// more parts will be picked against it — the same terminal set
+// reopenJob already treats as "done" — release whatever's left. Called
+// from changeJobStatus/updateJob/closeJob below.
+const RESERVATION_RELEASE_STATUSES: readonly string[] = ["COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"];
+
+async function releaseJobPartReservationsTx(tx: Prisma.TransactionClient, ctx: RequestContext, companyId: string, jobId: string) {
+  const lineIds = (await tx.jobPartLine.findMany({ where: { companyId, jobId }, select: { id: true } })).map((l) => l.id);
+  if (lineIds.length === 0) return;
+  const reservations = await tx.stockReservation.findMany({
+    where: { companyId, referenceType: "JOB", referenceId: { in: lineIds }, status: "ACTIVE" },
+  });
+  for (const reservation of reservations) {
+    try {
+      await releaseReservationTx(tx, { ...ctx, companyId }, reservation.id, { reason: "Job reached a status where parts are no longer being picked against it" });
+    } catch {
+      // Best-effort, same as the reservation attempt itself — never block
+      // a status change over a reservation-release failure.
+    }
+  }
 }
 
 export async function removePartLine(ctx: RequestContext, jobId: string, lineId: string) {

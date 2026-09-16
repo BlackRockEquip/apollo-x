@@ -509,7 +509,11 @@ export async function allocateJobToPexInventory(ctx: RequestContext, jobId: stri
   const companyId = requirePexWrite(ctx, "PEX_SUPPLY_CREATE");
   const result = await prisma.$transaction(async (tx) => {
     const job = await requireScopedJob(tx, companyId, jobId);
-    if (job.status !== "COMPLETE") throw new StockError("JOB_NOT_COMPLETE", "The job must be complete before it can be allocated to PEX Inventory.");
+    // 2026-09-16 — user request: this used to require COMPLETE, but a
+    // unit is physically done and ready to shelve once the job reaches
+    // Delivered - awaiting payment, well before payment/closing catches
+    // up administratively. Matches the JobWorkspace button's own gate.
+    if (job.status !== "DELIVERED_AWAITING_PAYMENT") throw new StockError("JOB_NOT_DELIVERED", "The job must be Delivered - awaiting payment before it can be allocated to PEX Inventory.");
     // 2026-09-16 — the "already linked" guard used to match ANY PexRecord
     // for this job, including one that was later SCRAPPED (excluded from
     // PEX Stock's own listing — see listPexInventory's `status: { not:
