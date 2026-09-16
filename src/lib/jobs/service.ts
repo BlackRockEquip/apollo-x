@@ -33,6 +33,7 @@ import {
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
+import { reserveStockTx, releaseReservationTx } from "@/lib/inventory/service";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, RETURNED_UNREPAIRED_REOPEN_STATUS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
@@ -915,13 +916,19 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
       const partNumberNormalized = normalized(row.partNumber);
-      const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized }, select: { id: true, description: true } }) : null;
+      const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized }, select: { id: true, description: true, binLocationId: true } }) : null;
 
-      // "In stock" is informational only here (unlike the old Parts
-      // required workflow, this doesn't reserve anything) — it's a quick
-      // signal for whether the total on-hand quantity across all locations
-      // covers what's needed, same purpose as ModApp's InventoryItem
-      // lookup, just against Apollo X's Part/StockBalance model instead.
+      // "In stock" reflects total on-hand across all locations, same
+      // purpose as ModApp's InventoryItem lookup against Apollo X's
+      // Part/StockBalance model. 2026-09-16 — user request: "stock is
+      // checked but needs to show that it is reserved under Stock Levels
+      // page so that it can not be used by another job" — when it's in
+      // stock we now also reserve it (best-effort, at the part's own bin
+      // location) so StockBalance.quantityReserved reflects it and another
+      // job can't take the same units. A reservation failure (no bin
+      // assigned, a race against another reservation, etc.) never blocks
+      // adding the part line — it just leaves the line unreserved, same as
+      // before this change.
       let inStock = false;
       if (part) {
         const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: part.id }, _sum: { quantityOnHand: true } });
@@ -947,6 +954,27 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
         await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}) — not currently in stock.`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
       } else {
         await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}).`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
+
+        if (part?.binLocationId) {
+          try {
+            await reserveStockTx(tx, { ...ctx, companyId }, {
+              partId: part.id,
+              locationId: part.binLocationId,
+              quantity: String(row.quantity),
+              referenceType: "JOB",
+              referenceId: created.id,
+              referenceNumber: null,
+              reason: "Reserved for job part line",
+              notes: null,
+              expiresAt: null,
+              idempotencyKey: undefined,
+            });
+          } catch {
+            // Best-effort — see comment above. Stock Levels' Reserved
+            // column simply won't reflect this line if the reservation
+            // couldn't be made.
+          }
+        }
       }
     }
   });
@@ -1070,6 +1098,22 @@ export async function removePartLine(ctx: RequestContext, jobId: string, lineId:
   const line = await getPartLineScoped(companyId, jobId, lineId);
 
   await prisma.$transaction(async (tx) => {
+    // 2026-09-16 — a part line added while in stock may hold an active
+    // reservation (see addPartLinesBulk). Release it before deleting the
+    // line so those units become available to other jobs again, rather
+    // than staying locked against a reservation nothing can ever consume.
+    const activeReservation = await tx.stockReservation.findFirst({
+      where: { companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" },
+    });
+    if (activeReservation) {
+      try {
+        await releaseReservationTx(tx, { ...ctx, companyId }, activeReservation.id, { reason: "Part line removed from job" });
+      } catch {
+        // Best-effort, same as the reservation attempt itself — never
+        // block deleting the part line over a reservation-release failure.
+      }
+    }
+
     await tx.jobPartLine.delete({ where: { id: line.id } });
     await addActivity(tx, ctx, jobId, "PART_REMOVED", `Part line removed: ${line.partNumber}.`, { lineId: line.id, partNumber: line.partNumber });
 

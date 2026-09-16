@@ -1318,6 +1318,33 @@ export async function getLocationDetail(ctx: RequestContext, locationId: string)
 }
 
 // ============================================================
+// Storage-location options for inventory forms (Adjust stock, and the
+// bin-location picker in Add/Edit Part). 2026-09-16 — user report: "When
+// clicking Adjust, locations do not pickup on dropdown." Root cause: the
+// dropdown was populated from the master-data storage-locations endpoint,
+// which is gated behind a *different* module (STORAGE/STORAGE_LOCATIONS_VIEW
+// — see src/lib/master-data/service.ts) than the one that gates Stock
+// Levels and Adjust itself (INVENTORY/INVENTORY_ADJUST). A user who can see
+// Stock Levels and adjust stock but wasn't separately granted STORAGE
+// access got a 403 from that fetch, which StockLevelsWorkspace's
+// loadOptions() silently swallows (options are "a convenience," the form
+// still works — except this dropdown IS the form here), so the location
+// list just stayed empty with no visible error. This gives the same active
+// locations, scoped to the INVENTORY module/permission that already gates
+// this page, so anyone who can open Stock Levels can populate it.
+// ============================================================
+
+export async function listStorageLocationOptions(ctx: RequestContext) {
+  requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  const locations = await prisma.storageLocation.findMany({
+    where: { companyId: ctx.companyId, active: true },
+    select: { id: true, code: true, name: true },
+    orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
+  });
+  return { items: locations };
+}
+
+// ============================================================
 // Bulk part-number search ("Check stock" on Stock Levels) — paste a list
 // of part numbers, see what's on hand for each. Read-only: nothing here
 // ever creates, updates, or moves stock. Matches by partNumber, exact and
@@ -1500,6 +1527,187 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
           },
     pickedCount: result.picked.length,
     backorderCount: result.backorderCount,
+  };
+}
+
+// ============================================================
+// JOB-SCOPED PICK SLIP — "Create picking slip" button on the Job's own
+// Parts list section (2026-09-16 user request). Unlike createPickSlip
+// above (used from Stock Levels' "Check stock" / floating pick bar, which
+// always creates brand-new JobPartLine rows because the job might not
+// have those parts listed at all yet), this targets the job's EXISTING
+// part lines — creating new lines here would duplicate every part
+// already on the list. Each outstanding line (not yet fully received,
+// and with a linked catalog part — a free-text line has nothing to pick
+// against) is picked against its own bin-location stock and updated in
+// place, using the exact same RECEIVED/PARTIALLY_RECEIVED transition
+// markPartLineReceived (jobs/service.ts) uses for a manual receipt, so a
+// stock-backed pick and a manual "mark received" always agree on what a
+// line's status means. A line with nothing available just stays as-is —
+// it's already sitting on the job's parts list as PENDING/ON_ORDER, no
+// separate "backorder" row needed the way the bare Stock Levels flow
+// needs one.
+// ============================================================
+
+export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
+  requireInventory(ctx, "INVENTORY_ISSUE");
+
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, include: { customer: true } });
+  if (!job) notFound();
+
+  const eligibleLines = await prisma.jobPartLine.findMany({
+    where: {
+      companyId: ctx.companyId,
+      jobId: job.id,
+      partId: { not: null },
+      status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"] as never },
+    },
+  });
+
+  type PickedLine = { partId: string; partNumber: string; description: string; binLocationId: string; binLocationLabel: string; quantity: Quantity };
+
+  const result = await prisma.$transaction(async (tx) => {
+    const picked: PickedLine[] = [];
+
+    for (const line of eligibleLines) {
+      if (!line.partId) continue;
+      const part = await requirePart(tx, ctx, line.partId);
+      const location = part.binLocationId ? await tx.storageLocation.findFirst({ where: { id: part.binLocationId, companyId: ctx.companyId } }) : null;
+      if (!location) continue;
+
+      const alreadyReceived = line.receivedQuantity ?? new D(0);
+      const outstanding = D.max(line.quantity.minus(alreadyReceived), new D(0));
+      if (outstanding.lte(0)) continue;
+
+      assertOperable(part, location);
+
+      // 2026-09-16 — user request: adding a part to a job now reserves the
+      // stock (see addPartLinesBulk) so another job can't take it. Consume
+      // that reservation here instead of treating it as ordinary
+      // unavailable stock — otherwise a line's own reservation would make
+      // the line look unpickable against itself.
+      const reservation = await tx.stockReservation.findFirst({
+        where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId: part.id, locationId: location.id },
+      });
+
+      let pickQty: Quantity;
+      let nextOnHand: Quantity;
+
+      if (reservation) {
+        const locked = await lockReservation(tx, ctx.companyId, reservation.id);
+        const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+        if (!locked || locked.status !== "ACTIVE" || !balance) continue;
+        const usage = await getReservationRemaining(tx, locked);
+        pickQty = D.min(outstanding, D.min(usage.remaining, D.min(balance.onHand, balance.reserved)));
+        if (pickQty.lte(0)) continue;
+        nextOnHand = balance.onHand.minus(pickQty);
+        const nextReserved = balance.reserved.minus(pickQty);
+
+        await tx.stockMovement.create({
+          data: buildMovement({
+            companyId: ctx.companyId,
+            partId: part.id,
+            movementType: "ISSUE",
+            quantity: pickQty,
+            fromLocationId: location.id,
+            referenceType: "RESERVATION",
+            referenceId: reservation.id,
+            referenceNumber: job.jobNumber ?? job.draftNumber,
+            reason: "Pick slip",
+            actorId: ctx.userId,
+            resultingFromQuantity: nextOnHand,
+            correlationId: ctx.correlationId,
+          }),
+        });
+        await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
+        if (usage.remaining.eq(pickQty)) {
+          await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
+        }
+      } else {
+        const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+        const available = balance ? balance.onHand.minus(balance.reserved) : new D(0);
+        if (available.lte(0) || !balance) continue;
+        pickQty = D.min(outstanding, available);
+        nextOnHand = balance.onHand.minus(pickQty);
+
+        await tx.stockMovement.create({
+          data: buildMovement({
+            companyId: ctx.companyId,
+            partId: part.id,
+            movementType: "ISSUE",
+            quantity: pickQty,
+            fromLocationId: location.id,
+            referenceType: "JOB",
+            referenceId: job.id,
+            referenceNumber: job.jobNumber ?? job.draftNumber,
+            reason: "Pick slip",
+            actorId: ctx.userId,
+            resultingFromQuantity: nextOnHand,
+            correlationId: ctx.correlationId,
+          }),
+        });
+        await saveBalance(tx, balance, { onHand: nextOnHand });
+      }
+
+      const newReceivedQuantity = alreadyReceived.plus(pickQty);
+      const nowFullyReceived = newReceivedQuantity.gte(line.quantity);
+      await tx.jobPartLine.update({
+        where: { id: line.id },
+        data: {
+          status: nowFullyReceived ? "RECEIVED" : "PARTIALLY_RECEIVED",
+          receivedQuantity: newReceivedQuantity,
+          previousStatus: line.previousStatus ?? line.status,
+          updatedById: ctx.userId,
+        },
+      });
+
+      picked.push({
+        partId: part.id,
+        partNumber: part.partNumber,
+        description: part.description,
+        binLocationId: location.id,
+        binLocationLabel: `${location.name} (${location.code})`,
+        quantity: pickQty,
+      });
+    }
+
+    if (picked.length === 0) return { pickSlipId: null as string | null, picked };
+
+    const pickSlip = await tx.pickSlip.create({ data: { companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
+    await tx.pickSlipLine.createMany({
+      data: picked.map((l) => ({ pickSlipId: pickSlip.id, partId: l.partId, partNumber: l.partNumber, description: l.description, binLocationId: l.binLocationId, quantity: l.quantity })),
+    });
+    return { pickSlipId: pickSlip.id as string | null, picked };
+  });
+
+  const outstandingCount = eligibleLines.length - result.picked.length;
+
+  if (result.pickSlipId) {
+    await recordAudit(ctx, {
+      source: "UI",
+      module: "INVENTORY",
+      entityType: "PickSlip",
+      entityId: result.pickSlipId,
+      action: "PICK_SLIP_CREATED",
+      afterData: { jobId: job.id, pickedLines: result.picked.length, outstandingLines: outstandingCount },
+    });
+  }
+
+  const customerName = job.customer?.tradingName || job.customer?.name || null;
+  return {
+    pickSlip:
+      result.pickSlipId == null
+        ? null
+        : {
+            id: result.pickSlipId,
+            jobId: job.id,
+            jobNumber: job.jobNumber ?? job.draftNumber,
+            customerName,
+            createdAt: new Date().toISOString(),
+            lines: result.picked.map((l) => ({ partNumber: l.partNumber, description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
+          },
+    pickedCount: result.picked.length,
+    outstandingCount,
   };
 }
 

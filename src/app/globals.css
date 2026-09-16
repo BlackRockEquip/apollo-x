@@ -755,6 +755,12 @@ td.actions, th.actions { text-align: right; white-space: nowrap; }
 td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
 .action-link { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--ink-150); border-radius: 6px; background: white; color: var(--ink-700); }
 .action-link:hover { background: #fbf2d7; border-color: var(--gold-500); color: #5c4109; }
+/* 2026-09-16 — generic "back to the list" link for detail pages that
+   don't use .detail-head/.job-workspace's own back-link styling (e.g.
+   inventory parts/[id]). Same look as .job-workspace .back-link so it
+   reads as one convention across the app. */
+.back-link { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--ink-700); font-size: 12px; font-weight: 700; text-decoration: none; }
+.back-link:hover { color: var(--gold-600); }
 .state-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 10px; font-weight: 800; text-transform: uppercase; white-space: nowrap; background: var(--ink-100); color: var(--ink-700); }
 .state-badge.tone-green, .state-badge.bg-emerald-500\/15 { background: #e8f7ee; color: #1f6b42; }
 .state-badge.tone-amber, .state-badge.bg-amber-500\/15 { background: #fff7d6; color: #8a6700; }

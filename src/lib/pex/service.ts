@@ -510,7 +510,16 @@ export async function allocateJobToPexInventory(ctx: RequestContext, jobId: stri
   const result = await prisma.$transaction(async (tx) => {
     const job = await requireScopedJob(tx, companyId, jobId);
     if (job.status !== "COMPLETE") throw new StockError("JOB_NOT_COMPLETE", "The job must be complete before it can be allocated to PEX Inventory.");
-    const existing = await tx.pexRecord.findFirst({ where: { companyId, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
+    // 2026-09-16 — the "already linked" guard used to match ANY PexRecord
+    // for this job, including one that was later SCRAPPED (excluded from
+    // PEX Stock's own listing — see listPexInventory's `status: { not:
+    // "SCRAPPED" }` filter); nothing is actually holding this job's unit
+    // any more, so a scrapped record should never block re-allocating it.
+    // Left in place, this made "Send to PEX Inventory" throw
+    // PEX_ALREADY_LINKED forever after a single scrap, for a job that
+    // showed no PEX record anywhere in the UI — indistinguishable from the
+    // action silently doing nothing.
+    const existing = await tx.pexRecord.findFirst({ where: { companyId, status: { not: "SCRAPPED" }, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
     if (existing) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a PEX record.");
     const created = await tx.pexRecord.create({
       data: {

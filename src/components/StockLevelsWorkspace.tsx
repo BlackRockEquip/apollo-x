@@ -166,6 +166,20 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [pickBarOpen, setPickBarOpen] = useState(false);
   const [jobs, setJobs] = useState<JobOption[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  // 2026-09-16 — user report: creating a pick slip for BRE1014 actually
+  // saved against BRE1045. Same root cause as the earlier "double-click to
+  // select a supplier" glitch elsewhere in the app: picking a job rewrites
+  // jobQuery to show "JobNumber — Customer" (so the field reflects the
+  // pick), but that rewrite itself re-armed this debounced search 250ms
+  // later — re-querying on the display text (not the original typed
+  // search) while the results list was still open and unchanged visually.
+  // If the refreshed list reordered (easy with similar job numbers like
+  // BRE1014/BRE1045), a still-open list at the same on-screen position
+  // could take a next click for a different job than the one the user
+  // actually saw and clicked. jobPickerOpen closes the list the moment a
+  // job is picked — explicitly, not inferred from the options array — so
+  // the post-selection query rewrite can never trigger another search.
+  const [jobPickerOpen, setJobPickerOpen] = useState(false);
   const [jobQuery, setJobQuery] = useState("");
   const [jobId, setJobId] = useState("");
   const [pickSubmitting, setPickSubmitting] = useState(false);
@@ -209,10 +223,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
   const loadOptions = useCallback(async () => {
     try {
+      // Locations come from the INVENTORY-scoped /api/v1/inventory/locations
+      // (not master-data/storage-locations, a different module's permission
+      // — see listStorageLocationOptions's comment) so this dropdown works
+      // for anyone who can already open Stock Levels, not just users also
+      // granted separate Storage Locations admin access.
       const [mfrRes, taxRes, locRes] = await Promise.all([
         fetch("/api/v1/master-data/manufacturers?status=active&pageSize=200", { cache: "no-store" }),
         fetch("/api/v1/master-data/tax-codes?status=active&pageSize=200", { cache: "no-store" }),
-        fetch("/api/v1/master-data/storage-locations?status=active&pageSize=200", { cache: "no-store" }),
+        fetch("/api/v1/inventory/locations", { cache: "no-store" }),
       ]);
       const [mfrBody, taxBody, locBody] = await Promise.all([mfrRes.json(), taxRes.json(), locRes.json()]);
       if (mfrRes.ok) setManufacturers((mfrBody.items || []).map((m: { id: string; name: string }) => ({ id: m.id, label: m.name })));
@@ -358,14 +377,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   function openPickBar() {
     setPickError(""); setJobId(""); setJobQuery("");
     setPickBarOpen(true);
+    setJobPickerOpen(true);
     void loadJobs("");
   }
   useEffect(() => {
-    if (!pickBarOpen) return;
+    if (!pickBarOpen || !jobPickerOpen) return;
     const t = setTimeout(() => void loadJobs(jobQuery), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobQuery, pickBarOpen]);
+  }, [jobQuery, pickBarOpen, jobPickerOpen]);
 
   async function submitPickSlip() {
     if (!jobId) { setPickError("Choose a job to link this picking slip to."); return; }
@@ -485,7 +505,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   <th>Part</th>
                   <th>Description</th>
                   <th>Manufacturer</th>
-                  <th>Category</th>
                   <th>Bin location</th>
                   <th className="numeric">On Hand</th>
                   <th className="numeric">Reserved</th>
@@ -496,9 +515,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={10} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : data.items.length === 0 ? (
-                  <tr><td colSpan={11} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
+                  <tr><td colSpan={10} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
                 ) : data.items.map((row) => {
                   const available = Number(row.quantityAvailable) || 0;
                   const pickEntry = pick.get(row.id);
@@ -527,7 +546,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                       <td className="mono">{row.partNumber}</td>
                       <td>{row.description}</td>
                       <td>{row.manufacturerName || "—"}</td>
-                      <td>{row.category || "—"}</td>
                       <td>{row.binLocationLabel || "—"}</td>
                       <td className="numeric">{row.quantityOnHand}</td>
                       <td className="numeric">{row.quantityReserved}</td>
@@ -617,20 +635,20 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                 </table>
               </div>
               <label><span>Job *</span>
-                <input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); }} placeholder="Type to search open jobs…" />
+                <input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); setJobPickerOpen(true); }} placeholder="Type to search open jobs…" />
               </label>
-              {jobsLoading ? <p className="hint-text"><Loader2 className="spin" size={13} /> Searching…</p> : (
+              {jobPickerOpen && (jobsLoading ? <p className="hint-text"><Loader2 className="spin" size={13} /> Searching…</p> : (
                 <ul className="job-picker-results">
                   {jobs.map((j) => (
                     <li key={j.id}>
-                      <button type="button" className={jobId === j.id ? "active" : ""} onClick={() => { setJobId(j.id); setJobQuery(`${j.jobNumber}${j.customerName ? ` — ${j.customerName}` : ""}`); }}>
+                      <button type="button" className={jobId === j.id ? "active" : ""} onClick={() => { setJobId(j.id); setJobQuery(`${j.jobNumber}${j.customerName ? ` — ${j.customerName}` : ""}`); setJobPickerOpen(false); }}>
                         {j.jobNumber}{j.customerName ? ` — ${j.customerName}` : ""}
                       </button>
                     </li>
                   ))}
                   {!jobsLoading && jobs.length === 0 && <li className="hint-text">No open jobs found.</li>}
                 </ul>
-              )}
+              ))}
               {pickError ? <div className="inline-error">{pickError}</div> : null}
             </div>
             <footer>

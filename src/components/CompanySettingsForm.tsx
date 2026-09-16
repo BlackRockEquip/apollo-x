@@ -27,6 +27,16 @@ export function CompanySettingsForm() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState("");
+  // 2026-09-16 — user report: "Uploading Logo problem, buttons dont confirm
+  // upload." Root cause: uploadLogo()/removeLogo() (and onSave() below, same
+  // gap) only ever surfaced a message on failure — a successful upload just
+  // re-fetched settings silently, and since logoPreview already shows the
+  // locally-selected file's own data URL (set at file-select time, before
+  // Upload is even clicked), the preview doesn't visibly change either, so
+  // clicking "Upload / replace" looked like it did nothing even when it
+  // worked. successMessage gives every save path here (settings Save, logo
+  // upload, logo remove) the same explicit confirmation banner.
+  const [successMessage, setSuccessMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
@@ -79,13 +89,14 @@ export function CompanySettingsForm() {
 
   async function onSave() {
     if (!form) return;
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setSuccessMessage("");
     try {
       const payload = { ...form, quoteValidityDays: Number(form.quoteValidityDays), smtpPort: form.smtpPort ? Number(form.smtpPort) : null, smtpSecure: form.smtpSecure === "true" };
       const response = await fetch("/api/v1/company-settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to save company settings.");
       await load();
+      setSuccessMessage("Company settings saved.");
       // 2026-09-10 — fixes "Primary colour picker does not change anything":
       // themeColor/accentColor/secondaryColor are read once per request by
       // the (tenant) server layout (see requireRequestContext in
@@ -105,6 +116,7 @@ export function CompanySettingsForm() {
 
   async function onLogoSelected(file: File | null) {
     if (!file) return;
+    setSuccessMessage("");
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) { setError("Use PNG, JPG or WebP logos only."); return; }
     const dataUrl = await file.arrayBuffer().then((buffer) => `data:${file.type};base64,${Buffer.from(buffer).toString("base64")}`);
     setLogoPreview(dataUrl);
@@ -114,13 +126,14 @@ export function CompanySettingsForm() {
     const input = document.getElementById("company-logo-input") as HTMLInputElement | null;
     const file = input?.files?.[0];
     if (!file) return;
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setSuccessMessage("");
     try {
       const contentBase64 = await file.arrayBuffer().then((buffer) => Buffer.from(buffer).toString("base64"));
       const response = await fetch("/api/v1/company-settings/logo", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ fileName: file.name, mimeType: file.type, contentBase64 }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to upload logo.");
       await load();
+      setSuccessMessage("Logo uploaded.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to upload logo.");
     } finally {
@@ -129,13 +142,14 @@ export function CompanySettingsForm() {
   }
 
   async function removeLogo() {
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setSuccessMessage("");
     try {
       const response = await fetch("/api/v1/company-settings/logo", { method: "DELETE" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to remove logo.");
       setLogoPreview(null);
       await load();
+      setSuccessMessage("Logo removed.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to remove logo.");
     } finally {
@@ -153,6 +167,7 @@ export function CompanySettingsForm() {
           <div className="header-actions"><button type="button" className="quiet-button" onClick={() => void load()}><RotateCcw size={14} /> Reset</button><button type="button" className="gold-button" disabled={saving} onClick={() => void onSave()}><Save size={14} /> {saving ? "Saving…" : "Save"}</button></div>
         </header>
         {error ? <div className="inline-error">{error}</div> : null}
+        {successMessage ? <div className="inline-success">{successMessage}</div> : null}
         <div className="drawer-fields">
           <label><span>Legal company name</span><input value={form.legalName} onChange={(e) => setForm((current) => current ? { ...current, legalName: e.target.value } : current)} /></label>
           <label><span>Trading name</span><input value={form.tradingName} onChange={(e) => setForm((current) => current ? { ...current, tradingName: e.target.value } : current)} /></label>
@@ -218,6 +233,8 @@ export function CompanySettingsForm() {
           <button type="button" className="table-action" disabled={saving} onClick={() => void uploadLogo()}>Upload / replace</button>
           <button type="button" className="table-action danger" disabled={saving} onClick={() => void removeLogo()}><X size={14} /> Remove</button>
         </div>
+        {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
+        {successMessage ? <div className="inline-success" style={{ marginTop: 10 }}>{successMessage}</div> : null}
       </section>
     </div>
   );

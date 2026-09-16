@@ -320,6 +320,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // already has parts on it.
   const [showAddParts, setShowAddParts] = useState(false);
   const [partsImportFile, setPartsImportFile] = useState<File | null>(null);
+  // "Create picking slip" — 2026-09-16 user request: pick this job's own
+  // outstanding parts against warehouse stock right from the Parts list,
+  // instead of going to Stock Levels and searching for the job there. See
+  // createPickSlipForJob's comment (inventory/service.ts) for why this
+  // updates the job's existing part lines in place rather than creating
+  // new ones the way Stock Levels' own pick flow does.
+  const [creatingPickSlip, setCreatingPickSlip] = useState(false);
+  const [pickSlipError, setPickSlipError] = useState("");
+  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; pickSlip: { jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
   // RFQ moved into a popup, triggered by a button next to the parts
   // list/"Add / cross-check with stock" area — matches ModApp's RfqPanel
   // (its own request-quotes button opens a modal rather than showing the
@@ -1010,6 +1019,48 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setError(e instanceof Error ? e.message : "Unable to add part lines.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function printJobPickSlip(result: NonNullable<typeof pickSlipResult>["pickSlip"]) {
+    if (!result) return;
+    const w = window.open("", "_blank", "width=800,height=900");
+    if (!w) return; // popup blocked — nothing more we can do here
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
+    const rows = result.lines
+      .map((l) => `<tr><td>${esc(l.partNumber)}</td><td>${esc(l.description || "")}</td><td class="qty">${esc(l.quantity)}</td><td class="qty"></td><td>${esc(l.binLocationLabel || "—")}</td></tr>`)
+      .join("");
+    const html = `<!doctype html><html><head><title>Pick slip - ${esc(result.jobNumber || "")}</title><meta charset="utf-8" /><style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
+      h1{font-size:20px;margin:0 0 4px;color:#7a5c14;border-bottom:3px solid #7a5c14;padding-bottom:10px}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin-top:18px}
+      th,td{border:1px solid #d1d5db;padding:8px 10px;text-align:left}
+      th{background:#f9fafb;border-bottom:2px solid #7a5c14}
+      td.qty{text-align:center;font-weight:600}
+    </style></head><body>
+      <h1>Pick slip — Job ${esc(result.jobNumber || "")}</h1>
+      <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
+    </body></html>`;
+    w.document.write(html);
+    w.document.close();
+    const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
+    w.onload = doPrint;
+    setTimeout(doPrint, 400);
+  }
+
+  async function createJobPickSlip() {
+    if (!jobId) return;
+    setCreatingPickSlip(true); setPickSlipError(""); setPickSlipResult(null);
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/pick-slip`, { method: "POST" });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to create picking slip.");
+      setPickSlipResult(b);
+      await load(true);
+    } catch (e) {
+      setPickSlipError(e instanceof Error ? e.message : "Unable to create picking slip.");
+    } finally {
+      setCreatingPickSlip(false);
     }
   }
 
@@ -2144,9 +2195,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" onClick={() => { setBulkEditMode((v) => !v); setBulkSelectedIds(new Set()); }}>{bulkEditMode ? "Cancel bulk update" : "Bulk update"}</button>
                 )}
+                {job.partLines.length > 0 && (
+                  <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
+                )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
             </header>
+            {/* 2026-09-16 — result banner for "Create picking slip" above:
+                picks this job's own outstanding parts against warehouse
+                stock in place (see createPickSlipForJob's comment) rather
+                than sending the user to Stock Levels to search for this
+                job. Shown right under the header, next to the button that
+                triggered it — same "don't bury feedback at the top of a
+                very long page" fix applied elsewhere on this page. */}
+            {pickSlipError ? <div className="inline-error">{pickSlipError}</div> : null}
+            {pickSlipResult ? (
+              <div className="inline-success" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span>
+                  {pickSlipResult.pickedCount > 0
+                    ? `Picked ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} from stock.`
+                    : "No stock was available to pick right now."}
+                  {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
+                </span>
+                {pickSlipResult.pickSlip && <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>}
+              </div>
+            ) : null}
             {showAddParts && (
               <>
                 <div className="drawer-fields">
@@ -2630,6 +2703,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           {job.status === "COMPLETE" && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Any completed job's unit can be allocated directly into PEX Inventory, without a supply/return chain — matches ModApp's manual stock intake.</p></div></header>
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {})}>Send to PEX Inventory</button></footer>
+            {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
+                not showing" on PEX Stock. The shared `error` state from
+                postAction() was only ever rendered once, near the top of
+                this (very long) job page — easy to miss after clicking a
+                button this far down, same class of bug already fixed for
+                Parts follow-up. If allocation actually fails here (job
+                already linked to a PEX record, a stale/duplicate record,
+                etc.) the section stays visible with no visible reason why,
+                so it looks like nothing happened rather than showing the
+                real error — repeating it locally, right at the button. */}
+            {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
           </section>}
 
           {/* Notes now render beside Customer details, at the top of

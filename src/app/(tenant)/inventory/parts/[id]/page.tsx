@@ -1,4 +1,5 @@
-import { Eye } from "lucide-react";
+import { ArrowLeft, Eye } from "lucide-react";
+import Link from "next/link";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule } from "@/lib/auth/guards";
 import { getInventoryDetail, listStockMovements } from "@/lib/inventory/service";
@@ -19,6 +20,7 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
     <div>
       <div className="page-header">
         <div>
+          <Link href="/inventory" className="back-link"><ArrowLeft size={15} /> Back to Stock Levels</Link>
           <p className="eyebrow">Part Detail</p>
           <h1>{detail.part.partNumber}</h1>
           <p>{detail.part.description}</p>
@@ -66,7 +68,7 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
       <div className="table-container">
         <table className="data-table">
           <thead>
-            <tr><th>Date</th><th>Type</th><th>Qty</th><th>From</th><th>To</th><th>Reference</th><th>Reason</th></tr>
+            <tr><th>Date</th><th>Type</th><th className="numeric">Qty</th><th>From</th><th>To</th><th>Reference</th><th>Reason</th></tr>
           </thead>
           <tbody>
             {movements.items.map((m) => (
