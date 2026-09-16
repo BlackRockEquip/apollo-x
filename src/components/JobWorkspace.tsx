@@ -497,6 +497,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // scheduling a save.
   const skipNextAutosave = useRef(true);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 2026-09-15 bug fix — "parts table, when changing supplier it refuses,
+  // always goes back to previous one." saveOrderNumberInline and
+  // saveSupplierInline both PATCH the same part-line endpoint and both have
+  // to resend the *other* field's current value alongside the one they're
+  // actually changing (the API resets whichever field is omitted to null),
+  // so each used to read that other value off the `line` object captured at
+  // render time. That's fine on its own, but the two saves fire from two
+  // different inputs in the same row (typing a PO number then tabbing to
+  // the supplier field is the common case) and neither waited for the
+  // other — if the order-number request (carrying the *old*, not-yet-
+  // -changed supplier id, correctly, since it fired before the pick) simply
+  // resolved after the supplier request, it silently overwrote the fresh
+  // supplier back to the old one. jobRef mirrors `job` synchronously
+  // (state updates land a render later, which is too slow here) so both
+  // saves can look up the other field's value fresh at the moment they
+  // actually run, and partLineSaveQueue below serializes same-row saves so
+  // they always apply in the order the user triggered them rather than
+  // whatever order the network happens to resolve them in.
+  const jobRef = useRef<JobDetail | null>(null);
+  const partLineSaveQueue = useRef<Record<string, Promise<void>>>({});
+  function queueRowSave(lineId: string, run: () => Promise<void>) {
+    const prior = partLineSaveQueue.current[lineId] || Promise.resolve();
+    const next = prior.then(run, run);
+    partLineSaveQueue.current[lineId] = next;
+    return next;
+  }
 
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
@@ -564,6 +590,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load job.");
       setJob(body);
+      // See jobRef's own comment above — kept in sync right here (not via
+      // a useEffect keyed on `job`) so it's already current by the time a
+      // queued row save reads it, with zero extra render lag.
+      jobRef.current = body;
       // See skipNextAutosave's own comment above — this repopulation is
       // the server echoing back what's already saved, not a new edit.
       skipNextAutosave.current = true;
@@ -1062,11 +1092,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // PartLineOrderNumberField (always an editable input, no separate "edit
   // mode" click needed first). Keeps the currently-assigned supplier as-is
   // (the API resets orderedFromSupplierId to null whenever it isn't passed,
-  // so it's always sent back unchanged here).
-  async function saveOrderNumberInline(lineId: string, currentSupplierId: string, value: string) {
+  // so it's always sent back unchanged here) — read fresh off jobRef at
+  // save time, not passed in by the caller, so a supplier change queued
+  // just ahead of this one (see queueRowSave) is picked up instead of a
+  // stale value from whenever this save was scheduled.
+  async function saveOrderNumberInline(lineId: string, value: string) {
     if (!jobId) return;
     setSaving(true); setError("");
     try {
+      const currentLine = jobRef.current?.partLines.find((l) => String(l.id) === lineId);
+      const currentSupplierId = currentLine?.orderedFromSupplier?.id ? String(currentLine.orderedFromSupplier.id) : "";
       const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -1086,13 +1121,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // editable without clicking the change supplier button." Mirrors
   // saveOrderNumberInline exactly, the other way round: always resends the
   // line's *current* order number unchanged so picking a supplier never
-  // clobbers a typed-in PO number. Closes the row's picker (orderEditLineId)
-  // on completion — see that state's declaration above for why this also
-  // matters for the double-click glitch fix.
-  async function saveSupplierInline(lineId: string, currentOrderNumber: string, supplierId: string) {
+  // clobbers a typed-in PO number — read fresh off jobRef at save time for
+  // the same reason (see saveOrderNumberInline's comment). Closes the row's
+  // picker (orderEditLineId) on completion — see that state's declaration
+  // above for why this also matters for the double-click glitch fix.
+  async function saveSupplierInline(lineId: string, supplierId: string) {
     if (!jobId) return;
     setSaving(true); setError("");
     try {
+      const currentLine = jobRef.current?.partLines.find((l) => String(l.id) === lineId);
+      const currentOrderNumber = currentLine?.orderNumber ? String(currentLine.orderNumber) : "";
       const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -2179,7 +2217,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       onBlur={(e) => {
                         const next = e.target.value.trim();
                         if (next === (line.orderNumber ? String(line.orderNumber).trim() : "")) return;
-                        void saveOrderNumberInline(lineId, line.orderedFromSupplier?.id ? String(line.orderedFromSupplier.id) : "", next);
+                        // Queued per-row (see queueRowSave's comment above)
+                        // so this can never resolve out of order with a
+                        // supplier pick on the same row and clobber it.
+                        void queueRowSave(lineId, () => saveOrderNumberInline(lineId, next));
                       }}
                     />
                   </td>
@@ -2199,7 +2240,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       placeholder="Search active supplier"
                       disabled={saving}
                     /></div>
-                    {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void saveSupplierInline(lineId, line.orderNumber ? String(line.orderNumber) : "", s.id)}><strong>{s.name}</strong></button>)}</div>}
+                    {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td><span className={`status-pill ${fullyReceived ? "" : "neutral"}`}>{text(line.status).replaceAll("_", " ")}</span></td>
                   <td className="actions">

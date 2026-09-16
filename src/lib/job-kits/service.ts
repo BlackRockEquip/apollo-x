@@ -3,7 +3,8 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { recordAudit } from "@/lib/audit/service";
 import { prisma } from "@/lib/prisma";
-import { jobKitActiveInput, jobKitCreateInput, jobKitLineInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
+import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
+import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
 
 function notFound(): never { throw new Error("NOT_FOUND"); }
 function normalized(value: string) { return value.trim().replace(/\s+/g, " ").toUpperCase(); }
@@ -149,6 +150,106 @@ export async function addJobKitLine(ctx: RequestContext, id: string, raw: unknow
   });
   await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKitLine", entityId: line.id, action: "CREATE", afterData: { jobKitId: id, partId: input.partId } });
   return getJobKitById(ctx, id);
+}
+
+// 2026-09-15, user request: "when adding a kit, make it that you can add a
+// part list/import a list that gets saved in table form for that specific
+// kit." Mirrors jobs/service.ts's addPartLinesBulk (paste box + spreadsheet
+// import, same row parsing / file-parsing approach via parts-import.ts's
+// shared extractPartLinesFromSpreadsheet), but unlike a job's own parts list
+// a kit line always has to resolve to an existing active catalog Part (the
+// FK is required — see schema.prisma's JobKitLine.partId, and the kit
+// editor's own copy: "lines stay tenant-scoped to active parts"), so a row
+// whose part number doesn't match anything in the catalog is skipped and
+// reported back rather than silently dropped or half-created. A row for a
+// part already on this kit tops up that line's quantity instead of adding a
+// duplicate row, same "top up, don't duplicate" behavior applyJobKitToJob
+// already uses when a kit is applied to a job that already has the part.
+const ALLOWED_KIT_LINES_IMPORT_MIME_TYPES = [
+  "text/csv",
+  "application/csv",
+  "text/plain",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+const MAX_KIT_LINES_IMPORT_FILE_BYTES = 8_000_000;
+
+type ParsedKitLineRow = { partNumber: string; quantity: number };
+
+// "PN-1001, 2" or a tab-separated paste straight out of Excel — part number
+// required, quantity optional (defaults to 1, since a kit's part list is
+// often just "these parts belong to this kit" with no particular quantity
+// in mind until someone edits it).
+function parseBulkKitLineRow(raw: string): ParsedKitLineRow | null {
+  const cells = (raw.includes("\t") ? raw.split("\t") : raw.split(",")).map((c) => c.trim());
+  const partNumber = cells[0] || "";
+  if (!partNumber) return null;
+  const quantity = cells[1] ? Number(cells[1]) : 1;
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  return { partNumber, quantity };
+}
+
+export type AddJobKitLinesBulkResult = {
+  addedCount: number;
+  incrementedCount: number;
+  skipped: Array<{ partNumber: string; reason: string }>;
+};
+
+export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: unknown) {
+  const companyId = requireJobKitsWrite(ctx, "JOB_KITS_EDIT");
+  const input = jobKitLineBulkAddInput.parse(raw);
+  const existing = await prisma.jobKit.findFirst({ where: { id, companyId } });
+  if (!existing) notFound();
+
+  const pasteRows = (input.bulkLines ?? "")
+    .split("\n")
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map(parseBulkKitLineRow)
+    .filter((r): r is ParsedKitLineRow => r !== null);
+
+  let fileRows: ParsedKitLineRow[] = [];
+  if (input.fileName && input.mimeType && input.contentBase64) {
+    if (!ALLOWED_KIT_LINES_IMPORT_MIME_TYPES.includes(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+    const data = Buffer.from(input.contentBase64, "base64");
+    if (data.length > MAX_KIT_LINES_IMPORT_FILE_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+    fileRows = (await extractPartLinesFromSpreadsheet(data)).map((r) => ({ partNumber: r.partNumber, quantity: r.quantity }));
+  }
+
+  const rows = [...pasteRows, ...fileRows];
+  let addedCount = 0;
+  let incrementedCount = 0;
+  const skipped: AddJobKitLinesBulkResult["skipped"] = [];
+
+  if (rows.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      const currentMax = await tx.jobKitLine.aggregate({ where: { jobKitId: id, companyId }, _max: { sortOrder: true } });
+      let nextSortOrder = (currentMax._max.sortOrder ?? -1) + 1;
+
+      for (const row of rows) {
+        const partNumberNormalized = normalized(row.partNumber);
+        const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized, active: true }, select: { id: true } }) : null;
+        if (!part) { skipped.push({ partNumber: row.partNumber, reason: "No active part with this part number in the catalog." }); continue; }
+
+        const existingLine = await tx.jobKitLine.findFirst({ where: { jobKitId: id, companyId, partId: part.id } });
+        if (existingLine) {
+          await tx.jobKitLine.update({ where: { id: existingLine.id }, data: { quantityDefault: existingLine.quantityDefault.plus(row.quantity) } });
+          incrementedCount += 1;
+        } else {
+          await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId: part.id, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
+          nextSortOrder += 1;
+          addedCount += 1;
+        }
+      }
+    });
+
+    if (addedCount > 0 || incrementedCount > 0) {
+      await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKit", entityId: id, action: "UPDATE", afterData: { id, bulkImport: { addedCount, incrementedCount, skippedCount: skipped.length } } });
+    }
+  }
+
+  const kit = await getJobKitById(ctx, id);
+  return { ...kit, importResult: { addedCount, incrementedCount, skipped } };
 }
 
 export async function updateJobKitLine(ctx: RequestContext, id: string, lineId: string, raw: unknown) {

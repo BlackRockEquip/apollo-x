@@ -1,6 +1,8 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { StatusPill } from "@/components/StatusPill";
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { ScrollRestore } from "@/components/ScrollRestore";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { requireRequestContext } from "@/lib/auth/session";
@@ -152,6 +154,11 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
 
   return (
     <div>
+      {/* 2026-09-15, user request: "Refresh faster with changes" — this is
+          the main shared work queue, so it's the highest-value place for
+          other people's status/field changes to show up without a manual
+          reload. See AutoRefresh.tsx's own comment. */}
+      <AutoRefresh intervalMs={20000} />
       <header className="page-header compact">
         <div>
           <p className="eyebrow">Jobs</p>
@@ -227,6 +234,12 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             </tbody>
           </table>
           <JobsWipColumnResize tableId="jobs-wip-table" storageKey={JOBS_WIP_COLUMN_WIDTHS_STORAGE_KEY} columns={columns} />
+          {/* 2026-09-15, user request: "Back button to take you back to
+              where you last were." Search/view/type/status are already in
+              the URL (this whole page is server-rendered off them), so
+              browser Back already restores those correctly — only the
+              table's own internal scroll position needed fixing. */}
+          <ScrollRestore selector=".jobs-panel .data-table-wrap" storageKey="jobs-wip" />
         </div>
       </section>
     </div>

@@ -3,10 +3,19 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async dashboard resource loading intentionally mirrors existing workspace patterns */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { AnalyticsLineChart, type AnalyticsSeriesPoint } from "@/components/AnalyticsLineChart";
 
 type Widget = { key: string; enabled: boolean; order: number };
 type OutstandingPartLine = { id: string; job: { id: string; jobNumber: string | null; customer: { name: string } | null } | null };
-type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; pexStatus: Record<string, number>; supportTickets: Record<string, number> };
+// 2026-09-15, user request: "add a linegraph that is customizable for
+// different analytics eg: total jobs per month, total completed jobs,
+// warrantys per month etc, user can select 3 line graph views." Which
+// metrics/how many is chosen on Settings > Dashboard (see
+// DashboardSettingsWorkspace.tsx) — this page only renders whatever the
+// backend already picked (up to 3, dashboard/service.ts's
+// DASHBOARD_ANALYTICS_METRIC_DEFS).
+type AnalyticsSeries = { key: string; label: string; points: AnalyticsSeriesPoint[] };
+type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; pexStatus: Record<string, number>; supportTickets: Record<string, number>; analyticsSeries: AnalyticsSeries[] };
 
 // 2026-09-14 — "Update the dashboard and make it clickable to take a user
 // to the relevant place" (explicit request). Every widget card is now a
@@ -84,8 +93,13 @@ export default function DashboardPage() {
     return Array.from(byJob.values());
   }, [data]);
 
-  async function load() {
-    setLoading(true);
+  // `silent` (2026-09-15, user request: "Refresh faster with changes" —
+  // clarified to mean other people's changes should show up here without a
+  // manual reload) skips the loading-state flip so a background poll
+  // doesn't blank the widgets/outstanding-jobs panel every tick — same
+  // silent-reload convention JobWorkspace's own load(silent) already uses.
+  async function load(silent?: boolean) {
+    if (!silent) setLoading(true);
     try {
       const dataResponse = await fetch("/api/v1/dashboard", { cache: "no-store" });
       const body = await dataResponse.json();
@@ -93,9 +107,13 @@ export default function DashboardPage() {
       setWidgets(body.widgets);
       setData(body.data);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load dashboard."); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 20000);
+    return () => clearInterval(timer);
+  }, []);
 
   const ordered = [...widgets].sort((a, b) => a.order - b.order);
 
@@ -130,6 +148,11 @@ export default function DashboardPage() {
               </article>
             ))}
           </div>
+        </section>
+      )}
+      {(data?.analyticsSeries?.length ?? 0) > 0 && (
+        <section className="analytics-chart-grid">
+          {data!.analyticsSeries.map((series) => <AnalyticsLineChart key={series.key} title={series.label} points={series.points} />)}
         </section>
       )}
     </>}

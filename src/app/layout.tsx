@@ -4,6 +4,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: { default: "Apollo X", template: "%s | Apollo X" },
   description: "Apollo X operational and commercial platform",
+  // 2026-09-15, user request: "Apollo x favicon icon on web browser to be
+  // the company logo of the organization else reverts back to ApolloX
+  // 'AX'." Points at a route handler (not a static file) because the icon
+  // has to vary per signed-in company — see the route's own comment for
+  // why a plain handler was used instead of the app/icon.tsx convention.
+  icons: { icon: "/api/v1/company-settings/favicon" },
 };
 
 // 2026-09-14 — explicit viewport meta, added as part of the mobile/phone

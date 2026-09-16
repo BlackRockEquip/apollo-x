@@ -120,6 +120,18 @@ a { color: inherit; text-decoration: none; }
 .header-tabs { display:flex; gap:8px; align-items:center; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .metric-grid.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+/* 2026-09-15 — customizable dashboard analytics line graphs (user request:
+   "add a linegraph that is customizable for different analytics ... user
+   can select 3 line graph views"). Up to 3 cards, each one AnalyticsLineChart
+   (a single-series inline-SVG line chart — see that component's own header
+   comment for the dataviz-skill mark specs it follows). */
+.analytics-chart-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.analytics-chart-card { border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; box-shadow: 0 2px 7px rgba(15,23,42,.035); padding: 14px; }
+.analytics-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.analytics-chart-header h3 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--ink-900); }
+.analytics-chart-svg { display: block; width: 100%; height: auto; outline: none; }
+.analytics-chart-svg:focus-visible { box-shadow: 0 0 0 2px var(--gold-500); border-radius: 6px; }
 .metric-card { position: relative; display: grid; min-height: 145px; border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; padding: 18px; box-shadow: 0 2px 7px rgba(15,23,42,.035); }
 .metric-card.compact { min-height: 108px; padding: 14px; }
 /* 2026-09-14 — dashboard widget cards became <Link>s ("make it clickable to
@@ -572,6 +584,7 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
   .login-story h1 { font-size: 44px; }
   .login-story .eyebrow { margin-top: 24px; }
   .metric-grid, .metric-grid.compact { grid-template-columns: repeat(2, 1fr); }
+  .analytics-chart-grid { grid-template-columns: 1fr; }
   .company-row { grid-template-columns: auto 1fr; }
   .company-row .support-form { grid-column: 1 / -1; }
   .platform-shell { grid-template-columns: 1fr; }

@@ -17,7 +17,15 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     requireSameOrigin(request);
-    return NextResponse.json(await saveDashboardConfig(await requireRequestContext(), (await request.json()).widgets));
+    // 2026-09-15 fix, found while wiring up the new analytics charts: this
+    // used to pass `(await request.json()).widgets` — but the frontend
+    // (DashboardSettingsWorkspace.tsx) has always POSTed the widgets array
+    // itself as the whole body, not wrapped in `{ widgets: ... }`, so
+    // `.widgets` on that array was always undefined and every save quietly
+    // fell back to the default layout. Now sends the whole parsed body
+    // through — saveDashboardConfig accepts either shape (see its own
+    // comment), and the frontend now sends `{ widgets, analyticsCharts }`.
+    return NextResponse.json(await saveDashboardConfig(await requireRequestContext(), await request.json()));
   } catch (error) {
     return apiError(error);
   }
