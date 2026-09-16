@@ -69,8 +69,15 @@ type PositionRow = {
 type ListResponse = { items: PositionRow[]; total: number; page: number; pageSize: number };
 type Option = { id: string; label: string };
 
+// 2026-09-16 — user request: "remove manufacturer part number from add
+// import parts as its not used." Dropped from this form (and from the
+// Add/Import Parts template — see PART_IMPORT_FIELDS in
+// import-export/fields.ts) — the underlying Part.manufacturerPartNumber
+// column and the Manufacturer field's own dropdown are untouched, so any
+// part already carrying a value keeps it, it's just no longer editable
+// from here.
 type PartForm = {
-  partNumber: string; description: string; manufacturerId: string; manufacturerPartNumber: string;
+  partNumber: string; description: string; manufacturerId: string;
   category: string; unitOfMeasure: string; taxCodeId: string;
   defaultPurchaseCost: string; defaultSellingPrice: string;
   reorderMinimum: string; reorderMaximum: string; reorderQuantity: string;
@@ -78,7 +85,7 @@ type PartForm = {
 };
 const NEW_BIN = "__new__";
 const BLANK_FORM: PartForm = {
-  partNumber: "", description: "", manufacturerId: "", manufacturerPartNumber: "",
+  partNumber: "", description: "", manufacturerId: "",
   category: "", unitOfMeasure: "EA", taxCodeId: "",
   defaultPurchaseCost: "", defaultSellingPrice: "",
   reorderMinimum: "", reorderMaximum: "", reorderQuantity: "",
@@ -223,13 +230,18 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
   const loadOptions = useCallback(async () => {
     try {
-      // Locations come from the INVENTORY-scoped /api/v1/inventory/locations
-      // (not master-data/storage-locations, a different module's permission
-      // — see listStorageLocationOptions's comment) so this dropdown works
-      // for anyone who can already open Stock Levels, not just users also
-      // granted separate Storage Locations admin access.
+      // Locations and manufacturers come from INVENTORY-scoped endpoints
+      // (/api/v1/inventory/locations, /api/v1/inventory/manufacturers —
+      // not their master-data equivalents, each gated behind its own
+      // separate module permission — see listStorageLocationOptions's and
+      // listManufacturerOptions's comments) so these dropdowns work for
+      // anyone who can already open Stock Levels, not just users also
+      // granted separate Storage Locations / Manufacturers admin access.
+      // 2026-09-16 — manufacturers switched over for the same reason
+      // locations already were: "manufacturer field not populating" was
+      // this exact 403-silently-swallowed bug.
       const [mfrRes, taxRes, locRes] = await Promise.all([
-        fetch("/api/v1/master-data/manufacturers?status=active&pageSize=200", { cache: "no-store" }),
+        fetch("/api/v1/inventory/manufacturers", { cache: "no-store" }),
         fetch("/api/v1/master-data/tax-codes?status=active&pageSize=200", { cache: "no-store" }),
         fetch("/api/v1/inventory/locations", { cache: "no-store" }),
       ]);
@@ -265,7 +277,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     setEditing(row);
     setForm({
       partNumber: row.partNumber, description: row.description,
-      manufacturerId: row.manufacturerId || "", manufacturerPartNumber: row.manufacturerPartNumber || "",
+      manufacturerId: row.manufacturerId || "",
       category: row.category || "", unitOfMeasure: row.unitOfMeasure || "EA", taxCodeId: row.taxCodeId || "",
       defaultPurchaseCost: row.cost || "", defaultSellingPrice: row.sellingPrice || "",
       reorderMinimum: row.reorderMinimum || "", reorderMaximum: row.reorderMaximum || "", reorderQuantity: row.reorderQuantity || "",
@@ -289,7 +301,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       }
       const payload = {
         partNumber: form.partNumber, description: form.description,
-        manufacturerId: form.manufacturerId || null, manufacturerPartNumber: form.manufacturerPartNumber || null,
+        // manufacturerPartNumber deliberately omitted, not sent as null —
+        // updateMaster merges {...before, ...raw} before validating, so a
+        // key this object doesn't have at all leaves an existing part's
+        // value untouched; sending it as null here would wipe it on every
+        // edit even though this form no longer offers a way to set it.
+        manufacturerId: form.manufacturerId || null,
         category: form.category || null, unitOfMeasure: form.unitOfMeasure || "EA", taxCodeId: form.taxCodeId || null,
         defaultPurchaseCost: form.defaultPurchaseCost || null, defaultSellingPrice: form.defaultSellingPrice || null,
         reorderMinimum: form.reorderMinimum || null, reorderMaximum: form.reorderMaximum || null, reorderQuantity: form.reorderQuantity || null,
@@ -505,7 +522,11 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   <th>Part</th>
                   <th>Description</th>
                   <th>Manufacturer</th>
-                  <th>Bin location</th>
+                  {/* 2026-09-16 — plural: this cell can now list more than
+                      one bin, comma-separated, when a part has stock
+                      spread across several — see buildBinLocationLabel
+                      in inventory/service.ts. */}
+                  <th>Bin locations</th>
                   <th className="numeric">On Hand</th>
                   <th className="numeric">Reserved</th>
                   <th className="numeric">Available</th>
@@ -812,7 +833,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                     {manufacturers.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                   </select>
                 </label>
-                <label><span>Manufacturer part number</span><input value={form.manufacturerPartNumber} onChange={(e) => setForm((f) => ({ ...f, manufacturerPartNumber: e.target.value }))} /></label>
                 <label><span>Category</span><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></label>
                 <label><span>Unit of measure *</span><input required value={form.unitOfMeasure} onChange={(e) => setForm((f) => ({ ...f, unitOfMeasure: e.target.value }))} /></label>
                 <label><span>Tax code</span>

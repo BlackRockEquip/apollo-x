@@ -743,7 +743,11 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       partNumber,
       description,
       manufacturerId,
-      manufacturerPartNumber: mappedValue(row, input.mapping, "manufacturerPartNumber") || undefined,
+      // manufacturerPartNumber column removed from PART_IMPORT_FIELDS
+      // (fields.ts) — 2026-09-16 user request: "remove manufacturer part
+      // number from add import parts as its not used." Existing parts
+      // that already carry a value keep it; import just no longer offers
+      // a column to set/overwrite it.
       category: mappedValue(row, input.mapping, "category") || undefined,
       unitOfMeasure: mappedValue(row, input.mapping, "unitOfMeasure") || undefined,
       notes: mappedValue(row, input.mapping, "notes") || undefined,

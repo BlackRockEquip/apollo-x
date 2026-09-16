@@ -179,7 +179,13 @@ async function getJobScoped(companyId: string, id: string) {
       // Outwork — new (see schema.prisma's OutworkItem comment).
       outworkItems: {
         include: {
-          supplier: { select: { id: true, name: true } },
+          // 2026-09-16 — vatNumber + the supplier's own address, added so
+          // the outwork delivery note (see JobWorkspace.tsx's
+          // printDeliveryNote) can print the supplier's full block —
+          // name, address lines, VAT number — instead of just its name.
+          // Same "one address, primary first" convention as the customer
+          // include above.
+          supplier: { select: { id: true, name: true, vatNumber: true, addresses: { where: { active: true }, orderBy: [{ isPrimary: "desc" }, { type: "asc" }], take: 1 } } },
         },
         orderBy: { createdAt: "desc" },
       },

@@ -24,7 +24,13 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
           <p className="eyebrow">Part Detail</p>
           <h1>{detail.part.partNumber}</h1>
           <p>{detail.part.description}</p>
-          <p className="small-line muted">Bin location: {detail.part.binLocationLabel || "Not assigned"}</p>
+          {/* 2026-09-16 — "Bin location" (singular) relabeled "Bin
+              locations" since binLocationLabel can now list more than
+              one, comma-separated (see buildBinLocationLabel in
+              inventory/service.ts) — this part already has stock in
+              multiple bins listed individually in the table below;
+              this line is just the quick summary. */}
+          <p className="small-line muted">Bin locations: {detail.part.binLocationLabel || "Not assigned"}</p>
         </div>
       </div>
 

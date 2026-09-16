@@ -37,7 +37,10 @@ type OutworkItemRow = Row & {
   dateReceived?: string | null;
   batchId?: string | null;
   notes?: string | null;
-  supplier?: Row & { name?: string | null };
+  // vatNumber/addresses added 2026-09-16 so the delivery note (see
+  // printDeliveryNote) can print the supplier's full block, not just its
+  // name — see the matching include added in jobs/service.ts.
+  supplier?: Row & { name?: string | null; vatNumber?: string | null; addresses?: Array<Row & { line1?: string | null; line2?: string | null; city?: string | null; province?: string | null; postalCode?: string | null }> };
 };
 // RFQ (request for quote) — see schema.prisma's JobRfqRequest comment.
 // status is one of REQUESTED (legacy)/SENT/FAILED/SKIPPED/QUOTED — SENT
@@ -379,6 +382,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // that a selection turns off directly, instead of inferring "closed"
   // from an empty options array that a stale in-flight fetch can refill.
   const [outworkSupplierPickerOpen, setOutworkSupplierPickerOpen] = useState(false);
+  // 2026-09-16 — "if not on list create new supplier to allow outwork form
+  // to work": tracks the inline create-supplier POST below (createSupplierInline)
+  // so the option can show "Creating…" and disable itself mid-request.
+  const [outworkCreatingSupplier, setOutworkCreatingSupplier] = useState(false);
   const [outworkDateSentOut, setOutworkDateSentOut] = useState("");
   const [outworkLines, setOutworkLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
   const [editingOutworkId, setEditingOutworkId] = useState("");
@@ -386,6 +393,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [editOutworkSupplierOptions, setEditOutworkSupplierOptions] = useState<SupplierOption[]>([]);
   const [editOutworkSupplierId, setEditOutworkSupplierId] = useState("");
   const [editOutworkSupplierPickerOpen, setEditOutworkSupplierPickerOpen] = useState(false);
+  const [editOutworkCreatingSupplier, setEditOutworkCreatingSupplier] = useState(false);
   const [editOutworkDescription, setEditOutworkDescription] = useState("");
   const [editOutworkQuantity, setEditOutworkQuantity] = useState("1");
   const [editOutworkDateSentOut, setEditOutworkDateSentOut] = useState("");
@@ -411,7 +419,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-09-10, user request ("Active history also only to be visible on
   // click, not visible from beginning").
   const [showActivityHistory, setShowActivityHistory] = useState(false);
-  const [deliveryNote, setDeliveryNote] = useState<{ jobNumber: string; supplierName: string; dateSentOut: string | null; items: Array<{ description: string; quantity: number }> } | null>(null);
+  // supplierAddressLines/supplierVat added 2026-09-16 — user request: print
+  // the supplier's full block (name bold, address lines stacked, VAT
+  // number) instead of a bare "Supplier: {name}" line. dateSentOut renamed
+  // dateCaptured to match the same request's relabeled/repositioned date
+  // field on the printed note (same underlying date, just relabeled).
+  const [deliveryNote, setDeliveryNote] = useState<{ jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; items: Array<{ description: string; quantity: number }> } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
   // once its normal-flow position reaches the pinned offset) still visibly
@@ -1318,6 +1331,50 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setOutworkLines((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   }
 
+  // 2026-09-16 — "Record outwork supplier field, if not on list create new
+  // supplier to allow outwork form to work." Without this, typing a
+  // supplier that doesn't exist yet left outworkSupplierId empty forever —
+  // Record outwork stays disabled (see its footer button below) with no
+  // way to proceed short of leaving the drawer to add the supplier under
+  // Suppliers first. POSTs just the name (every other field on
+  // supplierCreateInput in master-data/validation.ts is optional) through
+  // the same master-data endpoint the Suppliers page itself uses, then
+  // treats the new supplier exactly like one picked from the search
+  // results.
+  async function createSupplierInline(name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    const r = await fetch("/api/v1/master-data/suppliers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: trimmed }) });
+    const b = await r.json();
+    if (!r.ok) throw new Error(b.error?.message || "Unable to create supplier.");
+    return { id: String(b.id), name: trimmed };
+  }
+
+  async function createOutworkSupplier() {
+    if (outworkSupplierQuery.trim().length < 2) return;
+    setOutworkCreatingSupplier(true); setError("");
+    try {
+      const created = await createSupplierInline(outworkSupplierQuery);
+      setOutworkSupplierId(created.id); setOutworkSupplierQuery(created.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to create supplier.");
+    } finally {
+      setOutworkCreatingSupplier(false);
+    }
+  }
+
+  async function createEditOutworkSupplier() {
+    if (editOutworkSupplierQuery.trim().length < 2) return;
+    setEditOutworkCreatingSupplier(true); setError("");
+    try {
+      const created = await createSupplierInline(editOutworkSupplierQuery);
+      setEditOutworkSupplierId(created.id); setEditOutworkSupplierQuery(created.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to create supplier.");
+    } finally {
+      setEditOutworkCreatingSupplier(false);
+    }
+  }
+
   async function submitOutwork() {
     if (!jobId || !outworkSupplierId) return;
     const lines = outworkLines
@@ -1333,10 +1390,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to record outwork.");
-      setDeliveryNote({ jobNumber: job?.jobNumber || job?.draftNumber || "—", supplierName: outworkSupplierQuery || "—", dateSentOut: outworkDateSentOut || null, items: lines });
       setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1" }]);
       setShowOutworkPopup(false);
       await load(true);
+      // jobRef (not the `job` state var) — same pattern autosave uses
+      // elsewhere on this page — so this reads load()'s just-fetched data
+      // synchronously, already carrying the supplier's address/VAT (see
+      // the include added in jobs/service.ts), instead of the stale `job`
+      // closure from before this batch existed.
+      const freshItems = (jobRef.current?.outworkItems ?? []) as OutworkItemRow[];
+      const batchItems = freshItems.filter((i) => i.batchId === b.batchId);
+      if (batchItems.length > 0) buildDeliveryNote(batchItems[0], batchItems);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to record outwork.");
     } finally {
@@ -1480,14 +1544,30 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // whole batch, the same way the transient note after submitting does.
   // Older items from before batchId existed have no batch to group by and
   // just show themselves.
-  function openDeliveryNoteForItem(item: OutworkItemRow) {
-    const batchItems = item.batchId ? job?.outworkItems.filter((i) => i.batchId === item.batchId) ?? [item] : [item];
+  // Shared by openDeliveryNoteForItem (a historical item, already loaded
+  // with its supplier's address/VAT — see the include in jobs/service.ts)
+  // and submitOutwork below (which finds its just-created batch the same
+  // way, once load(true) has refreshed job.outworkItems with that same
+  // include). address is rendered as separate stacked lines rather than
+  // one string, per the user's example ("Renjohn (Pty) Ltd / 123 Test
+  // Street / Isando / Boksburg / 1401" — each its own line, blanks
+  // dropped) — see printDeliveryNote/the on-screen preview below.
+  function buildDeliveryNote(item: OutworkItemRow, batchItems: OutworkItemRow[]) {
+    const address = item.supplier?.addresses?.[0];
+    const addressLines = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v): v is string => Boolean(v && String(v).trim())).map(String) : [];
     setDeliveryNote({
       jobNumber: job?.jobNumber || job?.draftNumber || "—",
       supplierName: item.supplier?.name ? String(item.supplier.name) : "—",
-      dateSentOut: item.dateSentOut ? String(item.dateSentOut) : null,
+      supplierAddressLines: addressLines,
+      supplierVat: item.supplier?.vatNumber ? String(item.supplier.vatNumber) : null,
+      dateCaptured: item.dateSentOut ? String(item.dateSentOut) : null,
       items: batchItems.map((i) => ({ description: i.description || "—", quantity: Number(i.quantity ?? 0) })),
     });
+  }
+
+  function openDeliveryNoteForItem(item: OutworkItemRow) {
+    const batchItems = item.batchId ? job?.outworkItems.filter((i) => i.batchId === item.batchId) ?? [item] : [item];
+    buildDeliveryNote(item, batchItems);
   }
 
   // Checked / Vehicle reg / Dispatched by & Received by (name, signature,
@@ -1496,17 +1576,63 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // there's no digital-signature capture anywhere in Apollo X, and this
   // whole delivery note is itself an unpersisted, on-demand print view
   // (see the comment above), so nothing here is saved back.
-  function printDeliveryNote() {
+  // 2026-09-16 — user request: fetches the company logo (if any) as a data
+  // URL so it can be embedded straight into the print window's HTML — a
+  // window.open("", "_blank") document has no real origin of its own, so a
+  // plain <img src="/api/v1/company-settings/logo"> wouldn't resolve
+  // relative to the app; a data: URL sidesteps that entirely. GET
+  // /company-settings/logo 404s when no logo is set (see logo/route.ts),
+  // treated here as "no logo" rather than an error — the note prints fine
+  // without one.
+  async function fetchCompanyLogoDataUrl(): Promise<string | null> {
+    try {
+      const r = await fetch("/api/v1/company-settings/logo");
+      if (!r.ok) return null;
+      const blob = await r.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("read failed"));
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async function printDeliveryNote() {
     if (!deliveryNote) return;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the delivery note."); return; }
+    const logoDataUrl = await fetchCompanyLogoDataUrl();
     const rows = deliveryNote.items.map((i) => `<tr><td>${escapeHtml(i.description)}</td><td>${i.quantity}</td><td class="checked-box"></td></tr>`).join("");
-    win.document.write(`<!doctype html><html><head><title>Outwork delivery note</title><meta charset="utf-8" /><style>
+    // 2026-09-16 — user request: remove the "Supplier: " label and print
+    // the supplier's own block instead (bold name, address lines stacked,
+    // then VAT) — see buildDeliveryNote above for how supplierAddressLines
+    // is built from the supplier's primary address. "Date sent out" is
+    // relabeled "Date captured" and moved to sit under the job number
+    // (previously a standalone line under "Supplier:").
+    const addressRows = deliveryNote.supplierAddressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("");
+    const vatRow = deliveryNote.supplierVat ? `<p>VAT: ${escapeHtml(deliveryNote.supplierVat)}</p>` : "";
+    const dateCapturedText = deliveryNote.dateCaptured ? new Date(deliveryNote.dateCaptured).toLocaleDateString("en-ZA") : "—";
+    // File save-as name — user request: "when generating outwork file,
+    // save file as eg: JobNumber - Outwork - Supplier". The browser's
+    // Print > Save as PDF dialog defaults the filename to the document
+    // title, so this is set here rather than anywhere the file is written
+    // (this print view never writes a file itself — see the comment on
+    // printDeliveryNote's neighbour, printJobCard, below).
+    const noteTitle = `${deliveryNote.jobNumber} - Outwork - ${deliveryNote.supplierName}`;
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(noteTitle)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
+      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+      .logo{max-height:56px;max-width:200px;object-fit:contain;margin-bottom:2px}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
-      .meta{font-size:13px;color:#444;margin:2px 0}
+      .date-captured{font-size:13px;color:#444;text-align:right}
+      .supplier-block{margin-top:14px}
+      .supplier-name{font-weight:bold;font-size:14px;margin:0 0 2px}
+      .supplier-block p{font-size:13px;color:#444;margin:1px 0}
       table{width:100%;border-collapse:collapse;margin-top:16px}
       th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
       .checked-box{width:60px;text-align:center}
@@ -1519,10 +1645,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </style></head><body>
       <div class="note-head">
         <h1>Outwork delivery note</h1>
-        <div class="job-number">Job ${escapeHtml(deliveryNote.jobNumber)}</div>
+        <div class="note-right">
+          ${logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : ""}
+          <div class="job-number">Job ${escapeHtml(deliveryNote.jobNumber)}</div>
+          <div class="date-captured">Date captured: ${dateCapturedText}</div>
+        </div>
       </div>
-      <p class="meta">Supplier: ${escapeHtml(deliveryNote.supplierName)}</p>
-      <p class="meta">Date sent out: ${deliveryNote.dateSentOut ? new Date(deliveryNote.dateSentOut).toLocaleDateString("en-ZA") : "—"}</p>
+      <div class="supplier-block">
+        <p class="supplier-name">${escapeHtml(deliveryNote.supplierName)}</p>
+        ${addressRows}
+        ${vatRow}
+      </div>
       <table><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="vehicle-reg">Vehicle reg:<span class="line">&nbsp;</span></p>
       <div class="sign-blocks">
@@ -2591,7 +2724,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <aside className="form-drawer compact-dialog job-editor-drawer">
                   <header><div><h2>Record outwork</h2><p>Send components out to a supplier for outwork.</p></div><button type="button" onClick={() => setShowOutworkPopup(false)} aria-label="Close dialog"><X size={18} /></button></header>
                   <div className="drawer-fields">
-                    <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); setOutworkSupplierPickerOpen(true); }} onFocus={() => setOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{outworkSupplierPickerOpen && outworkSupplierOptions.length > 0 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
+                    <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); setOutworkSupplierPickerOpen(true); }} onFocus={() => setOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{outworkSupplierPickerOpen && outworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={outworkCreatingSupplier} onClick={() => void createOutworkSupplier()}><Plus size={13} style={{ verticalAlign: "-2px" }} /> {outworkCreatingSupplier ? "Creating…" : `Create supplier "${outworkSupplierQuery.trim()}"`}</button></div>}</label>
                     <label><span>Date sent out</span><input type="date" value={outworkDateSentOut} onChange={(e) => setOutworkDateSentOut(e.target.value)} /></label>
                     <div className="wide">
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2620,7 +2753,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   return <tr key={item.id}>
                     <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /></td>
                     <td><input type="number" min={1} value={editOutworkQuantity} onChange={(e) => setEditOutworkQuantity(e.target.value)} style={{ width: 70 }} /></td>
-                    <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierOptions.length > 0 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</td>
+                    <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={editOutworkCreatingSupplier} onClick={() => void createEditOutworkSupplier()}><Plus size={12} style={{ verticalAlign: "-2px" }} /> {editOutworkCreatingSupplier ? "Creating…" : `Create supplier "${editOutworkSupplierQuery.trim()}"`}</button></div>}</td>
                     <td><input type="date" value={editOutworkDateSentOut} onChange={(e) => setEditOutworkDateSentOut(e.target.value)} /></td>
                     <td>{outworkDaysOutstanding(item)}</td>
                     <td><span className={`status-pill ${item.status === "RECEIVED" ? "" : "neutral"}`}>{text(item.status).replaceAll("_", " ")}</span></td>
@@ -2703,8 +2836,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <aside className="form-drawer compact-dialog">
                 <header><div><p className="eyebrow">Outwork</p><h2>Delivery note</h2><p className="muted small-line">Job {deliveryNote.jobNumber}</p></div><button type="button" onClick={() => setDeliveryNote(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
-                  <p className="muted small-line">Supplier: {deliveryNote.supplierName}</p>
-                  <p className="muted small-line">Date sent out: {deliveryNote.dateSentOut ? new Date(deliveryNote.dateSentOut).toLocaleDateString("en-ZA") : "—"}</p>
+                  {/* 2026-09-16 — matches printDeliveryNote's own layout:
+                      bold name + stacked address lines instead of a
+                      "Supplier: " line, and "Date captured" instead of
+                      "Date sent out". */}
+                  <p className="muted small-line wide" style={{ fontWeight: 700, color: "var(--ink-900)" }}>{deliveryNote.supplierName}</p>
+                  {deliveryNote.supplierAddressLines.map((l, idx) => <p key={idx} className="muted small-line wide">{l}</p>)}
+                  {deliveryNote.supplierVat && <p className="muted small-line wide">VAT: {deliveryNote.supplierVat}</p>}
+                  <p className="muted small-line wide">Date captured: {deliveryNote.dateCaptured ? new Date(deliveryNote.dateCaptured).toLocaleDateString("en-ZA") : "—"}</p>
                   <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>
                     {deliveryNote.items.map((i, idx) => <tr key={idx}><td>{i.description}</td><td>{i.quantity}</td><td></td></tr>)}
                   </tbody></table></div>
@@ -2714,7 +2853,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       fill in on screen. */}
                 </div>
                 <footer className="detail-actions">
-                  <button type="button" className="gold-button" onClick={printDeliveryNote}>Print</button>
+                  <button type="button" className="gold-button" onClick={() => void printDeliveryNote()}>Print</button>
                   <button type="button" className="quiet-button" onClick={() => setDeliveryNote(null)}>Close</button>
                 </footer>
               </aside>

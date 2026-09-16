@@ -180,7 +180,10 @@ export const PART_IMPORT_FIELDS: ImportFieldDef[] = [
   { key: "partNumber", label: "Part number", required: true, aliases: ["Part #", "Part No", "PartNumber", "SKU"] },
   { key: "description", label: "Description", required: true, aliases: ["Part Description"] },
   { key: "manufacturerName", label: "Manufacturer", aliases: ["Manufacturer Name", "Brand", "Make"] },
-  { key: "manufacturerPartNumber", label: "Manufacturer part number", aliases: ["Mfr Part Number", "OEM Part Number", "Manufacturer Part #"] },
+  // manufacturerPartNumber column removed — 2026-09-16 user request:
+  // "remove manufacturer part number from add import parts as its not
+  // used." Also dropped from the template download and the mapping in
+  // service.ts's importParts.
   { key: "category", label: "Category", aliases: [] },
   { key: "unitOfMeasure", label: "Unit of measure", aliases: ["UOM", "Unit"] },
   // 2026-09-11 — user request: importing parts had no way to seed opening

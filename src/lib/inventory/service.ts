@@ -1061,7 +1061,9 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         manufacturer: { select: { name: true } },
         taxCode: { select: { code: true } },
         binLocation: { select: { id: true, code: true, name: true } },
-        stockBalances: stockBalanceWhere ? { where: stockBalanceWhere } : true,
+        // location select added 2026-09-16 — see binLocationLabel's own
+        // comment below for why.
+        stockBalances: { where: stockBalanceWhere, include: { location: { select: { code: true, name: true } } }, orderBy: { location: { code: "asc" } } },
       },
       orderBy: { partNumber: "asc" },
     }),
@@ -1097,7 +1099,16 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         taxCodeId: p.taxCodeId,
         taxCodeLabel: p.taxCode?.code ?? null,
         binLocationId: p.binLocationId,
-        binLocationLabel: p.binLocation ? `${p.binLocation.name} (${p.binLocation.code})` : null,
+        // 2026-09-16 — user request: "Part numbers can have multiple bin
+        // locations, reference bin locations next to each other comma
+        // seperated." A part's real bin locations are wherever it
+        // actually has stock (StockBalance, already multi-location — see
+        // that model's own comment), not just Part.binLocationId's single
+        // "default bin" assigned at creation. So this now lists every
+        // location the part currently has stock in, comma-separated,
+        // falling back to the single default bin only for a part with no
+        // stock anywhere yet (e.g. just created).
+        binLocationLabel: buildBinLocationLabel(p.stockBalances, p.binLocation),
         reorderMinimum: p.reorderMinimum?.toString() ?? null,
         reorderMaximum: p.reorderMaximum?.toString() ?? null,
         reorderQuantity: p.reorderQuantity?.toString() ?? null,
@@ -1115,6 +1126,18 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
     page,
     pageSize,
   };
+}
+
+// Shared by listInventoryPositions and getInventoryDetail — see the
+// binLocationLabel comment on each for why this exists. Only balances with
+// stock on hand are listed (a zero-quantity StockBalance row, e.g. after a
+// full transfer out, isn't a location the part is meaningfully "in"
+// anymore); a part with no stock anywhere yet falls back to its single
+// assigned default bin, same as before this change.
+function buildBinLocationLabel(balances: { quantityOnHand: Prisma.Decimal; location: { code: string; name: string } }[], defaultBin: { code: string; name: string } | null) {
+  const withStock = balances.filter((b) => b.quantityOnHand.greaterThan(0));
+  if (withStock.length > 0) return withStock.map((b) => `${b.location.name} (${b.location.code})`).join(", ");
+  return defaultBin ? `${defaultBin.name} (${defaultBin.code})` : null;
 }
 
 function sumBalances(balances: { quantityOnHand: Prisma.Decimal; quantityReserved: Prisma.Decimal }[]) {
@@ -1259,7 +1282,10 @@ export async function getInventoryDetail(ctx: RequestContext, partId: string) {
       category: part.category,
       active: part.active,
       notes: part.notes,
-      binLocationLabel: part.binLocation ? `${part.binLocation.name} (${part.binLocation.code})` : null,
+      // 2026-09-16 — same "list every location with stock, not just the
+      // single default bin" change as listInventoryPositions above; see
+      // buildBinLocationLabel's comment.
+      binLocationLabel: buildBinLocationLabel(part.stockBalances, part.binLocation),
       defaultSellingPrice: viewCost ? (part.defaultSellingPrice?.toString() ?? null) : null,
       reorderMinimum: part.reorderMinimum?.toString() ?? null,
       reorderMaximum: part.reorderMaximum?.toString() ?? null,
@@ -1342,6 +1368,29 @@ export async function listStorageLocationOptions(ctx: RequestContext) {
     orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
   });
   return { items: locations };
+}
+
+// Manufacturer options for Add/Edit Part's Manufacturer dropdown —
+// 2026-09-16 user report: "When creating a new part in Part stock,
+// manufacturer field not populating." Same root cause and same fix as
+// listStorageLocationOptions right above: the dropdown was populated from
+// the master-data manufacturers endpoint, gated behind a *separate*
+// permission (INVENTORY/MANUFACTURERS_VIEW — see src/lib/master-data/
+// service.ts's policy table) from the one that gates Stock Levels itself
+// (INVENTORY_VIEW). A user who can open Stock Levels and create parts but
+// wasn't separately granted Manufacturers admin access got a 403 from that
+// fetch, which StockLevelsWorkspace's loadOptions() silently swallows, so
+// the dropdown just stayed empty (only the blank "—" option) with no
+// visible error. This gives the same active manufacturers, scoped to the
+// permission that already gates this page.
+export async function listManufacturerOptions(ctx: RequestContext) {
+  requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  const manufacturers = await prisma.manufacturer.findMany({
+    where: { companyId: ctx.companyId, active: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  return { items: manufacturers };
 }
 
 // ============================================================
