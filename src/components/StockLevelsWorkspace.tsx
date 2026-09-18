@@ -102,6 +102,22 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 }
 
+// 2026-09-18 — user report: "selling price decimals problem" on Add/Edit
+// Part. defaultPurchaseCost/defaultSellingPrice are Decimal(19,4) columns
+// (see prisma/schema.prisma), so Postgres always returns them with exactly
+// four decimal places, and listInventoryPositions/getInventoryDetail just
+// call .toString() on that Decimal — a part saved with "1200" round-trips
+// back as "1200.0000" the moment you reopen it to edit. Trimming to a
+// normal 2dp currency string here (only when repopulating the edit form —
+// the value stored in the database is untouched) fixes the display without
+// touching precision anywhere quantities actually need more than 2dp
+// (reorder min/max/quantity are left alone).
+function formatMoneyForInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : value;
+}
+
 function printPickSlip(ps: PickSlipData) {
   const w = window.open("", "_blank", "width=800,height=900");
   if (!w) return; // popup blocked — nothing more we can do here
@@ -215,8 +231,19 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  // 2026-09-18 — user report: "when saving a part number, it jumps to the
+  // top of the table again, does not carry on where we were." Root cause
+  // (same pattern already fixed once for JobWorkspace.tsx's scroll-jump
+  // bug): every load() call, including the background refresh right after
+  // a save/delete/adjust, set loading=true, which swaps the entire tbody
+  // for a single "Loading…" row — the table collapses to one row height and
+  // back, which loses the page's/container's scroll position. `silent`
+  // lets a post-action refresh re-fetch without ever showing that
+  // full-table loading state, so the existing rows (and scroll position)
+  // stay put until the fresh data is ready to swap in.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError("");
     try {
       const params = new URLSearchParams({ q, stockState, page: String(page), pageSize: "25" });
       const response = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
@@ -224,7 +251,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       if (!response.ok) throw new Error(body.error?.message || "Unable to load stock levels.");
       setData(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load stock levels."); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }, [q, stockState, page]);
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
 
@@ -279,7 +306,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       partNumber: row.partNumber, description: row.description,
       manufacturerId: row.manufacturerId || "",
       category: row.category || "", unitOfMeasure: row.unitOfMeasure || "EA", taxCodeId: row.taxCodeId || "",
-      defaultPurchaseCost: row.cost || "", defaultSellingPrice: row.sellingPrice || "",
+      defaultPurchaseCost: formatMoneyForInput(row.cost), defaultSellingPrice: formatMoneyForInput(row.sellingPrice),
       reorderMinimum: row.reorderMinimum || "", reorderMaximum: row.reorderMaximum || "", reorderQuantity: row.reorderQuantity || "",
       notes: row.notes || "", active: row.active, binLocationId: row.binLocationId || "",
     });
@@ -320,7 +347,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to save the part.");
       setOpen(false);
-      await load();
+      await load(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to save the part."); }
     finally { setSaving(false); }
   }
@@ -332,7 +359,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const r = await fetch(`/api/v1/master-data/parts/${row.id}`, { method: "DELETE" });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to delete the part.");
-      await load();
+      await load(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to delete the part."); }
     finally { setRowBusy(null); }
   }
@@ -345,7 +372,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to delete all parts.");
       setPage(1);
-      await load();
+      await load(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to delete all parts."); }
     finally { setDeletingAll(false); }
   }
@@ -418,7 +445,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       if (!r.ok) throw new Error(body.error?.message || "Unable to create the picking slip.");
       setPickBarOpen(false);
       clearPick();
-      await load();
+      await load(true);
       if (body.pickSlip) setPickResult(body.pickSlip);
       if (body.backorderCount > 0) setPickNotice({ pickedCount: body.pickedCount, backorderCount: body.backorderCount });
     } catch (e) { setPickError(e instanceof Error ? e.message : "Unable to create the picking slip."); }
@@ -468,7 +495,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to adjust stock.");
       setAdjustRow(null);
-      await load();
+      await load(true);
     } catch (e) { setAdjustError(e instanceof Error ? e.message : "Unable to adjust stock."); }
     finally { setAdjustSaving(false); }
   }
@@ -791,9 +818,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
       {/* Add or Import Part */}
       {addImportOpen && (
-        <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { setAddImportOpen(false); void load(); } }}>
+        <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { setAddImportOpen(false); void load(true); } }}>
           <aside className="form-drawer wide-drawer" aria-modal="true">
-            <header><div><p className="eyebrow">Stock Levels</p><h2>Add or import parts</h2></div><button aria-label="Close" onClick={() => { setAddImportOpen(false); void load(); }}><X size={18} /></button></header>
+            <header><div><p className="eyebrow">Stock Levels</p><h2>Add or import parts</h2></div><button aria-label="Close" onClick={() => { setAddImportOpen(false); void load(true); }}><X size={18} /></button></header>
             <div className="drawer-body">
               {addImportTab === "choose" ? (
                 <div className="add-import-choices">
@@ -841,8 +868,8 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                     {taxCodes.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                   </select>
                 </label>
-                <label><span>Default purchase cost</span><input type="number" step="0.0001" value={form.defaultPurchaseCost} onChange={(e) => setForm((f) => ({ ...f, defaultPurchaseCost: e.target.value }))} /></label>
-                <label><span>Default selling price</span><input type="number" step="0.0001" value={form.defaultSellingPrice} onChange={(e) => setForm((f) => ({ ...f, defaultSellingPrice: e.target.value }))} /></label>
+                <label><span>Default purchase cost</span><input type="number" step="0.01" value={form.defaultPurchaseCost} onChange={(e) => setForm((f) => ({ ...f, defaultPurchaseCost: e.target.value }))} /></label>
+                <label><span>Default selling price</span><input type="number" step="0.01" value={form.defaultSellingPrice} onChange={(e) => setForm((f) => ({ ...f, defaultSellingPrice: e.target.value }))} /></label>
                 <label><span>Reorder minimum</span><input type="number" step="0.0001" value={form.reorderMinimum} onChange={(e) => setForm((f) => ({ ...f, reorderMinimum: e.target.value }))} /></label>
                 <label><span>Reorder maximum</span><input type="number" step="0.0001" value={form.reorderMaximum} onChange={(e) => setForm((f) => ({ ...f, reorderMaximum: e.target.value }))} /></label>
                 <label><span>Reorder quantity</span><input type="number" step="0.0001" value={form.reorderQuantity} onChange={(e) => setForm((f) => ({ ...f, reorderQuantity: e.target.value }))} /></label>

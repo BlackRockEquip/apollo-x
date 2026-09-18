@@ -126,20 +126,36 @@ a { color: inherit; text-decoration: none; }
    can select 3 line graph views"). Up to 3 cards, each one AnalyticsLineChart
    (a single-series inline-SVG line chart — see that component's own header
    comment for the dataviz-skill mark specs it follows). */
-.analytics-chart-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+/* 2026-09-18 — "combine line graphs into 1 interactive graph": this grid
+   used to hold up to 3 side-by-side one-metric cards (repeat(3, ...)); now
+   dashboard/page.tsx always renders exactly one CombinedAnalyticsChart card
+   plotting every selected metric together, so this is a single full-width
+   slot rather than a 3-column layout. */
+.analytics-chart-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
 .analytics-chart-card { border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; box-shadow: 0 2px 7px rgba(15,23,42,.035); padding: 14px; }
 .analytics-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .analytics-chart-header h3 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--ink-900); }
+.analytics-chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; }
+.analytics-chart-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--ink-500); }
+.analytics-chart-legend-swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
 .analytics-chart-svg { display: block; width: 100%; height: auto; outline: none; }
 .analytics-chart-svg:focus-visible { box-shadow: 0 0 0 2px var(--gold-500); border-radius: 6px; }
-.metric-card { position: relative; display: grid; min-height: 145px; border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; padding: 18px; box-shadow: 0 2px 7px rgba(15,23,42,.035); }
+.metric-card { position: relative; display: grid; min-height: 145px; border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; padding: 18px; box-shadow: 0 2px 7px rgba(15,23,42,.035); text-align: left; }
 .metric-card.compact { min-height: 108px; padding: 14px; }
 /* 2026-09-14 — dashboard widget cards became <Link>s ("make it clickable to
    take a user to the relevant place"); .metric-card itself stays generic
    (still used for a couple of non-clickable cards) so this is a
-   :hover/cursor affordance layered on only the ones that are actual links. */
-a.metric-card.clickable-metric-card { cursor: pointer; transition: box-shadow .12s ease, border-color .12s ease; }
-a.metric-card.clickable-metric-card:hover { border-color: var(--gold-500); box-shadow: 0 4px 14px rgba(15,23,42,.08); }
+   :hover/cursor affordance layered on only the ones that are actual links.
+   2026-09-18 — "Outstanding parts to be left aligned": that one card is a
+   <button> (it toggles the jobs panel below instead of navigating — see
+   dashboard/page.tsx), not an <a>, so it never matched this a-only selector
+   and fell back to the browser's own default button stylesheet, which
+   center-aligns a <button>'s text — every other card (an <a>) has no such
+   default, so only this one card looked centered. Selector widened to catch
+   both, and the explicit text-align: left above stops it depending on the
+   element's own UA default either way. */
+a.metric-card.clickable-metric-card, button.metric-card.clickable-metric-card { cursor: pointer; transition: box-shadow .12s ease, border-color .12s ease; }
+a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-card:hover { border-color: var(--gold-500); box-shadow: 0 4px 14px rgba(15,23,42,.08); }
 .metric-card svg { color: var(--blue-600); }
 .metric-card span { align-self: end; color: var(--ink-500); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .metric-card strong { font-size: 18px; letter-spacing: -.025em; }

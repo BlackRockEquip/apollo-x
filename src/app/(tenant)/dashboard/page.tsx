@@ -3,7 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async dashboard resource loading intentionally mirrors existing workspace patterns */
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AnalyticsLineChart, type AnalyticsSeriesPoint } from "@/components/AnalyticsLineChart";
+import { CombinedAnalyticsChart, type AnalyticsSeriesPoint } from "@/components/AnalyticsLineChart";
 
 type Widget = { key: string; enabled: boolean; order: number };
 type OutstandingPartLine = { id: string; job: { id: string; jobNumber: string | null; customer: { name: string } | null } | null };
@@ -15,7 +15,7 @@ type OutstandingPartLine = { id: string; job: { id: string; jobNumber: string | 
 // backend already picked (up to 3, dashboard/service.ts's
 // DASHBOARD_ANALYTICS_METRIC_DEFS).
 type AnalyticsSeries = { key: string; label: string; points: AnalyticsSeriesPoint[] };
-type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; pexStatus: Record<string, number>; supportTickets: Record<string, number>; analyticsSeries: AnalyticsSeries[] };
+type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; procurementOpen: number; pexStatus: Record<string, number>; supportTickets: Record<string, number>; analyticsSeries: AnalyticsSeries[] };
 
 // 2026-09-14 — "Update the dashboard and make it clickable to take a user
 // to the relevant place" (explicit request). Every widget card is now a
@@ -25,11 +25,17 @@ type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ 
 // already computing — they share a query with jobs-summary/low-stock
 // respectively — but the old inline ternary chain never rendered: they fell
 // through its `default` to an empty string, so enabling either from
-// Settings > Dashboard produced a blank card. "procurement-summary" and
-// "notifications" are left as-is (no destination page/data source exists
-// for either yet — Procurement/RFQs and Notifications are both still
-// permission-only module stubs, see codebase-overview.md's module list) —
-// not something "make it clickable" can fix on its own.
+// Settings > Dashboard produced a blank card. "notifications" is left as-is
+// (Notifications is still a permission-only module stub with no data source
+// or destination page — see codebase-overview.md's module list).
+//
+// 2026-09-18 — "procurement-summary" ("What is procurement summary on
+// dashboard?") turned out to be the same kind of dead widget: it was gated
+// behind a module ("PROCUREMENT") nothing else in the app ever grants, had
+// no case in widgetValue below (always showed "—"), and had no entry here.
+// dashboard/service.ts now computes a real count (open outwork items +
+// RFQs still awaiting a quote) and regates it to match where that data
+// actually lives — see that file's DASHBOARD_WIDGET_DEFS comment.
 const WIDGET_HREF: Record<string, string> = {
   "jobs-summary": "/jobs",
   "wip-status-counts": "/jobs?view=wip",
@@ -37,6 +43,7 @@ const WIDGET_HREF: Record<string, string> = {
   "low-stock": "/inventory",
   "inventory-alerts": "/inventory",
   "outstanding-parts": "/jobs?view=wip",
+  "procurement-summary": "/suppliers/outwork",
   "pex-status": "/pex-tracking",
   "support-tickets": "/support",
 };
@@ -64,6 +71,8 @@ function widgetValue(key: string, data: DashboardData | null): string {
       return String((data?.recentJobs || []).length);
     case "outstanding-parts":
       return String((data?.outstandingParts || []).length);
+    case "procurement-summary":
+      return String(data?.procurementOpen ?? 0);
     default:
       return "—";
   }
@@ -150,9 +159,14 @@ export default function DashboardPage() {
           </div>
         </section>
       )}
+      {/* 2026-09-18, user request: "combine line graphs into 1 interactive
+          graph" — was one AnalyticsLineChart card per selected metric in
+          this grid; now one CombinedAnalyticsChart plotting all of them
+          together (see that component's own header comment for why a
+          single shared Y-axis is correct here). */}
       {(data?.analyticsSeries?.length ?? 0) > 0 && (
         <section className="analytics-chart-grid">
-          {data!.analyticsSeries.map((series) => <AnalyticsLineChart key={series.key} title={series.label} points={series.points} />)}
+          <CombinedAnalyticsChart series={data!.analyticsSeries} />
         </section>
       )}
     </>}

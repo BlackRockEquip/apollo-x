@@ -40,10 +40,16 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
         <div className="stat-card"><strong>{detail.quantityAvailable}</strong><small>Available</small></div>
       </section>
 
+      {/* 2026-09-18 — defaultSellingPrice is a Decimal(19,4) column, so it
+          always round-trips as a fixed 4-decimal string (e.g. "1200.0000")
+          — same "selling price decimals problem" reported on the Add/Edit
+          Part form (see formatMoneyForInput in StockLevelsWorkspace.tsx).
+          Formatted to 2dp here for display only; the stored value is
+          untouched. */}
       {(detail.part.defaultSellingPrice ?? detail.part.reorderMinimum) &&
        (ctx.tenantPermissions.has("INVENTORY_VIEW_COST" as never) || ctx.platformPermissions.size > 0) && (
         <section className="stat-card-inline mb-6">
-          <strong>Unit Cost: {detail.part.defaultSellingPrice}</strong>
+          <strong>Unit Cost: {detail.part.defaultSellingPrice ? Number(detail.part.defaultSellingPrice).toFixed(2) : detail.part.defaultSellingPrice}</strong>
           <small>Cost data is restricted — finance roles only.</small>
         </section>
       )}

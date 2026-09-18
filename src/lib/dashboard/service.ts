@@ -26,7 +26,19 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
   { key: "low-stock", label: "Low stock", module: "INVENTORY", permission: "INVENTORY_VIEW" },
   { key: "pex-status", label: "PEX status", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW" },
   { key: "outstanding-parts", label: "Outstanding parts", module: "INVENTORY", permission: "INVENTORY_VIEW" },
-  { key: "procurement-summary", label: "Procurement / outwork", module: "PROCUREMENT", permission: "REPORTS_VIEW" },
+  // 2026-09-18 — user asked "What is procurement summary on dashboard?"
+  // while investigating it: it turned out to be a dead stub. Its gate
+  // (module: "PROCUREMENT", permission: "REPORTS_VIEW") didn't match where
+  // the actual outwork/RFQ screens live (both /suppliers/outwork and
+  // /suppliers/rfq require JOBS_WIP/"JOBS_VIEW", same as the rest of
+  // Jobs & WIP — nothing in the app grants/checks a "PROCUREMENT" module
+  // access flag at all, so this widget was effectively unreachable for
+  // everyone), getDashboardData never computed a value for it (widgetValue
+  // in dashboard/page.tsx fell through to "—" for it), and it had no
+  // WIDGET_HREF, so even on the rare account where it *did* show up it
+  // wasn't clickable. Regated to match its real data source and wired up
+  // below (procurementOpen) — see dashboard/page.tsx for the display side.
+  { key: "procurement-summary", label: "Procurement / outwork", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "support-tickets", label: "Support tickets", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
   { key: "notifications", label: "Notifications", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];
@@ -210,7 +222,7 @@ export async function getDashboardData(ctx: RequestContext) {
   const { widgets, analyticsCharts } = await getDashboardConfig(ctx);
   const enabled = widgets.filter((row) => row.enabled).map((row) => row.key);
 
-  const [jobsByStatus, recentJobs, lowStock, outstandingPartLines, pexOpen, tickets] = await Promise.all([
+  const [jobsByStatus, recentJobs, lowStock, outstandingPartLines, pexOpen, tickets, procurementOpen] = await Promise.all([
     enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts")
       ? prisma.job.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
@@ -238,6 +250,19 @@ export async function getDashboardData(ctx: RequestContext) {
     enabled.includes("support-tickets")
       ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
+    // "Procurement / outwork" — see the widget def's comment above for why
+    // this needed fixing. "Open" = still needs following up: an outwork
+    // item not yet back from the supplier, or an RFQ that hasn't come back
+    // with a quote yet (job RFQs: anything short of QUOTED; general/job-less
+    // RFQs: anything short of RECEIVED — SKIPPED counts as open on both
+    // since it means "still expecting a phone/in-person quote", not done).
+    enabled.includes("procurement-summary")
+      ? Promise.all([
+          prisma.outworkItem.count({ where: { companyId, status: "SENT_OUT" } }),
+          prisma.jobRfqRequest.count({ where: { companyId, status: { not: "QUOTED" } } }),
+          prisma.generalRfqRequest.count({ where: { companyId, status: { not: "RECEIVED" } } }),
+        ]).then(([outwork, jobRfq, generalRfq]) => outwork + jobRfq + generalRfq)
+      : Promise.resolve(0),
   ]);
 
   // 2026-09-15, user request: "add a linegraph that is customizable for
@@ -260,6 +285,7 @@ export async function getDashboardData(ctx: RequestContext) {
       recentJobs,
       lowStock: lowStock.map((part) => ({ ...part, balance: part.stockBalances[0] ?? null })),
       outstandingParts: outstandingPartLines,
+      procurementOpen,
       pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),
       supportTickets: tickets.reduce<Record<TicketStatus | string, number>>((acc, row) => { acc[String(row.status)] = row._count._all; return acc; }, {}),
       // 2026-09-15, user request: "add a linegraph that is customizable for
