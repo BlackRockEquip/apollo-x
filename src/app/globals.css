@@ -129,9 +129,16 @@ a { color: inherit; text-decoration: none; }
 /* 2026-09-18 — "combine line graphs into 1 interactive graph": this grid
    used to hold up to 3 side-by-side one-metric cards (repeat(3, ...)); now
    dashboard/page.tsx always renders exactly one CombinedAnalyticsChart card
-   plotting every selected metric together, so this is a single full-width
-   slot rather than a 3-column layout. */
-.analytics-chart-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+   plotting every selected metric together.
+   2026-09-18 (same day, follow-up) — "make the graph half page width, not
+   full page": that single card was still stretching across the whole grid
+   (grid-template-columns: 1fr). Back to a 2-column grid so the one card
+   only fills the first slot (half the page) with the second slot left
+   empty, same trick used to shrink it without touching the chart's own SVG
+   sizing (it scales to its container via width:100%/height:auto — see
+   AnalyticsLineChart.tsx). The max-width:950px override below still
+   collapses it to full width on narrow screens. */
+.analytics-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .analytics-chart-card { border: 1px solid var(--ink-150); border-radius: var(--radius); background: white; box-shadow: 0 2px 7px rgba(15,23,42,.035); padding: 14px; }
 .analytics-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .analytics-chart-header h3 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--ink-900); }

@@ -120,16 +120,31 @@ function bucketKeyFor(date: Date): string {
 // field that defines "when this happened" for that metric, scoped to the
 // trailing window; bucketing into months happens once, generically, in
 // buildMetricSeries below rather than a separate SQL groupBy per metric.
+//
+// 2026-09-18, user request: "Jobs created per month, use date in as
+// reference aswell for the other 2 lines" — then clarified: "Jobs created
+// per month - Date in field / jobs completed per month - Delivery Date
+// field." jobs-created and warranty-jobs bucket by Job.dateReceived ("Date
+// in," the date a job physically arrived); jobs-completed buckets by
+// Job.deliveryDate (the date the finished job actually went back out to the
+// customer — a plain form field, independent of the job status stepper,
+// see its own comment above the DeliveryType enum in schema.prisma) rather
+// than createdAt/closedAt as each used before. Each metric's own filter
+// (completed = closedAt set i.e. actually closed, warranty = type WARRANTY)
+// is unchanged — only the date used to place a job on the X axis changed,
+// so jobs-completed still only counts jobs that are actually closed, just
+// bucketed by delivery date rather than when Close was clicked. Both
+// dateReceived and deliveryDate are optional (see schema.prisma), so a job
+// missing the relevant one is simply excluded from that series, same as
+// jobs-completed already excluded jobs with no closedAt. support-tickets-
+// opened is untouched — it isn't a job metric and has neither field.
 const ANALYTICS_METRIC_FETCHERS: Record<DashboardAnalyticsMetricKey, (companyId: string, since: Date) => Promise<Date[]>> = {
   "jobs-created": async (companyId, since) =>
-    (await prisma.job.findMany({ where: { companyId, createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
-  // "Completed" here means actually closed (Job.closedAt set — see
-  // schema.prisma's Job.closedAt/closedById), not just sitting in the
-  // COMPLETE status without having gone through Close yet.
+    (await prisma.job.findMany({ where: { companyId, dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
   "jobs-completed": async (companyId, since) =>
-    (await prisma.job.findMany({ where: { companyId, closedAt: { gte: since } }, select: { closedAt: true } })).map((row) => row.closedAt).filter((d): d is Date => d != null),
+    (await prisma.job.findMany({ where: { companyId, deliveryDate: { gte: since }, closedAt: { not: null } }, select: { deliveryDate: true } })).map((row) => row.deliveryDate).filter((d): d is Date => d != null),
   "warranty-jobs": async (companyId, since) =>
-    (await prisma.job.findMany({ where: { companyId, type: "WARRANTY", createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
+    (await prisma.job.findMany({ where: { companyId, type: "WARRANTY", dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
   "support-tickets-opened": async (companyId, since) =>
     (await prisma.supportTicket.findMany({ where: { companyId, createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
 };
