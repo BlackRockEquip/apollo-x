@@ -323,6 +323,16 @@ enum JobActivityType {
   ATTACHMENT_DELETED
 }
 
+// 2026-09-19 — user request: a notifications bell (always visible, next to
+// Support) plus its own page, and an admin/manager notification whenever a
+// parts list is imported. See Notification below for the model this
+// backs. Kept as its own small enum (not reusing JobActivityType) since a
+// notification isn't tied to a job the way every JobActivityType value is
+// — PARTS_LIST_IMPORTED below fires from Stock Levels' import, not a job.
+enum NotificationType {
+  PARTS_LIST_IMPORTED
+}
+
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
 // at the user's explicit request, to match ModApp's simpler single-record
 // PexRecord model exactly — one mutable row per supply/return cycle rather
@@ -477,6 +487,11 @@ model UserIdentity {
   // Generic object-storage-backed attachments — added 2026-09-14, see
   // Attachment model below.
   attachmentsUploaded  Attachment[]            @relation("AttachmentUploadedBy")
+  // Notifications — added 2026-09-19 (user request: a bell icon next to
+  // Support, always visible, with its own page; and a notification to
+  // admins/managers whenever a parts list is imported). See Notification
+  // below.
+  notifications        Notification[]
 }
 
 model Company {
@@ -537,6 +552,7 @@ model Company {
   supportTickets    SupportTicket[]
   dashboardConfigs  UserDashboardConfig[]
   tableColumnConfigs UserTableColumns[]
+  notifications     Notification[]
 }
 
 // The top-level subscription record: which Product(s) an organization is
@@ -2068,6 +2084,36 @@ model JobActivity {
   actor       UserIdentity?   @relation("JobActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([companyId, jobId, createdAt])
+}
+
+// 2026-09-19 — user request: "notifications move to icon next to the
+// support link at the top of page, always visible from every page, once
+// clicked will have its own page that a user can view all notifications"
+// plus "when users load part list onto system, notification should be
+// sent to admins/managers." One row per recipient (not one shared row with
+// a read-by list) — simplest way to give each admin/manager their own
+// independent read state, same pattern as most notification systems.
+// link is an optional in-app path (e.g. "/inventory") the bell/page can
+// navigate to when a notification is clicked — nullable since not every
+// notification will need one.
+model Notification {
+  id        String           @id @default(cuid())
+  companyId String
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  user      UserIdentity     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // userId + readAt — the unread-count query (companyId, userId, readAt:
+  // null) is the one this needs to be fastest for, since it's the query
+  // behind the always-visible bell badge on every single page load.
+  @@index([companyId, userId, readAt])
 }
 
 model JobFieldServiceReport {

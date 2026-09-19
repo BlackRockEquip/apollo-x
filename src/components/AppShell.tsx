@@ -10,6 +10,7 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { TENANT_ROLE_LABELS } from "@/lib/constants";
 import { LogoutButton } from "@/components/LogoutButton";
 import { SupportExitButton } from "@/components/SupportExitButton";
+import { NotificationBell } from "@/components/NotificationBell";
 import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 
 type NavItem = { key: string; label: string; href: string; module: ModuleKey; icon: typeof LayoutDashboard };
@@ -42,7 +43,10 @@ const SETTINGS_ICONS: Record<string, typeof LayoutDashboard> = {
   support: Headset,
 };
 const NAV_GROUPS: NavGroup[] = [
-  { key: "crm", label: "CRM", icon: Users, items: [{ key: "customers", label: "Customers", href: "/customers", module: "CUSTOMERS", icon: Users }, { key: "suppliers", label: "Suppliers", href: "/suppliers", module: "SUPPLIERS", icon: Building2 }] },
+  // 2026-09-19 — user request: rename the "CRM" sidebar group to
+  // "Customers/Suppliers" (clearer than the internal acronym for what's
+  // actually just those two pages).
+  { key: "crm", label: "Customers/Suppliers", icon: Users, items: [{ key: "customers", label: "Customers", href: "/customers", module: "CUSTOMERS", icon: Users }, { key: "suppliers", label: "Suppliers", href: "/suppliers", module: "SUPPLIERS", icon: Building2 }] },
   { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", icon: PackageOpen }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", icon: Repeat }] },
   // 2026-09-10 — Parts Catalog folded into Stock Levels (single merged
   // page at /inventory: catalog fields + stock columns + bin location +
@@ -85,7 +89,11 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
       </aside>
       <div className="workspace">
         {context.supportAccessId && <div className="support-banner"><strong>Platform support context</strong><span>{companyName} · {context.supportMode === "READ_ONLY" ? "Read-only access" : "Read-write access"}</span><Link href="/platform" className="table-action"><ShieldCheck size={14} /> Platform Admin</Link><SupportExitButton /></div>}
-        <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div></div><div className="topbar-user"><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><LogoutButton /></div></header>
+        <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div></div>{/* 2026-09-19, user request: bell icon next to the Support link, always
+    visible from every page — AppShell renders on every tenant page, so
+    placing it here (rather than on any one page) is what makes it
+    "always visible from every page". See NotificationBell.tsx. */}
+<div className="topbar-user"><NotificationBell /><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><LogoutButton /></div></header>
         <main className="page-content">{children}</main>
       </div>
     </div>

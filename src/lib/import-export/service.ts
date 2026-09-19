@@ -9,6 +9,7 @@ import { receiveStock } from "@/lib/inventory/service";
 import { receiptInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
+import { notifyAdminsAndManagers } from "@/lib/notifications/service";
 import { ALL_JOB_STATUSES } from "@/lib/jobs/validation";
 import { CUSTOMER_IMPORT_FIELDS, SUPPLIER_IMPORT_FIELDS, JOB_IMPORT_FIELDS, PART_IMPORT_FIELDS, type ImportFieldDef, type ImportExportKind } from "./fields";
 import { ALLOWED_IMPORT_MIME_TYPES, MAX_IMPORT_FILE_BYTES, importFileInput, importRowsInput, importMapping } from "./validation";
@@ -794,6 +795,22 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     }
 
     rowResults.push({ label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` });
+  }
+
+  // 2026-09-19 — user request: "when users load part list onto system,
+  // notification should be sent to admins/managers." Only fires when the
+  // import actually created something — an all-skipped/all-error import
+  // (e.g. a file with nothing but blank part numbers) has nothing an
+  // admin or manager needs to know about. Fire-and-forget — see
+  // notifyAdminsAndManagers's own comment for why this never throws.
+  if (created > 0) {
+    void notifyAdminsAndManagers(
+      companyId,
+      "PARTS_LIST_IMPORTED",
+      "Parts list imported",
+      `${ctx.displayName} imported ${created} part${created === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} row${skipped === 1 ? "" : "s"} skipped)` : ""}.`,
+      "/inventory",
+    );
   }
 
   return { total: rows.length, created, updated: 0, skipped, rows: rowResults };

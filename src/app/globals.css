@@ -298,6 +298,16 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .quote-comparison-table tbody .table-action { display:inline-flex; align-items:center; gap:4px; }
 
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
+/* 2026-09-19 — notifications bell, always visible in the topbar next to
+   Support (see NotificationBell.tsx / AppShell.tsx). Positioned relative
+   so the unread-count badge can sit pinned to its top-right corner. */
+.notification-bell { position:relative; padding:4px; }
+.notification-badge { position:absolute; top:-6px; right:-8px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:var(--danger, #b3261e); color:#fff; font-size:10px; font-weight:750; line-height:16px; text-align:center; }
+/* Unread rows on the /notifications page (see NotificationsList.tsx) —
+   same .history-list article grid as Job's Activity history tab, just
+   with a highlighted background + bold title while unread. */
+.history-list article.notification-unread { background:#fff8e8; }
+.history-list article.notification-unread strong { color:#111; }
 .table-state { display:flex; min-height:140px; align-items:center; justify-content:center; gap:8px; color:var(--ink-500); font-size:12px; }
 .compact-empty-state { min-height: 84px; }
 /* 2026-09-16 — a colSpan empty-state <td> (e.g. "No PEX units in

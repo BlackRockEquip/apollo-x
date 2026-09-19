@@ -107,6 +107,28 @@ function requireJobsRead(ctx: RequestContext) {
   return ctx.companyId!;
 }
 
+// 2026-09-19 — "Mechanic Strip"/"Mechanic Assemble" fields (user request).
+// Job.stripMechanicId/buildMechanicId were already fully wired end to end
+// server-side (see getUserOrNull and its call sites in createJob/updateJob
+// below) — same "backend exists, no UI yet" gap as Date in before it. The
+// two new dropdowns need a list of assignable staff; listTenantUsers
+// (users/service.ts) requires USERS_MANAGE, an admin-only permission that
+// would repeat the exact permission-scoping mismatch already fixed twice
+// for manufacturers/storage locations (a user with ordinary JOBS_VIEW but
+// not separately granted Users admin access would get a silently empty
+// dropdown), so this is a lightweight JOBS_VIEW-gated list instead — same
+// pattern as listManufacturerOptions/listStorageLocationOptions in
+// inventory/service.ts.
+export async function listMechanicOptions(ctx: RequestContext) {
+  const companyId = requireJobsRead(ctx);
+  const memberships = await prisma.companyMembership.findMany({
+    where: { companyId, status: "ACTIVE", user: { active: true } },
+    select: { user: { select: { id: true, displayName: true } } },
+    orderBy: { user: { displayName: "asc" } },
+  });
+  return { items: memberships.map((m) => ({ id: m.user.id, label: m.user.displayName })) };
+}
+
 function notFound(): never {
   throw new Error("NOT_FOUND");
 }
@@ -145,11 +167,32 @@ async function getJobScoped(companyId: string, id: string) {
       closedBy: true,
       stripMechanic: true,
       buildMechanic: true,
-      // 2026-09-16 — kept for any historical reference, but the JobWorkspace
-      // UI no longer reads this list (see the plain `notes` scalar column
-      // added on Job itself, replacing the old add/edit/delete note list).
-      noteEntries: { include: { createdBy: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
-      activities: { include: { actor: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
+      // 2026-09-19 — user report: "sometimes it takes long to load when
+      // clicking to go into a job, is there a problem? check". Investigated
+      // getJobScoped (this query) as the prime suspect, since it's the one
+      // query every job-detail page load depends on. Found two unbounded
+      // includes that both grow without limit for the life of a job:
+      //
+      // 1. noteEntries — dropped entirely. The comment already on this line
+      //    said the JobWorkspace UI no longer reads this list (replaced by
+      //    the plain `notes` scalar column) — confirmed by grep, zero
+      //    references to `noteEntries` anywhere else in src/. It was still
+      //    being fetched (with a join to createdBy) on every single job
+      //    load for a value the UI throws away. The rows themselves aren't
+      //    touched — this only stops loading them here.
+      //
+      // 2. activities — this one IS shown (the History tab), so it can't
+      //    just be dropped, but it was unbounded too, and every autosave
+      //    save (JobWorkspace's 1200ms-debounced full-form autosave) calls
+      //    addActivity with a "Job details updated" entry on every save,
+      //    not only on a real change — see the call site further down in
+      //    this file. A job that's been actively worked over weeks/months
+      //    can easily accumulate hundreds of these, each one row this query
+      //    was pulling in full (plus its own actor join) on every load.
+      //    Capped to the most recent 100 (already ordered newest-first) —
+      //    plenty for the History tab, and bounds the worst case instead of
+      //    letting an old, heavily-edited job get slower to open forever.
+      activities: { take: 100, include: { actor: { select: { id: true, displayName: true, email: true } } }, orderBy: { createdAt: "desc" } },
       fieldServiceReport: true,
       warranty: true,
       components: true,

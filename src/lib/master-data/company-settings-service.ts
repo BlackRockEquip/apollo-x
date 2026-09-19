@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { deleteAttachment, storeAttachment } from "@/lib/attachments/service";
 const text = z.string().trim().max(500).optional().nullable();
@@ -23,6 +23,62 @@ export async function getCompanySettings(ctx: RequestContext) {
   const smtpConfigured = !!(s?.smtpHost && s?.smtpUsername && s?.smtpPassword && s?.smtpFromAddress);
   return { ...company, settings: s ? { ...s, smtpPassword: undefined, smtpConfigured } : s };
 }
+
+// 2026-09-19 — user report: "Fix logo display as its not pulling through"
+// on the outwork delivery note (and, it turns out, anywhere else something
+// other than AppShell's own sidebar <Image> tries to show it). Root cause:
+// GET /api/v1/company-settings/logo called the full getCompanySettings
+// above, gated behind COMPANY_SETTINGS_VIEW — an admin-only permission
+// that has nothing to do with viewing a company's own logo. A logo isn't
+// sensitive settings data; it's the same branding image already shown to
+// every signed-in member of the company in the sidebar. A user without
+// that separate admin permission got a silent 403 on the logo route
+// itself — same permission-scoping mismatch bug class already fixed for
+// manufacturers/storage locations/the procurement dashboard widget. This
+// lightweight check only confirms the caller belongs to a company
+// (requireTenant) — no admin permission required.
+export async function getCompanyLogoInfo(ctx: RequestContext) {
+  requireTenant(ctx);
+  const companyId = ctx.companyId!;
+  const settings = await prisma.companySettings.findUnique({ where: { companyId }, select: { logoMimeType: true } });
+  return { hasLogo: !!settings?.logoMimeType, companyId };
+}
+
+// 2026-09-19 — user request: print the company's own organization details
+// (name, address, VAT, registration number, contact, email) on the outwork
+// delivery note. Same reasoning as getCompanyLogoInfo above: this is
+// letterhead-style information that belongs on anything printed for a
+// company's own staff or a supplier, not admin-only settings, so it's
+// gated the same lightweight way rather than reusing getCompanySettings's
+// COMPANY_SETTINGS_VIEW gate (which would silently blank this out for
+// anyone printing a delivery note without also holding that separate admin
+// permission).
+export async function getCompanyPrintDetails(ctx: RequestContext) {
+  requireTenant(ctx);
+  const companyId = ctx.companyId!;
+  const company = await prisma.company.findFirstOrThrow({
+    where: { id: companyId },
+    select: {
+      legalName: true,
+      tradingName: true,
+      settings: { select: { registrationNumber: true, vatNumber: true, mainTelephone: true, mainEmail: true } },
+      addresses: { orderBy: [{ isPrimary: "desc" }, { type: "asc" }], take: 1 },
+    },
+  });
+  const address = company.addresses[0] ?? null;
+  const addressLines = address
+    ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v): v is string => Boolean(v && v.trim()))
+    : [];
+  return {
+    name: company.tradingName || company.legalName,
+    addressLines,
+    registrationNumber: company.settings?.registrationNumber ?? null,
+    vatNumber: company.settings?.vatNumber ?? null,
+    contact: company.settings?.mainTelephone ?? null,
+    email: company.settings?.mainEmail ?? null,
+  };
+}
+
 export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
   const companyId = auth(ctx, "WRITE");
   const input = settingsInput.parse(raw);

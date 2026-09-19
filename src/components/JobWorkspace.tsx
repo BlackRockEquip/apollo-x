@@ -11,6 +11,9 @@ import { PexStatusPill } from "@/components/StatusPill";
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
 type SupplierOption = Row & { name: string };
+// "Mechanic Strip"/"Mechanic Assemble" (2026-09-19 user request) — the
+// company's own staff list, for assigning who stripped/assembled a job.
+type MechanicOption = { id: string; label: string };
 // Parts list — replaces the old requirement/allocation summary types above
 // (see schema.prisma's JobPartLine comment). Each row carries its own
 // direct status, no derived summary needed.
@@ -316,6 +319,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // hard foreign key), so typing a make not yet in the list is still fine.
   const [machineMakeOptions, setMachineMakeOptions] = useState<SupplierOption[]>([]);
   const [showMachineMakeOptions, setShowMachineMakeOptions] = useState(false);
+  // "Mechanic Strip"/"Mechanic Assemble" — the company's staff list, loaded
+  // once on mount (small, fixed list, not a search-as-you-type field like
+  // machine make above).
+  const [mechanics, setMechanics] = useState<MechanicOption[]>([]);
   const [bulkPartLines, setBulkPartLines] = useState("");
   // Hides the "add parts" UI (job kit / paste box / import) behind an
   // explicit "Add parts to Job" toggle instead of showing it by default —
@@ -553,6 +560,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     type: "STANDARD_REPAIR",
     etaDate: "",
     mechanicEtaDate: "",
+    stripMechanicId: "",
+    buildMechanicId: "",
     relationshipNotes: "",
     quoteNumber: "",
     quoteDate: "",
@@ -628,6 +637,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         type: body.type || "STANDARD_REPAIR",
         etaDate: body.etaDate ? String(body.etaDate).slice(0, 10) : "",
         mechanicEtaDate: body.mechanicEtaDate ? String(body.mechanicEtaDate).slice(0, 10) : "",
+        stripMechanicId: body.stripMechanicId || "",
+        buildMechanicId: body.buildMechanicId || "",
         relationshipNotes: body.relationshipNotes || "",
         quoteNumber: body.quoteNumber || "",
         quoteDate: body.quoteDate ? String(body.quoteDate).slice(0, 10) : "",
@@ -671,6 +682,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   /* eslint-disable react-hooks/set-state-in-effect -- async resource loading and search result synchronization are intentional here */
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/v1/jobs/mechanics", { cache: "no-store" });
+        const b = await r.json();
+        if (r.ok) setMechanics(b.items || []);
+      } catch {
+        // Convenience list for picking an existing staff member — the
+        // fields underneath still save/load fine if this fails, same
+        // "options are a convenience" approach used elsewhere on this page.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const q = customerQuery.trim();
@@ -805,6 +830,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       type: form.type,
       etaDate: form.etaDate || null,
       mechanicEtaDate: form.mechanicEtaDate || null,
+      stripMechanicId: form.stripMechanicId || null,
+      buildMechanicId: form.buildMechanicId || null,
       relationshipNotes: form.relationshipNotes || null,
       quoteNumber: form.quoteNumber || null,
       quoteDate: form.quoteDate || null,
@@ -898,7 +925,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }, [
     mode, jobId, form.customerId, form.dateReceived, form.customerReference, form.machineMake, form.machineModel,
     form.machineSerial, form.component, form.componentType, form.componentSerial, form.componentPartNumber,
-    form.description, form.notes, form.type, form.etaDate, form.mechanicEtaDate, form.relationshipNotes, form.quoteNumber,
+    form.description, form.notes, form.type, form.etaDate, form.mechanicEtaDate, form.stripMechanicId, form.buildMechanicId, form.relationshipNotes, form.quoteNumber,
     form.quoteDate, form.salesOrderNumber, form.salesOrderDate, form.invoiceNumber, form.invoiceDate,
     form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
     form.receivingTransport, form.kmsTravelled, form.paymentDateReceived, form.paymentNotApplicable, form.machineHours,
@@ -1576,25 +1603,41 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // there's no digital-signature capture anywhere in Apollo X, and this
   // whole delivery note is itself an unpersisted, on-demand print view
   // (see the comment above), so nothing here is saved back.
-  // 2026-09-16 — user request: fetches the company logo (if any) as a data
-  // URL so it can be embedded straight into the print window's HTML — a
-  // window.open("", "_blank") document has no real origin of its own, so a
-  // plain <img src="/api/v1/company-settings/logo"> wouldn't resolve
-  // relative to the app; a data: URL sidesteps that entirely. GET
-  // /company-settings/logo 404s when no logo is set (see logo/route.ts),
-  // treated here as "no logo" rather than an error — the note prints fine
-  // without one.
-  async function fetchCompanyLogoDataUrl(): Promise<string | null> {
+  // 2026-09-16 — user request: embed the company logo in the print
+  // window's HTML — a window.open("", "_blank") document has no real
+  // origin of its own, so a plain relative <img src="/api/v1/company-
+  // settings/logo"> wouldn't resolve.
+  // 2026-09-19 — user report: "Fix logo display as its not pulling
+  // through." Root cause: since the 2026-09-14 move to object-storage-
+  // backed logos, GET /api/v1/company-settings/logo no longer streams
+  // bytes itself — it redirects to a signed URL on the object-storage
+  // host (see that route's own comment). This function used to fetch()
+  // that URL and read the response as a blob to build a data: URL, which
+  // meant following the redirect and reading a *cross-origin* response
+  // body — blocked by the storage host's CORS policy (an <img> tag isn't
+  // subject to that; only reading a cross-origin response's bytes via
+  // fetch/canvas is), so the fetch silently failed and this always
+  // returned null. Fixed by not fetching at all: just point a plain <img>
+  // at the logo route's own *absolute* URL (still needed since the popup
+  // has no origin of its own — see above) and let the browser follow the
+  // redirect and render it the same way the sidebar's <Image> already
+  // does. onerror on that <img> (in printDeliveryNote below) hides it if
+  // there's genuinely no logo set (the route 404s), so no pre-check is
+  // needed here.
+  function companyLogoImgSrc(): string {
+    return `${window.location.origin}/api/v1/company-settings/logo`;
+  }
+
+  // 2026-09-19 — user request: print the company's own organization
+  // details (name, address, VAT, registration number, contact, email) on
+  // the delivery note. See getCompanyPrintDetails's own comment
+  // (company-settings-service.ts) for why this is its own lightweight,
+  // non-admin-gated endpoint rather than /api/v1/company-settings.
+  async function fetchCompanyOrgDetails(): Promise<{ name: string; addressLines: string[]; registrationNumber: string | null; vatNumber: string | null; contact: string | null; email: string | null } | null> {
     try {
-      const r = await fetch("/api/v1/company-settings/logo");
+      const r = await fetch("/api/v1/company-settings/print-details", { cache: "no-store" });
       if (!r.ok) return null;
-      const blob = await r.blob();
-      return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("read failed"));
-        reader.readAsDataURL(blob);
-      });
+      return await r.json();
     } catch {
       return null;
     }
@@ -1604,7 +1647,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!deliveryNote) return;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the delivery note."); return; }
-    const logoDataUrl = await fetchCompanyLogoDataUrl();
+    const logoSrc = companyLogoImgSrc();
+    const orgDetails = await fetchCompanyOrgDetails();
+    const orgDetailsHtml = orgDetails ? `<div class="org-details">
+        <p class="org-name">${escapeHtml(orgDetails.name)}</p>
+        ${orgDetails.addressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
+        ${orgDetails.registrationNumber ? `<p>Reg: ${escapeHtml(orgDetails.registrationNumber)}</p>` : ""}
+        ${orgDetails.vatNumber ? `<p>VAT: ${escapeHtml(orgDetails.vatNumber)}</p>` : ""}
+        ${orgDetails.contact ? `<p>${escapeHtml(orgDetails.contact)}</p>` : ""}
+        ${orgDetails.email ? `<p>${escapeHtml(orgDetails.email)}</p>` : ""}
+      </div>` : "";
     const rows = deliveryNote.items.map((i) => `<tr><td>${escapeHtml(i.description)}</td><td>${i.quantity}</td><td class="checked-box"></td></tr>`).join("");
     // 2026-09-16 — user request: remove the "Supplier: " label and print
     // the supplier's own block instead (bold name, address lines stacked,
@@ -1628,6 +1680,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       h1{font-size:18px;margin:0 0 12px}
       .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
       .logo{max-height:56px;max-width:200px;object-fit:contain;margin-bottom:2px}
+      .org-details{text-align:left;margin-bottom:6px}
+      .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
+      .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
       .date-captured{font-size:13px;color:#444;text-align:right}
       .supplier-block{margin-top:14px}
@@ -1646,7 +1701,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div class="note-head">
         <h1>Outwork delivery note</h1>
         <div class="note-right">
-          ${logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : ""}
+          <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
+          ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(deliveryNote.jobNumber)}</div>
           <div class="date-captured">Date captured: ${dateCapturedText}</div>
         </div>
@@ -1728,6 +1784,222 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ${rows([["Job type", JOB_TYPE_LABELS[job.type]]])}
         <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
       </table>
+    </body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
+  // 2026-09-19 — user request: "add a button 'Print Job History' that
+  // prints all fields as displayed on the job, parts, outwork except
+  // history." Despite the button's name (kept exactly as the user asked
+  // for it), this deliberately excludes the Activity history section
+  // further down this page — "except history" in the same request. Covers
+  // every other on-screen section: Customer details, Notes, Machine/
+  // component details, Job details, Commercial & logistics, the Parts
+  // list table and the Outwork table, plus the job-type-specific panels
+  // (Field service / Warranty) when they apply to this job — all of it is
+  // "fields as displayed on the job" the same way those other sections
+  // are. Follows the same unpersisted, on-demand print-window pattern as
+  // printJobCard/printDeliveryNote/printPartsList above/below — nothing
+  // here is saved, it only reads the already-loaded `job`/`form` state.
+  function printJobHistory() {
+    if (!job) return;
+    const win = window.open("", "_blank");
+    if (!win) { setError("Enable pop-ups to print the job record."); return; }
+    const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
+    const jobLabel = job.jobNumber || job.draftNumber || "";
+    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
+    const address = (job.customer?.addresses || [])[0] as Record<string, unknown> | undefined;
+    const addressLine = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter(Boolean).map(String).join(", ") : "";
+    const contact = (job.customer?.contacts || [])[0] as Record<string, unknown> | undefined;
+    const contactLine = contact ? [[contact.firstName, contact.lastName].filter(Boolean).join(" "), contact.telephone || contact.mobile, contact.email].filter(Boolean).map(String).join(" · ") : "";
+    const partsRows = job.partLines.map((line) => `<tr>
+        <td>${escapeHtml(String(line.partNumber || ""))}</td>
+        <td>${escapeHtml(String(line.description || ""))}</td>
+        <td class="qty">${escapeHtml(decimalText(line.quantity))}</td>
+        <td class="qty">${escapeHtml(decimalText(line.receivedQuantity ?? 0))}</td>
+        <td>${escapeHtml(String(line.orderNumber || "—"))}</td>
+        <td>${escapeHtml(String(line.orderedFromSupplier?.name || "—"))}</td>
+        <td>${escapeHtml(String(line.status || "").replaceAll("_", " "))}</td>
+      </tr>`).join("");
+    const outworkRows = job.outworkItems.map((item) => `<tr>
+        <td>${escapeHtml(String(item.description || ""))}</td>
+        <td class="qty">${escapeHtml(String(item.quantity ?? ""))}</td>
+        <td>${escapeHtml(String(item.supplier?.name || "—"))}</td>
+        <td>${fmt(String(item.dateSentOut || ""))}</td>
+        <td>${fmt(String(item.dateReceived || ""))}</td>
+        <td>${escapeHtml(String(item.status || "").replaceAll("_", " "))}</td>
+      </tr>`).join("");
+    win.document.write(`<!doctype html><html><head><title>Job ${escapeHtml(String(jobLabel))} - Full details</title><meta charset="utf-8" /><style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
+      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
+      h1{font-size:18px;margin:0 0 12px}
+      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      .job-number{font-size:16px;font-weight:bold;text-align:right}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
+      th{width:32%;background:#f6f6f6;font-weight:600}
+      .description{white-space:pre-wrap}
+      table.list-table th{width:auto;background:#f9fafb;border-bottom:2px solid #7a5c14}
+      table.list-table td.qty{text-align:center;font-weight:600}
+      table.list-table{font-size:12px}
+    </style></head><body>
+      <div class="note-head">
+        <h1>Job record</h1>
+        <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+      </div>
+      <h2>Customer details</h2>
+      <table>${rows([
+        ["Customer", String(job.customer?.name || "")],
+        ["Trading name", String(job.customer?.tradingName || "")],
+        ["Address", addressLine],
+        ["Contact", contactLine],
+        ["Date in", fmt(form.dateReceived)],
+        ["Customer reference", form.customerReference],
+        ["Sales representative", form.salesRepresentative],
+        ["Report number", form.reportNumber],
+      ])}</table>
+      ${form.notes ? `<h2>Notes</h2><table><tr><td class="description">${escapeHtml(form.notes)}</td></tr></table>` : ""}
+      <h2>Machine / component details</h2>
+      <table>${rows([
+        ["Machine make", form.machineMake],
+        ["Machine model", form.machineModel],
+        ["Machine serial", form.machineSerial],
+        ["Component", form.component],
+        ["Component type", form.componentType],
+        ["Component serial", form.componentSerial],
+        ["Part number", form.componentPartNumber],
+        ["Plant number", form.plantNumber],
+        ["Machine hours", form.machineHours],
+      ])}</table>
+      <h2>Job details</h2>
+      <table>
+        ${rows([
+          ["Job type", JOB_TYPE_LABELS[job.type]],
+          ["Status", JOB_STATUS_LABELS[job.status]],
+          ["ETA date", fmt(form.etaDate)],
+          ["Mechanic ETA date", fmt(form.mechanicEtaDate)],
+          ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
+          ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
+          ["Import tracking number", form.importTrackingNumber],
+          ["Previous job number", form.previousJobNumber],
+        ])}
+        <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
+      </table>
+      <h2>Commercial &amp; logistics</h2>
+      <table>${rows([
+        ["Quote number", form.quoteNumber],
+        ["Quote date", fmt(form.quoteDate)],
+        ["Sales order number", form.salesOrderNumber],
+        ["Sales order date", fmt(form.salesOrderDate)],
+        ["Invoice number", form.invoiceNumber],
+        ["Invoice date", fmt(form.invoiceDate)],
+        ["Payment date received", form.paymentNotApplicable === "true" ? "N/A" : fmt(form.paymentDateReceived)],
+        ["Purchase order number", form.purchaseOrderNumber],
+        ["Purchase order date", fmt(form.purchaseOrderDate)],
+        ["Purchase order status", form.purchaseOrderStatus.replaceAll("_", " ")],
+        ["Receiving transport", form.receivingTransport.replaceAll("_", " ")],
+        ["Delivery type", form.deliveryType.replaceAll("_", " ")],
+        ["Delivery date", fmt(form.deliveryDate)],
+      ])}</table>
+      ${job.type === "FIELD_SERVICE" ? `<h2>Field service</h2><table>${rows([
+        ["Site", form.fieldSite],
+        ["Technician", form.fieldTechnician],
+        ["Vehicle", form.fieldVehicle],
+        ["Hours", form.fieldHours],
+        ["Kms travelled", form.kmsTravelled],
+      ])}<tr><th>Report</th><td class="description">${escapeHtml(form.fieldReport || "—")}</td></tr></table>` : ""}
+      ${job.type === "WARRANTY" ? `<h2>Warranty</h2><table>${rows([
+        ["Warranty status", form.warrantyStatus],
+        ["Historical source status", form.warrantyHistorical],
+      ])}<tr><th>Warranty notes</th><td class="description">${escapeHtml(form.warrantyNotes || "—")}</td></tr></table>` : ""}
+      <h2>Parts list</h2>
+      ${job.partLines.length > 0
+        ? `<table class="list-table"><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${partsRows}</tbody></table>`
+        : `<p>No parts on this job.</p>`}
+      <h2>Outwork</h2>
+      ${job.outworkItems.length > 0
+        ? `<table class="list-table"><thead><tr><th>Description</th><th>Qty</th><th>Supplier</th><th>Date sent out</th><th>Date received</th><th>Status</th></tr></thead><tbody>${outworkRows}</tbody></table>`
+        : `<p>No outwork on this job.</p>`}
+    </body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
+  // 2026-09-19 — user request: "add a button 'Print Delivery Note' that
+  // prints: Customer Details; Commercial & Logistics; on its own separate
+  // line print: job Type, Make, Model; next line print: Component."
+  // Distinct from printDeliveryNote above (that one is the *outwork*
+  // delivery note — a supplier-facing document for parts sent out for
+  // outwork). This one is job-facing: what's being delivered, to whom,
+  // and what it is. Same letterhead (logo + org details) as the outwork
+  // note for visual consistency between the two printed documents.
+  async function printJobDeliveryNote() {
+    if (!job) return;
+    const win = window.open("", "_blank");
+    if (!win) { setError("Enable pop-ups to print the delivery note."); return; }
+    const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
+    const jobLabel = job.jobNumber || job.draftNumber || "";
+    const logoSrc = companyLogoImgSrc();
+    const orgDetails = await fetchCompanyOrgDetails();
+    const orgDetailsHtml = orgDetails ? `<div class="org-details">
+        <p class="org-name">${escapeHtml(orgDetails.name)}</p>
+        ${orgDetails.addressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
+        ${orgDetails.registrationNumber ? `<p>Reg: ${escapeHtml(orgDetails.registrationNumber)}</p>` : ""}
+        ${orgDetails.vatNumber ? `<p>VAT: ${escapeHtml(orgDetails.vatNumber)}</p>` : ""}
+        ${orgDetails.contact ? `<p>${escapeHtml(orgDetails.contact)}</p>` : ""}
+        ${orgDetails.email ? `<p>${escapeHtml(orgDetails.email)}</p>` : ""}
+      </div>` : "";
+    const address = (job.customer?.addresses || [])[0] as Record<string, unknown> | undefined;
+    const addressLine = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter(Boolean).map(String).join(", ") : "";
+    const contact = (job.customer?.contacts || [])[0] as Record<string, unknown> | undefined;
+    const contactLine = contact ? [[contact.firstName, contact.lastName].filter(Boolean).join(" "), contact.telephone || contact.mobile, contact.email].filter(Boolean).map(String).join(" · ") : "";
+    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(String(jobLabel))} - Delivery Note</title><meta charset="utf-8" /><style>
+      body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
+      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
+      h1{font-size:18px;margin:0 0 12px}
+      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+      .logo{max-height:56px;max-width:200px;object-fit:contain;margin-bottom:2px}
+      .org-details{text-align:left;margin-bottom:6px}
+      .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
+      .org-details p{font-size:11px;color:#444;margin:1px 0}
+      .job-number{font-size:16px;font-weight:bold;text-align:right}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
+      th{width:32%;background:#f6f6f6;font-weight:600}
+      .summary-line{font-size:13px;margin:10px 0}
+      .summary-line strong{margin-right:4px}
+    </style></head><body>
+      <div class="note-head">
+        <h1>Delivery note</h1>
+        <div class="note-right">
+          <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
+          ${orgDetailsHtml}
+          <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+        </div>
+      </div>
+      <h2>Customer details</h2>
+      <table>${rows([
+        ["Customer", String(job.customer?.name || "")],
+        ["Trading name", String(job.customer?.tradingName || "")],
+        ["Address", addressLine],
+        ["Contact", contactLine],
+      ])}</table>
+      <h2>Commercial &amp; logistics</h2>
+      <table>${rows([
+        ["Quote number", form.quoteNumber],
+        ["Sales order number", form.salesOrderNumber],
+        ["Invoice number", form.invoiceNumber],
+        ["Purchase order number", form.purchaseOrderNumber],
+        ["Delivery type", form.deliveryType.replaceAll("_", " ")],
+        ["Delivery date", fmt(form.deliveryDate)],
+      ])}</table>
+      <p class="summary-line"><strong>Job type:</strong> ${escapeHtml(JOB_TYPE_LABELS[job.type])} &nbsp; <strong>Make:</strong> ${escapeHtml(form.machineMake || "—")} &nbsp; <strong>Model:</strong> ${escapeHtml(form.machineModel || "—")}</p>
+      <p class="summary-line"><strong>Component:</strong> ${escapeHtml(form.component || "—")}</p>
     </body></html>`);
     win.document.close();
     win.focus();
@@ -2167,6 +2439,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
             <label><span>Mechanic ETA date</span><input type="date" value={form.mechanicEtaDate} onChange={(e) => updateField("mechanicEtaDate", e.target.value)} /></label>
+            {/* 2026-09-19, user request: "add under job details sections 2
+                fields, 'Mechanic Strip' and 'Mechanic Assemble'."
+                Job.stripMechanicId/buildMechanicId were already fully wired
+                server-side (see jobs/service.ts) — just never had a field
+                here. Options come from the new JOBS_VIEW-gated
+                /api/v1/jobs/mechanics list (see listMechanicOptions's own
+                comment for why not /api/v1/users). */}
+            <label><span>Mechanic strip</span>
+              <select value={form.stripMechanicId} onChange={(e) => updateField("stripMechanicId", e.target.value)}>
+                <option value="">—</option>
+                {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </label>
+            <label><span>Mechanic assemble</span>
+              <select value={form.buildMechanicId} onChange={(e) => updateField("buildMechanicId", e.target.value)}>
+                <option value="">—</option>
+                {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </label>
             <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
             <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
             <label className="wide"><span>Job description</span><textarea rows={2} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
@@ -2234,6 +2525,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {job && mode === "detail" && (
               <>
                 <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>
+                {/* 2026-09-19, user request — see printJobHistory/
+                    printJobDeliveryNote's own comments above for scope. */}
+                <button type="button" className="table-action" onClick={printJobHistory}><Printer size={14} /> Print Job History</button>
+                <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>
                 {job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
                 {canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
                 {!["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { if (window.confirm("Cancel this job?")) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }}>Cancel job</button>}
