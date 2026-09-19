@@ -4,6 +4,7 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { recordAudit } from "@/lib/audit/service";
 import { prisma } from "@/lib/prisma";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
+import { reserveStockTx } from "@/lib/inventory/service";
 import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
 
 function notFound(): never { throw new Error("NOT_FOUND"); }
@@ -129,6 +130,48 @@ export async function setJobKitActive(ctx: RequestContext, id: string, raw: unkn
   });
   await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKit", entityId: updated.id, action: input.active ? "REACTIVATE" : "DEACTIVATE", afterData: { id: updated.id, active: updated.active } });
   return updated;
+}
+
+// 2026-09-19, user request: "add a delete button to kits created." Gated
+// behind JOB_KITS_DEACTIVATE (the existing permission for the other
+// destructive kit action — deactivate) rather than a brand-new permission,
+// to avoid adding a fresh permission-scoping surface for what's otherwise a
+// one-off ask (a new permission would also need its own entry in every
+// default role set in auth/permissions.ts). Safe as a real, unconditional
+// delete: JobKitLine.jobKit is `onDelete: Cascade` in schema.prisma (so a
+// kit's lines are removed automatically, same transaction), and nothing
+// else holds a hard FK to JobKit — a job's own history of a kit having been
+// applied lives in JobActivity/AuditEvent as plain JSON metadata (kitId/
+// kitName captured at the time), not a live relation, so it stays intact
+// and readable even after the kit itself is deleted.
+export async function deleteJobKit(ctx: RequestContext, id: string) {
+  const companyId = requireJobKitsWrite(ctx, "JOB_KITS_DEACTIVATE");
+  const existing = await prisma.jobKit.findFirst({ where: { id, companyId }, select: { id: true, name: true } });
+  if (!existing) notFound();
+  await prisma.jobKit.delete({ where: { id } });
+  await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKit", entityId: id, action: "DELETE", afterData: { id, name: existing.name } });
+  return { id };
+}
+
+// 2026-09-19, user request: "when creating a kit, make the Manufacturer
+// field dropdown based on manufacturers listed." Same lightweight-endpoint
+// pattern as listMechanicOptions (jobs/service.ts, added earlier this same
+// day) rather than reusing either of the two manufacturer-list endpoints
+// that already exist: /api/v1/inventory/manufacturers is gated behind
+// INVENTORY_VIEW and /api/v1/master-data/manufacturers behind its own
+// admin permission — neither is guaranteed to be held by a user who only
+// has Job Kits access, which is exactly the permission-scoping mismatch bug
+// class this engagement has hit (and fixed) several times already. Gated
+// on JOB_KITS_VIEW instead — the same permission that already gates this
+// page — so it can never silently come back empty for a Job-Kits-only user.
+export async function listJobKitManufacturerOptions(ctx: RequestContext) {
+  const companyId = requireJobKitsRead(ctx);
+  const manufacturers = await prisma.manufacturer.findMany({
+    where: { companyId, active: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  return { items: manufacturers };
 }
 
 export async function addJobKitLine(ctx: RequestContext, id: string, raw: unknown) {
@@ -293,7 +336,7 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
 
     const kit = await tx.jobKit.findFirst({
       where: { id: kitId, companyId, active: true },
-      include: { lines: { include: { part: { select: { id: true, partNumber: true, description: true, active: true } } }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
+      include: { lines: { include: { part: { select: { id: true, partNumber: true, description: true, active: true, binLocationId: true } } }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } },
     });
     if (!kit) notFound();
     if (kit.lines.length === 0) throw new Error("This job kit has no parts.");
@@ -311,14 +354,53 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
     const appliedLines: Array<{ partId: string; partNumber: string; quantityAdded: string; lineId: string; mode: "CREATED" | "INCREMENTED" }> = [];
 
     for (const line of kit.lines) {
+      // 2026-09-19, user request: "once applied to job, let it check stock
+      // availability like when adding a part number individually/via
+      // import." Mirrors addPartLinesBulk's own stock check exactly
+      // (jobs/service.ts): sum StockBalance.quantityOnHand for the part
+      // across all locations, mark the line IN_STOCK when there's enough
+      // on hand, and best-effort reserve it at the part's own bin location
+      // so it shows reserved under Stock Levels and another job can't also
+      // claim the same units. Before this, applyJobKitToJob always left a
+      // kit-sourced line as plain "PENDING" with nothing reserved, unlike
+      // every other way of adding a part to a job's parts list.
       const existing = await tx.jobPartLine.findFirst({ where: { companyId, jobId, partId: line.partId, status: { not: "RECEIVED" } } });
+      const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: line.partId }, _sum: { quantityOnHand: true } });
+      const onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
+
       if (existing) {
+        // A line already in PARTIALLY_RECEIVED is mid-receiving — leave its
+        // status alone (only the quantity/reservation are affected by
+        // topping it up), same caution the receive/unmark flow itself
+        // takes about not clobbering that state.
+        const newTotal = existing.quantity.plus(line.quantityDefault);
+        const inStock = onHand.gte(newTotal);
+        const nextStatus = existing.status === "PARTIALLY_RECEIVED" ? existing.status : (inStock ? "IN_STOCK" : "PENDING");
         const updated = await tx.jobPartLine.update({
           where: { id: existing.id },
-          data: { quantity: existing.quantity.plus(line.quantityDefault), updatedById: ctx.userId },
+          data: { quantity: newTotal, status: nextStatus, updatedById: ctx.userId },
         });
+        if (inStock && existing.status !== "PARTIALLY_RECEIVED" && line.part.binLocationId) {
+          try {
+            await reserveStockTx(tx, { ...ctx, companyId }, {
+              partId: line.partId,
+              locationId: line.part.binLocationId,
+              quantity: line.quantityDefault.toString(),
+              referenceType: "JOB",
+              referenceId: updated.id,
+              referenceNumber: job.jobNumber || job.draftNumber,
+              reason: `Reserved for job ${job.jobNumber || job.draftNumber}`,
+              notes: null,
+              expiresAt: null,
+              idempotencyKey: undefined,
+            });
+          } catch {
+            // Best-effort, same as addPartLinesBulk — never blocks applying the kit.
+          }
+        }
         appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: updated.id, mode: "INCREMENTED" });
       } else {
+        const inStock = onHand.gte(line.quantityDefault);
         const created = await tx.jobPartLine.create({
           data: {
             companyId,
@@ -326,12 +408,30 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
             partNumber: line.part.partNumber,
             description: line.part.description,
             quantity: line.quantityDefault,
-            status: "PENDING",
+            status: inStock ? "IN_STOCK" : "PENDING",
             partId: line.partId,
             createdById: ctx.userId,
             updatedById: ctx.userId,
           },
         });
+        if (inStock && line.part.binLocationId) {
+          try {
+            await reserveStockTx(tx, { ...ctx, companyId }, {
+              partId: line.partId,
+              locationId: line.part.binLocationId,
+              quantity: line.quantityDefault.toString(),
+              referenceType: "JOB",
+              referenceId: created.id,
+              referenceNumber: job.jobNumber || job.draftNumber,
+              reason: `Reserved for job ${job.jobNumber || job.draftNumber}`,
+              notes: null,
+              expiresAt: null,
+              idempotencyKey: undefined,
+            });
+          } catch {
+            // Best-effort, same as addPartLinesBulk — never blocks applying the kit.
+          }
+        }
         appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: created.id, mode: "CREATED" });
       }
     }

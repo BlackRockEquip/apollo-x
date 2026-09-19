@@ -6,6 +6,7 @@ import { readListState, writeListState } from "./list-state";
 import { ScrollRestore } from "./ScrollRestore";
 
 type PartOption = { id: string; partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; active?: boolean };
+type ManufacturerOption = { id: string; name: string };
 type JobKitLine = { id: string; partId: string; quantityDefault: string; notes?: string | null; sortOrder: number; part: PartOption };
 type JobKit = {
   id: string;
@@ -28,7 +29,26 @@ export function JobKitsWorkspace() {
   const [selectedKit, setSelectedKit] = useState<JobKit | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // 2026-09-19, user request: "when creating a kit, make the Manufacturer
+  // field dropdown based on manufacturers listed." Loaded once — this is a
+  // bounded reference list (a company's set of manufacturers), not a
+  // type-as-you-search list like Parts, so a plain <select> populated up
+  // front is simpler than another typeahead. See
+  // listJobKitManufacturerOptions's comment (job-kits/service.ts) for why
+  // this has its own endpoint instead of reusing the Stock Levels or
+  // master-data manufacturers ones.
+  const [manufacturerOptions, setManufacturerOptions] = useState<ManufacturerOption[]>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/v1/job-kits/manufacturers", { cache: "no-store" });
+        const b = await r.json();
+        if (r.ok) setManufacturerOptions(b.items || []);
+      } catch { /* dropdown just stays empty on failure — non-blocking */ }
+    })();
+  }, []);
   // 2026-09-15, user request: "Back button to take you back to where you
   // last were." Restored from sessionStorage (see list-state.ts) so opening
   // a kit and then clicking the browser's own Back button doesn't dump you
@@ -129,6 +149,28 @@ export function JobKitsWorkspace() {
       setError(e instanceof Error ? e.message : "Unable to update kit status.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // 2026-09-19, user request: "add a delete button to kits created." A real
+  // delete (see deleteJobKit's comment, job-kits/service.ts, for why it's
+  // safe as an unconditional delete rather than another deactivate), so
+  // confirm first — mirrors MasterDataWorkspace's own removeRow pattern.
+  // Callable straight from the list row, so it doesn't require opening the
+  // kit first; closes the editor afterward if the deleted kit was open.
+  async function removeKit(kit: JobKit) {
+    if (!confirm(`Delete "${kit.name}"? This cannot be undone.`)) return;
+    setDeletingId(kit.id); setError("");
+    try {
+      const response = await fetch(`/api/v1/job-kits/${kit.id}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to delete job kit.");
+      if (selectedKit?.id === kit.id) { setSelectedKit(null); setEditorOpen(false); }
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to delete job kit.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -257,13 +299,18 @@ export function JobKitsWorkspace() {
         <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option></select>
         <button type="button" className="gold-button" onClick={() => { setSelectedKit(null); setForm({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", quantityDefault: "1", notes: "", sortOrder: "0" }); setEditorOpen(true); }}><Plus size={15} /> New job kit</button>
       </div>
-      {loading ? <div className="table-state"><Loader2 className="spin" size={20} /> Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kit</th><th>Applicability</th><th>Lines</th><th>Total Qty</th><th>Status</th><th></th></tr></thead><tbody>{kits.map((kit) => <tr key={kit.id}><td><strong>{kit.name}</strong><div className="muted small-line">{text(kit.description)}</div></td><td>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "—"}</td><td>{kit.lineCount ?? kit.lines?.length ?? 0}</td><td>{text(kit.totalQuantity)}</td><td><span className={`status-pill ${kit.active ? "" : "neutral"}`}>{kit.active ? "Active" : "Inactive"}</span></td><td className="actions"><button type="button" className="table-action" onClick={() => void openKit(kit.id)}>Open</button></td></tr>)}{kits.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No job kits found.</td></tr>}</tbody></table></div>}
+      {loading ? <div className="table-state"><Loader2 className="spin" size={20} /> Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kit</th><th>Applicability</th><th>Lines</th><th>Total Qty</th><th>Status</th><th></th></tr></thead><tbody>{kits.map((kit) => <tr key={kit.id}><td><strong>{kit.name}</strong><div className="muted small-line">{text(kit.description)}</div></td><td>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "—"}</td><td>{kit.lineCount ?? kit.lines?.length ?? 0}</td><td>{text(kit.totalQuantity)}</td><td><span className={`status-pill ${kit.active ? "" : "neutral"}`}>{kit.active ? "Active" : "Inactive"}</span></td><td className="actions"><button type="button" className="table-action" onClick={() => void openKit(kit.id)}>Open</button> <button type="button" className="table-action" disabled={deletingId === kit.id} onClick={() => void removeKit(kit)}>{deletingId === kit.id ? "Deleting…" : "Delete"}</button></td></tr>)}{kits.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No job kits found.</td></tr>}</tbody></table></div>}
       {/* 2026-09-15, user request: "Back button to take you back to where
           you last were." Only mounted once the list has actually rendered
           — see ScrollRestore's own comment for why. */}
       {!loading && <ScrollRestore selector=".master-panel .data-table-wrap" storageKey="job-kits" />}
     </section>
-    {editorOpen && <section className="detail-panel"><header><div><h2>{selectedKit ? "Edit job kit" : "Create job kit"}</h2><p>Business users select kits by name; lines stay tenant-scoped to active parts.</p></div><button type="button" className="quiet-button" onClick={() => setEditorOpen(false)}>Close editor</button></header><div className="drawer-fields"><label><span>Kit name *</span><input value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} /></label><label><span>Machine make</span><input value={form.machineMake} onChange={(e) => setForm((c) => ({ ...c, machineMake: e.target.value }))} /></label><label><span>Machine model</span><input value={form.machineModel} onChange={(e) => setForm((c) => ({ ...c, machineModel: e.target.value }))} /></label><label><span>Component type</span><input value={form.componentType} onChange={(e) => setForm((c) => ({ ...c, componentType: e.target.value }))} /></label><label className="wide"><span>Description</span><textarea rows={4} value={form.description} onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !selectedKit} onClick={() => void toggleActive(!(selectedKit?.active ?? true))}>{selectedKit?.active ? "Deactivate" : "Reactivate"}</button><button type="button" className="gold-button" disabled={saving || !canSaveKit} onClick={() => void saveKit()}>{saving ? "Saving…" : "Save job kit"}</button></footer></section>}
+    {editorOpen && <section className="detail-panel"><header><div><h2>{selectedKit ? "Edit job kit" : "Create job kit"}</h2><p>Business users select kits by name; lines stay tenant-scoped to active parts.</p></div><button type="button" className="quiet-button" onClick={() => setEditorOpen(false)}>Close editor</button></header><div className="drawer-fields"><label><span>Kit name *</span><input value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} /></label>{/* 2026-09-19, user request: "make the Manufacturer field dropdown based
+    on manufacturers listed." A saved kit whose machineMake doesn't match
+    any current manufacturer name (legacy free-text value, or one typed
+    before this change) gets that value added as its own extra option
+    instead of silently disappearing from the field. */}
+<label><span>Machine make</span><select value={form.machineMake} onChange={(e) => setForm((c) => ({ ...c, machineMake: e.target.value }))}><option value="">—</option>{form.machineMake && !manufacturerOptions.some((m) => m.name === form.machineMake) && <option value={form.machineMake}>{form.machineMake}</option>}{manufacturerOptions.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}</select></label><label><span>Machine model</span><input value={form.machineModel} onChange={(e) => setForm((c) => ({ ...c, machineModel: e.target.value }))} /></label><label><span>Component type</span><input value={form.componentType} onChange={(e) => setForm((c) => ({ ...c, componentType: e.target.value }))} /></label><label className="wide"><span>Description</span><textarea rows={4} value={form.description} onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !selectedKit} onClick={() => void toggleActive(!(selectedKit?.active ?? true))}>{selectedKit?.active ? "Deactivate" : "Reactivate"}</button><button type="button" className="gold-button" disabled={saving || !canSaveKit} onClick={() => void saveKit()}>{saving ? "Saving…" : "Save job kit"}</button></footer></section>}
     {editorOpen && <section className="detail-panel"><header><div><h2>Kit lines</h2><p>Add commonly required parts without reserving or issuing stock.</p></div></header>{selectedKit ? <>
       {/* 2026-09-15, user request: "when adding a kit, make it that you can
           add a part list/import a list that gets saved in table form for

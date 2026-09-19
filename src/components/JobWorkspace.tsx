@@ -778,9 +778,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return () => clearTimeout(timer);
   }, [bulkSupplierQuery, bulkSupplierPickerOpen]);
 
+  // 2026-09-19, user request: "when selecting a kit in a job parts section,
+  // the search kit dropdown is visible before even typing." This effect ran
+  // on mount with jobKitQuery still empty ("") and fetched
+  // /api/v1/job-kits?q=&status=active — an empty q matches every active
+  // kit, not none — so jobKitOptions was already populated (and the
+  // dropdown, which just renders whenever jobKitOptions.length > 0, already
+  // visible) before the user typed anything. Every other search-as-you-type
+  // picker in this file (bulk supplier, parts, etc.) already guards on a
+  // minimum query length before fetching — this one just never had it.
   useEffect(() => {
     if (!jobId) return;
     const q = jobKitQuery.trim();
+    if (q.length < 2) { setJobKitOptions([]); return; }
     const timer = setTimeout(async () => {
       const r = await fetch(`/api/v1/job-kits?q=${encodeURIComponent(q)}&status=active&pageSize=20`, { cache: "no-store" });
       const b = await r.json();
