@@ -73,10 +73,20 @@ export async function storeAttachment(input: NewAttachmentInput) {
   });
 }
 
-/** Short-lived signed URL — never a public bucket URL. Call only after the caller's own permission check has passed. */
-export async function getAttachmentDownloadUrl(attachment: AttachmentRef, expiresInSeconds?: number) {
+/**
+ * Short-lived signed URL — never a public bucket URL. Call only after the
+ * caller's own permission check has passed.
+ *
+ * `disposition` defaults to "attachment" (a real download — job
+ * attachments, RFQ quote files) — pass "inline" for anything meant to
+ * render directly in the browser instead, such as the company logo (see
+ * resolveCompanyLogoSource in company-settings-service.ts, and
+ * StorageBackend.getSignedDownloadUrl's own comment in
+ * src/lib/storage/types.ts for the 2026-09-19 bug this fixes).
+ */
+export async function getAttachmentDownloadUrl(attachment: AttachmentRef, expiresInSeconds?: number, disposition?: "inline" | "attachment") {
   const backend = await getStorageBackendForCompany(attachment.companyId);
-  return backend.getSignedDownloadUrl(attachment.objectKey, attachment.fileName, expiresInSeconds);
+  return backend.getSignedDownloadUrl(attachment.objectKey, attachment.fileName, expiresInSeconds, disposition);
 }
 
 export async function deleteAttachment(attachment: { id: string; companyId: string; objectKey: string }) {

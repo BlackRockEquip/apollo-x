@@ -97,7 +97,17 @@ export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<Com
   if (!settings?.logoMimeType) return { kind: "none" };
   const attachment = await prisma.attachment.findFirst({ where: { companyId, ownerType: "COMPANY_LOGO", ownerId: companyId } });
   if (attachment) {
-    const url = await getAttachmentDownloadUrl(attachment);
+    // 2026-09-19 — user report: "local dev is working well with logos but
+    // online render still not showing logo." getAttachmentDownloadUrl
+    // defaults to Content-Disposition: attachment (right for a real
+    // download like an RFQ quote file), which forces a "Save As" download
+    // instead of rendering wherever this URL is used as an image — the
+    // sidebar, print letterheads, the favicon. Confirmed directly: opening
+    // the logo route's URL in a browser downloaded the file instead of
+    // displaying it. "inline" here is the fix — see
+    // StorageBackend.getSignedDownloadUrl's comment in
+    // src/lib/storage/types.ts for the full root cause.
+    const url = await getAttachmentDownloadUrl(attachment, undefined, "inline");
     return { kind: "redirect", url };
   }
   if (settings.logoData) return { kind: "inline", mimeType: settings.logoMimeType, data: toArrayBuffer(Buffer.from(settings.logoData)) };

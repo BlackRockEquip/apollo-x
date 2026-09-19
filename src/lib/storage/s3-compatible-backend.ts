@@ -23,15 +23,24 @@ export function createS3CompatibleBackend(config: S3CompatibleConfig): StorageBa
     async putObject(objectKey, body, contentType) {
       await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: objectKey, Body: body, ContentType: contentType }));
     },
-    async getSignedDownloadUrl(objectKey, fileName, expiresInSeconds = 300) {
+    async getSignedDownloadUrl(objectKey, fileName, expiresInSeconds = 300, disposition = "attachment") {
       // Buckets are never public (see the decision doc's "Access control"
       // open question) — every download goes through a short-lived signed
       // URL generated only after the caller's own companyId/permission
       // checks already passed (see src/lib/attachments/service.ts).
+      //
+      // 2026-09-19 — this used to hardcode "attachment", which is right for
+      // a real download (a job attachment, an RFQ quote file) but forces a
+      // "Save As" download prompt instead of rendering for anything meant
+      // to display inline (a company logo in <img> tags/the sidebar/print
+      // letterheads/the favicon) — see the interface's own comment in
+      // types.ts for the full symptom and how it was confirmed. Callers now
+      // choose; defaulting to "attachment" keeps every existing caller's
+      // behavior unchanged.
       const command = new GetObjectCommand({
         Bucket: config.bucket,
         Key: objectKey,
-        ResponseContentDisposition: `attachment; filename="${fileName.replace(/"/g, "")}"`,
+        ResponseContentDisposition: `${disposition}; filename="${fileName.replace(/"/g, "")}"`,
       });
       return getSignedUrl(client, command, { expiresIn: expiresInSeconds });
     },
