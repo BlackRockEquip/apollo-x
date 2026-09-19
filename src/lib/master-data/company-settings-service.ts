@@ -69,8 +69,26 @@ export async function getCompanyLogoInfo(ctx: RequestContext) {
 // it from then on.
 export type CompanyLogoSource =
   | { kind: "redirect"; url: string }
-  | { kind: "inline"; mimeType: string; data: Buffer }
+  | { kind: "inline"; mimeType: string; data: ArrayBuffer }
   | { kind: "none" };
+
+// 2026-09-19 — two build failures in a row on Render (not catchable from
+// this session — no local `next build`/TypeScript toolchain to run it
+// against). First: NextResponse's body type wants BodyInit, and a raw
+// Buffer doesn't structurally satisfy it, so the caller wrapped it in a
+// Blob. Second (this fix): Blob's own BlobPart type turned out to be just
+// as picky — Buffer's `.buffer` is typed `ArrayBufferLike`
+// (ArrayBuffer | SharedArrayBuffer), not the plain `ArrayBuffer` newer
+// lib.dom.d.ts requires. Fixed at the source instead of patching each
+// caller again: this function now returns a genuine `ArrayBuffer` — built
+// by copying the bytes into a freshly allocated one, whose type is
+// unambiguously `ArrayBuffer` with no generic to get wrong — so every
+// caller (logo route, favicon route) just works with it directly.
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const arrayBuffer = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(arrayBuffer).set(buffer);
+  return arrayBuffer;
+}
 
 export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<CompanyLogoSource> {
   requireTenant(ctx);
@@ -82,7 +100,7 @@ export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<Com
     const url = await getAttachmentDownloadUrl(attachment);
     return { kind: "redirect", url };
   }
-  if (settings.logoData) return { kind: "inline", mimeType: settings.logoMimeType, data: Buffer.from(settings.logoData) };
+  if (settings.logoData) return { kind: "inline", mimeType: settings.logoMimeType, data: toArrayBuffer(Buffer.from(settings.logoData)) };
   return { kind: "none" };
 }
 

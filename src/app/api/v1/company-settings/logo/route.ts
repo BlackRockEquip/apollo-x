@@ -31,14 +31,11 @@ export async function GET(request: NextRequest) {
     // Legacy inline bytes — see resolveCompanyLogoSource's comment. Short
     // cache so a shared/kiosk browser doesn't hold onto a stale logo for
     // long, but avoids re-fetching identical bytes on every navigation.
-    //
-    // 2026-09-19 — wrapped in a Blob rather than passed as a raw Buffer.
-    // Render's build caught what this device-bridge session couldn't (no
-    // local Next/TS toolchain to run `next build` against): TS2345,
-    // Buffer<ArrayBufferLike> doesn't structurally satisfy NextResponse's
-    // BodyInit type even though Buffer is a Uint8Array at runtime. Blob is
-    // unambiguously part of BodyInit and behaves identically here.
-    return new NextResponse(new Blob([source.data]), { headers: { "content-type": source.mimeType, "cache-control": "private, max-age=300" } });
+    // source.data is a genuine ArrayBuffer (see resolveCompanyLogoSource's
+    // own comment on toArrayBuffer — two Render TS build failures in a row
+    // came from Buffer not structurally satisfying BodyInit/BlobPart), so
+    // it's passed straight through here with no wrapping needed.
+    return new NextResponse(source.data, { headers: { "content-type": source.mimeType, "cache-control": "private, max-age=300" } });
   } catch (error) {
     return apiError(error);
   }
