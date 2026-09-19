@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
-import { getCompanySettings } from "@/lib/master-data/company-settings-service";
-import { getAttachmentDownloadUrl } from "@/lib/attachments/service";
-import { prisma } from "@/lib/prisma";
+import { resolveCompanyLogoSource } from "@/lib/master-data/company-settings-service";
 
 // 2026-09-15, user request: "Apollo x favicon icon on web browser to be the
 // company logo of the organization else reverts back to ApolloX 'AX'."
@@ -10,8 +8,18 @@ import { prisma } from "@/lib/prisma";
 // metadata.icons) rather than a static app/favicon.ico or app/icon.tsx —
 // this needs to be genuinely dynamic per signed-in company, and a plain
 // route handler lets it reuse the exact same lookup the existing
-// ../logo/route.ts GET already does (signed object-storage URL redirect)
-// instead of re-deriving it.
+// ../logo/route.ts GET already does instead of re-deriving it.
+//
+// 2026-09-19 — user report: "investigate logo display problem throughout
+// the app." This route was still calling the old getCompanySettings
+// directly, gated behind COMPANY_SETTINGS_VIEW (admin-only) — the exact
+// permission-scoping bug already fixed on ../logo/route.ts earlier this
+// session, just never applied here too. A user without that separate
+// admin permission got a thrown 403 on every page load, silently caught
+// below and shown the "AX" fallback forever, even with a real logo set.
+// Switched to resolveCompanyLogoSource — see its own comment for the
+// second bug it also fixes (pre-object-storage-migration logos with no
+// Attachment row).
 //
 // No caching here (Cache-Control: no-store) on purpose: the URL is the
 // same for every company ("/api/v1/company-settings/favicon", not
@@ -28,16 +36,9 @@ function axFallback() {
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireRequestContext();
-    const data = await getCompanySettings(ctx);
-    const settings = data.settings as Record<string, unknown> | null;
-    if (settings?.logoMimeType) {
-      const companyId = ctx.companyId!;
-      const attachment = await prisma.attachment.findFirst({ where: { companyId, ownerType: "COMPANY_LOGO", ownerId: companyId } });
-      if (attachment) {
-        const signedUrl = await getAttachmentDownloadUrl(attachment);
-        return NextResponse.redirect(new URL(signedUrl, request.url), { headers: { "cache-control": "no-store" } });
-      }
-    }
+    const source = await resolveCompanyLogoSource(ctx);
+    if (source.kind === "redirect") return NextResponse.redirect(new URL(source.url, request.url), { headers: { "cache-control": "no-store" } });
+    if (source.kind === "inline") return new NextResponse(source.data, { headers: { "content-type": source.mimeType, "cache-control": "no-store" } });
   } catch {
     // Not signed in yet (login page), no company context (platform-admin
     // area), or the lookup failed for some other reason — fall through to

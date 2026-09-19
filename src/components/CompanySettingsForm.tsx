@@ -46,6 +46,19 @@ export function CompanySettingsForm() {
     if (!response.ok) throw new Error(body.error?.message || "Unable to load company settings.");
     setData(body);
     const s = body.settings || {};
+    // 2026-09-19 — user report: "investigate logo display problem
+    // throughout the app." Found here too: logoPreview was only ever set
+    // from a freshly-picked local file (onLogoSelected) or cleared by
+    // removeLogo — load() never set it from the already-saved logo, so a
+    // company with a logo already uploaded saw the blank "no logo"
+    // placeholder on every fresh visit to this page, only ever showing
+    // something once you picked a new file to replace it with. Points at
+    // the (now-fixed, see resolveCompanyLogoSource) GET
+    // /api/v1/company-settings/logo route itself rather than re-fetching
+    // and re-encoding the bytes here — logoUpdatedAt busts the browser's
+    // cache after an upload/remove so the <Image> below doesn't keep
+    // showing a stale cached logo under the same URL.
+    setLogoPreview(s.logoMimeType ? `/api/v1/company-settings/logo?v=${encodeURIComponent(String(s.logoUpdatedAt || ""))}` : null);
     setForm({
       legalName: body.legalName || "",
       tradingName: body.tradingName || "",

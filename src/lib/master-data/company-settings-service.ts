@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { deleteAttachment, storeAttachment } from "@/lib/attachments/service";
+import { deleteAttachment, getAttachmentDownloadUrl, storeAttachment } from "@/lib/attachments/service";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -42,6 +42,48 @@ export async function getCompanyLogoInfo(ctx: RequestContext) {
   const companyId = ctx.companyId!;
   const settings = await prisma.companySettings.findUnique({ where: { companyId }, select: { logoMimeType: true } });
   return { hasLogo: !!settings?.logoMimeType, companyId };
+}
+
+// 2026-09-19 — user report: "investigate logo display problem throughout
+// the app." Root cause found beyond the permission/CORS fix above: the
+// 2026-09-14 object-storage migration deliberately did NOT backfill
+// existing logos (see decision-storage-architecture doc's "No backfill of
+// historical inline rows planned" — a scope decision, not an oversight).
+// A company that set its logo BEFORE that migration and hasn't re-uploaded
+// it since still has logoMimeType/logoData set on CompanySettings, but
+// updateCompanyLogo's object-storage path — the only thing that ever
+// creates a COMPANY_LOGO Attachment row — never ran for it. So
+// findLogoAttachment finds nothing for that company, and every consumer
+// that only checked the Attachment row (the logo route after this
+// session's earlier fix, and the favicon route, which still calls the
+// old admin-gated getCompanySettings below on top of this) quietly 404s —
+// while the sidebar's logo (src/app/(tenant)/layout.tsx) kept working the
+// whole time, because it reads CompanySettings.logoData directly rather
+// than going through either route. That's the "works in the sidebar, not
+// anywhere else" pattern behind this report.
+//
+// Fix: resolve the logo the same way everywhere, attachment-first with a
+// fallback to the legacy inline bytes instead of a bare 404 — no backfill
+// migration needed, and once a company re-uploads its logo (going through
+// updateCompanyLogo) the Attachment row exists and this naturally prefers
+// it from then on.
+export type CompanyLogoSource =
+  | { kind: "redirect"; url: string }
+  | { kind: "inline"; mimeType: string; data: Buffer }
+  | { kind: "none" };
+
+export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<CompanyLogoSource> {
+  requireTenant(ctx);
+  const companyId = ctx.companyId!;
+  const settings = await prisma.companySettings.findUnique({ where: { companyId }, select: { logoMimeType: true, logoData: true } });
+  if (!settings?.logoMimeType) return { kind: "none" };
+  const attachment = await prisma.attachment.findFirst({ where: { companyId, ownerType: "COMPANY_LOGO", ownerId: companyId } });
+  if (attachment) {
+    const url = await getAttachmentDownloadUrl(attachment);
+    return { kind: "redirect", url };
+  }
+  if (settings.logoData) return { kind: "inline", mimeType: settings.logoMimeType, data: Buffer.from(settings.logoData) };
+  return { kind: "none" };
 }
 
 // 2026-09-19 — user request: print the company's own organization details
