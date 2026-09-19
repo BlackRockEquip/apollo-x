@@ -109,24 +109,31 @@ function requireJobsRead(ctx: RequestContext) {
 
 // 2026-09-19 — "Mechanic Strip"/"Mechanic Assemble" fields (user request).
 // Job.stripMechanicId/buildMechanicId were already fully wired end to end
-// server-side (see getUserOrNull and its call sites in createJob/updateJob
-// below) — same "backend exists, no UI yet" gap as Date in before it. The
-// two new dropdowns need a list of assignable staff; listTenantUsers
-// (users/service.ts) requires USERS_MANAGE, an admin-only permission that
-// would repeat the exact permission-scoping mismatch already fixed twice
-// for manufacturers/storage locations (a user with ordinary JOBS_VIEW but
-// not separately granted Users admin access would get a silently empty
-// dropdown), so this is a lightweight JOBS_VIEW-gated list instead — same
-// pattern as listManufacturerOptions/listStorageLocationOptions in
-// inventory/service.ts.
+// server-side (see getMechanicOrNull and its call sites in createJob/
+// updateJob below) — same "backend exists, no UI yet" gap as Date in
+// before it. The two new dropdowns need a list of assignable staff; this
+// is a lightweight JOBS_VIEW-gated list — same pattern as
+// listManufacturerOptions/listStorageLocationOptions in inventory/
+// service.ts — so a user with ordinary JOBS_VIEW but not separately
+// granted Users admin access doesn't get a silently empty dropdown.
+//
+// 2026-09-19, later the same day — user request: "User Setup will be
+// where an admin can setup Mechanic Names that the corresponding fields
+// in jobs pickup." stripMechanicId/buildMechanicId were originally FK'd
+// to real UserIdentity/CompanyMembership records, but real workshop
+// mechanics very often don't have a system login, so this now reads from
+// the lightweight, admin-managed Mechanic table (see the Mechanic model
+// comment in schema.prisma, and its CRUD in users/service.ts) instead of
+// CompanyMembership. See migration 20260919130000_mechanics for how any
+// already-live assignment was preserved across the retarget.
 export async function listMechanicOptions(ctx: RequestContext) {
   const companyId = requireJobsRead(ctx);
-  const memberships = await prisma.companyMembership.findMany({
-    where: { companyId, status: "ACTIVE", user: { active: true } },
-    select: { user: { select: { id: true, displayName: true } } },
-    orderBy: { user: { displayName: "asc" } },
+  const mechanics = await prisma.mechanic.findMany({
+    where: { companyId, active: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
   });
-  return { items: memberships.map((m) => ({ id: m.user.id, label: m.user.displayName })) };
+  return { items: mechanics.map((m) => ({ id: m.id, label: m.name })) };
 }
 
 function notFound(): never {
@@ -143,11 +150,11 @@ async function getCustomerOrThrow(companyId: string, customerId: string) {
   return customer;
 }
 
-async function getUserOrNull(companyId: string, userId: string | null | undefined) {
-  if (!userId) return null;
-  const membership = await prisma.companyMembership.findFirst({ where: { companyId, userId, status: "ACTIVE" } });
-  if (!membership) notFound();
-  return userId;
+async function getMechanicOrNull(companyId: string, mechanicId: string | null | undefined) {
+  if (!mechanicId) return null;
+  const mechanic = await prisma.mechanic.findFirst({ where: { id: mechanicId, companyId } });
+  if (!mechanic) notFound();
+  return mechanicId;
 }
 
 async function getJobScoped(companyId: string, id: string) {
@@ -456,8 +463,8 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
   const companyId = requireJobs(ctx, "JOBS_CREATE");
   const input = jobCreateDraftInput.parse(raw);
   await getCustomerOrThrow(companyId, input.customerId);
-  const stripMechanicId = await getUserOrNull(companyId, input.stripMechanicId);
-  const buildMechanicId = await getUserOrNull(companyId, input.buildMechanicId);
+  const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
+  const buildMechanicId = await getMechanicOrNull(companyId, input.buildMechanicId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const job = await prisma.$transaction(async (tx) => {
     // Numbered immediately at creation, matching ModApp's nextJobNumber
@@ -595,8 +602,8 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   const input = jobUpdateInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (input.customerId) await getCustomerOrThrow(companyId, input.customerId);
-  const stripMechanicId = input.stripMechanicId === undefined ? existing.stripMechanicId : await getUserOrNull(companyId, input.stripMechanicId);
-  const buildMechanicId = input.buildMechanicId === undefined ? existing.buildMechanicId : await getUserOrNull(companyId, input.buildMechanicId);
+  const stripMechanicId = input.stripMechanicId === undefined ? existing.stripMechanicId : await getMechanicOrNull(companyId, input.stripMechanicId);
+  const buildMechanicId = input.buildMechanicId === undefined ? existing.buildMechanicId : await getMechanicOrNull(companyId, input.buildMechanicId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const updated = await prisma.$transaction(async (tx) => {
     const job = await tx.job.update({

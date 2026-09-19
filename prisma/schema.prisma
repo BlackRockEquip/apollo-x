@@ -450,8 +450,6 @@ model UserIdentity {
   jobsCreated         Job[]                    @relation("JobCreatedBy")
   jobsUpdated         Job[]                    @relation("JobUpdatedBy")
   jobsClosed          Job[]                    @relation("JobClosedBy")
-  jobsStripAssigned   Job[]                    @relation("JobStripMechanic")
-  jobsBuildAssigned   Job[]                    @relation("JobBuildMechanic")
   jobKitsCreated      JobKit[]
   jobNotes            JobNote[]                @relation("JobNoteAuthor")
   jobActivities       JobActivity[]            @relation("JobActivityActor")
@@ -536,6 +534,7 @@ model Company {
   jobs              Job[]
   jobComponents     JobComponent[]
   jobKits           JobKit[]
+  mechanics         Mechanic[]
   jobKitLines       JobKitLine[]
   jobPartLines      JobPartLine[]
   outworkItems      OutworkItem[]
@@ -1519,8 +1518,8 @@ model Job {
   customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
   relatedJob          Job?          @relation("RelatedJob", fields: [relatedJobId], references: [id], onDelete: SetNull)
   relatedJobs         Job[]         @relation("RelatedJob")
-  stripMechanic       UserIdentity? @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
-  buildMechanic       UserIdentity? @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
+  stripMechanic       Mechanic?     @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
+  buildMechanic       Mechanic?     @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
   createdBy           UserIdentity  @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
@@ -1565,6 +1564,34 @@ model JobComponent {
 
   @@unique([id, companyId])
   @@index([companyId, jobId])
+}
+
+// 2026-09-19 — user request: "User Setup will be where an admin can setup
+// Mechanic Names that the corresponding fields in jobs pickup." The
+// Job.stripMechanic/buildMechanic dropdowns (added earlier the same day)
+// were originally FK'd straight to UserIdentity/CompanyMembership — real
+// system logins — but real workshop mechanics very often don't have (and
+// shouldn't need) a system login just to appear in those two dropdowns.
+// This is a lightweight, admin-managed named list instead (same
+// "auth() = USERS_MANAGE" gate and CRUD shape as users/service.ts), with
+// no login/auth of its own. The retargeting migration
+// (20260919130000_mechanics) backfills one Mechanic row per distinct
+// UserIdentity already referenced by a Job's mechanic fields so no
+// same-day assignment is lost.
+model Mechanic {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobsStrip      Job[]   @relation("JobStripMechanic")
+  jobsBuild      Job[]   @relation("JobBuildMechanic")
+
+  @@unique([companyId, name])
+  @@index([companyId, active])
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair, at

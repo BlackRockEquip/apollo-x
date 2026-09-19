@@ -240,14 +240,21 @@ export function CompanySettingsForm() {
           <div className="brand-preview-sidebar"><div className="brand-preview-logo">{logoPreview ? <Image src={logoPreview} alt="Logo preview" className="brand-logo-preview" width={84} height={84} unoptimized /> : <ImagePlus size={28} />}</div><strong>{form.tradingName || form.legalName}</strong><span>Apollo X remains visible</span></div>
           <div className="brand-preview-workspace"><div className="brand-preview-topbar" /><div className="brand-preview-card-grid"><div /><div /><div /></div></div>
         </div>
-        <div className="stack-row" style={{ marginTop: 12 }}>
+        {/* 2026-09-19, user request: "When adding/removing a logo, move the
+            confirmation message to next to the buttons" + "change the
+            Upload / replace button label to 'Upload'." The message used to
+            render as its own full-width banner below this row; it's now an
+            inline-flex item inside the same .stack-row as the buttons
+            instead, so it reads immediately next to whichever action
+            produced it rather than below the whole row. */}
+        <div className="stack-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
           <label className="quiet-button" htmlFor="company-logo-input"><Upload size={14} /> Choose logo</label>
           <input id="company-logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => void onLogoSelected(e.target.files?.[0] ?? null)} />
-          <button type="button" className="table-action" disabled={saving} onClick={() => void uploadLogo()}>Upload / replace</button>
+          <button type="button" className="table-action" disabled={saving} onClick={() => void uploadLogo()}>Upload</button>
           <button type="button" className="table-action danger" disabled={saving} onClick={() => void removeLogo()}><X size={14} /> Remove</button>
+          {error ? <span className="inline-error" style={{ borderBottom: "none", borderRadius: 6 }}>{error}</span> : null}
+          {successMessage ? <span className="inline-success" style={{ borderBottom: "none", borderRadius: 6 }}>{successMessage}</span> : null}
         </div>
-        {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
-        {successMessage ? <div className="inline-success" style={{ marginTop: 10 }}>{successMessage}</div> : null}
       </section>
     </div>
   );

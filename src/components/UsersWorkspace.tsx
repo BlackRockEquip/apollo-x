@@ -2,13 +2,18 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- async user loading intentionally mirrors existing workspace patterns */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyRound, Pencil, Plus, Save, ShieldAlert, X } from "lucide-react";
+import { KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
 
 type ModuleOption = { moduleKey: string; label: string; category: string };
 type UserRow = { id: string; email: string; displayName: string; active: boolean; membershipStatus: string; role: string; roleLabel: string; moduleLabels: string[]; moduleKeys?: string[] };
 type EditorPayload = { availableModules: ModuleOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
+
+// 2026-09-19 — user request: "under settings-users create tab headings:
+// Add System Users, User Setup... User Setup will be where an admin can
+// setup Mechanic Names that the corresponding fields in jobs pickup."
+type MechanicRow = { id: string; name: string; active: boolean };
 
 // 2026-09-10 — split out of what used to be users/page.tsx itself (a
 // "use client" page.tsx can't be an async server component, so it couldn't
@@ -32,6 +37,68 @@ export function UsersWorkspace() {
   const [notice, setNotice] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: [] as string[] });
+
+  const [tab, setTab] = useState<"add" | "setup">("add");
+  const [mechanics, setMechanics] = useState<MechanicRow[]>([]);
+  const [mechanicsLoading, setMechanicsLoading] = useState(true);
+  const [mechanicSaving, setMechanicSaving] = useState(false);
+  const [mechanicError, setMechanicError] = useState("");
+  const [mechanicNotice, setMechanicNotice] = useState("");
+  const [editingMechanicId, setEditingMechanicId] = useState<string | null>(null);
+  const [mechanicForm, setMechanicForm] = useState({ name: "", active: true });
+
+  const loadMechanics = useCallback(async () => {
+    setMechanicsLoading(true);
+    try {
+      const response = await fetch("/api/v1/mechanics", { cache: "no-store" });
+      const body: { mechanics: MechanicRow[] } = await response.json();
+      if (!response.ok) throw new Error((body as never as { error?: { message?: string } }).error?.message || "Unable to load mechanics.");
+      setMechanics(body.mechanics);
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to load mechanics."); }
+    finally { setMechanicsLoading(false); }
+  }, []);
+
+  useEffect(() => { void loadMechanics(); }, [loadMechanics]);
+
+  function resetMechanicForm() {
+    setEditingMechanicId(null);
+    setMechanicNotice("");
+    setMechanicForm({ name: "", active: true });
+  }
+
+  function startEditMechanic(mechanic: MechanicRow) {
+    setEditingMechanicId(mechanic.id);
+    setMechanicNotice("");
+    setMechanicForm({ name: mechanic.name, active: mechanic.active });
+  }
+
+  async function saveMechanic() {
+    setMechanicSaving(true); setMechanicError("");
+    try {
+      const wasEditingId = editingMechanicId;
+      const response = await fetch(wasEditingId ? `/api/v1/mechanics/${wasEditingId}` : "/api/v1/mechanics", { method: wasEditingId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(mechanicForm) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to save mechanic.");
+      resetMechanicForm();
+      setMechanicNotice(wasEditingId ? "Mechanic updated." : "Mechanic added.");
+      await loadMechanics();
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to save mechanic."); }
+    finally { setMechanicSaving(false); }
+  }
+
+  async function removeMechanic(mechanic: MechanicRow) {
+    if (!window.confirm(`Remove mechanic "${mechanic.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`)) return;
+    setMechanicSaving(true); setMechanicError(""); setMechanicNotice("");
+    try {
+      const response = await fetch(`/api/v1/mechanics/${mechanic.id}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to remove mechanic.");
+      if (editingMechanicId === mechanic.id) resetMechanicForm();
+      setMechanicNotice("Mechanic removed.");
+      await loadMechanics();
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to remove mechanic."); }
+    finally { setMechanicSaving(false); }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,40 +187,57 @@ export function UsersWorkspace() {
     return Array.from(groups.entries());
   }, [editorSeed]);
 
-  // 2026-09-10 — revised per follow-up feedback: having Tenant users stacked
-  // under Add/Edit user in a half-width left column made that table too
-  // cramped (its columns — Name/Email/Role/Status/Allowed modules/Actions —
-  // need real width). Tenant users now sits full-width below the Add/Edit
-  // user + Module access row instead of sharing a column with either of
-  // them. Add/Edit user's own fields also get the new .compact-form-fields
-  // treatment below (two classes so it reliably wins over the plain
+  // 2026-09-19 — user request: "create tab headings: Add System Users, User
+  // Setup." "Add System Users" is this same screen, reorganized: Add/Edit
+  // user stays top-left, Tenant users moves back into the grid on the
+  // right (its own follow-up request — it was pulled out full-width on
+  // 2026-09-10 because Email/Allowed modules made it too cramped
+  // half-width; both columns are dropped below, which is what makes
+  // sharing the row workable again), and Module access moves below the
+  // grid, full width. "User Setup" is new — a lightweight, admin-managed
+  // list of Mechanic Names (see the Mechanic model comment in
+  // schema.prisma) that the Job view's "Mechanic Strip"/"Mechanic
+  // Assemble" dropdowns pick up, since real workshop mechanics often
+  // don't have — and shouldn't need — a system login just to appear
+  // there. Add/Edit user's own fields keep the .compact-form-fields
+  // treatment (two classes so it reliably wins over the plain
   // .drawer-fields rules elsewhere, which — for reasons unrelated to this
   // page — aren't consistently sized) since they rendered far larger than
   // every other control in this app ("the add user fields... are way to
   // big").
   return <div>
-    <div className="header-actions" style={{ marginBottom: 12 }}><button type="button" className="gold-button" onClick={resetForm}><Plus size={14} /> Add User</button></div>
-    {error ? <div className="inline-error">{error}</div> : null}
-    {notice ? <div className="inline-success">{notice}</div> : null}
-    <div className="platform-grid">
-      <section className="detail-panel">
-        <header>
-          <div><h2>{editingId ? "Edit user" : "Add user"}</h2></div>
-          <div className="header-actions">
-            {editingId ? <button type="button" className="quiet-button" onClick={resetForm}><X size={14} /> Cancel</button> : null}
-            <button type="button" className="gold-button" disabled={saving || form.email.trim().length < 5 || form.displayName.trim().length < 2 || (!editingId && form.password.length < 8)} onClick={() => void saveUser()}><Save size={14} /> Save</button>
+    <div className="tab-strip">
+      <button type="button" className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>Add System Users</button>
+      <button type="button" className={tab === "setup" ? "active" : ""} onClick={() => setTab("setup")}>User Setup</button>
+    </div>
+    {tab === "add" ? <>
+      <div className="header-actions" style={{ marginBottom: 12 }}><button type="button" className="gold-button" onClick={resetForm}><Plus size={14} /> Add User</button></div>
+      {error ? <div className="inline-error">{error}</div> : null}
+      {notice ? <div className="inline-success">{notice}</div> : null}
+      <div className="platform-grid">
+        <section className="detail-panel">
+          <header>
+            <div><h2>{editingId ? "Edit user" : "Add user"}</h2></div>
+            <div className="header-actions">
+              {editingId ? <button type="button" className="quiet-button" onClick={resetForm}><X size={14} /> Cancel</button> : null}
+              <button type="button" className="gold-button" disabled={saving || form.email.trim().length < 5 || form.displayName.trim().length < 2 || (!editingId && form.password.length < 8)} onClick={() => void saveUser()}><Save size={14} /> Save</button>
+            </div>
+          </header>
+          <div className="drawer-fields compact-form-fields">
+            <label><span>Name</span><input value={form.displayName} onChange={(e) => setForm((c) => ({ ...c, displayName: e.target.value }))} /></label>
+            <label><span>Email</span><input value={form.email} disabled={Boolean(editingId)} onChange={(e) => setForm((c) => ({ ...c, email: e.target.value }))} /></label>
+            <label><span>Role</span><select value={form.role} onChange={(e) => setForm((c) => ({ ...c, role: e.target.value }))}>{editorSeed?.roles.map((role) => <option key={role.role} value={role.role}>{role.label}</option>)}</select></label>
+            <label><span>Password {editingId ? "(leave blank to keep)" : ""}</span><input type="password" value={form.password} onChange={(e) => setForm((c) => ({ ...c, password: e.target.value }))} /></label>
+            <label><span>User active</span><select value={form.active ? "true" : "false"} onChange={(e) => setForm((c) => ({ ...c, active: e.target.value === "true" }))}><option value="true">Active</option><option value="false">Inactive</option></select></label>
+            <label><span>Membership status</span><select value={form.membershipStatus} onChange={(e) => setForm((c) => ({ ...c, membershipStatus: e.target.value }))}><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="ENDED">Ended</option></select></label>
           </div>
-        </header>
-        <div className="drawer-fields compact-form-fields">
-          <label><span>Name</span><input value={form.displayName} onChange={(e) => setForm((c) => ({ ...c, displayName: e.target.value }))} /></label>
-          <label><span>Email</span><input value={form.email} disabled={Boolean(editingId)} onChange={(e) => setForm((c) => ({ ...c, email: e.target.value }))} /></label>
-          <label><span>Role</span><select value={form.role} onChange={(e) => setForm((c) => ({ ...c, role: e.target.value }))}>{editorSeed?.roles.map((role) => <option key={role.role} value={role.role}>{role.label}</option>)}</select></label>
-          <label><span>Password {editingId ? "(leave blank to keep)" : ""}</span><input type="password" value={form.password} onChange={(e) => setForm((c) => ({ ...c, password: e.target.value }))} /></label>
-          <label><span>User active</span><select value={form.active ? "true" : "false"} onChange={(e) => setForm((c) => ({ ...c, active: e.target.value === "true" }))}><option value="true">Active</option><option value="false">Inactive</option></select></label>
-          <label><span>Membership status</span><select value={form.membershipStatus} onChange={(e) => setForm((c) => ({ ...c, membershipStatus: e.target.value }))}><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="ENDED">Ended</option></select></label>
-        </div>
-      </section>
-      <section className="detail-panel">
+        </section>
+        <section className="detail-panel">
+          <header><div><h2>Tenant users</h2></div></header>
+          {loading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>{users.map((user) => <tr key={user.id}><td><strong>{user.displayName}</strong></td><td>{user.roleLabel}</td><td>{user.active ? user.membershipStatus : "USER_DISABLED"}</td><td className="actions"><button type="button" className="table-action" onClick={() => void startEdit(user.id)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void resetSessions(user.id)}><KeyRound size={14} /> Reset</button></td></tr>)}{users.length === 0 && <tr><td colSpan={4} className="table-state compact-empty-state">No tenant users found.</td></tr>}</tbody></table></div>}
+        </section>
+      </div>
+      <section className="detail-panel" style={{ marginTop: 16 }}>
         {/* 2026-09-10 — two follow-up fixes:
             1. availableModules (and therefore groupedModules) was already
                filtered server-side to the company's *entitled* modules
@@ -175,11 +259,29 @@ export function UsersWorkspace() {
           ? <p className="table-state compact-empty-state">No modules are enabled for this company yet. Ask your Apollo X administrator to add module licensing before users can be granted access.</p>
           : <div className="module-picker-groups">{groupedModules.map(([category, items]) => <section key={category} className="module-picker-group"><h3>{category}</h3><div className="module-pill-grid">{items.map((item) => { const selected = form.selectedModuleKeys.includes(item.moduleKey); return <button key={item.moduleKey} type="button" className={selected ? "module-pill selected" : "module-pill"} onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: selected ? current.selectedModuleKeys.filter((key) => key !== item.moduleKey) : [...current.selectedModuleKeys, item.moduleKey] }))}><span>{selected ? "✓" : "○"}</span><strong>{item.label}</strong></button>; })}</div></section>)}</div>}
       </section>
-    </div>
-    <section className="detail-panel" style={{ marginTop: 16 }}>
-      <header><div><h2>Tenant users</h2></div></header>
-      {loading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Allowed modules</th><th></th></tr></thead><tbody>{users.map((user) => <tr key={user.id}><td><strong>{user.displayName}</strong></td><td>{user.email}</td><td>{user.roleLabel}</td><td>{user.active ? user.membershipStatus : "USER_DISABLED"}</td><td>{user.moduleLabels.join(" · ")}</td><td className="actions"><button type="button" className="table-action" onClick={() => void startEdit(user.id)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void resetSessions(user.id)}><KeyRound size={14} /> Reset</button></td></tr>)}{users.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No tenant users found.</td></tr>}</tbody></table></div>}
-    </section>
-    <div className="platform-inline-note"><ShieldAlert size={14} /> Backend entitlement checks remain authoritative. UI choices cannot grant unlicensed access.</div>
+      <div className="platform-inline-note"><ShieldAlert size={14} /> Backend entitlement checks remain authoritative. UI choices cannot grant unlicensed access.</div>
+    </> : <>
+      {mechanicError ? <div className="inline-error">{mechanicError}</div> : null}
+      {mechanicNotice ? <div className="inline-success">{mechanicNotice}</div> : null}
+      <div className="platform-grid">
+        <section className="detail-panel">
+          <header>
+            <div><h2>{editingMechanicId ? "Edit mechanic" : "Add mechanic"}</h2><p className="muted small-line">Names added here populate the Mechanic Strip / Mechanic Assemble dropdowns on the Job view — no system login required.</p></div>
+            <div className="header-actions">
+              {editingMechanicId ? <button type="button" className="quiet-button" onClick={resetMechanicForm}><X size={14} /> Cancel</button> : null}
+              <button type="button" className="gold-button" disabled={mechanicSaving || mechanicForm.name.trim().length < 1} onClick={() => void saveMechanic()}><Save size={14} /> Save</button>
+            </div>
+          </header>
+          <div className="drawer-fields compact-form-fields">
+            <label><span>Name</span><input value={mechanicForm.name} onChange={(e) => setMechanicForm((c) => ({ ...c, name: e.target.value }))} /></label>
+            <label><span>Status</span><select value={mechanicForm.active ? "true" : "false"} onChange={(e) => setMechanicForm((c) => ({ ...c, active: e.target.value === "true" }))}><option value="true">Active</option><option value="false">Inactive</option></select></label>
+          </div>
+        </section>
+        <section className="detail-panel">
+          <header><div><h2>Mechanic names</h2></div></header>
+          {mechanicsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{mechanics.map((mechanic) => <tr key={mechanic.id}><td><strong>{mechanic.name}</strong></td><td>{mechanic.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditMechanic(mechanic)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeMechanic(mechanic)}><Trash2 size={14} /> Remove</button></td></tr>)}{mechanics.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No mechanics set up yet.</td></tr>}</tbody></table></div>}
+        </section>
+      </div>
+    </>}
   </div>;
 }
