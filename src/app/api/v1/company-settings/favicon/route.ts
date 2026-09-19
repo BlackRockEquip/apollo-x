@@ -38,7 +38,10 @@ export async function GET(request: NextRequest) {
     const ctx = await requireRequestContext();
     const source = await resolveCompanyLogoSource(ctx);
     if (source.kind === "redirect") return NextResponse.redirect(new URL(source.url, request.url), { headers: { "cache-control": "no-store" } });
-    if (source.kind === "inline") return new NextResponse(source.data, { headers: { "content-type": source.mimeType, "cache-control": "no-store" } });
+    // 2026-09-19 — Blob wrapper, not a raw Buffer: see the matching
+    // comment on ../logo/route.ts's own inline-bytes branch (TS2345,
+    // caught by Render's build).
+    if (source.kind === "inline") return new NextResponse(new Blob([source.data]), { headers: { "content-type": source.mimeType, "cache-control": "no-store" } });
   } catch {
     // Not signed in yet (login page), no company context (platform-admin
     // area), or the lookup failed for some other reason — fall through to
