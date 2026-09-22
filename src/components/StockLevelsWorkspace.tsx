@@ -77,7 +77,12 @@ type PositionRow = {
 // Company Admin has it by default via ALL_TENANT, and, same as everywhere
 // else this permission is used, a company can also extend it to another
 // role (e.g. Finance) from Settings > Users without code changes.
-type ListResponse = { items: PositionRow[]; total: number; page: number; pageSize: number; canViewCost: boolean };
+// 2026-09-22, user request: "Stock Levels - add at the top right the total
+// inventory cost price with a label 'Total Stock Price'." totalStockValue
+// mirrors canViewCost's own gating (see listInventoryPositions) — null
+// whenever the caller can't see cost prices, same as every per-row cost
+// field, since this is just a sum of those.
+type ListResponse = { items: PositionRow[]; total: number; page: number; pageSize: number; canViewCost: boolean; totalStockValue: string | null };
 type Option = { id: string; label: string };
 
 // 2026-09-16 — user request: "remove manufacturer part number from add
@@ -177,7 +182,7 @@ function printPickSlip(ps: PickSlipData) {
 export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [tab, setTab] = useState<"stock" | "pickslips">("stock");
 
-  const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false });
+  const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
   const [q, setQ] = useState("");
   const [stockState, setStockState] = useState("ALL");
   const [page, setPage] = useState(1);
@@ -531,6 +536,17 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           <h1>Stock Levels</h1>
           <p>Part catalog, bin locations, stock on hand, picking slips, and recent movements — all in one place.</p>
         </div>
+        {/* 2026-09-22, user request: "add at the top right the total
+            inventory cost price with a label 'Total Stock Price'." Same
+            INVENTORY_VIEW_COST gate as the Cost Price/Selling Price columns
+            below (data.canViewCost) — a total built from cost prices can't
+            be shown to anyone those prices themselves are hidden from. */}
+        {data.canViewCost && (
+          <div className="stock-total-value">
+            <p className="stock-total-value-label">Total Stock Price</p>
+            <p className="stock-total-value-amount">{formatMoney(data.totalStockValue)}</p>
+          </div>
+        )}
       </div>
 
       <div className="tab-strip">

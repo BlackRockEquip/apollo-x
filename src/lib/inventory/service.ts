@@ -1082,6 +1082,21 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
 
   const paged = selected.slice((page - 1) * pageSize, page * pageSize);
 
+  // 2026-09-22, user request: "Stock Levels - add at the top right the
+  // total inventory cost price with a label 'Total Stock Price'." Summed
+  // across every part matching the current filters/search/stock-state (not
+  // just the current page — a per-page total would jump around as the user
+  // pages through and wouldn't answer "what's my stock worth"), on-hand
+  // quantity times unit cost price. Gated by the same INVENTORY_VIEW_COST
+  // check as the per-row Cost Price column (canViewCost below) — this is
+  // literally a sum of that same cost figure, so it can't be visible to
+  // anyone the per-row column is hidden from.
+  const totalStockValue = viewCost
+    ? selected
+        .reduce((sum, p) => sum.plus(sumBalances(p.stockBalances).onHand.times(p.defaultPurchaseCost ?? new D(0))), new D(0))
+        .toString()
+    : null;
+
   return {
     items: paged.map((p) => {
       const totals = sumBalances(p.stockBalances);
@@ -1134,6 +1149,7 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
     // "you're not allowed to see this". Exposed here once instead of
     // re-deriving it per row on the client.
     canViewCost: viewCost,
+    totalStockValue,
   };
 }
 

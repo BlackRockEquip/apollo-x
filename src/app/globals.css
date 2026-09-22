@@ -155,6 +155,13 @@ a { color: inherit; text-decoration: none; }
 .job-sticky-header .page-header { position: static; top: auto; z-index: auto; background: transparent; padding-bottom: 0; }
 .page-header h1 { margin: 0; font-size: 26px; letter-spacing: -.03em; }
 .page-header p:last-child { margin: 4px 0 0; color: var(--ink-500); font-size: 12.5px; }
+/* 2026-09-22, user request: Stock Levels "Total Stock Price" figure at the
+   top right of the page header — sits in .page-header's existing flex
+   (space-between), so this is just its right-hand sibling, no extra layout
+   needed. */
+.stock-total-value { text-align: right; flex: 0 0 auto; }
+.stock-total-value-label { margin: 0 0 4px; color: var(--ink-500); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.stock-total-value-amount { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.02em; color: var(--ink-900); }
 .header-tabs { display:flex; gap:8px; align-items:center; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .metric-grid.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
