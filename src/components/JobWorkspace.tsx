@@ -14,6 +14,7 @@ type SupplierOption = Row & { name: string };
 // "Mechanic Strip"/"Mechanic Assemble" (2026-09-19 user request) — the
 // company's own staff list, for assigning who stripped/assembled a job.
 type MechanicOption = { id: string; label: string };
+type SalesRepresentativeOption = { id: string; label: string };
 // Parts list — replaces the old requirement/allocation summary types above
 // (see schema.prisma's JobPartLine comment). Each row carries its own
 // direct status, no derived summary needed.
@@ -323,6 +324,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // once on mount (small, fixed list, not a search-as-you-type field like
   // machine make above).
   const [mechanics, setMechanics] = useState<MechanicOption[]>([]);
+  // "Sales representative" — 2026-09-22 user request: "add Sales
+  // Representative same as mechanic field." Same admin-managed named-list
+  // pattern as mechanics above, loaded once on mount the same way.
+  const [salesRepresentatives, setSalesRepresentatives] = useState<SalesRepresentativeOption[]>([]);
   const [bulkPartLines, setBulkPartLines] = useState("");
   // Hides the "add parts" UI (job kit / paste box / import) behind an
   // explicit "Add parts to Job" toggle instead of showing it by default —
@@ -583,7 +588,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     reportNumber: "",
     importTrackingNumber: "",
     previousJobNumber: "",
-    salesRepresentative: "",
+    salesRepresentativeId: "",
     registerStatus: "TO_BE_RECEIVED",
     closingOutcome: "",
     closingNote: "",
@@ -660,7 +665,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         reportNumber: body.reportNumber || "",
         importTrackingNumber: body.importTrackingNumber || "",
         previousJobNumber: body.previousJobNumber || "",
-        salesRepresentative: body.salesRepresentative || "",
+        salesRepresentativeId: body.salesRepresentativeId || "",
         registerStatus: body.status === "DRAFT" ? statusStepsForJobType(body.type)[0] : body.status,
         reopenStatus: statusStepsForJobType(body.type)[0],
         fieldSite: body.fieldServiceReport?.site ? String(body.fieldServiceReport.site) : "",
@@ -693,6 +698,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         // Convenience list for picking an existing staff member — the
         // fields underneath still save/load fine if this fails, same
         // "options are a convenience" approach used elsewhere on this page.
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/v1/jobs/sales-representatives", { cache: "no-store" });
+        const b = await r.json();
+        if (r.ok) setSalesRepresentatives(b.items || []);
+      } catch {
+        // Convenience list, same "options are a convenience" approach as
+        // the mechanics load above.
       }
     })();
   }, []);
@@ -863,7 +881,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       reportNumber: form.reportNumber || null,
       importTrackingNumber: form.importTrackingNumber || null,
       previousJobNumber: form.previousJobNumber || null,
-      salesRepresentative: form.salesRepresentative || null,
+      salesRepresentativeId: form.salesRepresentativeId || null,
     };
   }
 
@@ -939,7 +957,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     form.quoteDate, form.salesOrderNumber, form.salesOrderDate, form.invoiceNumber, form.invoiceDate,
     form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
     form.receivingTransport, form.kmsTravelled, form.paymentDateReceived, form.paymentNotApplicable, form.machineHours,
-    form.plantNumber, form.reportNumber, form.importTrackingNumber, form.previousJobNumber, form.salesRepresentative,
+    form.plantNumber, form.reportNumber, form.importTrackingNumber, form.previousJobNumber, form.salesRepresentativeId,
   ]);
 
   // Backs up the "Save failed — retrying" wording in the header (above)
@@ -1867,7 +1885,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ["Contact", contactLine],
         ["Date in", fmt(form.dateReceived)],
         ["Customer reference", form.customerReference],
-        ["Sales representative", form.salesRepresentative],
+        ["Sales representative", String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—")],
         ["Report number", form.reportNumber],
       ])}</table>
       ${form.notes ? `<h2>Notes</h2><table><tr><td class="description">${escapeHtml(form.notes)}</td></tr></table>` : ""}
@@ -2398,7 +2416,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </label>
             <label><span>Date in</span><input type="date" value={form.dateReceived} onChange={(e) => updateField("dateReceived", e.target.value)} /></label>
             <label><span>Customer reference</span><input value={form.customerReference} onChange={(e) => updateField("customerReference", e.target.value)} /></label>
-            <label><span>Sales representative</span><input value={form.salesRepresentative} onChange={(e) => updateField("salesRepresentative", e.target.value)} /></label>
+            {/* 2026-09-22, user request: "add Sales Representative same as
+                mechanic field." Was a free-text <input>; now the same
+                admin-managed-list <select> pattern as Mechanic strip/
+                assemble below, backed by /api/v1/jobs/sales-representatives
+                (see listSalesRepresentativeOptions's own comment). */}
+            <label><span>Sales representative</span>
+              <select value={form.salesRepresentativeId} onChange={(e) => updateField("salesRepresentativeId", e.target.value)}>
+                <option value="">—</option>
+                {salesRepresentatives.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </label>
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
           </div>
         </section>

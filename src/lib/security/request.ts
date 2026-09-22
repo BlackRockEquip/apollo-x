@@ -68,3 +68,19 @@ export function requireSameOrigin(request: NextRequest) {
 export function requestIp(request: NextRequest) {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
 }
+
+// 2026-09-22 — added so the forgot-password email (auth/password-reset-
+// service.ts) can build a correct absolute reset link. Same
+// x-forwarded-proto/x-forwarded-host trust as publicOrigin() above (same
+// Render-proxy reasoning — request.nextUrl.origin would report "http://"
+// even on a real https:// deploy), but returns a clean, human-facing
+// "protocol://host" with no forced :443/:80 suffix — publicOrigin()'s own
+// port-normalization exists only to make same-origin equality comparisons
+// exact, which isn't a concern for a link a person will actually click.
+export function publicOriginForLinks(request: NextRequest): string {
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || request.nextUrl.protocol.replace(":", "");
+  const host = forwardedHost || request.nextUrl.host;
+  return `${protocol}://${host}`;
+}

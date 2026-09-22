@@ -90,12 +90,16 @@ function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return arrayBuffer;
 }
 
-export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<CompanyLogoSource> {
-  requireTenant(ctx);
-  const companyId = ctx.companyId!;
+// Shared by resolveCompanyLogoSource (below — the signed-in, "my own
+// company's logo" path) and resolvePublicCompanyLogoSource (further down —
+// the unauthenticated "another company's logo, for the login page's
+// showcase" path). Takes a plain companyId with no RequestContext/auth
+// check of its own — callers are responsible for deciding who's allowed to
+// ask for which company's logo.
+async function resolveLogoSourceForCompanyId(companyId: string): Promise<CompanyLogoSource> {
   const settings = await prisma.companySettings.findUnique({ where: { companyId }, select: { logoMimeType: true, logoData: true } });
   if (!settings?.logoMimeType) return { kind: "none" };
-  const attachment = await prisma.attachment.findFirst({ where: { companyId, ownerType: "COMPANY_LOGO", ownerId: companyId } });
+  const attachment = await findLogoAttachment(companyId);
   if (attachment) {
     // 2026-09-19 — user report: "local dev is working well with logos but
     // online render still not showing logo." getAttachmentDownloadUrl
@@ -112,6 +116,35 @@ export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<Com
   }
   if (settings.logoData) return { kind: "inline", mimeType: settings.logoMimeType, data: toArrayBuffer(Buffer.from(settings.logoData)) };
   return { kind: "none" };
+}
+
+export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<CompanyLogoSource> {
+  requireTenant(ctx);
+  return resolveLogoSourceForCompanyId(ctx.companyId!);
+}
+
+// 2026-09-22 — user request: "Add below the words at the bottom a section
+// that displays all companies that use the platform, use the
+// organizations Logo" on the (unauthenticated) login screen. This pair —
+// listPublicCompanyLogos + resolvePublicCompanyLogoSource — is the one
+// place in the app that deliberately exposes company identity before
+// sign-in, so both are scoped tightly: id/name only (no settings, no
+// addresses, no financial data), ACTIVE companies only, and only ones that
+// actually have a logo set — an inactive/offboarded tenant, or one that
+// never uploaded a logo, never appears.
+export async function listPublicCompanyLogos() {
+  const companies = await prisma.company.findMany({
+    where: { status: "ACTIVE", settings: { logoMimeType: { not: null } } },
+    select: { id: true, legalName: true, tradingName: true },
+    orderBy: { legalName: "asc" },
+  });
+  return companies.map((company) => ({ id: company.id, name: company.tradingName || company.legalName }));
+}
+
+export async function resolvePublicCompanyLogoSource(companyId: string): Promise<CompanyLogoSource> {
+  const company = await prisma.company.findFirst({ where: { id: companyId, status: "ACTIVE" }, select: { id: true } });
+  if (!company) return { kind: "none" };
+  return resolveLogoSourceForCompanyId(companyId);
 }
 
 // 2026-09-19 — user request: print the company's own organization details

@@ -78,11 +78,14 @@ export const SUPPLIER_IMPORT_FIELDS: ImportFieldDef[] = [
 
 // Every scalar field jobCreateDraftInput (jobs/validation.ts) accepts,
 // except the internal cuid references (stripMechanicId/buildMechanicId/
-// relatedJobId) — not practical to fill in from a spreadsheet, same
-// "internal bookkeeping, not job data" scope cut ModApp's own Jobs import
-// makes for its equivalent id-shaped fields. "jobNumber", "type" and
-// "customerName" are the required fields; everything else mirrors what's
-// optional on the New Job form itself.
+// relatedJobId/salesRepresentativeId — the last one joined this list
+// 2026-09-22, when Job.salesRepresentative was retargeted from a
+// free-text column to an admin-managed named list, same as the mechanic
+// fields) — not practical to fill in from a spreadsheet, same "internal
+// bookkeeping, not job data" scope cut ModApp's own Jobs import makes for
+// its equivalent id-shaped fields. "jobNumber", "type" and "customerName"
+// are the required fields; everything else mirrors what's optional on the
+// New Job form itself.
 //
 // "jobNumber" vs "previousJobNumber" — two distinct fields, per the user's
 // explicit correction (they don't mean the same thing, in ModApp's own
@@ -147,7 +150,6 @@ export const JOB_IMPORT_FIELDS: ImportFieldDef[] = [
   // fields must never share an alias or a file's "JOB #" column would
   // auto-link to both.
   { key: "previousJobNumber", label: "Previous job number", aliases: ["Linked Job", "Linked Job / Project", "Linked Project", "Previous Job Number", "Previous Job No"] },
-  { key: "salesRepresentative", label: "Sales representative", aliases: ["Sales Rep"] },
 ];
 
 // 2026-09-10 — user request: "Create a import/export parts catalog in

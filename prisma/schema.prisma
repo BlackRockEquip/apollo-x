@@ -451,6 +451,7 @@ model UserIdentity {
   jobsUpdated         Job[]                    @relation("JobUpdatedBy")
   jobsClosed          Job[]                    @relation("JobClosedBy")
   jobKitsCreated      JobKit[]
+  passwordResetTokens PasswordResetToken[]
   jobNotes            JobNote[]                @relation("JobNoteAuthor")
   jobActivities       JobActivity[]            @relation("JobActivityActor")
   pexRecordsCreated   PexRecord[]              @relation("PexRecordCreatedBy")
@@ -535,6 +536,7 @@ model Company {
   jobComponents     JobComponent[]
   jobKits           JobKit[]
   mechanics         Mechanic[]
+  salesRepresentatives SalesRepresentative[]
   jobKitLines       JobKitLine[]
   jobPartLines      JobPartLine[]
   outworkItems      OutworkItem[]
@@ -678,6 +680,49 @@ model LoginThrottle {
   updatedAt    DateTime  @updatedAt
 
   @@index([lockedUntil])
+}
+
+// 2026-09-22 — user request: "Allow users to reset there own password, Add
+// n forgot password to the login screen." One row per outstanding reset
+// request; tokenHash (not the raw token) is what's stored, same pattern as
+// UserSession.tokenHash — the raw opaque token only ever exists in the
+// email link and briefly in memory while handling the request. usedAt
+// marks a token spent the moment it's redeemed so it can never be replayed
+// even before its own expiry.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user UserIdentity @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// 2026-09-22 — a true singleton (always the one row with id "platform"),
+// deliberately separate from CompanySettings' own per-company smtp*
+// fields: a password-reset email has to go out before any company is
+// chosen (the user may belong to several, or to none with SMTP configured
+// at all — see the forgot-password flow in auth/password-reset-service.ts
+// and lib/email.ts's sendPlatformEmail), so it needs one sender that
+// always exists rather than depending on which tenant a given user
+// happens to be a member of. Gated by PLATFORM_CONFIGURATION_MANAGE (see
+// platform/settings-service.ts) — same permission already used for the
+// per-company storage-provider override in platform/admin-service.ts,
+// since both are "platform operator, not any one tenant" configuration.
+model PlatformSettings {
+  id              String   @id
+  smtpHost        String?
+  smtpPort        Int?
+  smtpSecure      Boolean  @default(true)
+  smtpUsername    String?
+  smtpPassword    String?
+  smtpFromAddress String?
+  smtpFromName    String?
+  updatedAt       DateTime @updatedAt
 }
 
 model CompanyModuleEntitlement {
@@ -1494,7 +1539,13 @@ model Job {
   // tracking reads (see syncPexRedeployment in src/lib/pex/service.ts) —
   // this field IS the "assign to job" UI, matching ModApp exactly.
   previousJobNumber    String?
-  salesRepresentative  String?
+  // 2026-09-22, user request: "add Sales Representative same as mechanic
+  // field." Was a plain free-text column; retargeted to the same
+  // lightweight admin-managed-list pattern as Job.stripMechanicId/
+  // buildMechanicId (see the SalesRepresentative model comment below and
+  // migration 20260922110000_sales_representatives for how any already-
+  // typed value was preserved across the retarget).
+  salesRepresentativeId String?
 
   // 2026-09-14 — WIP Excel auto-sync's per-field conflict protection ("if
   // changes on the system have been made, spreadsheet must not overwrite
@@ -1520,6 +1571,7 @@ model Job {
   relatedJobs         Job[]         @relation("RelatedJob")
   stripMechanic       Mechanic?     @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
   buildMechanic       Mechanic?     @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
+  salesRepresentative SalesRepresentative? @relation(fields: [salesRepresentativeId], references: [id], onDelete: SetNull)
   createdBy           UserIdentity  @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
@@ -1589,6 +1641,30 @@ model Mechanic {
   company        Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   jobsStrip      Job[]   @relation("JobStripMechanic")
   jobsBuild      Job[]   @relation("JobBuildMechanic")
+
+  @@unique([companyId, name])
+  @@index([companyId, active])
+}
+
+// 2026-09-22, user request: "add Sales Representative same as mechanic
+// field." Job.salesRepresentative was a plain free-text column; this
+// mirrors the Mechanic model exactly (same shape, same "auth() =
+// USERS_MANAGE" CRUD gate, no login/auth of its own) so it gets the same
+// admin-managed Settings > Users > User Setup list instead of a
+// type-it-yourself text box. Migration 20260922110000_sales_
+// representatives backfills one row per distinct value already typed
+// into a Job's salesRepresentative column so no existing assignment is
+// lost.
+model SalesRepresentative {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobs    Job[]
 
   @@unique([companyId, name])
   @@index([companyId, active])

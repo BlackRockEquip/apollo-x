@@ -9,6 +9,7 @@ import type { ModuleKey } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { TENANT_ROLE_LABELS } from "@/lib/constants";
 import { LogoutButton } from "@/components/LogoutButton";
+import { ChangePasswordButton } from "@/components/ChangePasswordButton";
 import { SupportExitButton } from "@/components/SupportExitButton";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
@@ -93,7 +94,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
     visible from every page — AppShell renders on every tenant page, so
     placing it here (rather than on any one page) is what makes it
     "always visible from every page". See NotificationBell.tsx. */}
-<div className="topbar-user"><NotificationBell /><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><LogoutButton /></div></header>
+<div className="topbar-user"><NotificationBell /><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
         <main className="page-content">{children}</main>
       </div>
     </div>

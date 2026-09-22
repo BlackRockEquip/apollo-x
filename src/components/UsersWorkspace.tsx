@@ -15,6 +15,10 @@ type ListPayload = { users: UserRow[]; editor: EditorPayload };
 // setup Mechanic Names that the corresponding fields in jobs pickup."
 type MechanicRow = { id: string; name: string; active: boolean };
 
+// 2026-09-22 — user request: "under Settings-Users-User Setup, add Sales
+// Representative same as mechanic field." Same shape as MechanicRow.
+type SalesRepresentativeRow = { id: string; name: string; active: boolean };
+
 // 2026-09-10 — split out of what used to be users/page.tsx itself (a
 // "use client" page.tsx can't be an async server component, so it couldn't
 // fetch the RequestContext the new shared SettingsTabNav needs — see the
@@ -98,6 +102,70 @@ export function UsersWorkspace() {
       await loadMechanics();
     } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to remove mechanic."); }
     finally { setMechanicSaving(false); }
+  }
+
+  // 2026-09-22 — user request: "under Settings-Users-User Setup, add Sales
+  // Representative same as mechanic field." Identical CRUD shape to the
+  // Mechanic block above, against /api/v1/sales-representatives.
+  const [salesRepresentatives, setSalesRepresentatives] = useState<SalesRepresentativeRow[]>([]);
+  const [salesRepsLoading, setSalesRepsLoading] = useState(true);
+  const [salesRepSaving, setSalesRepSaving] = useState(false);
+  const [salesRepError, setSalesRepError] = useState("");
+  const [salesRepNotice, setSalesRepNotice] = useState("");
+  const [editingSalesRepId, setEditingSalesRepId] = useState<string | null>(null);
+  const [salesRepForm, setSalesRepForm] = useState({ name: "", active: true });
+
+  const loadSalesRepresentatives = useCallback(async () => {
+    setSalesRepsLoading(true);
+    try {
+      const response = await fetch("/api/v1/sales-representatives", { cache: "no-store" });
+      const body: { salesRepresentatives: SalesRepresentativeRow[] } = await response.json();
+      if (!response.ok) throw new Error((body as never as { error?: { message?: string } }).error?.message || "Unable to load sales representatives.");
+      setSalesRepresentatives(body.salesRepresentatives);
+    } catch (e) { setSalesRepError(e instanceof Error ? e.message : "Unable to load sales representatives."); }
+    finally { setSalesRepsLoading(false); }
+  }, []);
+
+  useEffect(() => { void loadSalesRepresentatives(); }, [loadSalesRepresentatives]);
+
+  function resetSalesRepForm() {
+    setEditingSalesRepId(null);
+    setSalesRepNotice("");
+    setSalesRepForm({ name: "", active: true });
+  }
+
+  function startEditSalesRep(salesRep: SalesRepresentativeRow) {
+    setEditingSalesRepId(salesRep.id);
+    setSalesRepNotice("");
+    setSalesRepForm({ name: salesRep.name, active: salesRep.active });
+  }
+
+  async function saveSalesRep() {
+    setSalesRepSaving(true); setSalesRepError("");
+    try {
+      const wasEditingId = editingSalesRepId;
+      const response = await fetch(wasEditingId ? `/api/v1/sales-representatives/${wasEditingId}` : "/api/v1/sales-representatives", { method: wasEditingId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(salesRepForm) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to save sales representative.");
+      resetSalesRepForm();
+      setSalesRepNotice(wasEditingId ? "Sales representative updated." : "Sales representative added.");
+      await loadSalesRepresentatives();
+    } catch (e) { setSalesRepError(e instanceof Error ? e.message : "Unable to save sales representative."); }
+    finally { setSalesRepSaving(false); }
+  }
+
+  async function removeSalesRep(salesRep: SalesRepresentativeRow) {
+    if (!window.confirm(`Remove sales representative "${salesRep.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`)) return;
+    setSalesRepSaving(true); setSalesRepError(""); setSalesRepNotice("");
+    try {
+      const response = await fetch(`/api/v1/sales-representatives/${salesRep.id}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to remove sales representative.");
+      if (editingSalesRepId === salesRep.id) resetSalesRepForm();
+      setSalesRepNotice("Sales representative removed.");
+      await loadSalesRepresentatives();
+    } catch (e) { setSalesRepError(e instanceof Error ? e.message : "Unable to remove sales representative."); }
+    finally { setSalesRepSaving(false); }
   }
 
   const load = useCallback(async () => {
@@ -280,6 +348,30 @@ export function UsersWorkspace() {
         <section className="detail-panel">
           <header><div><h2>Mechanic names</h2></div></header>
           {mechanicsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{mechanics.map((mechanic) => <tr key={mechanic.id}><td><strong>{mechanic.name}</strong></td><td>{mechanic.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditMechanic(mechanic)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeMechanic(mechanic)}><Trash2 size={14} /> Remove</button></td></tr>)}{mechanics.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No mechanics set up yet.</td></tr>}</tbody></table></div>}
+        </section>
+      </div>
+      {/* 2026-09-22, user request: "add Sales Representative same as
+          mechanic field." Identical layout to the Mechanic names panels
+          above, its own grid row below them. */}
+      {salesRepError ? <div className="inline-error">{salesRepError}</div> : null}
+      {salesRepNotice ? <div className="inline-success">{salesRepNotice}</div> : null}
+      <div className="platform-grid" style={{ marginTop: 16 }}>
+        <section className="detail-panel">
+          <header>
+            <div><h2>{editingSalesRepId ? "Edit sales representative" : "Add sales representative"}</h2><p className="muted small-line">Names added here populate the Sales representative dropdown on the Job view.</p></div>
+            <div className="header-actions">
+              {editingSalesRepId ? <button type="button" className="quiet-button" onClick={resetSalesRepForm}><X size={14} /> Cancel</button> : null}
+              <button type="button" className="gold-button" disabled={salesRepSaving || salesRepForm.name.trim().length < 1} onClick={() => void saveSalesRep()}><Save size={14} /> Save</button>
+            </div>
+          </header>
+          <div className="drawer-fields compact-form-fields">
+            <label><span>Name</span><input value={salesRepForm.name} onChange={(e) => setSalesRepForm((c) => ({ ...c, name: e.target.value }))} /></label>
+            <label><span>Status</span><select value={salesRepForm.active ? "true" : "false"} onChange={(e) => setSalesRepForm((c) => ({ ...c, active: e.target.value === "true" }))}><option value="true">Active</option><option value="false">Inactive</option></select></label>
+          </div>
+        </section>
+        <section className="detail-panel">
+          <header><div><h2>Sales representative names</h2></div></header>
+          {salesRepsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{salesRepresentatives.map((salesRep) => <tr key={salesRep.id}><td><strong>{salesRep.name}</strong></td><td>{salesRep.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditSalesRep(salesRep)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeSalesRep(salesRep)}><Trash2 size={14} /> Remove</button></td></tr>)}{salesRepresentatives.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No sales representatives set up yet.</td></tr>}</tbody></table></div>}
         </section>
       </div>
     </>}

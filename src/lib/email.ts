@@ -67,3 +67,45 @@ export async function sendEmail(companyId: string, input: { to: string; subject:
     attachments: input.attachments,
   });
 }
+
+// 2026-09-22 — platform-wide counterpart of the per-company sendEmail
+// above, added for the forgot-password flow (auth/password-reset-
+// service.ts): a reset email has to go out before any company is chosen,
+// so it can't depend on one specific tenant's SMTP settings the way an RFQ
+// email can. Reads PlatformSettings' one singleton row (id "platform")
+// instead of a companyId — see that model's comment in schema.prisma.
+async function getPlatformSmtpSettings(): Promise<SmtpSettings | null> {
+  const settings = await prisma.platformSettings.findUnique({
+    where: { id: "platform" },
+    select: { smtpHost: true, smtpPort: true, smtpSecure: true, smtpUsername: true, smtpPassword: true, smtpFromAddress: true, smtpFromName: true },
+  });
+  return settings ?? null;
+}
+
+export async function isPlatformEmailConfigured(): Promise<boolean> {
+  return isConfigured(await getPlatformSmtpSettings());
+}
+
+// Throws EMAIL_NOT_CONFIGURED just like sendEmail — callers decide how to
+// handle it (the forgot-password flow deliberately swallows it, since a
+// reset request must never reveal, via a 500 vs. a silent success, whether
+// email delivery is even configured).
+export async function sendPlatformEmail(input: { to: string; subject: string; text: string; html?: string }): Promise<void> {
+  const settings = await getPlatformSmtpSettings();
+  if (!isConfigured(settings)) throw new Error("EMAIL_NOT_CONFIGURED");
+
+  const transporter = nodemailer.createTransport({
+    host: settings.smtpHost,
+    port: settings.smtpPort ?? 587,
+    secure: settings.smtpSecure,
+    auth: { user: settings.smtpUsername, pass: settings.smtpPassword },
+  });
+
+  await transporter.sendMail({
+    from: settings.smtpFromName ? { name: settings.smtpFromName, address: settings.smtpFromAddress } : settings.smtpFromAddress,
+    to: input.to,
+    subject: input.subject,
+    text: input.text,
+    html: input.html,
+  });
+}

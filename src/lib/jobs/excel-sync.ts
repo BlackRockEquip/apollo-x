@@ -40,10 +40,11 @@
 // Field scope (which Job columns are synced at all) mirrors
 // JOB_IMPORT_FIELDS (src/lib/import-export/fields.ts) closely, including
 // that importer's own deliberate omissions — stripMechanicId/
-// buildMechanicId aren't set from the sheet's Technician/Mechanic Strip/
-// Mechanic Assemble columns here either, for the same reason given there:
-// resolving free-text names to real UserIdentity records isn't something
-// either importer attempts (see that file's header comment).
+// buildMechanicId/salesRepresentativeId aren't set from the sheet's
+// Technician/Mechanic Strip/Mechanic Assemble/Sales Representative columns
+// here either, for the same reason given there: resolving free-text names
+// to real admin-managed named-list records isn't something either
+// importer attempts (see that file's header comment).
 //
 // NOT SMOKE-TESTED — written and reasoned from the schema/service code,
 // same caveat as everything else in this engagement written without local
@@ -229,7 +230,10 @@ const COL = {
   reportNumber: ["Report Number", "Report #"],
   importTrackingNumber: ["Import Tracking Number", "Tracking Number", "Tracking #"],
   previousJobNumber: ["Previous Job Number", "Linked Job", "Linked Job / Project", "Linked Project", "Previous Job No"],
-  salesRepresentative: ["Sales Representative", "Sales Rep"],
+  // salesRepresentative deliberately absent — see the header comment above
+  // (2026-09-22: retargeted to an admin-managed named list, same "internal
+  // cuid reference, not settable from a spreadsheet" scope cut as
+  // stripMechanicId/buildMechanicId).
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -325,7 +329,6 @@ const APPEND_TEXT_FIELDS = [
   "reportNumber",
   "importTrackingNumber",
   "plantNumber",
-  "salesRepresentative",
 ] as const;
 
 const APPEND_SEPARATOR = " | ";
@@ -385,7 +388,6 @@ function mapRowToPayload(row: SheetRow, headerIndex: Map<string, string>, custom
     reportNumber: cellStr(row, headerIndex, COL.reportNumber) ?? undefined,
     importTrackingNumber: cellStr(row, headerIndex, COL.importTrackingNumber) ?? undefined,
     previousJobNumber: cellStr(row, headerIndex, COL.previousJobNumber) ?? undefined,
-    salesRepresentative: cellStr(row, headerIndex, COL.salesRepresentative) ?? undefined,
   };
 }
 

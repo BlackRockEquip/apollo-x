@@ -75,7 +75,7 @@ export const jobCreateDraftInput = z.object({
   reportNumber: optionalText,
   importTrackingNumber: optionalText,
   previousJobNumber: optionalText,
-  salesRepresentative: optionalText,
+  salesRepresentativeId: optionalId,
 });
 
 export const jobUpdateInput = jobCreateDraftInput.partial().extend({

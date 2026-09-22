@@ -89,7 +89,8 @@ const jobListSelect = {
   reportNumber: true,
   importTrackingNumber: true,
   previousJobNumber: true,
-  salesRepresentative: true,
+  salesRepresentativeId: true,
+  salesRepresentative: { select: { id: true, name: true } },
   createdAt: true,
   updatedAt: true,
   customer: { select: { id: true, name: true, tradingName: true, accountCode: true } },
@@ -136,6 +137,20 @@ export async function listMechanicOptions(ctx: RequestContext) {
   return { items: mechanics.map((m) => ({ id: m.id, label: m.name })) };
 }
 
+// 2026-09-22 — user request: "add Sales Representative same as mechanic
+// field." Same JOBS_VIEW-gated options list as listMechanicOptions above,
+// for the "Sales representative" dropdown on the Job view — see the
+// SalesRepresentative model comment in schema.prisma.
+export async function listSalesRepresentativeOptions(ctx: RequestContext) {
+  const companyId = requireJobsRead(ctx);
+  const salesRepresentatives = await prisma.salesRepresentative.findMany({
+    where: { companyId, active: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  return { items: salesRepresentatives.map((s) => ({ id: s.id, label: s.name })) };
+}
+
 function notFound(): never {
   throw new Error("NOT_FOUND");
 }
@@ -157,6 +172,13 @@ async function getMechanicOrNull(companyId: string, mechanicId: string | null | 
   return mechanicId;
 }
 
+async function getSalesRepresentativeOrNull(companyId: string, salesRepresentativeId: string | null | undefined) {
+  if (!salesRepresentativeId) return null;
+  const salesRep = await prisma.salesRepresentative.findFirst({ where: { id: salesRepresentativeId, companyId } });
+  if (!salesRep) notFound();
+  return salesRepresentativeId;
+}
+
 async function getJobScoped(companyId: string, id: string) {
   const job = await prisma.job.findFirst({
     where: { id, companyId },
@@ -174,6 +196,7 @@ async function getJobScoped(companyId: string, id: string) {
       closedBy: true,
       stripMechanic: true,
       buildMechanic: true,
+      salesRepresentative: true,
       // 2026-09-19 — user report: "sometimes it takes long to load when
       // clicking to go into a job, is there a problem? check". Investigated
       // getJobScoped (this query) as the prime suspect, since it's the one
@@ -465,6 +488,7 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
   await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
   const buildMechanicId = await getMechanicOrNull(companyId, input.buildMechanicId);
+  const salesRepresentativeId = await getSalesRepresentativeOrNull(companyId, input.salesRepresentativeId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const job = await prisma.$transaction(async (tx) => {
     // Numbered immediately at creation, matching ModApp's nextJobNumber
@@ -550,7 +574,7 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
         reportNumber: input.reportNumber,
         importTrackingNumber: input.importTrackingNumber,
         previousJobNumber: input.previousJobNumber,
-        salesRepresentative: input.salesRepresentative,
+        salesRepresentativeId,
         createdById: ctx.userId,
         updatedById: ctx.userId,
       },
@@ -604,6 +628,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   if (input.customerId) await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = input.stripMechanicId === undefined ? existing.stripMechanicId : await getMechanicOrNull(companyId, input.stripMechanicId);
   const buildMechanicId = input.buildMechanicId === undefined ? existing.buildMechanicId : await getMechanicOrNull(companyId, input.buildMechanicId);
+  const salesRepresentativeId = input.salesRepresentativeId === undefined ? existing.salesRepresentativeId : await getSalesRepresentativeOrNull(companyId, input.salesRepresentativeId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const updated = await prisma.$transaction(async (tx) => {
     const job = await tx.job.update({
@@ -648,9 +673,9 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.reportNumber !== undefined ? { reportNumber: input.reportNumber } : {}),
         ...(input.importTrackingNumber !== undefined ? { importTrackingNumber: input.importTrackingNumber } : {}),
         ...(input.previousJobNumber !== undefined ? { previousJobNumber: input.previousJobNumber } : {}),
-        ...(input.salesRepresentative !== undefined ? { salesRepresentative: input.salesRepresentative } : {}),
         stripMechanicId,
         buildMechanicId,
+        salesRepresentativeId,
         updatedById: ctx.userId,
       },
     });

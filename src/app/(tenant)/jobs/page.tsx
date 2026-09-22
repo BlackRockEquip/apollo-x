@@ -118,7 +118,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
     case "previousJobNumber":
       return job.previousJobNumber || "—";
     case "salesRepresentative":
-      return job.salesRepresentative || "—";
+      return job.salesRepresentative?.name || "—";
     case "createdAt":
       return fmtDate(job.createdAt);
     case "updatedAt":

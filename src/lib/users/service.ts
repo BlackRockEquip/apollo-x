@@ -284,3 +284,51 @@ export async function deleteMechanic(ctx: RequestContext, id: string) {
   await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "Mechanic", entityId: id, action: "MECHANIC_DELETED", correlationId: ctx.correlationId, beforeData: { name: before.name } } });
   return { id };
 }
+
+// 2026-09-22 — user request: "under Settings-Users-User Setup, add Sales
+// Representative same as mechanic field." Same shape and same USERS_MANAGE
+// gate as the Mechanic block above — see the SalesRepresentative model
+// comment in schema.prisma for why Job.salesRepresentative was retargeted
+// from a free-text column to this lightweight named list.
+const salesRepresentativeInput = z.object({
+  name: z.string().trim().min(1).max(120),
+  active: z.boolean().optional().default(true),
+});
+
+export async function listSalesRepresentatives(ctx: RequestContext) {
+  const companyId = auth(ctx);
+  return prisma.salesRepresentative.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+}
+
+export async function createSalesRepresentative(ctx: RequestContext, raw: unknown) {
+  const companyId = auth(ctx);
+  const input = salesRepresentativeInput.parse(raw);
+  const salesRep = await prisma.salesRepresentative.create({ data: { companyId, name: input.name, active: input.active } });
+  await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "SalesRepresentative", entityId: salesRep.id, action: "SALES_REPRESENTATIVE_CREATED", correlationId: ctx.correlationId, afterData: { name: salesRep.name, active: salesRep.active } } });
+  return salesRep;
+}
+
+export async function updateSalesRepresentative(ctx: RequestContext, id: string, raw: unknown) {
+  const companyId = auth(ctx);
+  const input = salesRepresentativeInput.partial().parse(raw);
+  const before = await prisma.salesRepresentative.findFirst({ where: { id, companyId } });
+  if (!before) throw new Error("NOT_FOUND");
+  const salesRep = await prisma.salesRepresentative.update({
+    where: { id },
+    data: { ...(input.name !== undefined ? { name: input.name } : {}), ...(input.active !== undefined ? { active: input.active } : {}) },
+  });
+  await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "SalesRepresentative", entityId: id, action: "SALES_REPRESENTATIVE_UPDATED", correlationId: ctx.correlationId, beforeData: { name: before.name, active: before.active }, afterData: { name: salesRep.name, active: salesRep.active } } });
+  return salesRep;
+}
+
+export async function deleteSalesRepresentative(ctx: RequestContext, id: string) {
+  const companyId = auth(ctx);
+  const before = await prisma.salesRepresentative.findFirst({ where: { id, companyId } });
+  if (!before) throw new Error("NOT_FOUND");
+  // Job.salesRepresentativeId is onDelete: SetNull, so deleting a sales
+  // representative currently assigned to a job is never blocked — those
+  // jobs just lose the assignment, same tradeoff as deleteMechanic.
+  await prisma.salesRepresentative.delete({ where: { id } });
+  await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "SalesRepresentative", entityId: id, action: "SALES_REPRESENTATIVE_DELETED", correlationId: ctx.correlationId, beforeData: { name: before.name } } });
+  return { id };
+}

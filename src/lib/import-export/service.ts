@@ -967,7 +967,6 @@ export async function importJobs(ctx: RequestContext, raw: unknown): Promise<Imp
       reportNumber: mappedValue(row, input.mapping, "reportNumber") || undefined,
       importTrackingNumber: mappedValue(row, input.mapping, "importTrackingNumber") || undefined,
       previousJobNumber,
-      salesRepresentative: mappedValue(row, input.mapping, "salesRepresentative") || undefined,
     };
 
     const customerNote = customerCreated
@@ -1193,7 +1192,6 @@ export async function exportModuleData(ctx: RequestContext, kind: ImportExportKi
         reportNumber: j.reportNumber ?? "",
         importTrackingNumber: j.importTrackingNumber ?? "",
         previousJobNumber: j.previousJobNumber ?? "",
-        salesRepresentative: j.salesRepresentative ?? "",
       }),
     );
   }
