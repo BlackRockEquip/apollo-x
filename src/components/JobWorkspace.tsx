@@ -372,6 +372,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [bulkOrderNumber, setBulkOrderNumber] = useState("");
   const [bulkSupplierId, setBulkSupplierId] = useState("");
   const [bulkSupplierQuery, setBulkSupplierQuery] = useState("");
+  // 2026-09-22, user request: "Inside a job, at the part list section, add
+  // a search bar to search for part number." Client-side filter over
+  // job.partLines — a job's parts list is small enough that this doesn't
+  // need a server round trip. Matches on part number OR description, since
+  // a mechanic searching by memory may only recall one or the other.
+  const [partSearchQuery, setPartSearchQuery] = useState("");
   const [bulkSupplierOptions, setBulkSupplierOptions] = useState<SupplierOption[]>([]);
   const [bulkSupplierPickerOpen, setBulkSupplierPickerOpen] = useState(false);
   const [bulkApplying, setBulkApplying] = useState(false);
@@ -2730,6 +2736,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
             </header>
+            {/* 2026-09-22, user request: "Inside a job, at the part list
+                section, add a search bar to search for part number." Filters
+                the table below client-side; matches part number or
+                description so a partial memory of either still finds the
+                line. Hidden when there's nothing yet to search. */}
+            {job.partLines.length > 0 && (
+              <div className="drawer-fields" style={{ padding: "10px 14px 0" }}>
+                <div className="search-control inventory-search-control">
+                  <Search size={15} />
+                  <input
+                    value={partSearchQuery}
+                    onChange={(e) => setPartSearchQuery(e.target.value)}
+                    placeholder="Search part number or description"
+                    aria-label="Search parts list by part number"
+                  />
+                </div>
+              </div>
+            )}
             {/* 2026-09-16 — result banner for "Create picking slip" above:
                 picks this job's own outstanding parts against warehouse
                 stock in place (see createPickSlipForJob's comment) rather
@@ -2780,11 +2804,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button></label>
               </div>
             )}
+            {(() => {
+              const q = partSearchQuery.trim().toLowerCase();
+              const visiblePartLines = q
+                ? job.partLines.filter((line) => (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q))
+                : job.partLines;
+              return (
             <div className="data-table-wrap"><table className="data-table"><thead><tr>
-              {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === job.partLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(job.partLines.map((l) => String(l.id))) : new Set())} /></th>}
+              {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === visiblePartLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(visiblePartLines.map((l) => String(l.id))) : new Set())} /></th>}
               <th>Part</th><th>Qty</th><th>Order</th><th>Supplier</th><th>Status</th><th></th>
             </tr></thead><tbody>
-              {job.partLines.map((line) => {
+              {visiblePartLines.map((line) => {
                 const lineId = String(line.id);
                 const quantity = decimalText(line.quantity);
                 const received = decimalText(line.receivedQuantity ?? 0);
@@ -2856,7 +2886,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </tr>;
               })}
               {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 7 : 6} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
+              {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 7 : 6} className="table-state compact-empty-state">No parts match &quot;{partSearchQuery}&quot;.</td></tr>}
             </tbody></table></div>
+              );
+            })()}
             {job.partLines.length > 0 && (
               <div className="detail-actions" style={{ borderTop: "1px solid var(--ink-150)" }}>
                 <button type="button" className="section-action-button" onClick={() => setShowRfqPopup(true)}><Mail size={15} /> Request quotes from suppliers</button>

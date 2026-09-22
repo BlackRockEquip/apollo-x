@@ -111,6 +111,17 @@ function assertMutableCompany(code: string) {
   if (code === BLACK_ROCK_INTERNAL_CODE) throw new Error("BLACK_ROCK_PROTECTED");
 }
 
+// 2026-09-22, user request: "When adding a company, the default modules
+// should automatically be added to the company." This is the starter
+// package granted to every ordinary new company at creation time (Black
+// Rock is excluded below — it gets its modules through its own immutable
+// INTERNAL_FREE policy, not this list). Source is "BUNDLE" rather than
+// "INTERNAL_FREE" (reserved for Black Rock, see BLACK_ROCK_ENTITLEMENT_PROTECTED
+// below) or "TRIAL"/"PLATFORM_OVERRIDE" (neither fits a standing default) —
+// a platform admin can still add/remove modules afterwards from the
+// company's own Modules/Licensing panel.
+const DEFAULT_MODULE_KEYS: ModuleKey[] = ["DASHBOARD", "CUSTOMERS", "JOBS_WIP", "WARRANTY", "FIELD_SERVICE", "IMPORT_EXPORT"];
+
 function effectivePlatformPermissions(role: PlatformRole, rows: ReadonlyArray<{ permission: string; allowed: boolean }>) {
   return Array.from(mergePermissionOverrides<PlatformPermission>(DEFAULT_PLATFORM_PERMISSIONS[role], rows)).sort();
 }
@@ -274,6 +285,43 @@ export async function createPlatformCompany(ctx: RequestContext, input: CompanyI
         afterData: { internalCode, legalName: normalized.legalName, tradingName: normalized.tradingName },
       },
     });
+    // Black Rock gets every module through its own immutable INTERNAL_FREE
+    // policy (see updatePlatformEntitlement's BLACK_ROCK_ENTITLEMENT_PROTECTED
+    // check) — granting the BUNDLE starter set here too would just create
+    // redundant/conflicting entitlement rows for it, so skip.
+    if (internalCode !== BLACK_ROCK_INTERNAL_CODE) {
+      const effectiveFrom = new Date();
+      await tx.companyModuleEntitlement.createMany({
+        data: DEFAULT_MODULE_KEYS.map((module) => ({
+          companyId: company.id,
+          product: "WORKSHOP" as Product,
+          module,
+          status: "ACTIVE" as EntitlementStatus,
+          source: "BUNDLE" as EntitlementSource,
+          effectiveFrom,
+          expiresAt: null,
+          gracePeriodDays: null,
+        })),
+      });
+      // EntitlementHistory doesn't FK to the entitlement row itself (see its
+      // schema comment / updatePlatformEntitlement's own usage), so this
+      // loop needn't wait on createMany returning IDs — same audit trail
+      // every other entitlement change leaves.
+      await tx.entitlementHistory.createMany({
+        data: DEFAULT_MODULE_KEYS.map((module) => ({
+          companyId: company.id,
+          product: "WORKSHOP" as Product,
+          module,
+          previousStatus: null,
+          newStatus: "ACTIVE" as EntitlementStatus,
+          source: "BUNDLE" as EntitlementSource,
+          effectiveAt: effectiveFrom,
+          expiresAt: null,
+          reason: "Default module bundle granted on company creation",
+          changedById: ctx.userId,
+        })),
+      });
+    }
     return company;
   });
 }
