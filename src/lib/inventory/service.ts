@@ -1125,6 +1125,15 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
     total: input.stockState === "ALL" ? total : selected.length,
     page,
     pageSize,
+    // 2026-09-22, user request: "Stock Levels - add columns Cost Price and
+    // Selling Price... only visible to company admins." cost/sellingPrice
+    // on each item above are already gated per-row (null when the caller
+    // lacks INVENTORY_VIEW_COST), but the Stock Levels table itself needs
+    // to know whether to render those two columns AT ALL — a null cost on
+    // every row (nobody's priced anything yet) must not look the same as
+    // "you're not allowed to see this". Exposed here once instead of
+    // re-deriving it per row on the client.
+    canViewCost: viewCost,
   };
 }
 

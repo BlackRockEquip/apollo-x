@@ -1652,6 +1652,26 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // does. onerror on that <img> (in printDeliveryNote below) hides it if
   // there's genuinely no logo set (the route 404s), so no pre-check is
   // needed here.
+  //
+  // 2026-09-22 — user report: "Logo on delivery notes only pulls through
+  // after you click close not on initial load." Root cause: the logo
+  // <img> above still has to make its OWN network round trip (fetch the
+  // logo route, follow its redirect to the signed object-storage URL,
+  // download the bytes) after the print window's HTML is written — but
+  // both printDeliveryNote and printJobDeliveryNote below used to call
+  // win.print() immediately after win.document.close(), with no wait for
+  // that image to actually finish loading. The browser's print
+  // preview/dialog then rendered whatever was on screen at that instant —
+  // almost always the logo's spot still blank — and the image only
+  // finished loading a moment later, in the background, invisible until
+  // the print dialog was dismissed ("click close") and the page underneath
+  // was looked at again. Fixed at the call sites: an inline
+  // `window.onload = () => window.print()` script is now written into the
+  // print document itself instead of calling win.print() from here
+  // straight after document.close(). The browser's `load` event doesn't
+  // fire until every resource on the page — including this <img>, whether
+  // it loads OR errors out — has finished, so the logo (when there is one)
+  // is always actually painted before the print dialog opens.
   function companyLogoImgSrc(): string {
     return `${window.location.origin}/api/v1/company-settings/logo`;
   }
@@ -1756,10 +1776,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <div class="field">Date</div>
         </div>
       </div>
+      <script>window.onload = function () { window.print(); };</script>
     </body></html>`);
     win.document.close();
     win.focus();
-    win.print();
   }
 
   // Mechanic's job card (2026-09-14, user request: "Create a job card
@@ -2028,10 +2048,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       ])}</table>
       <p class="summary-line"><strong>Job type:</strong> ${escapeHtml(JOB_TYPE_LABELS[job.type])} &nbsp; <strong>Make:</strong> ${escapeHtml(form.machineMake || "—")} &nbsp; <strong>Model:</strong> ${escapeHtml(form.machineModel || "—")}</p>
       <p class="summary-line"><strong>Component:</strong> ${escapeHtml(form.component || "—")}</p>
+      <script>window.onload = function () { window.print(); };</script>
     </body></html>`);
     win.document.close();
     win.focus();
-    win.print();
   }
 
   // RFQ (request for quote) — see schema.prisma's JobRfqRequest comment for

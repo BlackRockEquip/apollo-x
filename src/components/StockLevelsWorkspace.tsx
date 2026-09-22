@@ -66,7 +66,18 @@ type PositionRow = {
   cost: string | null;
   sellingPrice: string | null;
 };
-type ListResponse = { items: PositionRow[]; total: number; page: number; pageSize: number };
+// 2026-09-22 — user request: "Stock Levels - add columns Cost Price and
+// Selling Price, next to the bin locations column (These two columns only
+// visible to company admins)." canViewCost mirrors listInventoryPositions'
+// own new field (inventory/service.ts) — whether the two columns render AT
+// ALL, not just whether a given row's cost/sellingPrice happens to be
+// null. Gated server-side by the existing INVENTORY_VIEW_COST permission
+// (already used the same way for Quotes/Sales Orders/Invoices cost
+// visibility elsewhere in this app) rather than a new "is admin" check —
+// Company Admin has it by default via ALL_TENANT, and, same as everywhere
+// else this permission is used, a company can also extend it to another
+// role (e.g. Finance) from Settings > Users without code changes.
+type ListResponse = { items: PositionRow[]; total: number; page: number; pageSize: number; canViewCost: boolean };
 type Option = { id: string; label: string };
 
 // 2026-09-16 — user request: "remove manufacturer part number from add
@@ -118,6 +129,15 @@ function formatMoneyForInput(value: string | null | undefined): string {
   return Number.isFinite(n) ? n.toFixed(2) : value;
 }
 
+// 2026-09-22 — same ZAR currency formatting MasterDataWorkspace.tsx's
+// "currency-zar" column format already uses elsewhere, for the new Cost
+// Price / Selling Price columns below.
+function formatMoney(value: string | null | undefined): string {
+  if (value == null) return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(n) : "—";
+}
+
 function printPickSlip(ps: PickSlipData) {
   const w = window.open("", "_blank", "width=800,height=900");
   if (!w) return; // popup blocked — nothing more we can do here
@@ -157,7 +177,7 @@ function printPickSlip(ps: PickSlipData) {
 export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [tab, setTab] = useState<"stock" | "pickslips">("stock");
 
-  const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25 });
+  const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false });
   const [q, setQ] = useState("");
   const [stockState, setStockState] = useState("ALL");
   const [page, setPage] = useState(1);
@@ -554,6 +574,8 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                       spread across several — see buildBinLocationLabel
                       in inventory/service.ts. */}
                   <th>Bin locations</th>
+                  {data.canViewCost && <th className="numeric">Cost Price</th>}
+                  {data.canViewCost && <th className="numeric">Selling Price</th>}
                   <th className="numeric">On Hand</th>
                   <th className="numeric">Reserved</th>
                   <th className="numeric">Available</th>
@@ -563,9 +585,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={data.canViewCost ? 12 : 10} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : data.items.length === 0 ? (
-                  <tr><td colSpan={10} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
+                  <tr><td colSpan={data.canViewCost ? 12 : 10} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
                 ) : data.items.map((row) => {
                   const available = Number(row.quantityAvailable) || 0;
                   const pickEntry = pick.get(row.id);
@@ -595,6 +617,8 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                       <td>{row.description}</td>
                       <td>{row.manufacturerName || "—"}</td>
                       <td>{row.binLocationLabel || "—"}</td>
+                      {data.canViewCost && <td className="numeric">{formatMoney(row.cost)}</td>}
+                      {data.canViewCost && <td className="numeric">{formatMoney(row.sellingPrice)}</td>}
                       <td className="numeric">{row.quantityOnHand}</td>
                       <td className="numeric">{row.quantityReserved}</td>
                       <td className="numeric">{row.quantityAvailable}</td>
