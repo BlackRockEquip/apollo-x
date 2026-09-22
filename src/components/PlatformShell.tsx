@@ -7,13 +7,23 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
 
+// 2026-09-22, user report: "Support Access menu -- remove from sidebar as
+// its looks like another way to access companies, you tell me if its
+// redundant." Confirmed redundant, not just similar-looking: this item's
+// href was literally "/platform/companies" — the exact same route the
+// "Companies" item above already links to, so it never went anywhere
+// different. Real, audited entry into a company's own screens happens from
+// the Companies list itself (open a company > "Enter support mode"/"Manage
+// users", src/components/SupportContextForm.tsx) — that flow is untouched,
+// only this dead second link to the same page is removed. "Support"
+// (/platform/support, the cross-tenant support-ticket queue) is a distinct,
+// real page and stays.
 const NAV = [
   { href: "/platform", label: "Overview", icon: LayoutDashboard },
   { href: "/platform/companies", label: "Companies", icon: Building2 },
   { href: "/platform/modules", label: "Modules", icon: Package },
   { href: "/platform/users", label: "Platform Users", icon: Users },
   { href: "/platform/support", label: "Support", icon: Headset },
-  { href: "/platform/companies", label: "Support Access", icon: ShieldCheck },
   // 2026-09-22 — this used to point at "/platform" (the same href as
   // Overview above) because the real page didn't exist yet. Now it does
   // (platform/settings/page.tsx — platform-wide SMTP, used only for

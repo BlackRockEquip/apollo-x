@@ -31,6 +31,16 @@ export function apiError(error: unknown) {
   // (src/lib/account/service.ts, src/lib/auth/password-reset-service.ts).
   if (error instanceof Error && error.message === "INVALID_CURRENT_PASSWORD") return NextResponse.json({ error: { code: "INVALID_CURRENT_PASSWORD", message: "Current password is incorrect." } }, { status: 400 });
   if (error instanceof Error && error.message === "INVALID_RESET_TOKEN") return NextResponse.json({ error: { code: "INVALID_RESET_TOKEN", message: "This reset link is invalid or has expired. Request a new one." } }, { status: 400 });
+  // 2026-09-22 — Platform Admin: Modules delete safeguard
+  // (module-catalog-service.ts) and the "no organization admin/user can
+  // become a platform administrator" safeguard (platform/admin-service.ts).
+  if (error instanceof Error && error.message === "MODULE_HAS_ACTIVE_ENTITLEMENTS") return NextResponse.json({ error: { code: "MODULE_HAS_ACTIVE_ENTITLEMENTS", message: "This module is still actively entitled to at least one company. Revoke its entitlements first (Platform > Companies > that company > Modules) before deleting it from the catalog." } }, { status: 409 });
+  if (error instanceof Error && error.message === "ORG_MEMBER_CANNOT_BE_PLATFORM_ADMIN") return NextResponse.json({ error: { code: "ORG_MEMBER_CANNOT_BE_PLATFORM_ADMIN", message: "This person already belongs to a company (an organization admin or user). Platform authority can't be granted to, or reactivated for, an active company member — remove their company membership first if they genuinely need platform access." } }, { status: 409 });
+  if (error instanceof Error && error.message === "LAST_PLATFORM_ADMIN_REQUIRED") return NextResponse.json({ error: { code: "LAST_PLATFORM_ADMIN_REQUIRED", message: "At least one active Platform Admin must remain — this change would leave none." } }, { status: 409 });
+  if (error instanceof Error && error.message === "RESOURCE_NOT_FOUND") return NextResponse.json({ error: { code: "NOT_FOUND", message: "No user was found with that email." } }, { status: 404 });
+  if (error instanceof Error && error.message === "EMAIL_REQUIRED") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Email is required." } }, { status: 400 });
+  if (error instanceof Error && error.message === "INVALID_EMAIL") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Enter a valid email address." } }, { status: 400 });
+  if (error instanceof Error && error.message === "DISPLAY_NAME_TOO_SHORT") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Name must be at least 2 characters." } }, { status: 400 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }

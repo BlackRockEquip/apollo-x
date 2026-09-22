@@ -503,6 +503,12 @@ export async function listPlatformUsers(ctx: RequestContext, query: PlatformUser
         orderBy: [{ createdAt: "asc" }],
         select: { id: true, role: true, active: true, createdAt: true, permissions: { select: { permission: true, allowed: true } } },
       },
+      // 2026-09-22, user request: "make sure no organization admin, user etc
+      // can be a platform administrator." Surfaced here (not just enforced
+      // on grant/reactivate in grantPlatformAuthority/updatePlatformAuthority
+      // below) so the Platform Users table can show/disable the option
+      // up front instead of only failing after the admin tries it.
+      memberships: { where: { status: "ACTIVE" }, select: { id: true }, take: 1 },
     },
   });
   return users.map((user) => {
@@ -518,10 +524,12 @@ export async function listPlatformUsers(ctx: RequestContext, query: PlatformUser
       if (!role.active) continue;
       for (const permission of role.effectivePermissions) aggregate.add(permission);
     }
+    const { memberships, ...rest } = user;
     return {
-      ...user,
+      ...rest,
       roles,
       effectivePermissions: Array.from(aggregate).sort(),
+      hasActiveCompanyMembership: memberships.length > 0,
     };
   });
 }
@@ -541,6 +549,23 @@ export async function getPlatformOverview(ctx: RequestContext) {
   return { companies, activeCompanies, users, openTickets, highPriority, activeSupportSessions, entitlementRows, recentActivity };
 }
 
+// 2026-09-22, user request: "Platform Users menu -- make sure no
+// organization admin, user etc can be a platform administrator." Nothing
+// previously stopped grantPlatformAuthority from handing platform-wide
+// authority to a UserIdentity that already holds a real tenant
+// CompanyMembership — the two are meant to be separate people/roles (see
+// PlatformShell's own sidebar note, "Platform authority never bypasses
+// explicit support context"), but the grant flow only ever looked the
+// target user up by email, with no check on their existing tenant
+// standing. Shared by grantPlatformAuthority (new grant) and
+// updatePlatformAuthority (reactivating an existing, currently-inactive
+// assignment) below — both are ways a company member could end up with
+// live platform authority.
+async function assertNotActiveCompanyMember(tx: Prisma.TransactionClient, userId: string) {
+  const activeMembership = await tx.companyMembership.findFirst({ where: { userId, status: "ACTIVE" }, select: { id: true } });
+  if (activeMembership) throw new Error("ORG_MEMBER_CANNOT_BE_PLATFORM_ADMIN");
+}
+
 export async function grantPlatformAuthority(ctx: RequestContext, input: PlatformAuthorityCreateInput) {
   requirePlatformPermission(ctx, "PLATFORM_OPERATORS_MANAGE");
   if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
@@ -549,6 +574,7 @@ export async function grantPlatformAuthority(ctx: RequestContext, input: Platfor
   return prisma.$transaction(async (tx) => {
     const user = await tx.userIdentity.findUnique({ where: { email } });
     if (!user) throw new Error("RESOURCE_NOT_FOUND");
+    await assertNotActiveCompanyMember(tx, user.id);
     const assignment = await tx.platformRoleAssignment.upsert({
       where: { userId_role: { userId: user.id, role: input.role } },
       create: { userId: user.id, role: input.role, active: true },
@@ -578,6 +604,13 @@ export async function updatePlatformAuthority(ctx: RequestContext, input: Platfo
   return prisma.$transaction(async (tx) => {
     const before = await tx.platformRoleAssignment.findUnique({ where: { id: input.assignmentId }, include: { user: true, permissions: true } });
     if (!before) throw new Error("RESOURCE_NOT_FOUND");
+    // Only re-check on an actual activation (was inactive, now being set
+    // active) — an assignment that's already active is left alone here even
+    // if the underlying user has since picked up a company membership some
+    // other way, so this can't retroactively lock an admin out of managing
+    // an existing grant. grantPlatformAuthority (above) is where a brand
+    // new grant gets the same check.
+    if (input.active && !before.active) await assertNotActiveCompanyMember(tx, before.userId);
     if (before.role === "PLATFORM_ADMIN" && (input.role !== "PLATFORM_ADMIN" || input.active === false)) {
       await assertNotRemovingLastPlatformAdmin(tx, { assignmentId: before.id, nextRole: input.role, nextActive: input.active });
     }
@@ -608,5 +641,68 @@ export async function updatePlatformAuthority(ctx: RequestContext, input: Platfo
       },
     });
     return assignment;
+  });
+}
+
+type PlatformUserProfileInput = { displayName?: string; email?: string; active?: boolean };
+
+// Mirrors assertNotRemovingLastPlatformAdmin above, but keyed on the
+// UserIdentity's own `active` flag rather than a specific role assignment
+// — deactivating the account (below) locks a platform admin out just as
+// completely as deactivating their PlatformRoleAssignment would (see
+// session.ts's `!session.user.active` check), so it needs the same
+// protection.
+async function assertNotDeactivatingLastPlatformAdmin(tx: Prisma.TransactionClient, userId: string) {
+  const activeAdmins = await tx.platformRoleAssignment.findMany({ where: { role: "PLATFORM_ADMIN", active: true, user: { active: true } }, select: { userId: true } });
+  const targetIsUsableAdmin = activeAdmins.some((row) => row.userId === userId);
+  if (!targetIsUsableAdmin) return;
+  if (activeAdmins.length <= 1) throw new Error("LAST_PLATFORM_ADMIN_REQUIRED");
+}
+
+// 2026-09-22, user request: "Platform Users menu -- make users editable
+// which allows you to change user role, email etc." Role is already
+// covered by updatePlatformAuthority above; this is the missing piece —
+// editing the underlying UserIdentity's own name/email/active flag.
+// updateTenantUser (users/service.ts) does the equivalent for a company's
+// own users, but it's scoped by companyId via a membership row, which a
+// pure platform operator (no CompanyMembership at all) doesn't have.
+export async function updatePlatformUserProfile(ctx: RequestContext, userId: string, input: PlatformUserProfileInput) {
+  requirePlatformPermission(ctx, "PLATFORM_OPERATORS_MANAGE");
+  if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
+  const displayName = input.displayName !== undefined ? input.displayName.trim() : undefined;
+  const email = input.email !== undefined ? input.email.trim().toLowerCase() : undefined;
+  if (displayName !== undefined && displayName.length < 2) throw new Error("DISPLAY_NAME_TOO_SHORT");
+  if (email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("INVALID_EMAIL");
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.userIdentity.findUnique({ where: { id: userId } });
+    if (!before) throw new Error("RESOURCE_NOT_FOUND");
+    if (input.active === false) await assertNotDeactivatingLastPlatformAdmin(tx, userId);
+    const updated = await tx.userIdentity.update({
+      where: { id: userId },
+      data: {
+        ...(displayName !== undefined ? { displayName } : {}),
+        ...(email !== undefined ? { email } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
+      },
+    });
+    // Sessions revoked on a real credential-surface change (email) or a
+    // deactivation — same trigger conditions grantPlatformAuthority/
+    // updatePlatformAuthority already use elsewhere in this file, not on
+    // every edit (a pure display-name rename shouldn't sign anyone out).
+    if (input.active === false || email !== undefined) await revokeUserSessions(userId, tx);
+    await tx.auditEvent.create({
+      data: {
+        actorId: ctx.userId,
+        source: "PLATFORM",
+        module: "PLATFORM",
+        entityType: "UserIdentity",
+        entityId: userId,
+        action: "PLATFORM_USER_PROFILE_UPDATED",
+        correlationId: ctx.correlationId,
+        beforeData: { displayName: before.displayName, email: before.email, active: before.active },
+        afterData: { displayName: updated.displayName, email: updated.email, active: updated.active },
+      },
+    });
+    return updated;
   });
 }

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
-import { createPlatformCompany, grantPlatformAuthority, setPlatformCompanyStatus, updatePlatformAuthority, updatePlatformCompany, updatePlatformCompanyStorageProfile, updatePlatformEntitlement } from "@/lib/platform/admin-service";
+import { createPlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile, updatePlatformEntitlement } from "@/lib/platform/admin-service";
 
 export async function createCompanyAction(formData: FormData) {
   const context = await getRequestContext();
@@ -99,23 +99,10 @@ export async function updateEntitlementAction(formData: FormData) {
   revalidatePath(`/platform/companies/${companyId}`);
 }
 
-export async function createPlatformAuthorityAction(formData: FormData) {
-  const context = await getRequestContext();
-  if (!context) redirect("/login");
-  await grantPlatformAuthority(context, {
-    email: String(formData.get("email") ?? ""),
-    role: String(formData.get("role") ?? "") as never,
-  });
-  revalidatePath("/platform/users");
-}
-
-export async function updatePlatformAuthorityAction(formData: FormData) {
-  const context = await getRequestContext();
-  if (!context) redirect("/login");
-  await updatePlatformAuthority(context, {
-    assignmentId: String(formData.get("assignmentId") ?? ""),
-    role: String(formData.get("role") ?? "") as never,
-    active: String(formData.get("active") ?? "true") === "true",
-  });
-  revalidatePath("/platform/users");
-}
+// 2026-09-22 — createPlatformAuthorityAction/updatePlatformAuthorityAction
+// removed from here: Platform Users (app/platform/users/page.tsx) is now a
+// client table (PlatformUsersWorkspace.tsx) calling the new
+// /api/v1/platform/users/authority[...] routes directly, so it can show
+// errors (e.g. the new "can't grant an active company member platform
+// authority" safeguard) inline instead of only via a full error page — see
+// that route's own comment.

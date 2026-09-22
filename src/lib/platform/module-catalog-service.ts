@@ -78,3 +78,31 @@ export async function updateModuleCatalogEntry(ctx: RequestContext, id: string, 
     return updated;
   });
 }
+
+// 2026-09-22, user request: "on modules menu, make modules editable
+// (Enable/disable/delete)." Enable/disable is just updateModuleCatalogEntry
+// above with { status: "ACTIVE" | "INACTIVE" } — no new function needed.
+// Delete is new. Guarded against deleting an entry that's still doing real
+// work: if it's mapped to a real ModuleKey (moduleKey is only set for the
+// genuine Workshop modules seeded 1:1 from the ModuleKey enum — see
+// seedModuleCatalogIfEmpty above; the Education/Medical/Accounting rows are
+// deliberately moduleKey: null placeholders) AND any company currently has
+// an active/grace-period entitlement for it, deleting the catalog row would
+// remove its only documentation (name/description/category) while it's
+// still actively licensed to real tenants — same assignmentCount check
+// getModuleCatalogEntry already exposes to the UI, enforced here too so
+// this can't be bypassed by calling the API directly.
+export async function deleteModuleCatalogEntry(ctx: RequestContext, id: string) {
+  auth(ctx, true);
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.moduleCatalogEntry.findUnique({ where: { id } });
+    if (!before) throw new Error("NOT_FOUND");
+    if (before.moduleKey) {
+      const assignmentCount = await tx.companyModuleEntitlement.count({ where: { product: "WORKSHOP", module: before.moduleKey, status: { in: ["ACTIVE", "GRACE_READ_ONLY"] } } });
+      if (assignmentCount > 0) throw new Error("MODULE_HAS_ACTIVE_ENTITLEMENTS");
+    }
+    await tx.moduleCatalogEntry.delete({ where: { id } });
+    await tx.auditEvent.create({ data: { actorId: ctx.userId, source: "PLATFORM", module: "PLATFORM", entityType: "ModuleCatalogEntry", entityId: id, action: "MODULE_CATALOG_DELETED", correlationId: ctx.correlationId, beforeData: before as Prisma.InputJsonValue } });
+    return { ok: true };
+  });
+}
