@@ -626,10 +626,19 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
   const companyId = requirePexTrackingRead(ctx);
   const query = pexTrackingListQuery.parse(raw);
   const contains = { contains: query.q, mode: "insensitive" as const };
+  // 2026-09-23, user request: "make the pex tracking status for
+  // outstanding and awaiting core the same 'Awaiting Core'." Filtering by
+  // either value now returns both — matches the merged label/tone in
+  // StatusPill.tsx (see its own comment) and the combined stat card below.
+  // The dropdown itself only offers "AWAIT_CORE" now (page.tsx dropped its
+  // separate "Outstanding" option), but "OUTSTANDING" is handled the same
+  // way too in case an old bookmarked/shared URL still has it.
+  const statusFilter: Prisma.PexRecordWhereInput["status"] =
+    query.status === "AWAIT_CORE" || query.status === "OUTSTANDING" ? { in: ["AWAIT_CORE", "OUTSTANDING"] } : (query.status as PexStatus);
   const where: Prisma.PexRecordWhereInput = {
     companyId,
     supplyJobId: { not: null },
-    ...(query.status !== "ALL" ? { status: query.status as PexStatus } : {}),
+    ...(query.status !== "ALL" ? { status: statusFilter } : {}),
     ...(query.q
       ? {
           OR: [
@@ -657,14 +666,24 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
     prisma.pexRecord.count({ where }),
   ]);
   const countsBase: Prisma.PexRecordWhereInput = { companyId, supplyJobId: { not: null } };
-  const [toBeDelivered, awaitCore, outstanding, received, inRepair] = await prisma.$transaction([
+  // 2026-09-23, user report: "Pex tracking if status is awaiting core or
+  // outstanding, it is the same thing, so the stats cards can be combined
+  // with the outstanding at client card." AWAIT_CORE and OUTSTANDING are
+  // both "core still owed back from the client" (see PexStatus's own
+  // schema comment) — they only differ on whether a return job has been
+  // linked yet, which is still worth keeping as separate PexStatus values
+  // (the table's Status column and the status filter dropdown still show
+  // them distinctly), but the summary card no longer needs two tiles for
+  // what reads as the same thing to whoever's scanning it. Counted
+  // together here as a single "outstanding" figure; PexTrackingPage drops
+  // the separate "Awaiting core" card accordingly.
+  const [toBeDelivered, outstanding, received, inRepair] = await prisma.$transaction([
     prisma.pexRecord.count({ where: { ...countsBase, status: "TO_BE_DELIVERED" } }),
-    prisma.pexRecord.count({ where: { ...countsBase, status: "AWAIT_CORE" } }),
-    prisma.pexRecord.count({ where: { ...countsBase, status: "OUTSTANDING" } }),
+    prisma.pexRecord.count({ where: { ...countsBase, status: { in: ["AWAIT_CORE", "OUTSTANDING"] } } }),
     prisma.pexRecord.count({ where: { ...countsBase, status: "RECEIVED" } }),
     prisma.pexRecord.count({ where: { ...countsBase, status: "IN_REPAIR" } }),
   ]);
-  return { items, total, page: query.page, pageSize: query.pageSize, counts: { toBeDelivered, awaitCore, outstanding, received, inRepair } };
+  return { items, total, page: query.page, pageSize: query.pageSize, counts: { toBeDelivered, outstanding, received, inRepair } };
 }
 
 // Which JobActivity types actually belong in a PEX unit's own history feed

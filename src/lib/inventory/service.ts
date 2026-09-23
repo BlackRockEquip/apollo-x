@@ -1014,6 +1014,22 @@ async function getCountLines(tx: Tx, countId: string, companyId: string) {
 // can exist with zero stock and never be confused for it.
 // ============================================================
 
+// 2026-09-23, user report: "searching for a part number 3j1907 doesn't
+// pickup but searching for 3j-1907 does, this must be searched both ways
+// spaces included." Part numbers get typed with or without their
+// separators pretty interchangeably (hyphens, spaces) — this strips
+// anything that isn't a letter or digit before comparing, on both the
+// typed search term and the stored value, so "3J1907", "3j-1907" and
+// "3J 1907" all find the same part no matter which way either side was
+// typed. Deliberately separate from partNumberNormalized (the schema
+// field listInventoryPositions used to search against — it only trims and
+// uppercases, and is unique-constrained per company, so widening its own
+// meaning here would risk collisions between two real parts whose numbers
+// already differ only by punctuation).
+function stripSeparators(value: string | null | undefined) {
+  return (value ?? "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+}
+
 export async function listInventoryPositions(ctx: RequestContext, input: z.infer<typeof positionQuery>) {
   requireInventory(ctx, "INVENTORY_VIEW", "READ");
   const viewCost = canViewInventoryCost(ctx);
@@ -1029,23 +1045,12 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
   const where: Prisma.PartWhereInput = { companyId: ctx.companyId, operationalStatus: "OPERATIONAL" };
   if (input.active === "active") where.active = true;
   else if (input.active === "inactive") where.active = false;
-  if (input.q) {
-    // 2026-09-14 — extended to search across Bin location (code and name)
-    // and Manufacturer name too, per explicit request ("Search function
-    // across Part number, Description, Bin, manufacturer") — previously
-    // only partNumber/description/manufacturerPartNumber were searched,
-    // which meant typing a bin code or a manufacturer's actual name (as
-    // opposed to their part number) found nothing.
-    where.OR = [
-      { partNumber: { contains: input.q, mode: "insensitive" } },
-      { partNumberNormalized: { contains: input.q, mode: "insensitive" } },
-      { description: { contains: input.q, mode: "insensitive" } },
-      { manufacturerPartNumber: { contains: input.q, mode: "insensitive" } },
-      { manufacturer: { name: { contains: input.q, mode: "insensitive" } } },
-      { binLocation: { code: { contains: input.q, mode: "insensitive" } } },
-      { binLocation: { name: { contains: input.q, mode: "insensitive" } } },
-    ];
-  }
+  // 2026-09-23 — the search itself moved out of the DB `where` and into
+  // JS below (see stripSeparators' comment): matching hyphens/spaces
+  // interchangeably against partNumber isn't something a plain `contains`
+  // can do, so the text filter now runs after fetching. Non-text filters
+  // (active/location/manufacturer/category) stay in the DB query as
+  // before — only the free-text search moved.
   if (input.locationId) {
     where.stockBalances = { some: { locationId: input.locationId } };
   }
@@ -1054,27 +1059,52 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
 
   const stockBalanceWhere = input.locationId ? { locationId: input.locationId } : undefined;
 
-  const [parts, total] = await Promise.all([
-    prisma.part.findMany({
-      where,
-      include: {
-        manufacturer: { select: { name: true } },
-        taxCode: { select: { code: true } },
-        binLocation: { select: { id: true, code: true, name: true } },
-        // location select added 2026-09-16 — see binLocationLabel's own
-        // comment below for why.
-        stockBalances: { where: stockBalanceWhere, include: { location: { select: { code: true, name: true } } }, orderBy: { location: { code: "asc" } } },
-      },
-      orderBy: { partNumber: "asc" },
-    }),
-    prisma.part.count({ where }),
-  ]);
+  const parts = await prisma.part.findMany({
+    where,
+    include: {
+      manufacturer: { select: { name: true } },
+      taxCode: { select: { code: true } },
+      binLocation: { select: { id: true, code: true, name: true } },
+      // location select added 2026-09-16 — see binLocationLabel's own
+      // comment below for why.
+      stockBalances: { where: stockBalanceWhere, include: { location: { select: { code: true, name: true } } }, orderBy: { location: { code: "asc" } } },
+    },
+    orderBy: { partNumber: "asc" },
+  });
+
+  // 2026-09-23 — search now runs here in JS rather than as a DB `contains`
+  // (see stripSeparators' comment above): first pass keeps the original
+  // "type it exactly as stored" behaviour across every field the 2026-09-14
+  // change added (part number, description, manufacturer part number,
+  // manufacturer name, bin code/name); second pass additionally matches
+  // part number / manufacturer part number with hyphens, spaces and other
+  // separators ignored on both sides, so "3j1907" finds "3J-1907" and
+  // vice versa.
+  let selected = parts;
+  if (input.q) {
+    const q = input.q.trim().toLowerCase();
+    const qStripped = stripSeparators(input.q);
+    selected = selected.filter((p) => {
+      if (q && (
+        p.partNumber.toLowerCase().includes(q) ||
+        (p.description ?? "").toLowerCase().includes(q) ||
+        (p.manufacturerPartNumber ?? "").toLowerCase().includes(q) ||
+        (p.manufacturer?.name ?? "").toLowerCase().includes(q) ||
+        (p.binLocation?.code ?? "").toLowerCase().includes(q) ||
+        (p.binLocation?.name ?? "").toLowerCase().includes(q)
+      )) return true;
+      if (qStripped && (
+        stripSeparators(p.partNumber).includes(qStripped) ||
+        stripSeparators(p.manufacturerPartNumber).includes(qStripped)
+      )) return true;
+      return false;
+    });
+  }
 
   // Stock-state filtering is derived per part before pagination so totals and
   // page contents stay consistent with the user's selected state.
-  let selected = parts;
   if (input.stockState !== "ALL") {
-    selected = parts.filter((p) => {
+    selected = selected.filter((p) => {
       const totals = sumBalances(p.stockBalances);
       return deriveStockState({ onHand: totals.onHand, reserved: totals.reserved, threshold: p.reorderMinimum, partActive: p.active }) === input.stockState;
     });
@@ -1137,7 +1167,13 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         sellingPrice: viewCost ? (p.defaultSellingPrice?.toString() ?? null) : null,
       };
     }),
-    total: input.stockState === "ALL" ? total : selected.length,
+    // 2026-09-23 — used to read the DB's prisma.part.count({where}) when
+    // stockState was "ALL", back when search was also a DB `where` filter
+    // and that count already reflected it. Search now runs in JS above, so
+    // that DB count would no longer include it; selected.length is correct
+    // in every case now (it already reflects active/location/manufacturer/
+    // category from the DB query, search and stock-state from JS above).
+    total: selected.length,
     page,
     pageSize,
     // 2026-09-22, user request: "Stock Levels - add columns Cost Price and

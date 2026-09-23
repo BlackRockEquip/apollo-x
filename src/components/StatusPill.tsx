@@ -63,15 +63,25 @@ export function StatusPill({ status, label }: { status: string; label?: string }
 // value, even though "TO_BE_DELIVERED" is spelled the same as one.
 // AWAIT_CORE (added 2026-09-10, at the user's direct request) covers the
 // gap between "unit delivered" and "return job exists" — see
-// syncPexAwaitCoreFromDeliveryDate in src/lib/pex/service.ts. Given
-// "purple," same as JOB_STATUS_TONE's own convention for "waiting on a
-// person/decision" (QUOTE_IN_PROGRESS, AWAIT_PAYMENT, ...), distinct from
-// OUTSTANDING's amber so the two waiting-on-the-client stages (before vs.
-// after a return job actually exists) stay visually distinguishable.
+// syncPexAwaitCoreFromDeliveryDate in src/lib/pex/service.ts.
+//
+// 2026-09-23, user request: "make the pex tracking status for outstanding
+// and awaiting core the same 'Awaiting Core'." OUTSTANDING and AWAIT_CORE
+// both mean "core still owed back from the client" — they used to render
+// with different labels/tones deliberately, to keep "before vs. after a
+// return job exists" visually distinguishable (see listPexTracking's own
+// stat-card comment for the same distinction), but the user now wants
+// them to read as one and the same status everywhere a badge shows it —
+// on this table, on a job's own PEX Supply/Return panel, wherever
+// PexStatusPill is used. The two PexStatus enum values themselves are
+// UNCHANGED (a record can still transition OUTSTANDING once a return job
+// is linked — see JOB_STATUS_TO_PEX_STATUS below) — only the label/tone
+// shown to the user is merged; see also listPexTracking's status filter,
+// which now treats the two the same way.
 const PEX_STATUS_LABELS: Record<string, string> = {
   TO_BE_DELIVERED: "To be delivered",
   AWAIT_CORE: "Awaiting core",
-  OUTSTANDING: "Outstanding",
+  OUTSTANDING: "Awaiting core",
   RECEIVED: "Received",
   IN_REPAIR: "In repair",
   COMPLETED: "Completed",
@@ -81,7 +91,7 @@ const PEX_STATUS_LABELS: Record<string, string> = {
 const PEX_STATUS_TONE: Record<string, string> = {
   TO_BE_DELIVERED: "neutral",
   AWAIT_CORE: "purple",
-  OUTSTANDING: "amber",
+  OUTSTANDING: "purple",
   RECEIVED: "blue",
   IN_REPAIR: "orange",
   COMPLETED: "green",

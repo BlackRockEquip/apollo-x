@@ -37,9 +37,23 @@ import { SESSION_COOKIE } from "@/lib/constants";
 // whole strip renders nothing. Listing /api/v1/public/companies here (with
 // the existing startsWith(`${path}/`) prefix match) also covers the nested
 // /api/v1/public/companies/[id]/logo route the strip's <img> tags hit.
+// 2026-09-23 — user report: "when trying recover password on login screen,
+// after you put your email its throws error: Unexpected token '<',
+// \"<!DOCTYPE \"... is not valid JSON." Same root cause as the favicon/
+// public-companies case above, a third time: LoginForm's forgot-password
+// flow runs while signed out (it's reachable from the login screen itself),
+// POSTs to /api/v1/auth/forgot-password, gets redirected to /login before
+// the route ever runs (no session cookie yet — that's the whole point of
+// the flow), follows the redirect, and response.json() throws on the
+// login page's HTML. /api/v1/auth/reset-password (the second step, where
+// the emailed link lands) is the same signed-out flow and was missing for
+// the same reason, so it's added here too even though it hadn't been
+// reported broken yet.
 const PUBLIC_PATHS = [
   "/login",
   "/api/v1/auth/login",
+  "/api/v1/auth/forgot-password",
+  "/api/v1/auth/reset-password",
   "/api/v1/health",
   "/api/v1/integrations/excel-sync",
   "/api/v1/company-settings/favicon",
