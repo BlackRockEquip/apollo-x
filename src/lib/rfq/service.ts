@@ -412,19 +412,30 @@ export async function setPreferredQuoteLine(ctx: RequestContext, jobId: string, 
 // ---------------------------------------------------------------------------
 
 // Sums each job's still-outstanding JobPartLine quantity (quantity minus
-// whatever's been received so far, for any line not fully RECEIVED) —
-// used as the "parts outstanding" figure for job-linked RFQ rows on the
-// RFQ tab. Batched across every job passed in rather than queried per row.
-async function outstandingQtyByJob(companyId: string, jobIds: string[]): Promise<Record<string, number>> {
+// whatever's been received so far, for any line not fully RECEIVED), and
+// finds how long the oldest of those lines has actually been outstanding
+// — "since" being when it was ordered from a supplier, or when it was
+// added to the job if it hasn't been ordered yet. Used for both the
+// "Parts outstanding" qty and the "Days Outstanding" aging figure on the
+// RFQ tab (see daysOutstanding in RfqAllWorkspace.tsx — 2026-09-28,
+// clarified by the user to mean literally "days parts are outstanding",
+// not days since the RFQ itself was sent or quoted). Batched across every
+// job passed in rather than queried per row.
+async function outstandingPartsByJob(companyId: string, jobIds: string[]): Promise<Record<string, { qty: number; oldestSince: Date | null }>> {
   if (jobIds.length === 0) return {};
   const lines = await prisma.jobPartLine.findMany({
     where: { companyId, jobId: { in: jobIds }, status: { not: "RECEIVED" } },
-    select: { jobId: true, quantity: true, receivedQuantity: true },
+    select: { jobId: true, quantity: true, receivedQuantity: true, orderedAt: true, createdAt: true },
   });
-  const totals: Record<string, number> = {};
+  const totals: Record<string, { qty: number; oldestSince: Date | null }> = {};
   for (const line of lines) {
     const outstanding = Number(line.quantity) - Number(line.receivedQuantity ?? 0);
-    totals[line.jobId] = (totals[line.jobId] ?? 0) + Math.max(outstanding, 0);
+    if (outstanding <= 0) continue;
+    const since = line.orderedAt ?? line.createdAt;
+    const entry = totals[line.jobId] ?? { qty: 0, oldestSince: null as Date | null };
+    entry.qty += outstanding;
+    if (!entry.oldestSince || since < entry.oldestSince) entry.oldestSince = since;
+    totals[line.jobId] = entry;
   }
   return totals;
 }
@@ -533,8 +544,8 @@ export async function listAllRfqRequests(ctx: RequestContext) {
 
   const jobIds = Array.from(new Set(jobRfqs.map((r) => r.jobId)));
   const quotedRfqIds = jobRfqs.filter((r) => r.status === "QUOTED").map((r) => r.id);
-  const [outstandingByJob, totalPartLinesByJob, decidedByRfq] = await Promise.all([
-    outstandingQtyByJob(companyId, jobIds),
+  const [outstandingPartsByJobResult, totalPartLinesByJob, decidedByRfq] = await Promise.all([
+    outstandingPartsByJob(companyId, jobIds),
     partLineCountByJob(companyId, jobIds),
     quoteCoverageByRfqRequest(quotedRfqIds),
   ]);
@@ -548,7 +559,8 @@ export async function listAllRfqRequests(ctx: RequestContext) {
     supplierName: r.supplier.name,
     status: r.status as string,
     receivingStatus: jobRfqReceivingStatus(r.status, decidedByRfq[r.id] ?? 0, totalPartLinesByJob[r.jobId] ?? 0),
-    partsOutstandingQty: outstandingByJob[r.jobId] ?? 0,
+    partsOutstandingQty: outstandingPartsByJobResult[r.jobId]?.qty ?? 0,
+    partsOutstandingSince: outstandingPartsByJobResult[r.jobId]?.oldestSince ?? null,
     date: r.requestedAt,
     notes: r.partsSummary,
     hasAttachment: !!r.attachmentFileName,
@@ -563,6 +575,11 @@ export async function listAllRfqRequests(ctx: RequestContext) {
     status: r.status as string,
     receivingStatus: (r.status === "RECEIVED" ? "RECEIVED" : r.status === "SKIPPED" ? "SKIPPED" : "OUTSTANDING") as "OUTSTANDING" | "RECEIVED" | "SKIPPED",
     partsOutstandingQty: r.quantityOutstanding ?? 0,
+    // No JobPartLine to date a general RFQ's outstanding parts by — it's
+    // job-less, entered by hand. Falls back to when the RFQ itself was
+    // created, same as before this field existed, for as long as it's
+    // still genuinely outstanding (not Received or deliberately Skipped).
+    partsOutstandingSince: r.status === "RECEIVED" || r.status === "SKIPPED" ? null : r.createdAt,
     date: r.createdAt,
     notes: r.partsDescription,
     hasAttachment: !!r.attachmentFileName,

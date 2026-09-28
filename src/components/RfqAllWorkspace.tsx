@@ -8,7 +8,7 @@ type Option = { id: string; name?: string; jobNumber?: string | null; draftNumbe
 type RfqRow = {
   id: string; kind: "job" | "general"; jobId: string | null; jobNumber: string | null;
   supplierId: string; supplierName: string; status: string; receivingStatus: string; partsOutstandingQty: number;
-  date: string; notes: string | null; hasAttachment?: boolean;
+  partsOutstandingSince: string | null; date: string; notes: string | null; hasAttachment?: boolean;
 };
 
 function text(v: unknown) { return v == null || v === "" ? "—" : String(v); }
@@ -31,35 +31,37 @@ function receivingStatusInfo(receivingStatus: string): { label: string; tone: st
 }
 
 // 2026-09-28, user request: "Suppliers-RFQs - ... Remove notes column
-// (change to Days Outstanding)." An RFQ stops being "outstanding" once
-// it's resolved; a resolved row shows "—" instead of a stale day count.
-// row.date is already the sent/created timestamp (requestedAt for a job
-// RFQ, createdAt for a general one — see listAllRfqRequests).
+// (change to Days Outstanding)." Went through two same-day corrections
+// before landing here — worth reading in order since each one narrows
+// what "outstanding" actually means:
 //
-// FIX 2026-09-28 (same day, "days outstanding not calculating"): a job
-// RFQ's SKIPPED does NOT mean resolved the way a general RFQ's does — see
-// attemptRfqSend in rfq/service.ts, which returns SKIPPED as the default
-// outcome any time no email actually went out (no supplier email on file,
-// company email not configured, or the "send email" box wasn't ticked —
-// "added to the comparison list (no email sent)"). That's the normal path
-// for a supplier who quotes by phone, not a terminal state — the record
-// can still move to QUOTED later once a price comes back (see the
-// recordRfqQuote-style update at rfq/service.ts:325). Treating job-kind
-// SKIPPED as resolved (the original version of this function did) meant
-// every phone-quoted supplier's RFQ showed "—" forever, which in practice
-// was most of them — exactly the "not calculating" symptom reported.
-// QUOTED is the only real terminal state for a job RFQ. GeneralRfqRequest
-// is different: its SKIPPED is a value the user deliberately picks from
-// this table's own status dropdown (defaulting to SENT, never SKIPPED
-// automatically), so it genuinely does mean "no longer pursuing this" —
-// that exclusion stays as-is.
-function isRfqOutstanding(row: RfqRow) {
-  if (row.kind === "job") return row.status !== "QUOTED";
-  return row.status !== "RECEIVED" && row.status !== "SKIPPED";
-}
+// 1. First version measured days since the RFQ was sent, stopping once
+//    the job RFQ's raw status hit QUOTED. Bug reported as "days
+//    outstanding not calculating": a job RFQ's SKIPPED status is the
+//    normal outcome for a phone-quoted supplier (see attemptRfqSend in
+//    rfq/service.ts), not a resolved state, so most rows were wrongly
+//    frozen at "—" from the start. Fixed to stop only on QUOTED.
+// 2. Then the user clarified ("days outstanding should refer to the
+//    amount the days are outstanding"): QUOTED itself doesn't mean
+//    resolved either — it just means a quote was recorded, not that
+//    every part on it got priced (see receivingStatusInfo above). Fixed
+//    to key off row.receivingStatus instead, so a "Partially received"
+//    row kept counting.
+// 3. Finally the user clarified again ("days parts are outstanding"):
+//    this isn't about the RFQ's own lifecycle at all — it's how long the
+//    job's actual outstanding PARTS have been waiting, the same
+//    real-world thing the "Parts outstanding" qty column already
+//    measures, just aged instead of counted. So this now reads
+//    row.partsOutstandingSince — the oldest still-outstanding JobPartLine
+//    on the job (ordered date, or added-to-job date if never ordered;
+//    see outstandingPartsByJob in rfq/service.ts) — completely
+//    independent of this particular supplier's RFQ/quote status. A
+//    general (job-less) RFQ has no part-line dates to draw on, so it
+//    falls back to its own created date for as long as it's genuinely
+//    outstanding (see listAllRfqRequests).
 function daysOutstanding(row: RfqRow) {
-  if (!isRfqOutstanding(row)) return "—";
-  const days = Math.max(0, Math.floor((Date.now() - new Date(row.date).getTime()) / 86400000));
+  if (!row.partsOutstandingSince || row.partsOutstandingQty <= 0) return "—";
+  const days = Math.max(0, Math.floor((Date.now() - new Date(row.partsOutstandingSince).getTime()) / 86400000));
   return `${days} day${days === 1 ? "" : "s"}`;
 }
 
