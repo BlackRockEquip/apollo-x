@@ -157,7 +157,13 @@ export function MasterDataWorkspace({ config, hideHeader }: { config: MasterConf
     {showMerge&&<div className="drawer-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setShowMerge(false)}}><aside className="form-drawer" aria-modal="true">
       <header><div><p className="eyebrow">{config.title}</p><h2>Merge {config.singular.toLowerCase()}s</h2></div><button aria-label="Close" onClick={()=>setShowMerge(false)}><X size={18}/></button></header>
       <div className="drawer-fields">
-        <p className="muted small-line wide">Pick the {config.singular.toLowerCase()} to keep, and the one to merge into it. Everything on the second record — jobs, contacts, addresses, {config.kind==="suppliers"?"RFQs, outwork, ":""}history — moves to the first, and the second is then deactivated (not deleted).</p>
+        {/* 2026-09-28 — manufacturers has neither jobs, contacts nor
+            addresses (it's parts + supplier brand links, see
+            mergeManufacturers), so the generic customers/suppliers wording
+            below would just be wrong for it rather than merely vague. */}
+        <p className="muted small-line wide">{config.kind==="manufacturers"
+          ? `Pick the manufacturer to keep, and the one to merge into it. Every part and supplier brand link pointing at the second record moves to the first, and the second is then deactivated (not deleted).`
+          : `Pick the ${config.singular.toLowerCase()} to keep, and the one to merge into it. Everything on the second record — jobs, contacts, addresses, ${config.kind==="suppliers"?"RFQs, outwork, ":""}history — moves to the first, and the second is then deactivated (not deleted).`}</p>
         <label className="party-selector"><span>Keep this {config.singular.toLowerCase()}</span><div><Search size={15}/><input value={keepQuery} onChange={e=>{setKeepQuery(e.target.value);setKeepId("")}} placeholder={`Search ${config.title.toLowerCase()}…`}/></div>{keepOptions.length>0&&<div className="selector-results">{keepOptions.map(o=><button key={o.id} type="button" onClick={()=>{setKeepId(o.id);setKeepQuery(o.name);setKeepOptions([])}}><strong>{o.name}</strong></button>)}</div>}</label>
         <label className="party-selector"><span>Merge this {config.singular.toLowerCase()} in (deactivated afterwards)</span><div><Search size={15}/><input value={awayQuery} onChange={e=>{setAwayQuery(e.target.value);setAwayId("")}} placeholder={`Search ${config.title.toLowerCase()}…`}/></div>{awayOptions.length>0&&<div className="selector-results">{awayOptions.map(o=><button key={o.id} type="button" onClick={()=>{setAwayId(o.id);setAwayQuery(o.name);setAwayOptions([])}}><strong>{o.name}</strong></button>)}</div>}</label>
         {keepId&&awayId&&keepId===awayId&&<div className="inline-error">Pick two different {config.title.toLowerCase()}.</div>}

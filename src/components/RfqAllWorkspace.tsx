@@ -31,6 +31,23 @@ function statusInfo(kind: "job" | "general", status: string): { label: string; t
   return { label: "Skipped", tone: "neutral" };
 }
 
+// 2026-09-28, user request: "Suppliers-RFQs - ... Remove notes column
+// (change to Days Outstanding)." An RFQ stops being "outstanding" once
+// it's resolved one way or the other — quoted/received, or skipped — so
+// this only counts up while it's still genuinely pending a reply; a
+// resolved row shows "—" instead of a stale day count. row.date is
+// already the sent/created timestamp (requestedAt for a job RFQ,
+// createdAt for a general one — see listAllRfqRequests).
+function isRfqOutstanding(row: RfqRow) {
+  if (row.kind === "job") return row.status !== "QUOTED" && row.status !== "SKIPPED";
+  return row.status !== "RECEIVED" && row.status !== "SKIPPED";
+}
+function daysOutstanding(row: RfqRow) {
+  if (!isRfqOutstanding(row)) return "—";
+  const days = Math.max(0, Math.floor((Date.now() - new Date(row.date).getTime()) / 86400000));
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
 // New — 2026-09-14, Suppliers screen's RFQ tab (see that route's comment).
 // Lists every RFQ, job-linked and job-less, from GET /api/v1/rfqs. "Add
 // RFQ" optionally picks a job: with one picked this reuses the exact same
@@ -134,24 +151,6 @@ export function RfqAllWorkspace() {
     }
   }
 
-  // Views the outbound attachment on an RFQ row — job-linked and general
-  // RFQs use their own GET routes but return the same {fileName, mimeType,
-  // contentBase64} shape. Added 2026-09-14.
-  async function viewAttachment(row: RfqRow) {
-    setError("");
-    try {
-      const r = row.kind === "job"
-        ? await fetch(`/api/v1/jobs/${row.jobId}/rfq?rfqId=${row.id}`, { cache: "no-store" })
-        : await fetch(`/api/v1/rfqs/general/${row.id}`, { cache: "no-store" });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "No attachment on record.");
-      const win = window.open(`data:${b.mimeType};base64,${b.contentBase64}`, "_blank");
-      if (!win) setError("Enable pop-ups to view the attachment.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to open attachment.");
-    }
-  }
-
   async function updateGeneralStatus(id: string, next: string) {
     try {
       const r = await fetch(`/api/v1/rfqs/general/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: next }) });
@@ -181,8 +180,13 @@ export function RfqAllWorkspace() {
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Add RFQ</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
-    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Notes</th><th>Attachment</th><th></th></tr></thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={8} className="table-state">No RFQs yet.</td></tr> : rows.map((row) => {
+    {/* 2026-09-28, user request: "Suppliers-RFQs - Remove attachment column
+        (Not needed), Remove notes column (change to Days Outstanding)."
+        Attachment upload on Add RFQ (below) is unchanged — this only drops
+        the column that let you view one from the list, plus swaps Notes
+        for a computed Days Outstanding (see that function's own comment). */}
+    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Days Outstanding</th><th></th></tr></thead><tbody>
+      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : rows.map((row) => {
         const info = statusInfo(row.kind, row.status);
         return <tr key={`${row.kind}-${row.id}`}>
           <td>{row.jobId ? <Link href={`/jobs/${row.jobId}`}>{text(row.jobNumber)}</Link> : <span className="muted">General</span>}</td>
@@ -194,8 +198,7 @@ export function RfqAllWorkspace() {
           ) : <span className={`status-pill ${info.tone}`}>{info.label}</span>}</td>
           <td>{row.partsOutstandingQty}</td>
           <td>{fmtDate(row.date)}</td>
-          <td className="muted small-line">{text(row.notes)}</td>
-          <td>{row.hasAttachment ? <button type="button" className="table-action" onClick={() => void viewAttachment(row)}>View</button> : "—"}</td>
+          <td className="muted small-line">{daysOutstanding(row)}</td>
           <td className="actions">{row.jobId
             ? <Link className="table-action" href={`/jobs/${row.jobId}`}>View job</Link>
             : <button type="button" className="table-action danger" onClick={() => void removeGeneral(row.id)}>Remove</button>}

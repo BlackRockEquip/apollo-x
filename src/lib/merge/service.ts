@@ -126,3 +126,49 @@ export async function mergeCustomers(ctx: RequestContext, raw: unknown) {
   await recordAudit(ctx, { source: "UI", module: "CUSTOMERS", entityType: "Customer", entityId: surviving.id, action: "MERGE", afterData: summary });
   return { ok: true, ...summary };
 }
+
+// Merge Manufacturer — new 2026-09-28, at the user's request ("Manufacturers
+// - add a Merge button if there are duplicates"). Same reassign-then-
+// deactivate shape as mergeSuppliers/mergeCustomers above, scoped to what a
+// Manufacturer actually has pointing at it: Part.manufacturerId (SetNull on
+// delete, no uniqueness risk — a plain updateMany) and SupplierManufacturer
+// (Cascade on delete, @@unique([companyId, supplierId, manufacturerId]) —
+// same collision handling as mergeSuppliers uses for the same table, just
+// from the other direction: a supplier already linked to the survivor keeps
+// that link and the loser's duplicate is dropped rather than colliding).
+// Manufacturer has no `notes` field like Customer/Supplier do — `description`
+// gets the same "merged into X" stamp instead, so there's still an
+// on-record trail of why a manufacturer went inactive, not just the audit
+// event below.
+export async function mergeManufacturers(ctx: RequestContext, raw: unknown) {
+  requireModule(ctx, "INVENTORY", "WRITE");
+  requireTenantPermission(ctx, "MANUFACTURERS_EDIT");
+  const companyId = ctx.companyId!;
+  const input = mergeInput.parse(raw);
+  const [surviving, losing] = await Promise.all([
+    prisma.manufacturer.findFirst({ where: { id: input.survivingId, companyId } }),
+    prisma.manufacturer.findFirst({ where: { id: input.losingId, companyId } }),
+  ]);
+  if (!surviving || !losing) notFound();
+
+  const summary = await prisma.$transaction(async (tx) => {
+    await tx.part.updateMany({ where: { companyId, manufacturerId: losing.id }, data: { manufacturerId: surviving.id } });
+
+    const [survivorSupplierLinks, losingSupplierLinks] = await Promise.all([
+      tx.supplierManufacturer.findMany({ where: { companyId, manufacturerId: surviving.id }, select: { supplierId: true } }),
+      tx.supplierManufacturer.findMany({ where: { companyId, manufacturerId: losing.id } }),
+    ]);
+    const survivorSupplierIds = new Set(survivorSupplierLinks.map((l) => l.supplierId));
+    for (const link of losingSupplierLinks) {
+      if (survivorSupplierIds.has(link.supplierId)) await tx.supplierManufacturer.delete({ where: { id: link.id } });
+      else await tx.supplierManufacturer.update({ where: { id: link.id }, data: { manufacturerId: surviving.id } });
+    }
+
+    await tx.manufacturer.update({ where: { id: losing.id }, data: { active: false, description: mergedNotes(losing.description, surviving.name) } });
+
+    return { survivingId: surviving.id, losingId: losing.id, survivorName: surviving.name, losingName: losing.name };
+  });
+
+  await recordAudit(ctx, { source: "UI", module: "INVENTORY", entityType: "Manufacturer", entityId: surviving.id, action: "MERGE", afterData: summary });
+  return { ok: true, ...summary };
+}
