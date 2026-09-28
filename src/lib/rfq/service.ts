@@ -429,6 +429,57 @@ async function outstandingQtyByJob(companyId: string, jobIds: string[]): Promise
   return totals;
 }
 
+// Sums each job's TOTAL part-line count (every line, not just the ones
+// still outstanding) — the denominator for jobRfqReceivingStatus below.
+// Every RFQ snapshots the job's whole part list (see buildPartsSummary),
+// so this per-job total is valid for any supplier quoted on that job, not
+// just whichever RFQ happened to be sent first.
+async function partLineCountByJob(companyId: string, jobIds: string[]): Promise<Record<string, number>> {
+  if (jobIds.length === 0) return {};
+  const lines = await prisma.jobPartLine.findMany({ where: { companyId, jobId: { in: jobIds } }, select: { jobId: true } });
+  const totals: Record<string, number> = {};
+  for (const line of lines) totals[line.jobId] = (totals[line.jobId] ?? 0) + 1;
+  return totals;
+}
+
+// For every job RFQ that has a quote on file, counts how many of its
+// JobRfqQuoteLine rows are actually decided — a real price entered, or
+// explicitly marked unavailable (the supplier doesn't stock the part). A
+// line that exists with unitPrice: null and available: true just means
+// nobody's typed a price in yet, not a decision either way.
+async function quoteCoverageByRfqRequest(rfqRequestIds: string[]): Promise<Record<string, number>> {
+  if (rfqRequestIds.length === 0) return {};
+  const quotes = await prisma.jobRfqQuote.findMany({
+    where: { rfqRequestId: { in: rfqRequestIds } },
+    select: { rfqRequestId: true, lines: { select: { unitPrice: true, available: true } } },
+  });
+  const decided: Record<string, number> = {};
+  for (const quote of quotes) {
+    decided[quote.rfqRequestId] = quote.lines.filter((l) => l.unitPrice !== null || !l.available).length;
+  }
+  return decided;
+}
+
+// Suppliers > RFQ tab's Status column — 2026-09-28, user request: "RFQ
+// status says received even though parts are still outstanding, should
+// have 3 statuses: Received, Partially Received, Outstanding." The raw
+// JobRfqRequest.status flips to QUOTED (previously shown as "Received")
+// the instant recordRfqQuote is called, even before a single price has
+// been saved — see that function's comment: "the quote exists", not
+// "here are the numbers". This derives the real state from how much of
+// the quote is actually decided (quoteCoverageByRfqRequest) against the
+// job's total part-line count (partLineCountByJob): OUTSTANDING = not
+// quoted yet (SENT/REQUESTED/FAILED/SKIPPED), or quoted with nothing
+// decided yet; PARTIALLY_RECEIVED = some but not all of the job's part
+// lines decided; RECEIVED = every line decided (or the job has none).
+function jobRfqReceivingStatus(status: string, decidedCount: number, totalPartLines: number): "OUTSTANDING" | "PARTIALLY_RECEIVED" | "RECEIVED" {
+  if (status !== "QUOTED") return "OUTSTANDING";
+  if (totalPartLines === 0) return "RECEIVED";
+  if (decidedCount <= 0) return "OUTSTANDING";
+  if (decidedCount >= totalPartLines) return "RECEIVED";
+  return "PARTIALLY_RECEIVED";
+}
+
 // All outwork items across every job, newest first — the Suppliers >
 // Outwork tab. Job-scoped data, so gated the same as the job's own outwork
 // actions (requireJobsRead), not the Suppliers module.
@@ -480,7 +531,13 @@ export async function listAllRfqRequests(ctx: RequestContext) {
     }),
   ]);
 
-  const outstandingByJob = await outstandingQtyByJob(companyId, Array.from(new Set(jobRfqs.map((r) => r.jobId))));
+  const jobIds = Array.from(new Set(jobRfqs.map((r) => r.jobId)));
+  const quotedRfqIds = jobRfqs.filter((r) => r.status === "QUOTED").map((r) => r.id);
+  const [outstandingByJob, totalPartLinesByJob, decidedByRfq] = await Promise.all([
+    outstandingQtyByJob(companyId, jobIds),
+    partLineCountByJob(companyId, jobIds),
+    quoteCoverageByRfqRequest(quotedRfqIds),
+  ]);
 
   const jobRows = jobRfqs.map((r) => ({
     id: r.id,
@@ -490,6 +547,7 @@ export async function listAllRfqRequests(ctx: RequestContext) {
     supplierId: r.supplierId,
     supplierName: r.supplier.name,
     status: r.status as string,
+    receivingStatus: jobRfqReceivingStatus(r.status, decidedByRfq[r.id] ?? 0, totalPartLinesByJob[r.jobId] ?? 0),
     partsOutstandingQty: outstandingByJob[r.jobId] ?? 0,
     date: r.requestedAt,
     notes: r.partsSummary,
@@ -503,6 +561,7 @@ export async function listAllRfqRequests(ctx: RequestContext) {
     supplierId: r.supplierId,
     supplierName: r.supplier.name,
     status: r.status as string,
+    receivingStatus: (r.status === "RECEIVED" ? "RECEIVED" : r.status === "SKIPPED" ? "SKIPPED" : "OUTSTANDING") as "OUTSTANDING" | "RECEIVED" | "SKIPPED",
     partsOutstandingQty: r.quantityOutstanding ?? 0,
     date: r.createdAt,
     notes: r.partsDescription,

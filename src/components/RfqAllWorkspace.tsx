@@ -7,7 +7,7 @@ import { Loader2, Plus, Search, X } from "lucide-react";
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
 type RfqRow = {
   id: string; kind: "job" | "general"; jobId: string | null; jobNumber: string | null;
-  supplierId: string; supplierName: string; status: string; partsOutstandingQty: number;
+  supplierId: string; supplierName: string; status: string; receivingStatus: string; partsOutstandingQty: number;
   date: string; notes: string | null; hasAttachment?: boolean;
 };
 
@@ -15,31 +15,46 @@ function text(v: unknown) { return v == null || v === "" ? "—" : String(v); }
 function fmtDate(v: string) { return v ? new Date(v).toLocaleDateString("en-ZA") : "—"; }
 function jobRef(job: { jobNumber?: string | null; draftNumber?: string | null }) { return job.jobNumber || job.draftNumber || "—"; }
 
-// Unified status pill across JobRfqRequest's fuller lifecycle
-// (REQUESTED/SENT/FAILED/SKIPPED/QUOTED) and GeneralRfqRequest's simple
-// three-state one (SENT/RECEIVED/SKIPPED) — the user's requirement is just
-// "sent / received / skipped" on this tab, so both collapse to that.
-function statusInfo(kind: "job" | "general", status: string): { label: string; tone: string } {
-  if (kind === "job") {
-    if (status === "QUOTED") return { label: "Received", tone: "tone-green" };
-    if (status === "SENT") return { label: "Sent", tone: "tone-blue" };
-    if (status === "FAILED") return { label: "Sent (failed)", tone: "tone-red" };
-    return { label: "Skipped", tone: "neutral" };
-  }
-  if (status === "RECEIVED") return { label: "Received", tone: "tone-green" };
-  if (status === "SENT") return { label: "Sent", tone: "tone-blue" };
-  return { label: "Skipped", tone: "neutral" };
+// 2026-09-28, user request: "RFQ status says received even though parts
+// are still outstanding, should have 3 statuses: Received, Partially
+// Received, Outstanding." row.receivingStatus is computed server-side
+// (see jobRfqReceivingStatus in rfq/service.ts) from actual quote-line
+// coverage rather than the raw JobRfqRequest.status, which used to flip
+// to QUOTED — shown here as "Received" — the moment a quote was recorded,
+// before any price was saved. Only used for job-kind rows: a general RFQ's
+// status is a manual pick with no per-part data behind it, so it keeps its
+// own SENT/RECEIVED/SKIPPED dropdown below rather than a derived pill.
+function receivingStatusInfo(receivingStatus: string): { label: string; tone: string } {
+  if (receivingStatus === "RECEIVED") return { label: "Received", tone: "tone-green" };
+  if (receivingStatus === "PARTIALLY_RECEIVED") return { label: "Partially received", tone: "tone-amber" };
+  return { label: "Outstanding", tone: "tone-orange" };
 }
 
 // 2026-09-28, user request: "Suppliers-RFQs - ... Remove notes column
 // (change to Days Outstanding)." An RFQ stops being "outstanding" once
-// it's resolved one way or the other — quoted/received, or skipped — so
-// this only counts up while it's still genuinely pending a reply; a
-// resolved row shows "—" instead of a stale day count. row.date is
-// already the sent/created timestamp (requestedAt for a job RFQ,
-// createdAt for a general one — see listAllRfqRequests).
+// it's resolved; a resolved row shows "—" instead of a stale day count.
+// row.date is already the sent/created timestamp (requestedAt for a job
+// RFQ, createdAt for a general one — see listAllRfqRequests).
+//
+// FIX 2026-09-28 (same day, "days outstanding not calculating"): a job
+// RFQ's SKIPPED does NOT mean resolved the way a general RFQ's does — see
+// attemptRfqSend in rfq/service.ts, which returns SKIPPED as the default
+// outcome any time no email actually went out (no supplier email on file,
+// company email not configured, or the "send email" box wasn't ticked —
+// "added to the comparison list (no email sent)"). That's the normal path
+// for a supplier who quotes by phone, not a terminal state — the record
+// can still move to QUOTED later once a price comes back (see the
+// recordRfqQuote-style update at rfq/service.ts:325). Treating job-kind
+// SKIPPED as resolved (the original version of this function did) meant
+// every phone-quoted supplier's RFQ showed "—" forever, which in practice
+// was most of them — exactly the "not calculating" symptom reported.
+// QUOTED is the only real terminal state for a job RFQ. GeneralRfqRequest
+// is different: its SKIPPED is a value the user deliberately picks from
+// this table's own status dropdown (defaulting to SENT, never SKIPPED
+// automatically), so it genuinely does mean "no longer pursuing this" —
+// that exclusion stays as-is.
 function isRfqOutstanding(row: RfqRow) {
-  if (row.kind === "job") return row.status !== "QUOTED" && row.status !== "SKIPPED";
+  if (row.kind === "job") return row.status !== "QUOTED";
   return row.status !== "RECEIVED" && row.status !== "SKIPPED";
 }
 function daysOutstanding(row: RfqRow) {
@@ -187,7 +202,7 @@ export function RfqAllWorkspace() {
         for a computed Days Outstanding (see that function's own comment). */}
     <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Days Outstanding</th><th></th></tr></thead><tbody>
       {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : rows.map((row) => {
-        const info = statusInfo(row.kind, row.status);
+        const info = receivingStatusInfo(row.receivingStatus);
         return <tr key={`${row.kind}-${row.id}`}>
           <td>{row.jobId ? <Link href={`/jobs/${row.jobId}`}>{text(row.jobNumber)}</Link> : <span className="muted">General</span>}</td>
           <td>{text(row.supplierName)}</td>
