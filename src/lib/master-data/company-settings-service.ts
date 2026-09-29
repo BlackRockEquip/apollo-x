@@ -16,7 +16,23 @@ const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable(
 // blank value here means "leave the stored password unchanged" — see
 // updateCompanySettings below — and getCompanySettings never returns the
 // real value, only a `smtpConfigured` boolean.
-export const settingsInput = z.object({ legalName: z.string().trim().min(2).max(200), tradingName: text, registrationNumber: text, vatNumber: text, mainTelephone: text, mainEmail: z.string().trim().email().optional().nullable().or(z.literal("")), website: text, defaultCurrencyCode: z.string().trim().length(3), defaultTaxJurisdiction: z.string().trim().length(2), defaultTaxCodeId: z.string().cuid().optional().nullable(), defaultPaymentTermId: z.string().cuid().optional().nullable(), quoteValidityDays: z.number().int().min(1).max(365), themeColor: color, accentColor: color, secondaryColor: color, documentHeaderText: text, documentFooterText: z.string().trim().max(2000).optional().nullable(), smtpHost: text, smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: text, smtpPassword: z.string().trim().max(500).optional().nullable(), smtpFromAddress: z.string().trim().email().optional().nullable().or(z.literal("")), smtpFromName: text });
+// 2026-09-29 — user request: "Settings-Company, add address fields for
+// organization, once address fields are in add to all printed documents
+// that user company info." Company already had an addresses relation
+// (CompanyAddress) — getCompanyPrintDetails (below) already reads the
+// primary one and every letterhead-style print (outwork delivery note,
+// job delivery note, and now the Job History print too) already renders
+// whatever it finds there via orgDetailsHtml. So this is simply the first
+// UI/write path for that relation — nothing else needs to change for an
+// address to start appearing on those prints once it's saved here. Folded
+// onto this same settingsInput/updateCompanySettings pair (rather than a
+// separate endpoint, the way emailTemplatesInput got its own) since these
+// fields sit in the same "Company / Branding" panel and save on the same
+// button as legalName/tradingName/registrationNumber etc. — see
+// updateCompanySettings below for how they're pulled out before the
+// ...settings spread (they're CompanyAddress columns, not CompanySettings
+// ones, so they can't ride along in that update call).
+export const settingsInput = z.object({ legalName: z.string().trim().min(2).max(200), tradingName: text, registrationNumber: text, vatNumber: text, mainTelephone: text, mainEmail: z.string().trim().email().optional().nullable().or(z.literal("")), website: text, addressLine1: text, addressLine2: text, addressCity: text, addressProvince: text, addressPostalCode: text, defaultCurrencyCode: z.string().trim().length(3), defaultTaxJurisdiction: z.string().trim().length(2), defaultTaxCodeId: z.string().cuid().optional().nullable(), defaultPaymentTermId: z.string().cuid().optional().nullable(), quoteValidityDays: z.number().int().min(1).max(365), themeColor: color, accentColor: color, secondaryColor: color, documentHeaderText: text, documentFooterText: z.string().trim().max(2000).optional().nullable(), smtpHost: text, smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: text, smtpPassword: z.string().trim().max(500).optional().nullable(), smtpFromAddress: z.string().trim().email().optional().nullable().or(z.literal("")), smtpFromName: text });
 // 2026-09-29 — "Test connection" button on the SMTP settings section. Only
 // the fields .verify() actually needs — no fromName/fromAddress, since
 // those don't affect whether the server accepts the connection/login.
@@ -216,8 +232,35 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
     const before = await tx.company.findUniqueOrThrow({ where: { id: companyId }, include: { settings: true } });
     if (input.defaultTaxCodeId && !await tx.taxCode.findFirst({ where: { id: input.defaultTaxCodeId, companyId } })) throw new Error("NOT_FOUND");
     if (input.defaultPaymentTermId && !await tx.commercialTerm.findFirst({ where: { id: input.defaultPaymentTermId, companyId, type: "PAYMENT" } })) throw new Error("NOT_FOUND");
-    const { legalName, tradingName, smtpPassword, ...settings } = input;
+    const { legalName, tradingName, smtpPassword, addressLine1, addressLine2, addressCity, addressProvince, addressPostalCode, ...settings } = input;
     await tx.company.update({ where: { id: companyId }, data: { legalName, tradingName } });
+    // A single PHYSICAL, isPrimary address per company — no multi-address
+    // UI here, unlike Customer/Supplier (which can have several branches);
+    // this is just the tenant's own one office/workshop address for
+    // letterhead purposes. Blank addressLine1 means "leave whatever's
+    // already stored alone" — CompanyAddress.line1 is a required column,
+    // so there's nothing sensible to write if it's empty, and this also
+    // means clearing the other fields one at a time (leaving line1 typed)
+    // just updates that same row rather than needing line1 re-entered
+    // every save.
+    const trimmedLine1 = addressLine1?.trim() || "";
+    if (trimmedLine1) {
+      const existingAddress = await tx.companyAddress.findFirst({ where: { companyId }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] });
+      const addressData = {
+        type: "PHYSICAL" as const,
+        line1: trimmedLine1,
+        line2: addressLine2?.trim() || null,
+        city: addressCity?.trim() || null,
+        province: addressProvince?.trim() || null,
+        postalCode: addressPostalCode?.trim() || null,
+        isPrimary: true,
+      };
+      if (existingAddress) {
+        await tx.companyAddress.update({ where: { id: existingAddress.id }, data: addressData });
+      } else {
+        await tx.companyAddress.create({ data: { companyId, ...addressData } });
+      }
+    }
     // Blank smtpPassword means "leave it as-is" — never overwrite a stored
     // password with an empty string just because the form re-submitted it.
     const willHavePassword = !!(smtpPassword || before.settings?.smtpPassword);

@@ -12,6 +12,11 @@ type SettingsData = {
   legalName: string;
   tradingName: string | null;
   settings: Record<string, string | number | boolean | null> | null;
+  // 2026-09-29 — user request: "add address fields for organization."
+  // Company already had this relation (CompanyAddress) and
+  // getCompanySettings's own select already returns it — this is just the
+  // first place anything on the client reads it.
+  addresses: Array<{ line1: string; line2: string | null; city: string | null; province: string | null; postalCode: string | null }> | null;
 };
 
 type FormState = Record<string, string>;
@@ -65,6 +70,7 @@ export function CompanySettingsForm() {
     // cache after an upload/remove so the <Image> below doesn't keep
     // showing a stale cached logo under the same URL.
     setLogoPreview(s.logoMimeType ? `/api/v1/company-settings/logo?v=${encodeURIComponent(String(s.logoUpdatedAt || ""))}` : null);
+    const address = (body.addresses || [])[0];
     setForm({
       legalName: body.legalName || "",
       tradingName: body.tradingName || "",
@@ -73,6 +79,11 @@ export function CompanySettingsForm() {
       mainTelephone: String(s.mainTelephone || ""),
       mainEmail: String(s.mainEmail || ""),
       website: String(s.website || ""),
+      addressLine1: String(address?.line1 || ""),
+      addressLine2: String(address?.line2 || ""),
+      addressCity: String(address?.city || ""),
+      addressProvince: String(address?.province || ""),
+      addressPostalCode: String(address?.postalCode || ""),
       defaultCurrencyCode: String(s.defaultCurrencyCode || "ZAR"),
       defaultTaxJurisdiction: String(s.defaultTaxJurisdiction || "ZA"),
       quoteValidityDays: String(s.quoteValidityDays || 30),
@@ -250,6 +261,27 @@ export function CompanySettingsForm() {
           </label>
           <label className="wide"><span>Document header text</span><textarea rows={3} value={form.documentHeaderText} onChange={(e) => setForm((current) => current ? { ...current, documentHeaderText: e.target.value } : current)} /></label>
           <label className="wide"><span>Document footer text</span><textarea rows={3} value={form.documentFooterText} onChange={(e) => setForm((current) => current ? { ...current, documentFooterText: e.target.value } : current)} /></label>
+        </div>
+      </section>
+
+      {/* 2026-09-29 — user request: "add address fields for organization,
+          once address fields are in add to all printed documents that user
+          company info." Saved on the same Save button as Company/Branding
+          above (see onSave's payload — it sends the whole form object),
+          same convention as the Email/SMTP panel below it. Once saved,
+          this address shows up automatically on every print that already
+          renders org details (outwork delivery note, job delivery note,
+          Job History) — those all read it via getCompanyPrintDetails,
+          which already queried Company.addresses before this form existed
+          any way to set one. */}
+      <section className="detail-panel">
+        <header><div><h2>Address</h2><p>Printed on delivery notes and other documents alongside your logo.</p></div></header>
+        <div className="drawer-fields">
+          <label className="wide"><span>Address line 1</span><input value={form.addressLine1} onChange={(e) => setForm((current) => current ? { ...current, addressLine1: e.target.value } : current)} /></label>
+          <label className="wide"><span>Address line 2</span><input value={form.addressLine2} onChange={(e) => setForm((current) => current ? { ...current, addressLine2: e.target.value } : current)} /></label>
+          <label><span>City</span><input value={form.addressCity} onChange={(e) => setForm((current) => current ? { ...current, addressCity: e.target.value } : current)} /></label>
+          <label><span>Province</span><input value={form.addressProvince} onChange={(e) => setForm((current) => current ? { ...current, addressProvince: e.target.value } : current)} /></label>
+          <label><span>Postal code</span><input value={form.addressPostalCode} onChange={(e) => setForm((current) => current ? { ...current, addressPostalCode: e.target.value } : current)} /></label>
         </div>
       </section>
 

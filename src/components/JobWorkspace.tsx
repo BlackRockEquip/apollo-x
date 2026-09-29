@@ -1883,7 +1883,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
       .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-      .logo{max-height:56px;max-width:200px;object-fit:contain;margin-bottom:2px}
+      .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
       .org-details{text-align:left;margin-bottom:6px}
       .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
       .org-details p{font-size:11px;color:#444;margin:1px 0}
@@ -1948,6 +1948,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // notes, the parts list and outwork/RFQ status, none of which the user
   // picked. "Date in" is form.dateReceived — the only field on the page
   // actually labelled "Date in" (Customer details panel).
+  // 2026-09-29 — user request: "make the date in field 50% width of the
+  // page, make the machine component details also 50% width of the page,
+  // make the Job details section as follows: job type 50% width, job
+  // description heading on its own line with field details below it."
+  // .half-width constrains each of those tables to half the page rather
+  // than the full-width tables every other print view uses — a deliberate
+  // departure just for this one document. Job description is pulled out of
+  // the label/value table entirely (previously a <tr><th>/<td> row) into
+  // its own heading + a plain full-width block below it, matching "on its
+  // own line ... below it" literally. Component type dropped from the
+  // Machine/component table — see the "Component type" removal comment on
+  // the on-screen field above.
   function printJobCard() {
     if (!job) return;
     const win = window.open("", "_blank");
@@ -1959,35 +1971,36 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
       h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      h3{font-size:13px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em;color:#555}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
       table{width:100%;border-collapse:collapse}
       th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
       th{width:38%;background:#f6f6f6;font-weight:600}
       .description{white-space:pre-wrap}
+      .half-width{width:50%}
+      .description-block{white-space:pre-wrap;border:1px solid #ccc;padding:8px 9px;font-size:13px}
     </style></head><body>
       <div class="note-head">
         <h1>Job card — for workshop use</h1>
         <div class="job-number">Job ${escapeHtml(String(job.jobNumber || job.draftNumber || "—"))}</div>
       </div>
       <h2>Date in</h2>
-      <table>${rows([["Date in", fmt(form.dateReceived)]])}</table>
+      <div class="half-width"><table>${rows([["Date in", fmt(form.dateReceived)]])}</table></div>
       <h2>Machine / component details</h2>
-      <table>${rows([
+      <div class="half-width"><table>${rows([
         ["Machine make", form.machineMake],
         ["Machine model", form.machineModel],
         ["Machine serial", form.machineSerial],
         ["Component", form.component],
-        ["Component type", form.componentType],
         ["Component serial", form.componentSerial],
         ["Part number", form.componentPartNumber],
         ["Plant number", form.plantNumber],
         ["Machine hours", form.machineHours],
-      ])}</table>
+      ])}</table></div>
       <h2>Job details</h2>
-      <table>
-        ${rows([["Job type", JOB_TYPE_LABELS[job.type]]])}
-        <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
-      </table>
+      <div class="half-width"><table>${rows([["Job type", JOB_TYPE_LABELS[job.type]]])}</table></div>
+      <h3>Job description</h3>
+      <div class="description-block">${escapeHtml(form.description || "—")}</div>
     </body></html>`);
     win.document.close();
     win.focus();
@@ -2007,12 +2020,39 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // are. Follows the same unpersisted, on-demand print-window pattern as
   // printJobCard/printDeliveryNote/printPartsList above/below — nothing
   // here is saved, it only reads the already-loaded `job`/`form` state.
-  function printJobHistory() {
+  // 2026-09-29 — user request: "Make Customer details and Machine component
+  // details sections next to each other, Job Details and commercial &
+  // logistics sections next to each other, Parts List on its own page
+  // followed by outwork, Add company logo to top right (sizing consistant
+  // with all logos)." The two side-by-side pairs use the same .two-col
+  // flex wrapper; Notes and the Field service/Warranty panels (which used
+  // to sit between/after those sections) keep their previous relative
+  // order, just now sitting between the two .two-col blocks (or after the
+  // second) as full-width sections rather than between individual tables.
+  // Parts list gets a real page-break-before so it always starts a fresh
+  // sheet; Outwork has no break of its own, so it simply continues on that
+  // same page after Parts list. Logo/org details use the same markup and
+  // sizing as printDeliveryNote/printJobDeliveryNote for consistency (this
+  // view previously had neither) — this function is now async to fetch
+  // them, and uses the same window.onload-triggers-print pattern as those
+  // two (see companyLogoImgSrc's comment) since it now has an image that
+  // needs to finish loading before the print dialog opens.
+  async function printJobHistory() {
     if (!job) return;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the job record."); return; }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const jobLabel = job.jobNumber || job.draftNumber || "";
+    const logoSrc = companyLogoImgSrc();
+    const orgDetails = await fetchCompanyOrgDetails();
+    const orgDetailsHtml = orgDetails ? `<div class="org-details">
+        <p class="org-name">${escapeHtml(orgDetails.name)}</p>
+        ${orgDetails.addressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
+        ${orgDetails.registrationNumber ? `<p>Reg: ${escapeHtml(orgDetails.registrationNumber)}</p>` : ""}
+        ${orgDetails.vatNumber ? `<p>VAT: ${escapeHtml(orgDetails.vatNumber)}</p>` : ""}
+        ${orgDetails.contact ? `<p>${escapeHtml(orgDetails.contact)}</p>` : ""}
+        ${orgDetails.email ? `<p>${escapeHtml(orgDetails.email)}</p>` : ""}
+      </div>` : "";
     const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
     const address = (job.customer?.addresses || [])[0] as Record<string, unknown> | undefined;
     const addressLine = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter(Boolean).map(String).join(", ") : "";
@@ -2040,6 +2080,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
       h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+      .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
+      .org-details{text-align:left;margin-bottom:6px}
+      .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
+      .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
       table{width:100%;border-collapse:collapse}
       th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
@@ -2048,65 +2093,83 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       table.list-table th{width:auto;background:#f9fafb;border-bottom:2px solid #7a5c14}
       table.list-table td.qty{text-align:center;font-weight:600}
       table.list-table{font-size:12px}
+      .two-col{display:flex;gap:24px;align-items:flex-start}
+      .two-col > div{flex:1;min-width:0}
+      .page-break{page-break-before:always}
     </style></head><body>
       <div class="note-head">
         <h1>Job record</h1>
-        <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+        <div class="note-right">
+          <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
+          ${orgDetailsHtml}
+          <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+        </div>
       </div>
-      <h2>Customer details</h2>
-      <table>${rows([
-        ["Customer", String(job.customer?.name || "")],
-        ["Trading name", String(job.customer?.tradingName || "")],
-        ["Address", addressLine],
-        ["Contact", contactLine],
-        ["Date in", fmt(form.dateReceived)],
-        ["Customer reference", form.customerReference],
-        ["Sales representative", String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—")],
-        ["Report number", form.reportNumber],
-      ])}</table>
+      <div class="two-col">
+        <div>
+          <h2>Customer details</h2>
+          <table>${rows([
+            ["Customer", String(job.customer?.name || "")],
+            ["Trading name", String(job.customer?.tradingName || "")],
+            ["Address", addressLine],
+            ["Contact", contactLine],
+            ["Date in", fmt(form.dateReceived)],
+            ["Customer reference", form.customerReference],
+            ["Sales representative", String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—")],
+            ["Report number", form.reportNumber],
+          ])}</table>
+        </div>
+        <div>
+          <h2>Machine / component details</h2>
+          <table>${rows([
+            ["Machine make", form.machineMake],
+            ["Machine model", form.machineModel],
+            ["Machine serial", form.machineSerial],
+            ["Component", form.component],
+            ["Component serial", form.componentSerial],
+            ["Part number", form.componentPartNumber],
+            ["Plant number", form.plantNumber],
+            ["Machine hours", form.machineHours],
+          ])}</table>
+        </div>
+      </div>
       ${form.notes ? `<h2>Notes</h2><table><tr><td class="description">${escapeHtml(form.notes)}</td></tr></table>` : ""}
-      <h2>Machine / component details</h2>
-      <table>${rows([
-        ["Machine make", form.machineMake],
-        ["Machine model", form.machineModel],
-        ["Machine serial", form.machineSerial],
-        ["Component", form.component],
-        ["Component type", form.componentType],
-        ["Component serial", form.componentSerial],
-        ["Part number", form.componentPartNumber],
-        ["Plant number", form.plantNumber],
-        ["Machine hours", form.machineHours],
-      ])}</table>
-      <h2>Job details</h2>
-      <table>
-        ${rows([
-          ["Job type", JOB_TYPE_LABELS[job.type]],
-          ["Status", JOB_STATUS_LABELS[job.status]],
-          ["ETA date", fmt(form.etaDate)],
-          ["Mechanic ETA date", fmt(form.mechanicEtaDate)],
-          ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
-          ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
-          ["Import tracking number", form.importTrackingNumber],
-          ["Previous job number", form.previousJobNumber],
-        ])}
-        <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
-      </table>
-      <h2>Commercial &amp; logistics</h2>
-      <table>${rows([
-        ["Quote number", form.quoteNumber],
-        ["Quote date", fmt(form.quoteDate)],
-        ["Sales order number", form.salesOrderNumber],
-        ["Sales order date", fmt(form.salesOrderDate)],
-        ["Invoice number", form.invoiceNumber],
-        ["Invoice date", fmt(form.invoiceDate)],
-        ["Payment date received", form.paymentNotApplicable === "true" ? "N/A" : fmt(form.paymentDateReceived)],
-        ["Purchase order number", form.purchaseOrderNumber],
-        ["Purchase order date", fmt(form.purchaseOrderDate)],
-        ["Purchase order status", form.purchaseOrderStatus.replaceAll("_", " ")],
-        ["Receiving transport", form.receivingTransport.replaceAll("_", " ")],
-        ["Delivery type", form.deliveryType.replaceAll("_", " ")],
-        ["Delivery date", fmt(form.deliveryDate)],
-      ])}</table>
+      <div class="two-col">
+        <div>
+          <h2>Job details</h2>
+          <table>
+            ${rows([
+              ["Job type", JOB_TYPE_LABELS[job.type]],
+              ["Status", JOB_STATUS_LABELS[job.status]],
+              ["ETA date", fmt(form.etaDate)],
+              ["Mechanic ETA date", fmt(form.mechanicEtaDate)],
+              ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
+              ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
+              ["Import tracking number", form.importTrackingNumber],
+              ["Previous job number", form.previousJobNumber],
+            ])}
+            <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
+          </table>
+        </div>
+        <div>
+          <h2>Commercial &amp; logistics</h2>
+          <table>${rows([
+            ["Quote number", form.quoteNumber],
+            ["Quote date", fmt(form.quoteDate)],
+            ["Sales order number", form.salesOrderNumber],
+            ["Sales order date", fmt(form.salesOrderDate)],
+            ["Invoice number", form.invoiceNumber],
+            ["Invoice date", fmt(form.invoiceDate)],
+            ["Payment date received", form.paymentNotApplicable === "true" ? "N/A" : fmt(form.paymentDateReceived)],
+            ["Purchase order number", form.purchaseOrderNumber],
+            ["Purchase order date", fmt(form.purchaseOrderDate)],
+            ["Purchase order status", form.purchaseOrderStatus.replaceAll("_", " ")],
+            ["Receiving transport", form.receivingTransport.replaceAll("_", " ")],
+            ["Delivery type", form.deliveryType.replaceAll("_", " ")],
+            ["Delivery date", fmt(form.deliveryDate)],
+          ])}</table>
+        </div>
+      </div>
       ${job.type === "FIELD_SERVICE" ? `<h2>Field service</h2><table>${rows([
         ["Site", form.fieldSite],
         ["Technician", form.fieldTechnician],
@@ -2118,18 +2181,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ["Warranty status", form.warrantyStatus],
         ["Historical source status", form.warrantyHistorical],
       ])}<tr><th>Warranty notes</th><td class="description">${escapeHtml(form.warrantyNotes || "—")}</td></tr></table>` : ""}
-      <h2>Parts list</h2>
-      ${job.partLines.length > 0
-        ? `<table class="list-table"><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${partsRows}</tbody></table>`
-        : `<p>No parts on this job.</p>`}
+      <div class="page-break">
+        <h2>Parts list</h2>
+        ${job.partLines.length > 0
+          ? `<table class="list-table"><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${partsRows}</tbody></table>`
+          : `<p>No parts on this job.</p>`}
+      </div>
       <h2>Outwork</h2>
       ${job.outworkItems.length > 0
         ? `<table class="list-table"><thead><tr><th>Description</th><th>Qty</th><th>Supplier</th><th>Date sent out</th><th>Date received</th><th>Status</th></tr></thead><tbody>${outworkRows}</tbody></table>`
         : `<p>No outwork on this job.</p>`}
+      <script>window.onload = function () { window.print(); };</script>
     </body></html>`);
     win.document.close();
     win.focus();
-    win.print();
   }
 
   // 2026-09-19 — user request: "add a button 'Print Delivery Note' that
@@ -2140,6 +2205,29 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // outwork). This one is job-facing: what's being delivered, to whom,
   // and what it is. Same letterhead (logo + org details) as the outwork
   // note for visual consistency between the two printed documents.
+  //
+  // 2026-09-29 — user request: "Make Customer details and commercial &
+  // logistics sections next to each other; customer details section and
+  // commercial logistics sections to be same as outwork delivery note
+  // format; Remove Job Type; add table like outwork delivery note that
+  // capturers the following, under the description field (Make, Model,
+  // Component, Serial) Qty field (will be editable by user before
+  // printing, Checked column will fall away on this delivery note; add
+  // signature fields like outwork delivery note; move the delivery date
+  // field to below the job number." Reworked from the label/value tables
+  // above into the same plain stacked-line ".info-block" style
+  // printDeliveryNote uses for its supplier block (bold heading line, then
+  // plain text lines, no table borders) — the two blocks now sit side by
+  // side via the same .two-col wrapper printJobHistory uses. The old
+  // "Job type / Make / Model" + "Component" summary lines are gone
+  // entirely, replaced by the new items table below (which already covers
+  // Make/Model/Component/Serial) — that's what "Remove Job Type" and the
+  // new table are, together. Since Qty must stay editable *before*
+  // printing, this is the one print view in this file that does NOT
+  // auto-print on window.onload (see the other three above) — it opens
+  // with an on-screen "Print delivery note" button (.no-print, hidden in
+  // the actual printed output) instead, so the person can type a quantity
+  // first and print only when ready.
   async function printJobDeliveryNote() {
     if (!job) return;
     const win = window.open("", "_blank");
@@ -2156,55 +2244,94 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ${orgDetails.contact ? `<p>${escapeHtml(orgDetails.contact)}</p>` : ""}
         ${orgDetails.email ? `<p>${escapeHtml(orgDetails.email)}</p>` : ""}
       </div>` : "";
-    const address = (job.customer?.addresses || [])[0] as Record<string, unknown> | undefined;
-    const addressLine = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter(Boolean).map(String).join(", ") : "";
+    const address = job.customer?.addresses?.[0] as Record<string, unknown> | undefined;
+    const customerAddressLines = address
+      ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v): v is string => Boolean(v && String(v).trim())).map(String)
+      : [];
     const contact = (job.customer?.contacts || [])[0] as Record<string, unknown> | undefined;
     const contactLine = contact ? [[contact.firstName, contact.lastName].filter(Boolean).join(" "), contact.telephone || contact.mobile, contact.email].filter(Boolean).map(String).join(" · ") : "";
-    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
+    const commercialLines: string[] = [];
+    if (form.quoteNumber) commercialLines.push(`Quote number: ${escapeHtml(form.quoteNumber)}`);
+    if (form.salesOrderNumber) commercialLines.push(`Sales order number: ${escapeHtml(form.salesOrderNumber)}`);
+    if (form.invoiceNumber) commercialLines.push(`Invoice number: ${escapeHtml(form.invoiceNumber)}`);
+    if (form.purchaseOrderNumber) commercialLines.push(`Purchase order number: ${escapeHtml(form.purchaseOrderNumber)}`);
+    if (form.deliveryType) commercialLines.push(`Delivery type: ${escapeHtml(form.deliveryType.replaceAll("_", " "))}`);
+    const descriptionLines: string[] = [];
+    if (form.machineMake) descriptionLines.push(`Make: ${escapeHtml(form.machineMake)}`);
+    if (form.machineModel) descriptionLines.push(`Model: ${escapeHtml(form.machineModel)}`);
+    if (form.component) descriptionLines.push(`Component: ${escapeHtml(form.component)}`);
+    if (form.componentSerial) descriptionLines.push(`Serial: ${escapeHtml(form.componentSerial)}`);
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(String(jobLabel))} - Delivery Note</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
       h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
       .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-      .logo{max-height:56px;max-width:200px;object-fit:contain;margin-bottom:2px}
+      .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
       .org-details{text-align:left;margin-bottom:6px}
       .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
       .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
-      table{width:100%;border-collapse:collapse}
-      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
-      th{width:32%;background:#f6f6f6;font-weight:600}
-      .summary-line{font-size:13px;margin:10px 0}
-      .summary-line strong{margin-right:4px}
+      .date-captured{font-size:13px;color:#444;text-align:right}
+      .two-col{display:flex;gap:24px;align-items:flex-start;margin-top:14px}
+      .two-col > div{flex:1;min-width:0}
+      .info-block .block-name{font-weight:bold;font-size:14px;margin:0 0 2px}
+      .info-block p{font-size:13px;color:#444;margin:1px 0}
+      table{width:100%;border-collapse:collapse;margin-top:16px}
+      th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
+      .qty-col{width:90px;text-align:center}
+      .qty-input{width:64px;font-size:13px;border:1px solid #999;padding:3px;text-align:center}
+      .sign-blocks{display:flex;gap:40px;margin-top:36px}
+      .sign-block{flex:1}
+      .sign-block h2{font-size:13px;margin:0 0 18px}
+      .sign-block .field{font-size:13px;margin-top:22px;border-bottom:1px solid #111;padding-bottom:4px}
+      .no-print-bar{display:flex;justify-content:space-between;align-items:center;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#444}
+      .print-btn{background:#155fca;color:#fff;border:none;border-radius:5px;padding:8px 16px;font-size:13px;cursor:pointer}
+      @media print{.no-print{display:none}}
     </style></head><body>
+      <div class="no-print-bar no-print">
+        <span>Enter the quantity, then print.</span>
+        <button type="button" class="print-btn" onclick="window.print()">Print delivery note</button>
+      </div>
       <div class="note-head">
         <h1>Delivery note</h1>
         <div class="note-right">
           <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+          <div class="date-captured">Delivery date: ${fmt(form.deliveryDate)}</div>
         </div>
       </div>
-      <h2>Customer details</h2>
-      <table>${rows([
-        ["Customer", String(job.customer?.name || "")],
-        ["Trading name", String(job.customer?.tradingName || "")],
-        ["Address", addressLine],
-        ["Contact", contactLine],
-      ])}</table>
-      <h2>Commercial &amp; logistics</h2>
-      <table>${rows([
-        ["Quote number", form.quoteNumber],
-        ["Sales order number", form.salesOrderNumber],
-        ["Invoice number", form.invoiceNumber],
-        ["Purchase order number", form.purchaseOrderNumber],
-        ["Delivery type", form.deliveryType.replaceAll("_", " ")],
-        ["Delivery date", fmt(form.deliveryDate)],
-      ])}</table>
-      <p class="summary-line"><strong>Job type:</strong> ${escapeHtml(JOB_TYPE_LABELS[job.type])} &nbsp; <strong>Make:</strong> ${escapeHtml(form.machineMake || "—")} &nbsp; <strong>Model:</strong> ${escapeHtml(form.machineModel || "—")}</p>
-      <p class="summary-line"><strong>Component:</strong> ${escapeHtml(form.component || "—")}</p>
-      <script>window.onload = function () { window.print(); };</script>
+      <div class="two-col">
+        <div class="info-block">
+          <h2>Customer details</h2>
+          <p class="block-name">${escapeHtml(String(job.customer?.name || "—"))}</p>
+          ${job.customer?.tradingName ? `<p>${escapeHtml(String(job.customer.tradingName))}</p>` : ""}
+          ${customerAddressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
+          ${contactLine ? `<p>${escapeHtml(contactLine)}</p>` : ""}
+        </div>
+        <div class="info-block">
+          <h2>Commercial &amp; logistics</h2>
+          ${commercialLines.length > 0 ? commercialLines.map((l) => `<p>${l}</p>`).join("") : "<p>—</p>"}
+        </div>
+      </div>
+      <table><thead><tr><th>Description</th><th class="qty-col">Qty</th></tr></thead><tbody>
+        <tr><td>${descriptionLines.length > 0 ? descriptionLines.join("<br />") : "—"}</td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
+      </tbody></table>
+      <div class="sign-blocks">
+        <div class="sign-block">
+          <h2>Dispatched by</h2>
+          <div class="field">Name</div>
+          <div class="field">Signature</div>
+          <div class="field">Date</div>
+        </div>
+        <div class="sign-block">
+          <h2>Received by</h2>
+          <div class="field">Name</div>
+          <div class="field">Signature</div>
+          <div class="field">Date</div>
+        </div>
+      </div>
     </body></html>`);
     win.document.close();
     win.focus();
@@ -2524,11 +2651,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // CSV export of the quote comparison table — Blob + BOM, mirrors
   // ModApp's QuoteComparisonSection handleExportCsv().
-  function exportQuoteComparisonCsv() {
-    if (!job) return;
+  // 2026-09-29 — user request: "Compare prices dialog does not show qty
+  // column and exporting to csv does not either (add the qty column),
+  // allow a user to select csv export or excel export." Shared by both
+  // exporters below (and mirrors the dialog table's own columns — see the
+  // quote-comparison-table JSX) so the on-screen table, the CSV, and the
+  // Excel file can never drift out of sync with each other.
+  function buildQuoteComparisonExport(job: JobDetail) {
     const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-    if (quotedRequests.length === 0 || job.partLines.length === 0) return;
-    const header = ["Part", "Description", ...quotedRequests.flatMap((r) => [`${r.supplier.name} (unit)`, `${r.supplier.name} (total)`])];
+    const header = ["Part", "Description", "Qty", ...quotedRequests.flatMap((r) => [`${r.supplier.name} (unit)`, `${r.supplier.name} (total)`])];
     const rows = job.partLines.map((line) => {
       const qty = Number(line.quantity ?? 0);
       const cells = quotedRequests.flatMap((request) => {
@@ -2537,9 +2668,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         const unit = Number(quoteLine.unitPrice);
         return [unit.toFixed(2), (unit * qty).toFixed(2)];
       });
-      return [text(line.partNumber), text(line.description), ...cells];
+      return [text(line.partNumber), text(line.description), decimalText(line.quantity), ...cells];
     });
+    return { quotedRequests, header, rows };
+  }
+
+  function exportQuoteComparisonCsv() {
+    if (!job) return;
+    const { quotedRequests, header, rows } = buildQuoteComparisonExport(job);
+    if (quotedRequests.length === 0 || job.partLines.length === 0) return;
     downloadCsv(`quote-comparison-${job.jobNumber || job.draftNumber}.csv`, [header, ...rows]);
+  }
+
+  // Excel export — same rows as the CSV above, built into a workbook with
+  // SheetJS (already a project dependency, used server-side for Settings >
+  // Import/Export; loaded here via dynamic import so it's only pulled into
+  // the browser bundle if this button is actually clicked). writeFile
+  // triggers the browser download itself, no manual Blob/anchor needed.
+  async function exportQuoteComparisonExcel() {
+    if (!job) return;
+    const { quotedRequests, header, rows } = buildQuoteComparisonExport(job);
+    if (quotedRequests.length === 0 || job.partLines.length === 0) return;
+    const XLSX = await import("xlsx");
+    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Quote comparison");
+    XLSX.writeFile(workbook, `quote-comparison-${job.jobNumber || job.draftNumber}.xlsx`);
   }
 
   async function applyJobKit() {
@@ -2704,7 +2858,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
             <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
             <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
-            <label><span>Component type</span><input value={form.componentType} onChange={(e) => updateField("componentType", e.target.value)} /></label>
+            {/* 2026-09-29 — user request: "Remove the field Component type
+                within jobs and remove from all printed locations." Removed
+                just this input and its rows in printJobCard/printJobHistory
+                below — form.componentType/buildJobPayload/the underlying
+                Job.componentType column are all left completely untouched
+                (still readable/writable via Import/Export, Excel sync, and
+                the PEX unit-description fallback, none of which this
+                request named), so nothing else relying on that data
+                breaks. It simply can no longer be seen or edited here. */}
             <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
             <label><span>Part number</span><input value={form.componentPartNumber} onChange={(e) => updateField("componentPartNumber", e.target.value)} /></label>
             <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
@@ -2806,7 +2968,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>
                 {/* 2026-09-19, user request — see printJobHistory/
                     printJobDeliveryNote's own comments above for scope. */}
-                <button type="button" className="table-action" onClick={printJobHistory}><Printer size={14} /> Print Job History</button>
+                <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>
                 <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>
                 {job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
                 {canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
@@ -3454,12 +3616,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     <button type="button" onClick={() => setShowSavedQuotesCompare(false)} aria-label="Close dialog"><X size={18} /></button>
                   </header>
                   <div className="quote-compare-body">
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                       <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
+                      <button type="button" className="quiet-button" onClick={() => void exportQuoteComparisonExcel()}><Download size={14} /> Export Excel</button>
                     </div>
                     <div className="data-table-wrap" style={{ marginTop: 12 }}><table className="data-table quote-comparison-table"><thead>
                       <tr>
                         <th rowSpan={2}>Part</th>
+                        <th rowSpan={2}>Qty</th>
                         {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
                       </tr>
                       <tr>
@@ -3471,6 +3635,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         const qty = Number(line.quantity ?? 0);
                         return <tr key={line.id}>
                           <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
+                          <td>{decimalText(line.quantity)}</td>
                           {quotedRequests.map((request) => {
                             const quote = request.quote!;
                             const quoteLine = quote.lines.find((l) => l.partLineId === String(line.id));
@@ -3494,7 +3659,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       })}
                     </tbody><tfoot>
                       <tr>
-                        <td><strong>Quote total</strong></td>
+                        <td colSpan={2}><strong>Quote total</strong></td>
                         {quotedRequests.map((request) => <Fragment key={request.id}><td className="supplier-group-start" /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
                       </tr>
                       {/* 2026-09-15, user request: "add total field to compare
@@ -3505,7 +3670,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           text below the table, now also as a row in the table
                           itself. */}
                       <tr>
-                        <td><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
+                        <td colSpan={2}><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
                         <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
                       </tr>
                     </tfoot></table></div>
