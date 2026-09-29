@@ -1,46 +1,49 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Fix outwork delivery note dialog spacing/width; align parts follow-up list
+Move RFQ quote entry into a dedicated Compare quotes dialog
 
-Delivery note dialog (two follow-up reports on the widened dialog):
+User request: "on the RFQ form for parts, move the import quote section
+to its own place. Eg: add a 'Compare quotes' button next to bulk update
+button which lets the user view the suppliers requested from in table
+form next to each other, allow user to import quote received for the
+respective supplier or fill in amounts next to part number."
 
-- "the table is still cramped not the width of the window" -- the
-  table's wrapper div was missing the "wide" class, so inside
-  .drawer-fields' 2-column grid it only ever got ONE column (about half
-  the dialog's width), no matter how wide the dialog itself was made.
-  Its own width:100% just filled that half-width box, and
-  data-table-wrap's overflow-x:auto clipped the rest. Added "wide" so it
-  spans the full dialog width like everything else in this drawer.
+Previously, entering a supplier's quote meant clicking "Record quote" on
+one row of the RFQ popup's supplier list, which opened a drawer for that
+ONE supplier only (its own file upload, notes, and a Part/Available/
+Unit price/Notes table) -- comparing across suppliers meant closing that
+drawer, opening another supplier's, and mentally tracking the numbers
+between them. A read-only "Quote comparison" table further down could
+show suppliers side by side, but only once every price was already
+saved -- not while entering them.
 
-- "make the suppliers details more together, they are spaced very far
-  apart" -- the supplier name/address/VAT/date lines were separate <p>
-  "wide" elements, each its own row in the grid -- so on top of the
-  grid's own 12px row-gap, every line also carried the browser's default
-  paragraph margin (~1em top+bottom), which doesn't collapse between
-  separate grid items the way it would in normal text flow, stacking up
-  to 30-40px between lines. Replaced with a single "wide" block (one grid
-  row) with the lines packed at a tight 3px gap like a real address
-  block -- same "small-line as a <div>, no default margin" convention
-  already used everywhere else in this app; this dialog was the one
-  place still using <p>.
+New "Compare quotes" button, next to "Bulk update" on the Parts list
+toolbar (disabled until at least one supplier has been asked to quote),
+opens its own dialog with one column per requested supplier in a single
+table -- part numbers down the left, an editable unit-price cell (with an
+N/A toggle) per supplier per part. Each supplier's column header carries
+its own "Import quote file" control (same best-effort price extraction
+as before -- fills blanks only, never overwrites a typed price), an
+optional notes field, and its own Save button, so any number of
+suppliers can be filled in or imported side by side in one view instead
+of one drawer at a time. A live (unsaved) total per column updates as
+you type, before Save is clicked.
 
-Consistency pass ("ensure this is the same throughout the app"):
+The existing read-only comparison -- star-pick a preferred price per
+part, cheapest-price highlighting, per-supplier and preferred totals,
+CSV export -- is kept directly below the entry grid in the same dialog
+(still only shown once at least one quote is actually saved), so the
+"enter/import" and "compare what's saved" views live together instead of
+being split across two different popups.
 
-- Audited every .drawer-fields (2-column grid) usage across the app for
-  the same two bug patterns -- a data-table-wrap missing "wide", or
-  stacked <p> elements as separate grid rows. Found one more genuine
-  instance: the parts follow-up "skipped suppliers" list (job workspace,
-  Parts screen) rendered one <p className="muted small-line"> per skipped
-  supplier as siblings -- same margin-stacking issue. Converted to a
-  tight-gap <div> block, matching the delivery note dialog's fix.
-- Everything else checked (Stock levels, Import/Export, Platform users,
-  Platform modules, Users/mechanics/sales reps, Job kits, Master data,
-  RFQ/Outwork lists, and the "Record quote" drawer's own parts table)
-  is either outside any .drawer-fields grid or already wrapped in "wide"
-  -- no further changes needed there.
+The RFQ send popup's per-supplier "Record quote"/"Edit quote" button now
+reads "Compare quotes" and opens this same dialog, closing the RFQ popup
+first so the two don't stack.
 
-No schema change, JobWorkspace.tsx only.
+No schema or API change -- same quote/quote-lines endpoints as before,
+now called per supplier column instead of per single "current" edit
+target. JobWorkspace.tsx and globals.css only.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

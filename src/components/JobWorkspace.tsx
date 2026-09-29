@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, X } from "lucide-react";
+import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill } from "@/components/StatusPill";
@@ -517,12 +517,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // "existing supplier" and "new supplier" request-quote actions below,
   // since only one of those is used per click.
   const [rfqAttachmentFile, setRfqAttachmentFile] = useState<File | null>(null);
-  const [rfqQuoteEditId, setRfqQuoteEditId] = useState("");
-  const [rfqQuoteNotes, setRfqQuoteNotes] = useState("");
-  const [rfqQuoteFile, setRfqQuoteFile] = useState<File | null>(null);
-  const [rfqPriceDrafts, setRfqPriceDrafts] = useState<Record<string, { unitPrice: string; available: boolean; notes: string }>>({});
-  const [rfqGuessCount, setRfqGuessCount] = useState(0);
-  const [rfqAnalyzing, setRfqAnalyzing] = useState(false);
+  // 2026-09-29 — user request: "move the import quote section to its own
+  // place... add a 'Compare quotes' button next to bulk update button
+  // which lets the user view the suppliers requested from in table form
+  // next to each other, allow user to import quote received for the
+  // respective supplier or fill in amounts next to part number." Replaces
+  // the old single-supplier-at-a-time "Record quote" drawer (which lived
+  // inside the Request quotes (RFQ) popup, one supplier hidden behind the
+  // next) with a dedicated dialog of its own, opened from the main Parts
+  // list toolbar, where every requested supplier is its own editable
+  // column in one table, so prices can be imported or typed in for any
+  // supplier without leaving the others out of view.
+  type QuoteDraftLine = { unitPrice: string; available: boolean; notes: string };
+  const [showQuoteComparePopup, setShowQuoteComparePopup] = useState(false);
+  const [quoteDrafts, setQuoteDrafts] = useState<Record<string, Record<string, QuoteDraftLine>>>({});
+  const [quoteNotesByRequest, setQuoteNotesByRequest] = useState<Record<string, string>>({});
+  const [quoteFiles, setQuoteFiles] = useState<Record<string, File | null>>({});
+  const [quoteAnalyzingId, setQuoteAnalyzingId] = useState("");
+  const [quoteGuessCounts, setQuoteGuessCounts] = useState<Record<string, number>>({});
+  const [quoteSavingId, setQuoteSavingId] = useState("");
   const [partsFollowupResult, setPartsFollowupResult] = useState<{ sent: { supplierName: string }[]; skipped: { supplierName: string; reason: string }[] } | null>(null);
   const [jobKitQuery, setJobKitQuery] = useState("");
   const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
@@ -2160,84 +2173,116 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await deleteAction(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}`, {});
   }
 
-  function openRecordQuote(request: RfqRequestRow) {
-    setRfqQuoteEditId(String(request.id));
-    setRfqQuoteNotes(request.quote?.notes || "");
-    setRfqQuoteFile(null);
-    const drafts: Record<string, { unitPrice: string; available: boolean; notes: string }> = {};
-    for (const line of job?.partLines || []) {
-      const existing = request.quote?.lines.find((l) => l.partLineId === String(line.id));
-      drafts[String(line.id)] = {
-        unitPrice: existing?.unitPrice != null ? String(existing.unitPrice) : "",
-        available: existing?.available !== false,
-        notes: existing?.notes ? String(existing.notes) : "",
-      };
+  // 2026-09-29 — see the QuoteDraftLine state block above: this whole
+  // group replaces the old openRecordQuote/cancelRecordQuote/
+  // analyzeRfqQuoteFile/saveRfqQuote quartet, which all operated on a
+  // single "currently being edited" supplier at a time. These operate on
+  // every requested supplier's own entry in the Compare quotes dialog at
+  // once, keyed by rfqRequestId throughout.
+  function openQuoteCompare() {
+    const drafts: Record<string, Record<string, QuoteDraftLine>> = {};
+    const notes: Record<string, string> = {};
+    for (const request of job?.rfqRequests || []) {
+      const requestId = String(request.id);
+      const lineDrafts: Record<string, QuoteDraftLine> = {};
+      for (const line of job?.partLines || []) {
+        const existing = request.quote?.lines.find((l) => l.partLineId === String(line.id));
+        lineDrafts[String(line.id)] = {
+          unitPrice: existing?.unitPrice != null ? String(existing.unitPrice) : "",
+          available: existing?.available !== false,
+          notes: existing?.notes ? String(existing.notes) : "",
+        };
+      }
+      drafts[requestId] = lineDrafts;
+      notes[requestId] = request.quote?.notes || "";
     }
-    setRfqPriceDrafts(drafts);
-    setRfqGuessCount(0);
+    setQuoteDrafts(drafts);
+    setQuoteNotesByRequest(notes);
+    setQuoteFiles({});
+    setQuoteGuessCounts({});
+    setQuoteAnalyzingId("");
+    setShowRfqPopup(false);
+    setShowQuoteComparePopup(true);
   }
 
-  function cancelRecordQuote() {
-    setRfqQuoteEditId(""); setRfqQuoteNotes(""); setRfqQuoteFile(null); setRfqPriceDrafts({}); setRfqGuessCount(0);
+  function closeQuoteCompare() {
+    setShowQuoteComparePopup(false);
+    setQuoteDrafts({});
+    setQuoteNotesByRequest({});
+    setQuoteFiles({});
+    setQuoteGuessCounts({});
+    setQuoteAnalyzingId("");
+  }
+
+  function updateQuoteDraftLine(rfqRequestId: string, partLineId: string, patch: Partial<QuoteDraftLine>) {
+    setQuoteDrafts((current) => {
+      const requestDrafts = current[rfqRequestId] || {};
+      const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "" };
+      return { ...current, [rfqRequestId]: { ...requestDrafts, [partLineId]: { ...existing, ...patch } } };
+    });
   }
 
   // Best-effort price extraction — added 2026-09-09 (user request: "Prices
   // are typed in by hand, not extracted from uploaded files"). Runs as
   // soon as a file is attached (uploading it to recordRfqQuote, which both
   // stores it and returns guesses — see rfq/quote-extraction.ts) so the
-  // person can see and correct the guesses in the price table below
-  // *before* clicking Save — nothing is treated as a real price until
-  // then. Only fills in lines that are still blank; it never overwrites a
-  // price someone already typed.
-  async function analyzeRfqQuoteFile(rfqRequestId: string, file: File) {
+  // person can see and correct the guesses in the price table *before*
+  // clicking Save — nothing is treated as a real price until then. Only
+  // fills in lines that are still blank; it never overwrites a price
+  // someone already typed. Now scoped per supplier column (rfqRequestId)
+  // so importing one supplier's file never disturbs another's in-progress
+  // entry sitting right next to it.
+  async function analyzeQuoteFileForRequest(rfqRequestId: string, file: File) {
     if (!jobId) return;
-    setRfqAnalyzing(true); setError("");
+    setQuoteAnalyzingId(rfqRequestId); setError("");
     try {
       const contentBase64 = await fileToBase64(file);
       const r = await fetch(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/quote`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", contentBase64, notes: rfqQuoteNotes.trim() || null }),
+        body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", contentBase64, notes: (quoteNotesByRequest[rfqRequestId] || "").trim() || null }),
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to analyze the quote file.");
       const guesses = (b.guesses || {}) as Record<string, number>;
       let applied = 0;
-      setRfqPriceDrafts((current) => {
-        const next = { ...current };
+      setQuoteDrafts((current) => {
+        const requestDrafts = { ...(current[rfqRequestId] || {}) };
         for (const [partLineId, price] of Object.entries(guesses)) {
-          const existing = next[partLineId];
-          if (existing && !existing.unitPrice) { next[partLineId] = { ...existing, unitPrice: String(price) }; applied += 1; }
+          const existing = requestDrafts[partLineId];
+          if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price) }; applied += 1; }
         }
-        return next;
+        return { ...current, [rfqRequestId]: requestDrafts };
       });
-      setRfqGuessCount(applied);
+      setQuoteGuessCounts((current) => ({ ...current, [rfqRequestId]: applied }));
     } catch (e) {
       // Extraction is best-effort — a failure here just means no guesses;
       // the file is still attached and priced by hand at Save time.
       setError(e instanceof Error ? e.message : "Unable to analyze the quote file.");
     } finally {
-      setRfqAnalyzing(false);
+      setQuoteAnalyzingId("");
     }
   }
 
-  async function saveRfqQuote(rfqRequestId: string) {
+  async function saveQuoteForRequest(rfqRequestId: string) {
     if (!jobId) return;
-    setSaving(true); setError("");
+    setQuoteSavingId(rfqRequestId); setError("");
     try {
+      const file = quoteFiles[rfqRequestId] || null;
       let filePayload: Record<string, unknown> = {};
-      if (rfqQuoteFile) {
-        filePayload = { fileName: rfqQuoteFile.name, mimeType: rfqQuoteFile.type || "application/octet-stream", contentBase64: await fileToBase64(rfqQuoteFile) };
+      if (file) {
+        filePayload = { fileName: file.name, mimeType: file.type || "application/octet-stream", contentBase64: await fileToBase64(file) };
       }
       let r = await fetch(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/quote`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...filePayload, notes: rfqQuoteNotes.trim() || null }),
+        body: JSON.stringify({ ...filePayload, notes: (quoteNotesByRequest[rfqRequestId] || "").trim() || null }),
       });
       let b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to record quote.");
 
-      const lines = Object.entries(rfqPriceDrafts).map(([partLineId, draft]) => ({
+      const requestDrafts = quoteDrafts[rfqRequestId] || {};
+      const lines = Object.entries(requestDrafts).map(([partLineId, draft]) => ({
         partLineId,
         unitPrice: draft.available && draft.unitPrice ? Number(draft.unitPrice) : null,
         available: draft.available,
@@ -2252,13 +2297,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         b = await r.json();
         if (!r.ok) throw new Error(b.error?.message || "Unable to save prices.");
       }
-      cancelRecordQuote();
+      setQuoteFiles((current) => ({ ...current, [rfqRequestId]: null }));
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to record quote.");
     } finally {
-      setSaving(false);
+      setQuoteSavingId("");
     }
+  }
+
+  // Live (unsaved) total for one supplier's column while filling in the
+  // Compare quotes grid — mirrors rfqQuoteTotal below but reads local
+  // draft state instead of the server-saved quote, so the figure updates
+  // as you type, before Save is clicked.
+  function draftQuoteTotal(rfqRequestId: string): number {
+    const requestDrafts = quoteDrafts[rfqRequestId] || {};
+    let total = 0;
+    for (const line of job?.partLines || []) {
+      const draft = requestDrafts[String(line.id)];
+      if (!draft || !draft.available || !draft.unitPrice) continue;
+      const price = Number(draft.unitPrice);
+      if (Number.isNaN(price)) continue;
+      const qty = Number(line.quantity ?? 0);
+      total += price * (Number.isNaN(qty) ? 0 : qty);
+    }
+    return total;
   }
 
   async function togglePreferred(partLineId: string, rfqQuoteId: string) {
@@ -2777,6 +2840,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" onClick={() => { setBulkEditMode((v) => !v); setBulkSelectedIds(new Set()); }}>{bulkEditMode ? "Cancel bulk update" : "Bulk update"}</button>
                 )}
+                {/* 2026-09-29 — user request: "move the import quote section
+                    to its own place... add a 'Compare quotes' button next
+                    to bulk update button which lets the user view the
+                    suppliers requested from in table form next to each
+                    other, allow user to import quote received for the
+                    respective supplier or fill in amounts next to part
+                    number." Opens the new dedicated Compare quotes dialog
+                    (see showQuoteComparePopup below) — disabled until at
+                    least one supplier has actually been asked to quote. */}
+                {job.partLines.length > 0 && (
+                  <button type="button" className="quiet-button" disabled={job.rfqRequests.length === 0} title={job.rfqRequests.length === 0 ? "Request a quote from at least one supplier first" : undefined} onClick={openQuoteCompare}><Columns3 size={14} /> Compare quotes</button>
+                )}
                 {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
                 )}
@@ -3029,7 +3104,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           out on purpose, same as before: nothing to resend once a
                           supplier's actually quoted. */}
                       {(status === "FAILED" || status === "SKIPPED" || status === "SENT") && <button type="button" className="table-action" disabled={!!rfqResendId} onClick={() => void resendRfq(String(request.id))}>{rfqResendId === String(request.id) ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />} {rfqResendId === String(request.id) ? "Sending…" : status === "FAILED" ? "Retry" : status === "SENT" ? "Resend" : "Send email"}</button>}
-                      <button type="button" className="table-action" disabled={saving} onClick={() => openRecordQuote(request)}>{request.quote ? "Edit quote" : "Record quote"}</button>
+                      {/* 2026-09-29 — user request: "move the import quote
+                          section to its own place... add a 'Compare
+                          quotes' button..." Used to open a single-supplier
+                          "Record quote" drawer right here; that whole
+                          flow now lives in the dedicated Compare quotes
+                          dialog (openQuoteCompare below), reachable from
+                          the Parts list toolbar or this shortcut. */}
+                      <button type="button" className="table-action" onClick={() => openQuoteCompare()}>Compare quotes</button>
                       <button type="button" className="table-action danger" onClick={() => void removeRfq(String(request.id))}>Remove</button>
                     </div>
                   </td>
@@ -3037,43 +3119,107 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               })}
               {job.rfqRequests.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No suppliers have been asked to quote this job yet.</td></tr>}
             </tbody></table></div>
+          </aside>
+          </div>
+          )}
 
-            {rfqQuoteEditId && (() => {
-              const request = job.rfqRequests.find((r) => String(r.id) === rfqQuoteEditId);
-              if (!request) return null;
-              return <div className="drawer-fields" style={{ marginTop: 16 }}>
-                <h3 style={{ gridColumn: "1 / -1" }}>Record quote — {text(request.supplier.name)}</h3>
-                <label><span>Quote file (optional)</span><input type="file" onChange={(e) => { const file = e.target.files?.[0] || null; setRfqQuoteFile(file); if (file) void analyzeRfqQuoteFile(rfqQuoteEditId, file); }} /></label>
-                <label className="wide"><span>Notes</span><textarea rows={2} value={rfqQuoteNotes} onChange={(e) => setRfqQuoteNotes(e.target.value)} /></label>
-                {rfqAnalyzing && <p className="muted small-line wide">Analyzing file for prices…</p>}
-                {!rfqAnalyzing && rfqGuessCount > 0 && <p className="muted small-line wide">Guessed {rfqGuessCount} price{rfqGuessCount === 1 ? "" : "s"} from the file — review before saving.</p>}
-                <div className="wide">
-                  <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Available</th><th>Unit price</th><th>Notes</th></tr></thead><tbody>
-                    {job.partLines.map((line) => {
-                      const draft = rfqPriceDrafts[String(line.id)] || { unitPrice: "", available: true, notes: "" };
-                      return <tr key={line.id}>
-                        <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
-                        <td><input type="checkbox" checked={draft.available} onChange={(e) => setRfqPriceDrafts((d) => ({ ...d, [String(line.id)]: { ...draft, available: e.target.checked } }))} /></td>
-                        <td><input type="number" min="0" step="0.01" disabled={!draft.available} value={draft.unitPrice} onChange={(e) => setRfqPriceDrafts((d) => ({ ...d, [String(line.id)]: { ...draft, unitPrice: e.target.value } }))} style={{ width: 100 }} /></td>
-                        <td><input value={draft.notes} onChange={(e) => setRfqPriceDrafts((d) => ({ ...d, [String(line.id)]: { ...draft, notes: e.target.value } }))} /></td>
-                      </tr>;
-                    })}
-                    {job.partLines.length === 0 && <tr><td colSpan={4} className="table-state compact-empty-state">No parts on this job to price yet.</td></tr>}
-                  </tbody></table></div>
+          {/* 2026-09-29 — user request: "move the import quote section to
+              its own place. Eg: add a 'Compare quotes' button next to
+              bulk update button which lets the user view the suppliers
+              requested from in table form next to each other, allow user
+              to import quote received for the respective supplier or
+              fill in amounts next to part number." This dialog replaces
+              the old single-supplier "Record quote" drawer and the
+              read-only "Quote comparison" section that both used to live
+              inside the Request quotes (RFQ) popup above — every
+              requested supplier is now its own editable column in one
+              table, so prices can be imported or typed in for any of
+              them without the others being out of view. The read-only
+              star-pick/cheapest-highlight comparison (once at least one
+              quote is actually saved) is kept below it, unchanged. */}
+          {showQuoteComparePopup && (
+          <div className="drawer-backdrop" role="dialog" aria-modal="true">
+          <aside className="form-drawer compact-dialog job-editor-drawer quote-compare-dialog" style={{ maxHeight: "90vh", overflowY: "auto" }}>
+            <header><div><h2>Compare quotes</h2><p>Every supplier asked to quote this job, side by side — import a received quote file or type prices in directly.</p></div><button type="button" onClick={closeQuoteCompare} aria-label="Close dialog"><X size={18} /></button></header>
+
+            {job.rfqRequests.length === 0 ? (
+              <p className="table-state compact-empty-state">No suppliers have been asked to quote this job yet — use &quot;Request quotes (RFQ)&quot; first.</p>
+            ) : job.partLines.length === 0 ? (
+              <p className="table-state compact-empty-state">This job has no parts to price yet.</p>
+            ) : (
+              <>
+                <div className="data-table-wrap">
+                  <table className="data-table quote-entry-table">
+                    <thead>
+                      <tr>
+                        <th>Part</th>
+                        {job.rfqRequests.map((request) => {
+                          const requestId = String(request.id);
+                          const status = String(request.status || "SKIPPED");
+                          const tone = status === "QUOTED" ? "tone-green" : status === "SENT" ? "tone-blue" : status === "FAILED" ? "tone-red" : "neutral";
+                          const analyzing = quoteAnalyzingId === requestId;
+                          const guessCount = quoteGuessCounts[requestId] || 0;
+                          const importedFile = quoteFiles[requestId];
+                          return (
+                            <th key={request.id} className="supplier-group-start quote-entry-head">
+                              <div className="quote-entry-head-inner">
+                                <strong>{text(request.supplier.name)}</strong>
+                                <span className={`status-pill ${tone}`}>{RFQ_STATUS_LABELS[status] || status.replaceAll("_", " ")}</span>
+                                <label className="quote-entry-import">
+                                  <Upload size={12} />
+                                  <span>{importedFile ? importedFile.name : "Import quote file"}</span>
+                                  <input type="file" onChange={(e) => { const file = e.target.files?.[0] || null; setQuoteFiles((c) => ({ ...c, [requestId]: file })); if (file) void analyzeQuoteFileForRequest(requestId, file); }} />
+                                </label>
+                                {analyzing && <span className="muted small-line">Analyzing file for prices…</span>}
+                                {!analyzing && guessCount > 0 && <span className="muted small-line">Guessed {guessCount} price{guessCount === 1 ? "" : "s"} — review below.</span>}
+                                <input className="quote-entry-notes" value={quoteNotesByRequest[requestId] || ""} onChange={(e) => setQuoteNotesByRequest((c) => ({ ...c, [requestId]: e.target.value }))} placeholder="Notes (optional)" />
+                                <button type="button" className="table-action" disabled={quoteSavingId === requestId} onClick={() => void saveQuoteForRequest(requestId)}>{quoteSavingId === requestId ? <Loader2 className="spin" size={12} /> : <Save size={12} />} {quoteSavingId === requestId ? "Saving…" : "Save"}</button>
+                              </div>
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {job.partLines.map((line) => (
+                        <tr key={line.id}>
+                          <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
+                          {job.rfqRequests.map((request) => {
+                            const requestId = String(request.id);
+                            const draft = quoteDrafts[requestId]?.[String(line.id)] || { unitPrice: "", available: true, notes: "" };
+                            return (
+                              <td key={request.id} className="supplier-group-start">
+                                <div className="quote-entry-cell">
+                                  <input type="number" min="0" step="0.01" disabled={!draft.available} value={draft.unitPrice} onChange={(e) => updateQuoteDraftLine(requestId, String(line.id), { unitPrice: e.target.value })} placeholder="R0.00" />
+                                  <label className="inline-check quote-entry-unavailable" title="Not available from this supplier">
+                                    <input type="checkbox" checked={!draft.available} onChange={(e) => updateQuoteDraftLine(requestId, String(line.id), { available: !e.target.checked })} />
+                                    <span>N/A</span>
+                                  </label>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td><strong>Total (unsaved)</strong></td>
+                        {job.rfqRequests.map((request) => <td key={request.id} className="supplier-group-start"><strong>R{draftQuoteTotal(String(request.id)).toFixed(2)}</strong></td>)}
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
-                <div className="wide" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" className="gold-button" disabled={saving} onClick={() => void saveRfqQuote(rfqQuoteEditId)}>Save quote</button>
-                  <button type="button" className="quiet-button" disabled={saving} onClick={cancelRecordQuote}>Cancel</button>
-                </div>
-              </div>;
-            })()}
+                <p className="muted small-line" style={{ marginTop: 8 }}>Prices are only saved once you click Save on that supplier&apos;s column — importing a file fills in blanks only, it never overwrites a price you&apos;ve already typed.</p>
+              </>
+            )}
 
             {job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (() => {
               const quotedRequests = job.rfqRequests.filter((r) => r.quote);
               const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
               return <div style={{ marginTop: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                  <h3>Quote comparison</h3>
+                  <h3>Saved quotes</h3>
                   <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
                 </div>
                 <div className="data-table-wrap"><table className="data-table quote-comparison-table"><thead>

@@ -390,6 +390,25 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .quote-comparison-table .supplier-group-start { border-left:2px solid var(--ink-150); }
 .quote-comparison-table tbody .table-action { display:inline-flex; align-items:center; gap:4px; }
 
+/* 2026-09-29 — the Compare quotes dialog's editable grid (JobWorkspace.tsx,
+   showQuoteComparePopup): one column per supplier, each header cell packing
+   a name, status pill, file-import control, notes field and Save button —
+   the same .supplier-group-start left-border convention as
+   .quote-comparison-table above keeps each supplier's column visually
+   separated, but the header needs to stack its own controls vertically
+   rather than sit inline like a normal single-line <th>. */
+.quote-entry-table th, .quote-entry-table td { padding:8px 10px; vertical-align:top; }
+.quote-entry-table td:first-child, .quote-entry-table th:first-child { white-space:normal; min-width:140px; }
+.quote-entry-head { text-transform:none; letter-spacing:normal; }
+.quote-entry-head-inner { display:flex; flex-direction:column; gap:6px; min-width:150px; }
+.quote-entry-head-inner strong { font-size:12px; color:var(--ink-900); }
+.quote-entry-import { position:relative; display:flex; align-items:center; gap:5px; border:1px dashed var(--ink-300); border-radius:6px; padding:5px 8px; font-size:11px; font-weight:700; color:var(--ink-500); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.quote-entry-import input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+.quote-entry-notes { font-size:11px; padding:5px 7px; border:1px solid var(--ink-150); border-radius:6px; width:100%; }
+.quote-entry-cell { display:flex; align-items:center; gap:6px; }
+.quote-entry-cell input[type="number"] { width:90px; }
+.quote-entry-unavailable { display:flex; align-items:center; gap:3px; font-size:10px; color:var(--ink-500); white-space:nowrap; }
+
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
 /* 2026-09-19 — notifications bell, always visible in the topbar next to
    Support (see NotificationBell.tsx / AppShell.tsx). Positioned relative
@@ -862,6 +881,17 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
    .compact-dialog that only overrides width, so every other .compact-dialog
    popup is untouched. */
 .delivery-note-dialog { width: min(720px, 94vw); }
+/* 2026-09-29 — user request: "move the import quote section to its own
+   place... add a 'Compare quotes' button next to bulk update button
+   which lets the user view the suppliers requested from in table form
+   next to each other, allow user to import quote received for the
+   respective supplier or fill in amounts next to part number." New
+   dedicated dialog (JobWorkspace.tsx) replacing the old single-supplier
+   "Record quote" drawer — one editable column per requested supplier, so
+   it needs more room than a typical .compact-dialog popup; same
+   width-only-modifier pattern as .job-editor-drawer/.delivery-note-dialog
+   above. */
+.quote-compare-dialog { width: min(1200px, 96vw); }
 .settings-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 /* 2026-09-10 — the settings tab bar (SettingsTabNav.tsx) now appears on
    every Settings destination, not just 2 of them, and highlights whichever
