@@ -2130,17 +2130,24 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
   return { ok: true, revertedLines: result.revertedLines, skippedLines: result.skippedLines };
 }
 
+// 2026-09-29 — jobId filter added (see pickSlipQuery's own comment) so
+// JobWorkspace can list just one job's picking slips; status/cancelledAt/
+// cancelReason added to the returned shape so either caller (this job-
+// scoped list, or Stock Levels' company-wide history) can show a
+// cancelled slip as cancelled rather than indistinguishable from an
+// active one, and hide its own "Cancel"/"Delete" action once it's gone.
 export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof pickSlipQuery>) {
   requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  const where = { companyId: ctx.companyId, ...(input.jobId ? { jobId: input.jobId } : {}) };
   const [slips, total] = await Promise.all([
     prisma.pickSlip.findMany({
-      where: { companyId: ctx.companyId },
+      where,
       include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } } } } },
       orderBy: { createdAt: "desc" },
       skip: (input.page - 1) * input.pageSize,
       take: input.pageSize,
     }),
-    prisma.pickSlip.count({ where: { companyId: ctx.companyId } }),
+    prisma.pickSlip.count({ where }),
   ]);
   return {
     items: slips.map((ps) => ({
@@ -2149,6 +2156,9 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
       jobNumber: ps.job.jobNumber ?? ps.job.draftNumber,
       customerName: ps.job.customer?.tradingName || ps.job.customer?.name || null,
       createdAt: ps.createdAt.toISOString(),
+      status: String(ps.status),
+      cancelledAt: ps.cancelledAt ? ps.cancelledAt.toISOString() : null,
+      cancelReason: ps.cancelReason,
       lines: ps.lines.map((l) => ({
         partNumber: l.partNumber,
         description: l.description,
