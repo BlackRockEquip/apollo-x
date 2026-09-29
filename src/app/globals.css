@@ -526,6 +526,18 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .data-table thead tr.filter-row input, .data-table thead tr.filter-row select { width: 100%; min-height: 27px; border: 1px solid var(--ink-300); border-radius: 5px; padding: 2px 7px; font-size: 11px; font-weight: 400; color: var(--ink-700); background: white; }
 .data-table thead tr.filter-row th:has(button) { text-align: right; }
 .data-table thead tr.filter-row button { display: inline-flex; align-items: center; justify-content: center; padding: 4px; }
+/* 2026-09-29, user report: "the unit price header when scrolling goes
+   over the supplier name" — the Compare quotes entry table is the other
+   place in the app with a two-row thead (each supplier's name/status/
+   save/import block, then a shared "Unit price" row below it). Same
+   underlying cause and same fix as the filter-row rule just above: the
+   generic .data-table-wrap thead th rule pins EVERY th to top:0 with no
+   regard for which row it's in, so this second row stuck at the exact
+   same offset as the first and drew over it as soon as the table body
+   scrolled. Un-stuck here, same as filter-row, so it scrolls away
+   normally below the sticky supplier-info row instead of colliding
+   with it. */
+.data-table-wrap .quote-entry-table thead tr.quote-entry-subhead th { position: static; top: auto; z-index: auto; background: #fff; }
 /* Jobs & WIP keeps its own slightly-shorter height override — it has one
    extra toolbar row (the status filter-chip strip) above the table that
    the generic 300px budget above doesn't account for. */

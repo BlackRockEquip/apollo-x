@@ -538,11 +538,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [quoteSavingId, setQuoteSavingId] = useState("");
   // 2026-09-29 — follow-up polish on the Compare quotes dialog: the
   // read-only "Saved quotes" comparison is now tucked behind its own
-  // "Compare Prices" toggle instead of always showing (user request:
+  // "Compare Prices" button instead of always showing (user request:
   // "move the saved quotes section behind a button that says 'Compare
   // Prices'"), and the whole dialog can be expanded to use most of the
   // screen (user request: "make the dialog be able to maximize the
-  // screen as to get a better view").
+  // screen as to get a better view"). Follow-up same day: "when clicking
+  // the compare Prices button, make that it opens its own dialog" — this
+  // flag now gates a second, separate popup (stacked on top of the
+  // Compare quotes dialog) instead of an inline expand/collapse section,
+  // so it gets its own header and close button rather than sharing space
+  // and scroll with the entry table above it.
   const [showSavedQuotesCompare, setShowSavedQuotesCompare] = useState(false);
   const [quoteCompareMaximized, setQuoteCompareMaximized] = useState(false);
   const [partsFollowupResult, setPartsFollowupResult] = useState<{ sent: { supplierName: string }[]; skipped: { supplierName: string; reason: string }[] } | null>(null);
@@ -3220,7 +3225,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           );
                         })}
                       </tr>
-                      <tr>
+                      {/* className so this row can be un-stuck in CSS —
+                          see .quote-entry-subhead in globals.css, user
+                          report: "the unit price header when scrolling
+                          goes over the supplier name". */}
+                      <tr className="quote-entry-subhead">
                         {job.rfqRequests.map((request) => <th key={request.id} className="supplier-group-start">Unit price</th>)}
                       </tr>
                     </thead>
@@ -3261,23 +3270,47 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
             {/* user request: "move the saved quotes section behind a
                 button that says 'Compare Prices' which will then bring
-                up the table shown" — was always-visible before; now a
-                toggle, still only offered once at least one quote has
-                actually been saved. */}
+                up the table shown" — still only offered once at least one
+                quote has actually been saved. Follow-up: "when clicking
+                the compare Prices button, make that it opens its own
+                dialog" — see the separate popup below, rendered as a
+                sibling of this one, instead of expanding inline here. */}
             {job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (
               <div style={{ marginTop: 16 }}>
-                <button type="button" className="quiet-button" onClick={() => setShowSavedQuotesCompare((v) => !v)}>
-                  <Columns3 size={14} /> {showSavedQuotesCompare ? "Hide saved quotes" : "Compare Prices"}
+                <button type="button" className="quiet-button" onClick={() => setShowSavedQuotesCompare(true)}>
+                  <Columns3 size={14} /> Compare Prices
                 </button>
-                {showSavedQuotesCompare && (() => {
-                  const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-                  const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
-                  return <div style={{ marginTop: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                      <h3>Saved quotes</h3>
+              </div>
+            )}
+            </div>
+          </aside>
+          </div>
+          )}
+
+          {/* user request: "when clicking the compare Prices button, make
+              that it opens its own dialog" — was an inline expand/collapse
+              section inside the Compare quotes dialog above; now its own
+              popup (same .drawer-backdrop/.form-drawer pattern as every
+              other dialog in this app), stacked on top so it gets its own
+              header and close button rather than sharing scroll space with
+              the entry table above it. Kept as its own conditional block
+              (not nested inside the dialog above) so it can stay open even
+              if the Compare quotes dialog behind it is later closed. */}
+          {showSavedQuotesCompare && job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (() => {
+            const quotedRequests = job.rfqRequests.filter((r) => r.quote);
+            const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
+            return (
+              <div className="drawer-backdrop" role="dialog" aria-modal="true">
+                <aside className="form-drawer compact-dialog job-editor-drawer quote-compare-dialog" style={{ maxHeight: "90vh", overflowY: "auto" }}>
+                  <header>
+                    <div><h2>Saved quotes</h2><p>Every supplier with a saved quote on this job, compared side by side.</p></div>
+                    <button type="button" onClick={() => setShowSavedQuotesCompare(false)} aria-label="Close dialog"><X size={18} /></button>
+                  </header>
+                  <div className="quote-compare-body">
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
                       <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
                     </div>
-                    <div className="data-table-wrap"><table className="data-table quote-comparison-table"><thead>
+                    <div className="data-table-wrap" style={{ marginTop: 12 }}><table className="data-table quote-comparison-table"><thead>
                       <tr>
                         <th rowSpan={2}>Part</th>
                         {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
@@ -3330,14 +3363,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       </tr>
                     </tfoot></table></div>
                     <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier.</p>
-                  </div>;
-                })()}
+                  </div>
+                </aside>
               </div>
-            )}
-            </div>
-          </aside>
-          </div>
-          )}
+            );
+          })()}
 
           <section className="detail-panel">
             <header><div><h2>Parts follow-up</h2><p>Chase every supplier with outstanding ordered parts on this job — one email per supplier listing everything still outstanding from them.</p></div></header>
