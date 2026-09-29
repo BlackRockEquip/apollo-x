@@ -138,18 +138,31 @@ export function CompanySettingsForm() {
   // Save. A blank password field means "use the already-stored password"
   // (see testCompanySmtpConnection's own comment) — the field always
   // starts blank since the server never returns it.
+  //
+  // 2026-09-29 (Render staging) — user report: "the test connection just
+  // runs but nothing happens." The server side of this is now fixed
+  // (verifySmtpConnection in lib/email.ts gained short timeouts so a
+  // wrong/unreachable host or a firewalled port fails within ~12s instead
+  // of nodemailer's 2-minute default), but this fetch had no client-side
+  // timeout of its own either — belt and braces: abort after 20s so the
+  // button always resolves to a visible result no matter what happens
+  // server-side, instead of leaving "Testing…" spinning forever.
   async function testSmtpConnection() {
     if (!form) return;
     setSmtpTesting(true); setSmtpTestResult(null);
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 20_000);
     try {
       const payload = { smtpHost: form.smtpHost, smtpPort: form.smtpPort ? Number(form.smtpPort) : null, smtpSecure: form.smtpSecure === "true", smtpUsername: form.smtpUsername, smtpPassword: form.smtpPassword };
-      const response = await fetch("/api/v1/company-settings/smtp-test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const response = await fetch("/api/v1/company-settings/smtp-test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: controller.signal });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to test the SMTP connection.");
       setSmtpTestResult({ ok: true, message: "Connection successful — the SMTP server accepted the login." });
     } catch (e) {
-      setSmtpTestResult({ ok: false, message: e instanceof Error ? e.message : "Unable to test the SMTP connection." });
+      const timedOut = e instanceof DOMException && e.name === "AbortError";
+      setSmtpTestResult({ ok: false, message: timedOut ? "Timed out waiting for a response. The host/port may be unreachable — double-check the port isn't blocked (port 25 is commonly blocked; use 587 or 465) and that the security setting matches the port." : e instanceof Error ? e.message : "Unable to test the SMTP connection." });
     } finally {
+      clearTimeout(abortTimer);
       setSmtpTesting(false);
     }
   }

@@ -1,39 +1,27 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Add supplier email templates, SMTP test connection, RFQ retry feedback
+Fix SMTP test connection hanging with no feedback on unreachable host/port
 
-- Settings > Templates (new tab): edit the RFQ-request and parts-follow-up
-  supplier emails, plus a shared signature, using {{supplierName}},
-  {{jobNumber}}, {{machine}}, {{partsList}} placeholders. Leaving a field
-  blank keeps the existing hardcoded wording -- nothing changes for a
-  company that never opens this tab. The "from" address/name stay on
-  Company / Branding (shown read-only here for reference) since that's
-  SMTP transport config, not message content.
+User report on Render staging: "the test connection just runs but nothing
+happens." Root cause: nodemailer's defaults (connectionTimeout 2min,
+greetingTimeout 30s, socketTimeout 2min) were untouched, so a wrong host
+or a firewalled port -- most commonly port 25, which Render (like most
+PaaS providers) blocks outbound -- produced no response at all for up to
+2 minutes before failing, and the button had no client-side timeout
+either, so it looked like it silently did nothing.
 
-- Settings > Company / Branding: added a "Test connection" button next to
-  the SMTP section's Configured/Not configured pill. Opens and
-  authenticates against the mail server (no email sent) and shows the
-  real failure reason -- bad login, wrong host, connection refused, etc.
-  -- instead of only finding out the SMTP details are wrong when a real
-  RFQ email fails to send.
+- lib/email.ts: verifySmtpConnection now sets 12s connection/greeting/
+  socket timeouts, so a bad host/port/blocked-port fails fast with a real
+  error message instead of hanging. sendEmail's own transporter (real RFQ
+  sends) deliberately keeps the longer defaults.
 
-- Job > RFQ table: clicking Retry on a failed/skipped request now shows a
-  clear success/failure banner and a spinner on that row, instead of
-  silently reloading with no feedback. Also added specific error messages
-  for the three ways a retry can't go through (supplier already quoted,
-  supplier has no email on file, email not configured for this company)
-  -- these used to fall through to a generic "could not be completed"
-  error.
+- CompanySettingsForm.tsx: the Test connection button now aborts after
+  20s as a safety net either way, with a specific message pointing at
+  port 25 commonly being blocked (use 587 or 465 instead) and to check
+  the security setting matches the port.
 
-- Job parts list: the "In stock: N" line (added in the previous session)
-  now shows under the Status field instead of under the part
-  number/description.
-
-Includes a new Prisma migration (20260929120000_supplier_email_templates)
--- 5 new nullable columns on CompanySettings for the templates above. Runs
-automatically on the next deploy via the existing migrate-on-build step;
-no manual DB action needed.
+No schema change in this batch -- just the two files above.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

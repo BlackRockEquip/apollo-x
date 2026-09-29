@@ -96,12 +96,31 @@ export async function isPlatformEmailConfigured(): Promise<boolean> {
 // the caller (testCompanySmtpConnection in
 // master-data/company-settings-service.ts) wraps that into a SmtpTestError
 // so the UI shows the real reason instead of a generic failure.
+//
+// 2026-09-29 (Render staging) — user report: "the test connection just
+// runs but nothing happens." Root cause: nodemailer's defaults —
+// connectionTimeout 2min, greetingTimeout 30s, socketTimeout 2min — were
+// left untouched, so a wrong/unreachable host or a firewalled port (very
+// commonly port 25 outbound, which most PaaS providers including Render
+// block; 587/465 are normally fine) doesn't fail fast, it just sits there
+// with no TCP response at all — for up to 2 minutes — before nodemailer
+// ever rejects. The button's spinner has no client-side timeout either
+// (see testSmtpConnection in CompanySettingsForm.tsx), so the whole thing
+// looked like it silently did nothing. Explicit short timeouts here make a
+// bad host/port/firewalled-port fail within ~12s with an actionable
+// message instead. sendEmail's own transporter (above) deliberately keeps
+// the longer defaults — a real RFQ send already has its own
+// SENT/FAILED/SKIPPED handling and shouldn't be cut off early just because
+// a legitimate mail server is briefly slow to greet.
 export async function verifySmtpConnection(settings: { host: string; port: number; secure: boolean; username: string; password: string }): Promise<void> {
   const transporter = nodemailer.createTransport({
     host: settings.host,
     port: settings.port,
     secure: settings.secure,
     auth: { user: settings.username, pass: settings.password },
+    connectionTimeout: 12_000,
+    greetingTimeout: 12_000,
+    socketTimeout: 12_000,
   });
   await transporter.verify();
 }
