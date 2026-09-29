@@ -367,6 +367,18 @@ enum JobWarrantyStatus {
 enum PartLineStatus {
   PENDING
   IN_STOCK
+  // 2026-09-29 — user request: "when clicking create picking slip inside
+  // a job, it should not change the status to received as the part
+  // might not be in stock physically." Creating a picking slip is real
+  // stock movement (the shelf quantity is actually decremented, see
+  // createPickSlipForJob) but it isn't the same thing as a person
+  // confirming the part is now physically on the job — that's still
+  // what RECEIVED/PARTIALLY_RECEIVED (via the separate "Mark received"
+  // action, unchanged) are for. A line lands here once anything has
+  // been picked for it (see JobPartLine.pickedQuantity below), tracked
+  // independently from receivedQuantity so "Mark received" keeps
+  // working exactly as before once the part is actually in hand.
+  PICKED
   ON_ORDER
   // Some, but not all, of the ordered quantity has been received — the
   // rest is tracked as "outstanding" (quantity - receivedQuantity) and can
@@ -1876,6 +1888,14 @@ model JobPartLine {
   // accumulates across multiple "mark received" clicks rather than
   // locking the line after the first partial delivery.
   receivedQuantity      Decimal?        @db.Decimal(19, 4)
+  // 2026-09-29 — added alongside the new PICKED status (see
+  // PartLineStatus's own comment): how many have actually been issued
+  // from shelf stock via a picking slip so far (createPickSlipForJob),
+  // tracked completely separately from receivedQuantity above so
+  // picking stock never advances — and creating another picking slip
+  // never double-issues stock the line already picked, since this is
+  // what "how much is left to pick" is computed from.
+  pickedQuantity        Decimal?        @db.Decimal(19, 4)
   // Whatever status this line was in right before receiving started —
   // restored exactly by "Undo" if "Mark received" was clicked by mistake.
   previousStatus        PartLineStatus?

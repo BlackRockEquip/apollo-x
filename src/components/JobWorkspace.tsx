@@ -24,6 +24,10 @@ type PartLineRow = Row & {
   quantity?: unknown;
   status?: string | null;
   receivedQuantity?: unknown;
+  // 2026-09-29 — how much has been issued from shelf stock via a picking
+  // slip so far (see PartLineStatus's PICKED value, schema.prisma), kept
+  // separate from receivedQuantity above — see the Status column below.
+  pickedQuantity?: unknown;
   previousStatus?: string | null;
   orderNumber?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
@@ -2962,6 +2966,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 const outstanding = Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0));
                 const hasReceivedSome = Number(line.receivedQuantity ?? 0) > 0;
                 const fullyReceived = line.status === "RECEIVED";
+                // 2026-09-29, user request: "when clicking create picking
+                // slip inside a job, it should not change the status to
+                // received as the part might not be in stock physically."
+                // Picking now tracks its own pickedQuantity (separate from
+                // receivedQuantity above, which "Mark received" still
+                // owns entirely) and sets status PICKED instead of
+                // (PARTIALLY_)RECEIVED — shown here as its own line and
+                // its own pill tone so it reads as "pulled from the
+                // shelf" rather than "confirmed on the job."
+                const picked = decimalText(line.pickedQuantity ?? 0);
+                const hasPickedSome = Number(line.pickedQuantity ?? 0) > 0;
+                const statusTone = fullyReceived ? "" : line.status === "PICKED" ? "tone-blue" : "neutral";
                 const supplierPickerOpenHere = orderEditLineId === lineId;
                 return <tr key={line.id}>
                   {bulkEditMode && <td><input type="checkbox" aria-label={`Select ${line.partNumber}`} checked={bulkSelectedIds.has(lineId)} onChange={(e) => setBulkSelectedIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(lineId); else next.delete(lineId); return next; })} /></td>}
@@ -2970,7 +2986,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
                   </td>
                   <td>
-                    {quantity}{hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
+                    {quantity}
+                    {hasPickedSome ? <div className="muted small-line">Picked {picked} of {quantity}</div> : null}
+                    {hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
                     {receivingLineId === lineId && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                       <input type="number" min={1} max={outstanding} value={receiveQty} onChange={(e) => setReceiveQty(e.target.value)} style={{ width: 80 }} />
                       <button type="button" className="quiet-button" disabled={saving || !receiveQty} onClick={() => void receivePartLine(lineId)}>Confirm</button>
@@ -3017,7 +3035,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td>
-                    <span className={`status-pill ${fullyReceived ? "" : "neutral"}`}>{text(line.status).replaceAll("_", " ")}</span>
+                    <span className={`status-pill ${statusTone}`}>{text(line.status).replaceAll("_", " ")}</span>
                     {/* 2026-09-29, user request: moved from under the part
                         number to here, under Status — see partStockOnHand's
                         own comment above for what this shows and why. */}

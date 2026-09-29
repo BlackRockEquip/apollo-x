@@ -1761,16 +1761,23 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
   // line is genuinely un-picked, just like a PENDING one. Any job whose
   // parts already showed the "In Stock" status badge (BRE1116 included) had
   // every one of those lines silently excluded here before the multi-bin
-  // lookup below ever ran, no matter how good that lookup was. The
-  // remaining logic already treats "remaining = quantity - receivedQuantity
-  // (0 for these lines)" correctly, so including IN_STOCK needs no other
-  // change.
+  // lookup below ever ran, no matter how good that lookup was.
+  //
+  // 2026-09-29, same day — switched from an allow-list to a deny-list
+  // (exclude only RECEIVED, the one truly terminal status — nothing left
+  // to pick once a line is fully received) after this exact mistake bit
+  // twice in one day: the allow-list above had to be patched once
+  // already for IN_STOCK, and would otherwise have needed patching AGAIN
+  // for the new PICKED status added below (a partially-picked line still
+  // needs to be pickable again for its remaining quantity). A deny-list
+  // means the next new status doesn't require remembering to come back
+  // here.
   const eligibleLines = await prisma.jobPartLine.findMany({
     where: {
       companyId: ctx.companyId,
       jobId: job.id,
       partId: { not: null },
-      status: { in: ["PENDING", "IN_STOCK", "ON_ORDER", "PARTIALLY_RECEIVED"] as never },
+      status: { not: "RECEIVED" },
     },
   });
 
@@ -1788,58 +1795,70 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       // there, backorder the rest" promise intact even for this case.
       if (!part.active) continue;
 
-      const alreadyReceived = line.receivedQuantity ?? new D(0);
-      let remaining = D.max(line.quantity.minus(alreadyReceived), new D(0));
+      // 2026-09-29, user request: "when clicking create picking slip
+      // inside a job, it should not change the status to received as
+      // the part might not be in stock physically." "How much is left
+      // to pick" is now tracked by its own pickedQuantity field, kept
+      // completely separate from receivedQuantity (which stays
+      // untouched here — see the status update after this loop, and
+      // PartLineStatus's own schema comment for why).
+      const alreadyPicked = line.pickedQuantity ?? new D(0);
+      let remaining = D.max(line.quantity.minus(alreadyPicked), new D(0));
       if (remaining.lte(0)) continue;
 
       const pickedForLine: PickedLine[] = [];
 
-      // 1. Consume this line's own reservation first, if any — it's
-      // always at the part's default bin (see addPartLinesBulk/
-      // reserveStockTx, both always reserve at part.binLocationId) — same
-      // reasoning as before: a line's own reservation shouldn't look like
-      // ordinary unavailable stock to itself.
-      if (part.binLocationId) {
-        const defaultLocation = await tx.storageLocation.findFirst({ where: { id: part.binLocationId, companyId: ctx.companyId, active: true } });
-        if (defaultLocation) {
-          const reservation = await tx.stockReservation.findFirst({
-            where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId: part.id, locationId: defaultLocation.id },
-          });
-          if (reservation) {
-            const locked = await lockReservation(tx, ctx.companyId, reservation.id);
-            const balance = await lockBalance(tx, ctx.companyId, part.id, defaultLocation.id);
-            if (locked && locked.status === "ACTIVE" && balance) {
-              const usage = await getReservationRemaining(tx, locked);
-              const pickQty = D.min(remaining, D.min(usage.remaining, D.min(balance.onHand, balance.reserved)));
-              if (pickQty.gt(0)) {
-                const nextOnHand = balance.onHand.minus(pickQty);
-                const nextReserved = balance.reserved.minus(pickQty);
-                await tx.stockMovement.create({
-                  data: buildMovement({
-                    companyId: ctx.companyId,
-                    partId: part.id,
-                    movementType: "ISSUE",
-                    quantity: pickQty,
-                    fromLocationId: defaultLocation.id,
-                    referenceType: "RESERVATION",
-                    referenceId: reservation.id,
-                    referenceNumber: job.jobNumber ?? job.draftNumber,
-                    reason: "Pick slip",
-                    actorId: ctx.userId,
-                    resultingFromQuantity: nextOnHand,
-                    correlationId: ctx.correlationId,
-                  }),
-                });
-                await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
-                if (usage.remaining.eq(pickQty)) {
-                  await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
-                }
-                pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: defaultLocation.id, binLocationLabel: `${defaultLocation.name} (${defaultLocation.code})`, quantity: pickQty });
-                remaining = remaining.minus(pickQty);
-              }
-            }
-          }
+      // 1. Consume this line's own reservation(s) first, if any — a
+      // line's own reservation shouldn't look like ordinary unavailable
+      // stock to itself. Used to only ever check the part's default bin
+      // (reservations used to only ever be made at part.binLocationId).
+      // 2026-09-29 — follow-up to the "reserve part" bug fix in
+      // addPartLinesBulk (jobs/service.ts): that function now reserves
+      // across every location the part actually has stock at, not just
+      // the default bin, so a line can end up with more than one ACTIVE
+      // reservation at more than one location. Looked up by referenceId
+      // alone here now (not also locationId) so every one of them is
+      // found and consumed, in the order they were created (default bin
+      // first, since addPartLinesBulk reserves there first when it's
+      // available — same order this used to hard-code).
+      const lineReservations = await tx.stockReservation.findMany({
+        where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId: part.id },
+        orderBy: { createdAt: "asc" },
+      });
+      for (const reservation of lineReservations) {
+        if (remaining.lte(0)) break;
+        const location = await tx.storageLocation.findFirst({ where: { id: reservation.locationId, companyId: ctx.companyId, active: true } });
+        if (!location) continue;
+        const locked = await lockReservation(tx, ctx.companyId, reservation.id);
+        const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+        if (!locked || locked.status !== "ACTIVE" || !balance) continue;
+        const usage = await getReservationRemaining(tx, locked);
+        const pickQty = D.min(remaining, D.min(usage.remaining, D.min(balance.onHand, balance.reserved)));
+        if (pickQty.lte(0)) continue;
+        const nextOnHand = balance.onHand.minus(pickQty);
+        const nextReserved = balance.reserved.minus(pickQty);
+        await tx.stockMovement.create({
+          data: buildMovement({
+            companyId: ctx.companyId,
+            partId: part.id,
+            movementType: "ISSUE",
+            quantity: pickQty,
+            fromLocationId: location.id,
+            referenceType: "RESERVATION",
+            referenceId: reservation.id,
+            referenceNumber: job.jobNumber ?? job.draftNumber,
+            reason: "Pick slip",
+            actorId: ctx.userId,
+            resultingFromQuantity: nextOnHand,
+            correlationId: ctx.correlationId,
+          }),
+        });
+        await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
+        if (usage.remaining.eq(pickQty)) {
+          await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
         }
+        pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty });
+        remaining = remaining.minus(pickQty);
       }
 
       // 2. Still short? Pick from any OTHER location with available
@@ -1911,14 +1930,24 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       if (pickedForLine.length === 0) continue;
 
       const totalPicked = pickedForLine.reduce((sum, p) => sum.plus(p.quantity), new D(0));
-      const newReceivedQuantity = alreadyReceived.plus(totalPicked);
-      const nowFullyReceived = newReceivedQuantity.gte(line.quantity);
+      const newPickedQuantity = alreadyPicked.plus(totalPicked);
+      // 2026-09-29, user request: "when clicking create picking slip
+      // inside a job, it should not change the status to received as
+      // the part might not be in stock physically." Picking stock is a
+      // real inventory movement, but it isn't a person confirming the
+      // part is physically on the job — that's still only ever set by
+      // the separate "Mark received" action (markPartLineReceived,
+      // completely untouched by this function now: receivedQuantity/
+      // previousStatus are never written here). A line that's had
+      // anything picked for it — whether this run fully covers its
+      // quantity or not — goes to the single new PICKED status; "Picked
+      // X of Y" in the UI (JobWorkspace.tsx) shows the partial-vs-full
+      // picture the old PARTIALLY_RECEIVED/RECEIVED split used to.
       await tx.jobPartLine.update({
         where: { id: line.id },
         data: {
-          status: nowFullyReceived ? "RECEIVED" : "PARTIALLY_RECEIVED",
-          receivedQuantity: newReceivedQuantity,
-          previousStatus: line.previousStatus ?? line.status,
+          status: "PICKED",
+          pickedQuantity: newPickedQuantity,
           updatedById: ctx.userId,
         },
       });

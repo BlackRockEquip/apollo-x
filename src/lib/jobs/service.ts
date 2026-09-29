@@ -1009,12 +1009,52 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
       } else {
         await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}).`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
 
-        if (part?.binLocationId) {
+        // 2026-09-29 — user report: "check the reserve part feature if
+        // its working correctly, i dont see that it reserves the part."
+        // Root cause: this only ever tried to reserve at
+        // Part.binLocationId, the part's single "default" bin — the
+        // exact same one-location-only mistake createPickSlipForJob had
+        // (see its own 2026-09-29 fix a few lines below, in
+        // inventory/service.ts). "In stock" above sums StockBalance
+        // across EVERY location, so a part whose stock actually sits at
+        // a bin other than its default — or with no default bin set at
+        // all (binLocationId null, so the old `if (part?.binLocationId)`
+        // guard skipped reservation outright) — passed the "in stock"
+        // check and then reserved nothing at all, silently: either
+        // skipped entirely (no default bin), or reserveStockTx threw
+        // insufficient() at the one location actually checked (the
+        // stock is elsewhere) and the catch below swallowed it. Now
+        // reserves across every location the part actually has stock
+        // at, default bin first (so behavior is unchanged when that's
+        // where the stock already sits), splitting across more than one
+        // StockReservation row if that's genuinely where the stock is —
+        // same "look everywhere, default bin first" approach as the
+        // picking fix. createPickSlipForJob's own reservation-
+        // consumption step was updated to match: it now looks up a
+        // line's reservations by referenceId alone (not also
+        // locationId), so a reservation made here at a non-default bin
+        // is still found and consumed there.
+        let remainingToReserve = new Prisma.Decimal(row.quantity);
+        const reserveCandidates = part
+          ? await tx.stockBalance.findMany({ where: { companyId, partId: part.id, quantityOnHand: { gt: 0 } }, select: { locationId: true } })
+          : [];
+        const orderedReserveLocationIds = part
+          ? [
+              ...(part.binLocationId ? [part.binLocationId] : []),
+              ...reserveCandidates.map((c) => c.locationId).filter((id) => id !== part.binLocationId),
+            ]
+          : [];
+        for (const locationId of orderedReserveLocationIds) {
+          if (remainingToReserve.lte(0)) break;
+          const balance = await tx.stockBalance.findFirst({ where: { companyId, partId: part!.id, locationId } });
+          const available = balance ? balance.quantityOnHand.minus(balance.quantityReserved) : new Prisma.Decimal(0);
+          if (available.lte(0)) continue;
+          const qtyHere = Prisma.Decimal.min(remainingToReserve, available);
           try {
             await reserveStockTx(tx, { ...ctx, companyId }, {
-              partId: part.id,
-              locationId: part.binLocationId,
-              quantity: String(row.quantity),
+              partId: part!.id,
+              locationId,
+              quantity: qtyHere.toString(),
               referenceType: "JOB",
               referenceId: created.id,
               // 2026-09-16 — user request: the reservation's reason (shown
@@ -1027,10 +1067,15 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
               expiresAt: null,
               idempotencyKey: undefined,
             });
+            remainingToReserve = remainingToReserve.minus(qtyHere);
           } catch {
-            // Best-effort — see comment above. Stock Levels' Reserved
-            // column simply won't reflect this line if the reservation
-            // couldn't be made.
+            // Best-effort per location — a race against another
+            // reservation between the read above and reserveStockTx's
+            // own row lock can still leave less available than
+            // expected; move on to the next candidate location instead
+            // of aborting the whole line. If every candidate is
+            // exhausted this way, the line just stays unreserved, same
+            // as the old single-location best-effort behavior.
           }
         }
       }

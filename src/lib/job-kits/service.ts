@@ -328,6 +328,67 @@ export async function removeJobKitLine(ctx: RequestContext, id: string, lineId: 
   return getJobKitById(ctx, id);
 }
 
+// 2026-09-29 — user request: "check the reserve part feature if its
+// working correctly, i dont see that it reserves the part." Shared by
+// both branches of applyJobKitToJob below (existing-line top-up and
+// new-line create), both of which used to reserve only at the part's
+// single default bin (Part.binLocationId) — the exact same mistake
+// addPartLinesBulk had (jobs/service.ts, see its own comment for the
+// full root cause): "in stock" sums StockBalance across EVERY location,
+// so a part whose stock actually sits at a bin other than its default —
+// or with no default bin set at all — passed the "in stock" check just
+// above each call site and then reserved nothing at all, silently. Now
+// reserves across every location the part actually has stock at,
+// default bin first (so behavior is unchanged when that's where the
+// stock already sits), splitting across more than one StockReservation
+// row if that's genuinely where the stock is.
+async function reserveAcrossLocations(
+  tx: Prisma.TransactionClient,
+  ctx: RequestContext,
+  companyId: string,
+  partId: string,
+  defaultBinLocationId: string | null,
+  quantity: Prisma.Decimal,
+  referenceId: string,
+  jobNumberLabel: string | null,
+) {
+  let remaining = quantity;
+  const candidates = await tx.stockBalance.findMany({ where: { companyId, partId, quantityOnHand: { gt: 0 } }, select: { locationId: true } });
+  const orderedLocationIds = [
+    ...(defaultBinLocationId ? [defaultBinLocationId] : []),
+    ...candidates.map((c) => c.locationId).filter((id) => id !== defaultBinLocationId),
+  ];
+  for (const locationId of orderedLocationIds) {
+    if (remaining.lte(0)) break;
+    const balance = await tx.stockBalance.findFirst({ where: { companyId, partId, locationId } });
+    const available = balance ? balance.quantityOnHand.minus(balance.quantityReserved) : new Prisma.Decimal(0);
+    if (available.lte(0)) continue;
+    const qtyHere = Prisma.Decimal.min(remaining, available);
+    try {
+      await reserveStockTx(tx, { ...ctx, companyId }, {
+        partId,
+        locationId,
+        quantity: qtyHere.toString(),
+        referenceType: "JOB",
+        referenceId,
+        referenceNumber: jobNumberLabel,
+        reason: `Reserved for job ${jobNumberLabel}`,
+        notes: null,
+        expiresAt: null,
+        idempotencyKey: undefined,
+      });
+      remaining = remaining.minus(qtyHere);
+    } catch {
+      // Best-effort per location — a race against another reservation
+      // between the read above and reserveStockTx's own row lock can
+      // still leave less available than expected; move on to the next
+      // candidate location instead of aborting. If every candidate is
+      // exhausted this way, the line just stays unreserved, same as the
+      // old single-location best-effort behavior.
+    }
+  }
+}
+
 export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId: string) {
   requireModule(ctx, "JOBS_WIP", "WRITE");
   requireTenantPermission(ctx, "JOBS_EDIT");
@@ -374,34 +435,23 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
       const onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
 
       if (existing) {
-        // A line already in PARTIALLY_RECEIVED is mid-receiving — leave its
-        // status alone (only the quantity/reservation are affected by
-        // topping it up), same caution the receive/unmark flow itself
-        // takes about not clobbering that state.
+        // A line already in PARTIALLY_RECEIVED is mid-receiving, or
+        // PICKED (2026-09-29 — stock has already been physically issued
+        // for it via a picking slip, see PartLineStatus's own schema
+        // comment) — leave its status alone either way (only the
+        // quantity/reservation are affected by topping it up), same
+        // caution the receive/unmark flow itself takes about not
+        // clobbering that state.
         const newTotal = existing.quantity.plus(line.quantityDefault);
         const inStock = onHand.gte(newTotal);
-        const nextStatus = existing.status === "PARTIALLY_RECEIVED" ? existing.status : (inStock ? "IN_STOCK" : "PENDING");
+        const preserveStatus = existing.status === "PARTIALLY_RECEIVED" || existing.status === "PICKED";
+        const nextStatus = preserveStatus ? existing.status : (inStock ? "IN_STOCK" : "PENDING");
         const updated = await tx.jobPartLine.update({
           where: { id: existing.id },
           data: { quantity: newTotal, status: nextStatus, updatedById: ctx.userId },
         });
-        if (inStock && existing.status !== "PARTIALLY_RECEIVED" && line.part.binLocationId) {
-          try {
-            await reserveStockTx(tx, { ...ctx, companyId }, {
-              partId: line.partId,
-              locationId: line.part.binLocationId,
-              quantity: line.quantityDefault.toString(),
-              referenceType: "JOB",
-              referenceId: updated.id,
-              referenceNumber: job.jobNumber || job.draftNumber,
-              reason: `Reserved for job ${job.jobNumber || job.draftNumber}`,
-              notes: null,
-              expiresAt: null,
-              idempotencyKey: undefined,
-            });
-          } catch {
-            // Best-effort, same as addPartLinesBulk — never blocks applying the kit.
-          }
+        if (inStock && !preserveStatus) {
+          await reserveAcrossLocations(tx, ctx, companyId, line.partId, line.part.binLocationId, line.quantityDefault, updated.id, job.jobNumber || job.draftNumber);
         }
         appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: updated.id, mode: "INCREMENTED" });
       } else {
@@ -419,23 +469,8 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
             updatedById: ctx.userId,
           },
         });
-        if (inStock && line.part.binLocationId) {
-          try {
-            await reserveStockTx(tx, { ...ctx, companyId }, {
-              partId: line.partId,
-              locationId: line.part.binLocationId,
-              quantity: line.quantityDefault.toString(),
-              referenceType: "JOB",
-              referenceId: created.id,
-              referenceNumber: job.jobNumber || job.draftNumber,
-              reason: `Reserved for job ${job.jobNumber || job.draftNumber}`,
-              notes: null,
-              expiresAt: null,
-              idempotencyKey: undefined,
-            });
-          } catch {
-            // Best-effort, same as addPartLinesBulk — never blocks applying the kit.
-          }
+        if (inStock) {
+          await reserveAcrossLocations(tx, ctx, companyId, line.partId, line.part.binLocationId, line.quantityDefault, created.id, job.jobNumber || job.draftNumber);
         }
         appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: created.id, mode: "CREATED" });
       }
