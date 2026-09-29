@@ -1,49 +1,47 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Move RFQ quote entry into a dedicated Compare quotes dialog
+Fix Compare quotes dialog: invisible entry table, cramped columns
 
-User request: "on the RFQ form for parts, move the import quote section
-to its own place. Eg: add a 'Compare quotes' button next to bulk update
-button which lets the user view the suppliers requested from in table
-form next to each other, allow user to import quote received for the
-respective supplier or fill in amounts next to part number."
+Two follow-up reports on the new Compare quotes dialog (Render staging):
 
-Previously, entering a supplier's quote meant clicking "Record quote" on
-one row of the RFQ popup's supplier list, which opened a drawer for that
-ONE supplier only (its own file upload, notes, and a Part/Available/
-Unit price/Notes table) -- comparing across suppliers meant closing that
-drawer, opening another supplier's, and mentally tracking the numbers
-between them. A read-only "Quote comparison" table further down could
-show suppliers side by side, but only once every price was already
-saved -- not while entering them.
+1. "does not show import quote or other suppliers requested from" -- the
+   entry table (Import quote file / per-supplier price grid) never
+   appeared at all, even though the read-only "Saved quotes" section
+   below it rendered fine. A Ctrl+F page search for "Import quote file"
+   still found it on the page, proving it WAS in the DOM, just rendered
+   at zero height -- not a React/data bug.
 
-New "Compare quotes" button, next to "Bulk update" on the Parts list
-toolbar (disabled until at least one supplier has been asked to quote),
-opens its own dialog with one column per requested supplier in a single
-table -- part numbers down the left, an editable unit-price cell (with an
-N/A toggle) per supplier per part. Each supplier's column header carries
-its own "Import quote file" control (same best-effort price extraction
-as before -- fills blanks only, never overwrites a typed price), an
-optional notes field, and its own Save button, so any number of
-suppliers can be filled in or imported side by side in one view instead
-of one drawer at a time. A live (unsaved) total per column updates as
-you type, before Save is clicked.
+   Root cause: every .form-drawer/.compact-dialog popup in this app
+   (JobWorkspace.tsx's dialogs) is display:flex; flex-direction:column
+   with a constrained max-height, and .data-table-wrap sits as a
+   *direct* flex item inside several of them. Because .data-table-wrap
+   sets overflow-x:auto (which forces overflow-y to compute as auto
+   too), flexbox gives it an "automatic minimum size" of effectively
+   zero -- so once a dialog's total content genuinely exceeds its
+   max-height, as the new Compare quotes grid does with many parts times
+   several suppliers, the flex-shrink algorithm is free to squash that
+   one div toward 0px to make everything else fit, while sibling
+   elements without overflow set on themselves (like the plain note
+   paragraph, or the Saved quotes section's own wrapper div) don't get
+   shrunk the same way. This was a latent bug in every .data-table-wrap
+   in the app -- it just never surfaced before because no other dialog's
+   content was ever tall enough to trigger the flex-shrink. Fixed by
+   adding flex-shrink:0 to the shared .data-table-wrap rule -- a no-op
+   outside a flex container, so safe everywhere, not just this dialog.
 
-The existing read-only comparison -- star-pick a preferred price per
-part, cheapest-price highlighting, per-supplier and preferred totals,
-CSV export -- is kept directly below the entry grid in the same dialog
-(still only shown once at least one quote is actually saved), so the
-"enter/import" and "compare what's saved" views live together instead of
-being split across two different popups.
+2. "space columns neatly not so far apart" -- the Saved quotes table had
+   a large blank gap between the Part column and the supplier's
+   Unit/Total columns, because the generic .data-table width:100% rule
+   stretched a 3-4 column table across the dialog's new min(1200px,
+   96vw) width (widened this session to fit many supplier columns) even
+   when only one or two suppliers were actually on the job. Both
+   .quote-comparison-table and .quote-entry-table now size to their own
+   content (width:auto) instead of the dialog's width -- data-table-wrap's
+   existing overflow-x:auto still lets them scroll horizontally once
+   enough suppliers genuinely make a table wider than the dialog.
 
-The RFQ send popup's per-supplier "Record quote"/"Edit quote" button now
-reads "Compare quotes" and opens this same dialog, closing the RFQ popup
-first so the two don't stack.
-
-No schema or API change -- same quote/quote-lines endpoints as before,
-now called per supplier column instead of per single "current" edit
-target. JobWorkspace.tsx and globals.css only.
+No schema change, globals.css only.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt
