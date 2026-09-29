@@ -351,7 +351,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // rather than actually removing the row, so it stays in this history as
   // a record of what happened, just no longer actionable.
   async function deletePickSlip(ps: PickSlipData) {
-    if (!confirm(`Delete this picking slip for ${ps.jobNumber}? The stock it took will be allocated back onto the shelf.`)) return;
+    if (!confirm(`Permanently delete this picking slip for ${ps.jobNumber}? The stock it took will be allocated back onto the shelf, and the slip itself will be removed from this list for good.`)) return;
     setCancellingId(ps.id); setHistoryError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips/${ps.id}/cancel`, {
@@ -761,26 +761,32 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
         </section>
       ) : (
         <section className="master-panel">
+          {/* 2026-09-29 — user request: "deleted pickslips must delete
+              completely from the system." Delete now genuinely removes the
+              PickSlip row (see cancelPickSlip's own comment in
+              inventory/service.ts), so every row this list can ever show is
+              by definition still active — no more Status column/pill,
+              which only ever existed to distinguish a soft-cancelled row
+              from an active one. */}
           <p className="hint-text" style={{ padding: "12px 14px 0" }}>Every picking slip generated for this company, most recent first. Reprint shows it exactly as it would print today.</p>
           {historyError ? <div className="inline-error">{historyError}</div> : null}
           <div className="data-table-wrap">
             <table className="data-table">
-              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th><th>Status</th><th className="actions">Actions</th></tr></thead>
+              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
               <tbody>
                 {historyLoading ? (
-                  <tr><td colSpan={6} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={5} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : history.length === 0 ? (
-                  <tr><td colSpan={6} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
+                  <tr><td colSpan={5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
                 ) : history.map((ps) => (
                   <tr key={ps.id}>
                     <td><Link href={`/jobs/${ps.jobId}`} className="action-link">{ps.jobNumber}</Link></td>
                     <td>{ps.customerName || "—"}</td>
                     <td>{new Date(ps.createdAt).toLocaleString()}</td>
                     <td>{ps.lines.length}</td>
-                    <td>{ps.status === "CANCELLED" ? <span className="status-pill tone-amber">Cancelled</span> : <span className="status-pill tone-green">Active</span>}</td>
                     <td className="actions">
                       <button type="button" className="table-action" onClick={() => setPickResult(ps)}><Printer size={14} /> Reprint</button>
-                      {hasManage && ps.status !== "CANCELLED" && (
+                      {hasManage && (
                         <button type="button" className="table-action" disabled={cancellingId === ps.id} onClick={() => void deletePickSlip(ps)}>
                           {cancellingId === ps.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete
                         </button>

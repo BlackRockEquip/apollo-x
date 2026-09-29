@@ -1298,7 +1298,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // "already marked received" case), rolls its Picked status back too.
   // Clears pickSlipResult on success if it was the one just cancelled, so
   // a stale banner (with now-dead Print/Cancel buttons) doesn't linger.
+  // 2026-09-29 — user request: "deleted pickslips must delete completely
+  // from the system." This permanently removes the pick slip (see
+  // cancelPickSlip's own comment in inventory/service.ts) after restoring
+  // the stock it took, so a confirm() guards it the same way Stock
+  // Levels' own Delete button does — there's no "cancelled" state to fall
+  // back into any more if this is clicked by mistake.
   async function cancelJobPickSlip(pickSlipId: string) {
+    if (!confirm("Permanently delete this picking slip? The stock it took will be allocated back onto the shelf, and the slip itself will be removed for good.")) return;
     setCancellingPickSlipId(pickSlipId); setPickSlipError(""); setJobPickSlipsError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlipId}/cancel`, {
@@ -1307,12 +1314,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         body: JSON.stringify({}),
       });
       const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to cancel picking slip.");
+      if (!r.ok) throw new Error(b.error?.message || "Unable to delete picking slip.");
       if (pickSlipResult?.pickSlip?.id === pickSlipId) setPickSlipResult(null);
       await load(true);
       await loadJobPickSlips();
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Unable to cancel picking slip.";
+      const message = e instanceof Error ? e.message : "Unable to delete picking slip.";
       setPickSlipError(message);
       setJobPickSlipsError(message);
     } finally {
@@ -2993,7 +3000,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {pickSlipResult.pickSlip ? (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
-                    <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Cancelling…" : "Cancel"}</button>
+                    <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Deleting…" : "Delete"}</button>
                   </span>
                 ) : null}
               </div>
@@ -3007,27 +3014,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 on job's own GET. Collapsed away entirely once there's
                 nothing to show and nothing still loading, so a job with no
                 picking history doesn't grow an empty section. */}
+            {/* 2026-09-29 — user request: "deleted pickslips must delete
+                completely from the system." Delete now genuinely removes
+                the PickSlip row (see cancelPickSlip's own comment in
+                inventory/service.ts), so every row this list can ever
+                show is by definition still active — no more Status
+                column/pill, which only ever existed to distinguish a
+                soft-cancelled row from an active one. */}
             {jobPickSlipsError ? <div className="inline-error">{jobPickSlipsError}</div> : null}
             {jobPickSlipsLoading || jobPickSlips.length > 0 ? (
               <div className="data-table-wrap" style={{ margin: "0 14px 10px" }}>
                 <table className="data-table">
-                  <thead><tr><th>Generated</th><th>Lines</th><th>Status</th><th className="actions">Actions</th></tr></thead>
+                  <thead><tr><th>Generated</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
                   <tbody>
                     {jobPickSlipsLoading ? (
-                      <tr><td colSpan={4} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
+                      <tr><td colSpan={3} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
                     ) : (
                       jobPickSlips.map((ps) => (
                         <tr key={ps.id}>
                           <td>{new Date(ps.createdAt).toLocaleString()}</td>
                           <td>{ps.lines.length}</td>
-                          <td>{ps.status === "CANCELLED" ? <span className="status-pill tone-amber">Cancelled</span> : <span className="status-pill tone-green">Active</span>}</td>
                           <td className="actions">
                             <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
-                            {ps.status !== "CANCELLED" && (
-                              <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
-                                {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Cancelling…" : "Cancel"}
-                              </button>
-                            )}
+                            <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
+                              {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Deleting…" : "Delete"}
+                            </button>
                           </td>
                         </tr>
                       ))

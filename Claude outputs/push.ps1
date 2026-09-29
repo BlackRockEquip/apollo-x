@@ -1,40 +1,33 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Add Delete to Picking Slip History and a per-job pick slip list
+Make picking slip delete permanent instead of soft-cancel
 
-"Picking slip history, add a delete slip button and allocate stock
-back" plus "make viewing already created pickslips visible within the
-job self."
+"deleted pickslips must delete completely from the system."
 
-1. Stock Levels' Picking Slip History table gets a Status column
-   (Active/Cancelled) and, on any still-active row, a Delete button --
-   reuses the cancelPickSlip action added earlier today (restores the
-   stock the slip took, same as Job Workspace's own "Cancel" button),
-   just labelled Delete here and gated behind the same manage
-   permission as the rest of that tab. A cancelled slip's row stays in
-   the list (as a record of what happened) but loses its Delete
-   button -- it can still be reprinted.
+The Delete/Cancel action (Stock Levels' Picking Slip History and a
+job's own pick slip list) previously restored the stock a slip took
+but only flipped it to a Cancelled status -- the row stayed in both
+lists forever, just greyed out. Now it genuinely deletes the PickSlip
+row (cascades to its own PickSlipLine rows via that table's existing
+ON DELETE CASCADE foreign key -- no migration needed), so a deleted
+slip is simply gone from both lists, not lingering as a Cancelled
+entry someone has to mentally filter past. The stock movement ledger
+itself (the original pick and the new reversal) is untouched and
+permanent, same as every other stock movement in the app -- only the
+slip "receipt" record is removed. A permanent note that the deletion
+happened still lives in the audit log, just not in either picking
+slip list.
 
-2. A Job's own Parts screen now lists every picking slip ever created
-   for that job -- date, line count, status, Print/Cancel per row --
-   not just the ephemeral "just created" banner from this visit.
-   Backed by a small extension to listPickSlips (a new jobId filter on
-   GET /api/v1/inventory/pick-slips) rather than a new endpoint, so
-   Stock Levels' own company-wide history and this job-scoped one share
-   one code path. The existing single-slip "Cancel" button (from
-   earlier today) and this list's own per-row Cancel button now share
-   one generalized cancelJobPickSlip(id) handler instead of being
-   wired to the one most-recently-created slip only.
+Both Delete/Cancel buttons now confirm() before acting, and are
+simply always shown (no more Active/Cancelled status column in either
+table -- every row left in the list is active by definition once a
+deleted one is actually gone). Renamed the job page's own button
+label from Cancel to Delete for consistency, since it's the same
+irreversible action either place now.
 
-No schema changes -- PickSlip.status/cancelledAt/cancelReason already
-existed from today's earlier cancel-pick-slip work; this just surfaces
-them in the two list views and wires a second entry point to the same
-cancel action.
-
-src/lib/inventory/service.ts, src/lib/inventory/validation.ts,
-src/app/api/v1/inventory/pick-slips/route.ts,
-src/components/StockLevelsWorkspace.tsx, src/components/JobWorkspace.tsx.
+src/lib/inventory/service.ts, src/components/StockLevelsWorkspace.tsx,
+src/components/JobWorkspace.tsx.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

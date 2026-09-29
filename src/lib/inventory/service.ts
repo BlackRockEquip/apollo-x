@@ -2045,6 +2045,29 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
 // or Stock Levels' own createPickSlip) — the latter's lines simply
 // have no jobPartLineId either, so cancelling one of those restores
 // stock only, same as a pre-migration row.
+//
+// 2026-09-29, later same day — user request: "deleted pickslips must
+// delete completely from the system." Originally this only flipped
+// PickSlip.status to CANCELLED (kept the row as a visible audit entry
+// in both list views); the user twice reported a cancelled slip still
+// "showing" in the table — once from an actual deploy bug (Follow-up
+// 6, since fixed), and once as a direct ask that a deleted slip simply
+// not exist any more, anywhere, rather than linger as a greyed-out
+// row a person has to mentally filter out. So this now genuinely
+// deletes the PickSlip row (tx.pickSlip.delete — cascades to its
+// PickSlipLine rows via the FK's own ON DELETE CASCADE from the
+// original 20260914090000_pick_slips migration, no manual line
+// deletion needed) rather than soft-cancelling it. PickSlipStatus/
+// cancelledAt/cancelledById/cancelReason are left in the schema
+// unused rather than migrated away — harmless dead columns, and a
+// smaller/safer change than a schema rollback. The permanent record
+// that a deletion happened at all now lives only in AuditEvent (via
+// recordAudit below), which isn't surfaced in either Picking Slip
+// History or a job's own pick slip list, so it can't "still show"
+// the way the PickSlip row itself used to. Function name kept as
+// cancelPickSlip (and the route path stays .../cancel) to avoid
+// rippling a rename through both UI call sites for what's an internal
+// behavior change, not a new capability.
 export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, input: z.infer<typeof pickSlipCancelInput>) {
   requireInventory(ctx, "INVENTORY_ISSUE");
 
@@ -2053,7 +2076,6 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
     include: { lines: true, job: { select: { id: true, jobNumber: true, draftNumber: true } } },
   });
   if (!pickSlip) notFound();
-  if (pickSlip.status === "CANCELLED") throw new StockError("PICK_SLIP_ALREADY_CANCELLED", "This picking slip has already been cancelled.");
 
   const result = await prisma.$transaction(async (tx) => {
     let revertedLines = 0;
@@ -2110,10 +2132,14 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
       }
     }
 
-    await tx.pickSlip.update({
-      where: { id: pickSlip.id },
-      data: { status: "CANCELLED", cancelledAt: new Date(), cancelledById: ctx.userId, cancelReason: input.reason ?? null },
-    });
+    // Cascades to delete this slip's own PickSlipLine rows (FK's own ON
+    // DELETE CASCADE) — nothing else references PickSlip, so nothing
+    // else is affected. The StockMovement rows created above (and the
+    // original ISSUE movements each line's stockMovementId pointed at)
+    // are untouched — that ledger stays permanent regardless of what
+    // happens to the slip that triggered it, same as every other stock
+    // movement in the app.
+    await tx.pickSlip.delete({ where: { id: pickSlip.id } });
 
     return { revertedLines, skippedLines };
   });
@@ -2123,7 +2149,7 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
     module: "INVENTORY",
     entityType: "PickSlip",
     entityId: pickSlip.id,
-    action: "PICK_SLIP_CANCELLED",
+    action: "PICK_SLIP_DELETED",
     afterData: { jobId: pickSlip.jobId, revertedLines: result.revertedLines, skippedLines: result.skippedLines, reason: input.reason ?? null },
   });
 
