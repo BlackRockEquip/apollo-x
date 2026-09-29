@@ -3020,7 +3020,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td>{request.quote?.fileName ? <button type="button" className="table-action" onClick={() => void viewQuoteFile(String(request.id))}>{text(request.quote.fileName)}</button> : "—"}</td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {(status === "FAILED" || status === "SKIPPED") && <button type="button" className="table-action" disabled={!!rfqResendId} onClick={() => void resendRfq(String(request.id))}>{rfqResendId === String(request.id) ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />} {rfqResendId === String(request.id) ? "Sending…" : status === "FAILED" ? "Retry" : "Send email"}</button>}
+                      {/* 2026-09-29 — user request: "when sending RFQs to suppliers via
+                          rfq form, if i click send email and it sends, allow a user to
+                          resend the rfq again via a resend button." resendRfqRequest
+                          (rfq/service.ts) only ever refused a QUOTED request
+                          (RFQ_ALREADY_QUOTED) — SENT was already resendable
+                          server-side, this button just never offered it. Left QUOTED
+                          out on purpose, same as before: nothing to resend once a
+                          supplier's actually quoted. */}
+                      {(status === "FAILED" || status === "SKIPPED" || status === "SENT") && <button type="button" className="table-action" disabled={!!rfqResendId} onClick={() => void resendRfq(String(request.id))}>{rfqResendId === String(request.id) ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />} {rfqResendId === String(request.id) ? "Sending…" : status === "FAILED" ? "Retry" : status === "SENT" ? "Resend" : "Send email"}</button>}
                       <button type="button" className="table-action" disabled={saving} onClick={() => openRecordQuote(request)}>{request.quote ? "Edit quote" : "Record quote"}</button>
                       <button type="button" className="table-action danger" onClick={() => void removeRfq(String(request.id))}>Remove</button>
                     </div>
@@ -3283,7 +3291,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           {deliveryNote && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
-              <aside className="form-drawer compact-dialog">
+              <aside className="form-drawer compact-dialog delivery-note-dialog">
                 <header><div><p className="eyebrow">Outwork</p><h2>Delivery note</h2><p className="muted small-line">Job {deliveryNote.jobNumber}</p></div><button type="button" onClick={() => setDeliveryNote(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
                   {/* 2026-09-16 — matches printDeliveryNote's own layout:

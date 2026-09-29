@@ -1768,84 +1768,136 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
     for (const line of eligibleLines) {
       if (!line.partId) continue;
       const part = await requirePart(tx, ctx, line.partId);
-      const location = part.binLocationId ? await tx.storageLocation.findFirst({ where: { id: part.binLocationId, companyId: ctx.companyId } }) : null;
-      if (!location) continue;
+      // Inactive parts used to abort the WHOLE pick slip via
+      // assertOperable's throw (one bad line blocking every other line on
+      // the job) — skipping instead keeps this function's own "pick what's
+      // there, backorder the rest" promise intact even for this case.
+      if (!part.active) continue;
 
       const alreadyReceived = line.receivedQuantity ?? new D(0);
-      const outstanding = D.max(line.quantity.minus(alreadyReceived), new D(0));
-      if (outstanding.lte(0)) continue;
+      let remaining = D.max(line.quantity.minus(alreadyReceived), new D(0));
+      if (remaining.lte(0)) continue;
 
-      assertOperable(part, location);
+      const pickedForLine: PickedLine[] = [];
 
-      // 2026-09-16 — user request: adding a part to a job now reserves the
-      // stock (see addPartLinesBulk) so another job can't take it. Consume
-      // that reservation here instead of treating it as ordinary
-      // unavailable stock — otherwise a line's own reservation would make
-      // the line look unpickable against itself.
-      const reservation = await tx.stockReservation.findFirst({
-        where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId: part.id, locationId: location.id },
-      });
-
-      let pickQty: Quantity;
-      let nextOnHand: Quantity;
-
-      if (reservation) {
-        const locked = await lockReservation(tx, ctx.companyId, reservation.id);
-        const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
-        if (!locked || locked.status !== "ACTIVE" || !balance) continue;
-        const usage = await getReservationRemaining(tx, locked);
-        pickQty = D.min(outstanding, D.min(usage.remaining, D.min(balance.onHand, balance.reserved)));
-        if (pickQty.lte(0)) continue;
-        nextOnHand = balance.onHand.minus(pickQty);
-        const nextReserved = balance.reserved.minus(pickQty);
-
-        await tx.stockMovement.create({
-          data: buildMovement({
-            companyId: ctx.companyId,
-            partId: part.id,
-            movementType: "ISSUE",
-            quantity: pickQty,
-            fromLocationId: location.id,
-            referenceType: "RESERVATION",
-            referenceId: reservation.id,
-            referenceNumber: job.jobNumber ?? job.draftNumber,
-            reason: "Pick slip",
-            actorId: ctx.userId,
-            resultingFromQuantity: nextOnHand,
-            correlationId: ctx.correlationId,
-          }),
-        });
-        await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
-        if (usage.remaining.eq(pickQty)) {
-          await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
+      // 1. Consume this line's own reservation first, if any — it's
+      // always at the part's default bin (see addPartLinesBulk/
+      // reserveStockTx, both always reserve at part.binLocationId) — same
+      // reasoning as before: a line's own reservation shouldn't look like
+      // ordinary unavailable stock to itself.
+      if (part.binLocationId) {
+        const defaultLocation = await tx.storageLocation.findFirst({ where: { id: part.binLocationId, companyId: ctx.companyId, active: true } });
+        if (defaultLocation) {
+          const reservation = await tx.stockReservation.findFirst({
+            where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId: part.id, locationId: defaultLocation.id },
+          });
+          if (reservation) {
+            const locked = await lockReservation(tx, ctx.companyId, reservation.id);
+            const balance = await lockBalance(tx, ctx.companyId, part.id, defaultLocation.id);
+            if (locked && locked.status === "ACTIVE" && balance) {
+              const usage = await getReservationRemaining(tx, locked);
+              const pickQty = D.min(remaining, D.min(usage.remaining, D.min(balance.onHand, balance.reserved)));
+              if (pickQty.gt(0)) {
+                const nextOnHand = balance.onHand.minus(pickQty);
+                const nextReserved = balance.reserved.minus(pickQty);
+                await tx.stockMovement.create({
+                  data: buildMovement({
+                    companyId: ctx.companyId,
+                    partId: part.id,
+                    movementType: "ISSUE",
+                    quantity: pickQty,
+                    fromLocationId: defaultLocation.id,
+                    referenceType: "RESERVATION",
+                    referenceId: reservation.id,
+                    referenceNumber: job.jobNumber ?? job.draftNumber,
+                    reason: "Pick slip",
+                    actorId: ctx.userId,
+                    resultingFromQuantity: nextOnHand,
+                    correlationId: ctx.correlationId,
+                  }),
+                });
+                await saveBalance(tx, balance, { onHand: nextOnHand, reserved: nextReserved });
+                if (usage.remaining.eq(pickQty)) {
+                  await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
+                }
+                pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: defaultLocation.id, binLocationLabel: `${defaultLocation.name} (${defaultLocation.code})`, quantity: pickQty });
+                remaining = remaining.minus(pickQty);
+              }
+            }
+          }
         }
-      } else {
-        const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
-        const available = balance ? balance.onHand.minus(balance.reserved) : new D(0);
-        if (available.lte(0) || !balance) continue;
-        pickQty = D.min(outstanding, available);
-        nextOnHand = balance.onHand.minus(pickQty);
-
-        await tx.stockMovement.create({
-          data: buildMovement({
-            companyId: ctx.companyId,
-            partId: part.id,
-            movementType: "ISSUE",
-            quantity: pickQty,
-            fromLocationId: location.id,
-            referenceType: "JOB",
-            referenceId: job.id,
-            referenceNumber: job.jobNumber ?? job.draftNumber,
-            reason: "Pick slip",
-            actorId: ctx.userId,
-            resultingFromQuantity: nextOnHand,
-            correlationId: ctx.correlationId,
-          }),
-        });
-        await saveBalance(tx, balance, { onHand: nextOnHand });
       }
 
-      const newReceivedQuantity = alreadyReceived.plus(pickQty);
+      // 2. Still short? Pick from any OTHER location with available
+      // (onHand - reserved) stock for this part.
+      //
+      // 2026-09-29 — user report (job BRE1116): "stock shows in stock
+      // under the status but error 'No stock was available to pick right
+      // now.' is thrown." Root cause: this function only ever looked at
+      // Part.binLocationId — the part's single "default" bin — while both
+      // the "In stock: N" figure shown on the job's parts list
+      // (partStockOnHand in JobWorkspace.tsx) AND the "in stock" check
+      // that first sets a line's status when it's added (addPartLinesBulk
+      // in jobs/service.ts) sum a part's StockBalance across EVERY bin
+      // location. A part with stock recorded at a bin other than its
+      // configured default — or one that never had a default bin set at
+      // all (Part.binLocationId null) — showed as clearly "in stock" on
+      // the job, yet this function found nothing at the one location it
+      // was willing to check and silently skipped the line, so the pick
+      // slip came back empty. Now it looks at every location the part
+      // actually has stock, default bin first (to keep the existing
+      // "picks from its home bin" behavior when that's where the stock
+      // is), then whichever others have any — splitting the pick across
+      // more than one location if that's genuinely where the stock is.
+      // Candidate locations are read unlocked here purely to know where to
+      // look; each is re-checked under lockBalance's row lock before its
+      // balance is trusted or touched, same as every other stock mutation
+      // in this file.
+      if (remaining.gt(0)) {
+        const candidates = await tx.stockBalance.findMany({
+          where: { companyId: ctx.companyId, partId: part.id, onHand: { gt: 0 } },
+          select: { locationId: true },
+        });
+        const orderedLocationIds = [
+          ...(part.binLocationId ? [part.binLocationId] : []),
+          ...candidates.map((c) => c.locationId).filter((id) => id !== part.binLocationId),
+        ];
+        for (const locationId of orderedLocationIds) {
+          if (remaining.lte(0)) break;
+          const location = await tx.storageLocation.findFirst({ where: { id: locationId, companyId: ctx.companyId, active: true } });
+          if (!location) continue;
+          const balance = await lockBalance(tx, ctx.companyId, part.id, location.id);
+          const available = balance ? balance.onHand.minus(balance.reserved) : new D(0);
+          if (!balance || available.lte(0)) continue;
+          const pickQty = D.min(remaining, available);
+          const nextOnHand = balance.onHand.minus(pickQty);
+
+          await tx.stockMovement.create({
+            data: buildMovement({
+              companyId: ctx.companyId,
+              partId: part.id,
+              movementType: "ISSUE",
+              quantity: pickQty,
+              fromLocationId: location.id,
+              referenceType: "JOB",
+              referenceId: job.id,
+              referenceNumber: job.jobNumber ?? job.draftNumber,
+              reason: "Pick slip",
+              actorId: ctx.userId,
+              resultingFromQuantity: nextOnHand,
+              correlationId: ctx.correlationId,
+            }),
+          });
+          await saveBalance(tx, balance, { onHand: nextOnHand });
+          pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty });
+          remaining = remaining.minus(pickQty);
+        }
+      }
+
+      if (pickedForLine.length === 0) continue;
+
+      const totalPicked = pickedForLine.reduce((sum, p) => sum.plus(p.quantity), new D(0));
+      const newReceivedQuantity = alreadyReceived.plus(totalPicked);
       const nowFullyReceived = newReceivedQuantity.gte(line.quantity);
       await tx.jobPartLine.update({
         where: { id: line.id },
@@ -1857,14 +1909,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         },
       });
 
-      picked.push({
-        partId: part.id,
-        partNumber: part.partNumber,
-        description: part.description,
-        binLocationId: location.id,
-        binLocationLabel: `${location.name} (${location.code})`,
-        quantity: pickQty,
-      });
+      picked.push(...pickedForLine);
     }
 
     if (picked.length === 0) return { pickSlipId: null as string | null, picked };

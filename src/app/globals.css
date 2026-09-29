@@ -852,6 +852,16 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
 .compact-dialog { position: fixed; inset: auto; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(480px, 94vw); max-height: min(680px, 90vh); overflow: auto; border-radius: 12px; box-shadow: 0 24px 64px rgba(3, 10, 20, 0.35); }
 .job-editor-drawer { width: min(880px, 96vw); }
 .job-editor-drawer .job-layout { padding: 14px; gap: 14px; }
+/* 2026-09-29 — user request: "When clicking view outwork delivery note, the
+   popup window needs to be big enough to view the table correctly." The
+   delivery-note preview dialog (JobWorkspace.tsx) is a .compact-dialog like
+   many small confirm/edit popups across the app, all sharing that class's
+   480px width — fine for a couple of fields, too narrow for its
+   Description/Quantity/Checked table, which wrapped badly. Same pattern as
+   .job-editor-drawer above: a second modifier class layered on
+   .compact-dialog that only overrides width, so every other .compact-dialog
+   popup is untouched. */
+.delivery-note-dialog { width: min(720px, 94vw); }
 .settings-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 /* 2026-09-10 — the settings tab bar (SettingsTabNav.tsx) now appears on
    every Settings destination, not just 2 of them, and highlights whichever
