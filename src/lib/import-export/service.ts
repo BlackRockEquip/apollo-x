@@ -6,6 +6,7 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { createMaster } from "@/lib/master-data/service";
 import { receiveStock } from "@/lib/inventory/service";
+import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { receiptInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
@@ -420,6 +421,14 @@ function describeRowError(err: unknown): string {
     const fields = columns.map((c) => UNIQUE_FIELD_LABELS[c] ?? c).join(", ");
     return fields ? `A record with the same ${fields} already exists.` : "A duplicate record already exists (unique field conflict).";
   }
+  // 2026-09-29 — createMaster's "parts" case (master-data/service.ts) now
+  // also rejects a part number that's already recorded as some OTHER
+  // part's alternate (superseded/group) number — a collision the P2002
+  // branch above can't catch, since that only fires for a clash against
+  // another part's OWN number. Given its own friendly message here for
+  // the same reason the P2002 branch has one, rather than surfacing the
+  // raw "PART_NUMBER_ALREADY_IN_USE" error code.
+  if (err instanceof Error && err.message === "PART_NUMBER_ALREADY_IN_USE") return "That part number is already in use — either as another part's own number, or as an alternate number already recorded against a part.";
   if (err instanceof Error) return err.message;
   return "Could not import this row.";
 }
@@ -676,9 +685,14 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     // Create-only, same as Customers/Suppliers — matches ModApp's own
     // Import behaviour for master-data catalogs, and avoids a stale sheet
     // silently overwriting a part's current pricing/reorder settings on
-    // re-import (see the file header comment).
-    const duplicate = await prisma.part.findFirst({ where: { companyId, partNumber: { equals: partNumber, mode: "insensitive" } } });
-    if (duplicate) {
+    // re-import (see the file header comment). 2026-09-29 — also checks
+    // alternate (superseded/group) numbers, not just a real part's own
+    // number, so an imported row can't quietly create a duplicate part
+    // under a number some other part already answers to (see
+    // numberAlreadyInUse) — same check createMaster's "parts" case
+    // enforces further down, just done here first to skip the row before
+    // the manufacturer/bin-location side effects below run for nothing.
+    if (await numberAlreadyInUse(prisma, companyId, partNumber)) {
       skipped++;
       rowResults.push({ label: partNumber, status: "skipped", detail: "A part with this part number already exists." });
       continue;

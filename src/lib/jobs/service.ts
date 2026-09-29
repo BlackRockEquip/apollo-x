@@ -5,8 +5,8 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { isCompanyEmailConfigured } from "@/lib/email";
-import { normalized } from "@/lib/master-data/validation";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
+import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import {
   jobsListQuery,
   jobCreateDraftInput,
@@ -955,8 +955,13 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
 
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
-      const partNumberNormalized = normalized(row.partNumber);
-      const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized }, select: { id: true, description: true, binLocationId: true } }) : null;
+      // 2026-09-29 — resolves a typed/pasted/imported part number to its
+      // catalog Part even when it's a SUPERSEDED or GROUP number rather
+      // than the part's own current one (see findPartByNumber's comment
+      // and PartAlternateNumber in schema.prisma) — same lookup Stock
+      // Levels search uses, so a job's parts list recognizes an old or
+      // group number the same way.
+      const part = await findPartByNumber(tx, companyId, row.partNumber, { id: true, description: true, binLocationId: true });
 
       // "In stock" reflects total on-hand across all locations, same
       // purpose as ModApp's InventoryItem lookup against Apollo X's

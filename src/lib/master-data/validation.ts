@@ -79,6 +79,17 @@ export const partInput = z.object({
   binLocationId: z.string().cuid().optional().nullable(),
   reorderMinimum: money, reorderMaximum: money, reorderQuantity: money, active: z.boolean().default(true),
 });
+// 2026-09-29 — user request: "how can we add additional part numbers for
+// parts that have superseded numbers and also have group numbers... two
+// different numbers but have multiple entries?" One part can carry any
+// number of these — a superseded number it used to be known by, or a
+// group/family number a broader interchangeable range shares — each
+// resolving back to this same part (see PartAlternateNumber in
+// schema.prisma and findPartByNumber in inventory/parts-lookup.ts).
+export const partAlternateNumberInput = z.object({
+  number: z.string().trim().min(1).max(150),
+  kind: z.enum(["SUPERSEDED", "GROUP"]),
+});
 export const locationInput = z.object({ code: z.string().trim().min(1).max(50), name: z.string().trim().min(1).max(150), type: z.enum(["STORES","SHELF","BIN","WORKSHOP","PEX_HOLDING","QUARANTINE","RECEIVING","OTHER"]), description: optionalText, parentId: z.string().cuid().optional().nullable(), sortOrder: z.number().int().min(0).max(100000).default(0), active: z.boolean().default(true) });
 export const serviceInput = z.object({ code: z.string().trim().min(1).max(50), description: z.string().trim().min(2).max(500), category: optionalText, unitOfMeasure: z.string().trim().min(1).max(20).default("HOUR"), defaultCost: money, defaultSellingPrice: money, taxCodeId: z.string().cuid().optional().nullable(), active: z.boolean().default(true) });
 export const taxInput = z.object({ code: z.string().trim().min(1).max(30), description: z.string().trim().min(2).max(200), rate: z.union([z.string(), z.number()]).transform(String).refine((v) => /^\d+(\.\d{1,6})?$/.test(v) && Number(v) <= 1, "Rate must be between 0 and 1."), type: z.enum(["STANDARD","ZERO_RATED","EXEMPT","NON_TAXABLE"]), effectiveFrom: z.coerce.date(), effectiveTo: z.coerce.date().optional().nullable(), active: z.boolean().default(true) }).refine((v) => !v.effectiveTo || v.effectiveTo >= v.effectiveFrom, { message: "End date must follow the effective date.", path: ["effectiveTo"] });

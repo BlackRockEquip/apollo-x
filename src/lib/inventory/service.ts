@@ -24,6 +24,7 @@ import type {
   bulkPartSearchInput,
 } from "@/lib/inventory/validation";
 import { deriveStockState } from "@/lib/inventory/stock-state";
+import { normalized } from "@/lib/master-data/validation";
 
 type Tx = Prisma.TransactionClient;
 type Quantity = Prisma.Decimal;
@@ -1068,6 +1069,12 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
       // location select added 2026-09-16 — see binLocationLabel's own
       // comment below for why.
       stockBalances: { where: stockBalanceWhere, include: { location: { select: { code: true, name: true } } }, orderBy: { location: { code: "asc" } } },
+      // 2026-09-29 — user request: "how can we add additional part
+      // numbers for parts that have superseded numbers and also have
+      // group numbers?" Selected here so both the search below and the
+      // returned row (alternateNumbers, for the small badges under the
+      // part number) have them without a second round-trip per part.
+      alternateNumbers: { select: { id: true, number: true, kind: true }, orderBy: { number: "asc" } },
     },
     orderBy: { partNumber: "asc" },
   });
@@ -1091,11 +1098,16 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         (p.manufacturerPartNumber ?? "").toLowerCase().includes(q) ||
         (p.manufacturer?.name ?? "").toLowerCase().includes(q) ||
         (p.binLocation?.code ?? "").toLowerCase().includes(q) ||
-        (p.binLocation?.name ?? "").toLowerCase().includes(q)
+        (p.binLocation?.name ?? "").toLowerCase().includes(q) ||
+        // 2026-09-29 — a part's superseded/group numbers should find it
+        // here the same way its own part number does (see
+        // PartAlternateNumber in schema.prisma).
+        p.alternateNumbers.some((a) => a.number.toLowerCase().includes(q))
       )) return true;
       if (qStripped && (
         stripSeparators(p.partNumber).includes(qStripped) ||
-        stripSeparators(p.manufacturerPartNumber).includes(qStripped)
+        stripSeparators(p.manufacturerPartNumber).includes(qStripped) ||
+        p.alternateNumbers.some((a) => stripSeparators(a.number).includes(qStripped))
       )) return true;
       return false;
     });
@@ -1154,6 +1166,10 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
         // falling back to the single default bin only for a part with no
         // stock anywhere yet (e.g. just created).
         binLocationLabel: buildBinLocationLabel(p.stockBalances, p.binLocation),
+        // 2026-09-29 — badges under the part number in the Stock Levels
+        // table (see StockLevelsWorkspace.tsx) and the "Also known as"
+        // section on the Part Detail page.
+        alternateNumbers: p.alternateNumbers.map((a) => ({ id: a.id, number: a.number, kind: a.kind })),
         reorderMinimum: p.reorderMinimum?.toString() ?? null,
         reorderMaximum: p.reorderMaximum?.toString() ?? null,
         reorderQuantity: p.reorderQuantity?.toString() ?? null,
@@ -1322,6 +1338,7 @@ export async function getInventoryDetail(ctx: RequestContext, partId: string) {
     include: {
       manufacturer: { select: { name: true } },
       binLocation: { select: { id: true, code: true, name: true } },
+      alternateNumbers: { select: { id: true, number: true, kind: true }, orderBy: { number: "asc" } },
       stockBalances: { include: { location: { select: { id: true, code: true, name: true, type: true } } } },
       stockMovements: {
         take: 25,
@@ -1347,6 +1364,9 @@ export async function getInventoryDetail(ctx: RequestContext, partId: string) {
       // single default bin" change as listInventoryPositions above; see
       // buildBinLocationLabel's comment.
       binLocationLabel: buildBinLocationLabel(part.stockBalances, part.binLocation),
+      // 2026-09-29 — "Also known as" on the Part Detail page (see
+      // PartAlternateNumber in schema.prisma).
+      alternateNumbers: part.alternateNumbers.map((a) => ({ id: a.id, number: a.number, kind: a.kind })),
       defaultSellingPrice: viewCost ? (part.defaultSellingPrice?.toString() ?? null) : null,
       reorderMinimum: part.reorderMinimum?.toString() ?? null,
       reorderMaximum: part.reorderMaximum?.toString() ?? null,
@@ -1462,35 +1482,101 @@ export async function listManufacturerOptions(ctx: RequestContext) {
 // lookups use, e.g. import-export's manufacturer/tax-code resolution) —
 // not a fuzzy `contains`, since a bulk check is about confirming specific
 // part numbers exist, not discovering new ones.
+//
+// FIX 2026-09-29 — user report: "when clicking check stock button, and i
+// type in 3J1907 it does not pick up stock, but when I type 3J-1907 it
+// does." Same root cause (and same fix, ported over) as the 2026-09-23
+// "3j1907 doesn't pickup but 3j-1907 does" report on the main Stock
+// Levels search (see stripSeparators' own comment above) — this function
+// never got that fix, since it's a separate code path (a batched exact
+// DB match, not the JS filter listInventoryPositions uses) that was added
+// after that fix landed. Exact match still runs first and is the fast
+// path for the common case; only numbers that still don't match after
+// that (and after the alternate-number check just below) fall back to
+// loading the company's parts and comparing with hyphens/spaces/other
+// separators ignored on both sides, same as the main search.
 // ============================================================
 
 export async function searchPartsByNumbers(ctx: RequestContext, input: z.infer<typeof bulkPartSearchInput>) {
   requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  const companyId = ctx.companyId!;
 
   // Preserves first-seen order while de-duplicating (same input part number
   // pasted twice only needs one lookup / one result row).
   const requested = Array.from(new Set(input.partNumbers.map((p) => p.trim()).filter(Boolean)));
 
+  const partSelect = { binLocation: { select: { code: true, name: true } }, stockBalances: true, alternateNumbers: { select: { number: true } } } as const;
+
   const parts = requested.length
     ? await prisma.part.findMany({
         where: {
-          companyId: ctx.companyId,
+          companyId,
           operationalStatus: "OPERATIONAL",
           OR: requested.map((partNumber) => ({ partNumber: { equals: partNumber, mode: "insensitive" as const } })),
         },
-        include: { binLocation: { select: { code: true, name: true } }, stockBalances: true },
+        include: partSelect,
       })
     : [];
   const byPartNumber = new Map(parts.map((p) => [p.partNumber.toLowerCase(), p]));
 
+  // 2026-09-29 — a pasted number that doesn't match any part's own
+  // partNumber directly might still be a SUPERSEDED or GROUP number
+  // recorded against one (see PartAlternateNumber in schema.prisma). Only
+  // the numbers that missed the direct match above are checked here — one
+  // batched lookup, not a query per line — so "check stock" on an old or
+  // group number resolves to the same part its current number would.
+  const unmatched = requested.filter((p) => !byPartNumber.has(p.toLowerCase()));
+  const byNormalizedAlt = new Map<string, (typeof parts)[number]>();
+  if (unmatched.length) {
+    const alts = await prisma.partAlternateNumber.findMany({
+      where: { companyId, numberNormalized: { in: unmatched.map((p) => normalized(p)!) } },
+      select: { numberNormalized: true, partId: true },
+    });
+    if (alts.length) {
+      const altParts = await prisma.part.findMany({ where: { id: { in: Array.from(new Set(alts.map((a) => a.partId))) }, companyId }, include: partSelect });
+      const partsById = new Map(altParts.map((p) => [p.id, p]));
+      for (const alt of alts) {
+        const part = partsById.get(alt.partId);
+        if (part) byNormalizedAlt.set(alt.numberNormalized, part);
+      }
+    }
+  }
+
+  // Separator-insensitive fallback (see this function's FIX comment
+  // above) — only reached for a number that matched neither a part's own
+  // number nor an alternate number exactly. Loads every operational part
+  // once (own number + alternate numbers) and compares with hyphens/
+  // spaces/etc. stripped from both sides, same as the main Stock Levels
+  // search already does.
+  const stillUnmatched = unmatched.filter((p) => !byNormalizedAlt.has(normalized(p)!));
+  const byStrippedNumber = new Map<string, (typeof parts)[number]>();
+  if (stillUnmatched.length) {
+    const allParts = await prisma.part.findMany({ where: { companyId, operationalStatus: "OPERATIONAL" }, include: partSelect });
+    for (const p of allParts) {
+      const ownKey = stripSeparators(p.partNumber);
+      if (ownKey && !byStrippedNumber.has(ownKey)) byStrippedNumber.set(ownKey, p);
+      for (const alt of p.alternateNumbers) {
+        const altKey = stripSeparators(alt.number);
+        if (altKey && !byStrippedNumber.has(altKey)) byStrippedNumber.set(altKey, p);
+      }
+    }
+  }
+
   return {
     rows: requested.map((partNumber) => {
-      const part = byPartNumber.get(partNumber.toLowerCase()) ?? null;
+      const part = byPartNumber.get(partNumber.toLowerCase())
+        ?? byNormalizedAlt.get(normalized(partNumber)!)
+        ?? byStrippedNumber.get(stripSeparators(partNumber))
+        ?? null;
       if (!part) {
         return { partNumber, found: false, partId: null, description: null, binLocationLabel: null, quantityAvailable: "0" };
       }
       const totals = sumBalances(part.stockBalances);
       return {
+        // The part's own current number, not necessarily the (possibly
+        // superseded/group) number that was typed to find it — same
+        // "resolves to the real thing" behavior as everywhere else this
+        // lookup happens.
         partNumber: part.partNumber,
         found: true,
         partId: part.id,

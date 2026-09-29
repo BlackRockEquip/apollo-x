@@ -527,6 +527,7 @@ model Company {
   manufacturers     Manufacturer[]
   supplierBrands    SupplierManufacturer[]
   parts             Part[]
+  partAlternateNumbers PartAlternateNumber[]
   storageLocations  StorageLocation[]
   serviceItems      ServiceItem[]
   taxCodes          TaxCode[]
@@ -1117,6 +1118,7 @@ model Part {
   stockCountLines        StockCountLine[]
   jobPartLines           JobPartLine[]
   pickSlipLines          PickSlipLine[]
+  alternateNumbers      PartAlternateNumber[]
 
   @@unique([companyId, partNumberNormalized])
   @@index([companyId, description])
@@ -1127,6 +1129,54 @@ model Part {
 enum PartOperationalStatus {
   OPERATIONAL
   HISTORICAL_REFERENCE
+}
+
+// New — 2026-09-29, at the user's request ("how can we add additional
+// part numbers for parts that have superseded numbers and also have
+// group numbers... two different numbers but have multiple entries?").
+// A part can be known by more than its own catalog number: a manufacturer
+// discontinues one number and reissues the same part under a new one
+// (SUPERSEDED), or a number covers a broader interchangeable family/kit
+// (GROUP). Rather than creating a second Part record for each of those —
+// which would split stock, history and reorder settings across records
+// for what's physically the same item — an alternate number is just
+// another way to FIND the same Part: same stock balances, same bin, same
+// movement history, no duplication. See findPartByNumber in
+// inventory/parts-lookup.ts, used everywhere a raw part number typed or
+// imported by a user gets resolved to a Part record (Stock Levels search,
+// adding a part to a job, RFQ/job-kit part matching, Excel/CSV import),
+// so scanning or typing either the superseded or the group number finds
+// the exact same part as the current number would.
+//
+// numberNormalized is unique per company across ALL alternate numbers
+// (enforced at the DB level here), but NOT automatically checked against
+// every other Part's own partNumberNormalized by a DB constraint — Prisma
+// can't express a cross-table unique constraint, so that collision (an
+// alternate number that happens to equal some OTHER part's real number,
+// or a part's own number being changed to equal some OTHER part's
+// alternate number) is checked in application code on both sides instead
+// — see numberAlreadyInUse in inventory/parts-lookup.ts, used by
+// addPartAlternateNumber and by createMaster/updateMaster's "parts" case
+// (master-data/service.ts).
+model PartAlternateNumber {
+  id               String                   @id @default(cuid())
+  companyId        String
+  partId           String
+  number           String
+  numberNormalized String
+  kind             PartAlternateNumberKind
+  createdAt        DateTime                 @default(now())
+
+  company          Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  part             Part                     @relation(fields: [partId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, numberNormalized])
+  @@index([companyId, partId])
+}
+
+enum PartAlternateNumberKind {
+  SUPERSEDED
+  GROUP
 }
 
 model StorageLocation {

@@ -218,6 +218,15 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .status-pill { border-radius: 999px; background: #dcfce7; padding: 5px 9px; color: var(--success); font-size: 10px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
 .status-pill.neutral { background: var(--ink-100); color: var(--ink-700); }
 
+/* 2026-09-29 — user request: "how can we add additional part numbers for
+   parts that have superseded numbers and also have group numbers?" Small
+   tags under a part number on Stock Levels / Part Detail (see
+   PartAlternateNumber in schema.prisma) — reuses .status-pill's own
+   tone-* colors, just normal-case and smaller so a row with several of
+   these doesn't dominate the cell. */
+.alt-number-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.alt-number-badges .status-pill { text-transform: none; font-weight: 600; font-size: 9px; padding: 3px 7px; }
+
 .platform-page { min-height: 100vh; padding: clamp(24px, 5vw, 68px); }
 .platform-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .platform-header > div { display: flex; align-items: center; gap: 12px; }
@@ -456,6 +465,18 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .drawer-fields label.wide { grid-column:1/-1; }
 .drawer-fields label:has(input[type=checkbox]) { display:flex; align-items:center; grid-column:1/-1; }
 .drawer-fields textarea { resize:vertical; }
+/* 2026-09-29 — Alternate part numbers editor on the Add/Edit Part drawer
+   (StockLevelsWorkspace.tsx). Not a <label> like its siblings (nothing
+   here is one control), so .wide alone won't span it under the
+   label.wide rule above — spanned explicitly here instead. */
+.drawer-fields .alt-number-editor { grid-column:1/-1; display:grid; gap:8px; }
+.drawer-fields .alt-number-editor > span { font-size:11px; font-weight:700; color:var(--ink-700); }
+.alt-number-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
+.alt-number-list li { display:flex; align-items:center; gap:8px; border:1px solid var(--ink-150); border-radius:8px; padding:6px 9px; }
+.alt-number-list li .mono { flex:1; font-size:12px; }
+.alt-number-add-row { display:flex; gap:8px; }
+.alt-number-add-row select { flex:0 0 auto; }
+.alt-number-add-row input { flex:1; }
 .form-drawer form > footer { position:sticky; bottom:0; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--ink-150); background:rgba(255,255,255,.95); padding:14px 22px; }
 /* Customer/Supplier "New"/"Edit" drawer (MasterDataWorkspace.tsx) — widened
    at the user's request ("make the supplier and client form wider (to fill

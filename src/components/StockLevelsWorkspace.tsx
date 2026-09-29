@@ -65,7 +65,16 @@ type PositionRow = {
   locationCount: number;
   cost: string | null;
   sellingPrice: string | null;
+  // 2026-09-29 — user request: "how can we add additional part numbers
+  // for parts that have superseded numbers and also have group numbers?"
+  // Every alternate number recorded against this part (see
+  // PartAlternateNumber in schema.prisma) — shown as small badges under
+  // the part number below, and searchable/resolvable everywhere a part
+  // number is typed (see findPartByNumber in inventory/parts-lookup.ts).
+  alternateNumbers: AlternateNumber[];
 };
+type AlternateNumber = { id: string; number: string; kind: "SUPERSEDED" | "GROUP" };
+const ALT_KIND_LABEL: Record<AlternateNumber["kind"], string> = { SUPERSEDED: "Superseded", GROUP: "Group" };
 // 2026-09-22 — user request: "Stock Levels - add columns Cost Price and
 // Selling Price, next to the bin locations column (These two columns only
 // visible to company admins)." canViewCost mirrors listInventoryPositions'
@@ -202,6 +211,18 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
 
+  // 2026-09-29 — alternate (superseded/group) part numbers. Only
+  // meaningful once a part actually exists (they attach to a partId), so
+  // this list is only populated/editable when editing an existing part —
+  // openCreate leaves it empty and the drawer explains why it's hidden
+  // for a brand-new part.
+  const [altNumbers, setAltNumbers] = useState<AlternateNumber[]>([]);
+  const [newAltNumber, setNewAltNumber] = useState("");
+  const [newAltKind, setNewAltKind] = useState<AlternateNumber["kind"]>("SUPERSEDED");
+  const [altSaving, setAltSaving] = useState(false);
+  const [altBusyId, setAltBusyId] = useState<string | null>(null);
+  const [altError, setAltError] = useState("");
+
   // "Add or Import Part" popup — replaces the old standalone "Receive
   // Stock" button (never wired to anything) and "New Part" button.
   const [addImportOpen, setAddImportOpen] = useState(false);
@@ -322,6 +343,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
   function openCreate() {
     setEditing(null); setForm(BLANK_FORM); setNewBinCode(""); setNewBinName(""); setError("");
+    setAltNumbers([]); setNewAltNumber(""); setNewAltKind("SUPERSEDED"); setAltError("");
     void loadOptions();
     setOpen(true);
   }
@@ -336,8 +358,41 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       notes: row.notes || "", active: row.active, binLocationId: row.binLocationId || "",
     });
     setNewBinCode(""); setNewBinName(""); setError("");
+    setAltNumbers(row.alternateNumbers); setNewAltNumber(""); setNewAltKind("SUPERSEDED"); setAltError("");
     void loadOptions();
     setOpen(true);
+  }
+
+  // 2026-09-29 — add/remove alternate (superseded/group) part numbers.
+  // Only reachable once a part exists (see the drawer markup below), so
+  // `editing` is always set here.
+  async function addAltNumber() {
+    if (!editing) return;
+    if (!newAltNumber.trim()) { setAltError("Enter a part number."); return; }
+    setAltSaving(true); setAltError("");
+    try {
+      const r = await fetch(`/api/v1/master-data/parts/${editing.id}/alternate-numbers`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ number: newAltNumber.trim(), kind: newAltKind }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to add that alternate number.");
+      setAltNumbers((prev) => [...prev, { id: body.id, number: body.number, kind: body.kind }].sort((a, b) => a.number.localeCompare(b.number)));
+      setNewAltNumber("");
+      await load(true);
+    } catch (e) { setAltError(e instanceof Error ? e.message : "Unable to add that alternate number."); }
+    finally { setAltSaving(false); }
+  }
+  async function removeAltNumber(altId: string) {
+    if (!editing) return;
+    setAltBusyId(altId); setAltError("");
+    try {
+      const r = await fetch(`/api/v1/master-data/parts/${editing.id}/alternate-numbers/${altId}`, { method: "DELETE" });
+      if (!r.ok) { const body = await r.json(); throw new Error(body.error?.message || "Unable to remove that alternate number."); }
+      setAltNumbers((prev) => prev.filter((a) => a.id !== altId));
+      await load(true);
+    } catch (e) { setAltError(e instanceof Error ? e.message : "Unable to remove that alternate number."); }
+    finally { setAltBusyId(null); }
   }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -629,7 +684,25 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                           )}
                         </div>
                       </td>
-                      <td className="mono">{row.partNumber}</td>
+                      <td className="mono">
+                        {row.partNumber}
+                        {/* 2026-09-29 — user request: "how can we add
+                            additional part numbers for parts that have
+                            superseded numbers and also have group
+                            numbers?" Small tags under the part number,
+                            visible at a glance without a dedicated
+                            column — see PartAlternateNumber in
+                            schema.prisma. */}
+                        {row.alternateNumbers.length > 0 && (
+                          <div className="alt-number-badges">
+                            {row.alternateNumbers.map((a) => (
+                              <span key={a.id} className={`status-pill ${a.kind === "SUPERSEDED" ? "tone-amber" : "tone-purple"}`}>
+                                {ALT_KIND_LABEL[a.kind]}: {a.number}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td>{row.description}</td>
                       <td>{row.manufacturerName || "—"}</td>
                       <td>{row.binLocationLabel || "—"}</td>
@@ -928,6 +1001,53 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                 )}
                 <label className="wide"><span>Notes</span><textarea rows={3} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} /></label>
                 <label><input type="checkbox" checked={form.active} onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} /><span>Active</span></label>
+
+                {/* 2026-09-29 — user request: "how can we add additional
+                    part numbers for parts that have superseded numbers
+                    and also have group numbers... two different numbers
+                    but have multiple entries?" Any number of extra
+                    numbers can be attached to this same part — a
+                    Superseded number it used to be known by, or a Group
+                    number a wider interchangeable range shares — and
+                    scanning/typing/importing either one finds this exact
+                    part (same stock, same history), not a separate
+                    record. Only shown once the part actually exists,
+                    since an alternate number attaches to a real partId —
+                    a brand-new, unsaved part has nowhere to attach it. */}
+                <div className="wide alt-number-editor">
+                  <span>Alternate part numbers</span>
+                  {!editing ? (
+                    <p className="hint-text">Save this part first — you can then edit it to add a superseded or group number.</p>
+                  ) : (
+                    <>
+                      {altNumbers.length > 0 && (
+                        <ul className="alt-number-list">
+                          {altNumbers.map((a) => (
+                            <li key={a.id}>
+                              <span className={`status-pill ${a.kind === "SUPERSEDED" ? "tone-amber" : "tone-purple"}`}>{ALT_KIND_LABEL[a.kind]}</span>
+                              <span className="mono">{a.number}</span>
+                              <button type="button" className="table-action danger" disabled={altBusyId === a.id} onClick={() => void removeAltNumber(a.id)}>
+                                {altBusyId === a.id ? <Loader2 className="spin" size={13} /> : <Trash2 size={13} />}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="alt-number-add-row">
+                        <select value={newAltKind} onChange={(e) => setNewAltKind(e.target.value as AlternateNumber["kind"])}>
+                          <option value="SUPERSEDED">Superseded</option>
+                          <option value="GROUP">Group</option>
+                        </select>
+                        <input value={newAltNumber} onChange={(e) => setNewAltNumber(e.target.value)} placeholder="e.g. OLD-1234" />
+                        <button type="button" className="table-action" disabled={altSaving} onClick={() => void addAltNumber()}>
+                          {altSaving ? <Loader2 className="spin" size={13} /> : <Plus size={13} />} Add
+                        </button>
+                      </div>
+                      {altError ? <div className="inline-error">{altError}</div> : null}
+                      <p className="hint-text">Either number will find this same part everywhere one can be typed — search, jobs, RFQs, job kits, and imports.</p>
+                    </>
+                  )}
+                </div>
               </div>
               {error ? <div className="inline-error">{error}</div> : null}
               <footer><button type="button" className="quiet-button" onClick={() => setOpen(false)}>Cancel</button><button className="gold-button" disabled={saving}>{saving ? <Loader2 className="spin" size={15} /> : null}{saving ? "Saving…" : "Save"}</button></footer>

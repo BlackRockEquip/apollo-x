@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { reserveStockTx } from "@/lib/inventory/service";
 import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
+import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 
 function notFound(): never { throw new Error("NOT_FOUND"); }
 function normalized(value: string) { return value.trim().replace(/\s+/g, " ").toUpperCase(); }
@@ -270,9 +271,13 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
       let nextSortOrder = (currentMax._max.sortOrder ?? -1) + 1;
 
       for (const row of rows) {
-        const partNumberNormalized = normalized(row.partNumber);
-        const part = partNumberNormalized ? await tx.part.findFirst({ where: { companyId, partNumberNormalized, active: true }, select: { id: true } }) : null;
-        if (!part) { skipped.push({ partNumber: row.partNumber, reason: "No active part with this part number in the catalog." }); continue; }
+        // 2026-09-29 — recognizes a SUPERSEDED or GROUP alternate number
+        // the same way the part's own current number is recognized (see
+        // findPartByNumber's comment and PartAlternateNumber in
+        // schema.prisma), so a kit list built from an old or group number
+        // still matches.
+        const part = await findPartByNumber(tx, companyId, row.partNumber, { id: true, active: true });
+        if (!part || !part.active) { skipped.push({ partNumber: row.partNumber, reason: "No active part with this part number in the catalog." }); continue; }
 
         const existingLine = await tx.jobKitLine.findFirst({ where: { jobKitId: id, companyId, partId: part.id } });
         if (existingLine) {

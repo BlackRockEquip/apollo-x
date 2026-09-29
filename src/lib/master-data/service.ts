@@ -3,7 +3,8 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { customerCreateInput, customerInput, inlineAddressInput, inlineContactInput, listQuery, locationInput, manufacturerInput, normalized, partInput, sequenceInput, serviceInput, supplierCreateInput, supplierInput, taxInput, termInput } from "./validation";
+import { customerCreateInput, customerInput, inlineAddressInput, inlineContactInput, listQuery, locationInput, manufacturerInput, normalized, partAlternateNumberInput, partInput, sequenceInput, serviceInput, supplierCreateInput, supplierInput, taxInput, termInput } from "./validation";
+import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { z } from "zod";
 
 export type MasterKind = "customers" | "suppliers" | "parts" | "manufacturers" | "storage-locations" | "services" | "tax-codes" | "commercial-terms" | "numbering";
@@ -88,7 +89,13 @@ export async function createMaster(ctx: RequestContext, kind: MasterKind, raw: u
       case "customers": { const v=customerCreateInput.parse(input); const {address,contacts,...data}=v; created=await tx.customer.create({data:{...data,companyId,mainEmail:data.mainEmail||null,nameNormalized:normalized(data.name)!,accountCodeNormalized:normalized(data.accountCode),creditLimit:data.creditLimit==null?null:new Prisma.Decimal(data.creditLimit)}}); await createInlinePartyChildren(tx,ctx,companyId,"customer",created.id,address,contacts); break; }
       case "suppliers": { const v=supplierCreateInput.parse(input); const {manufacturerIds,address,contacts,...data}=v; created=await tx.supplier.create({data:{...data,companyId,mainEmail:data.mainEmail||null,nameNormalized:normalized(data.name)!,accountCodeNormalized:normalized(data.accountCode),manufacturers:{create:manufacturerIds.map(manufacturerId=>({companyId,manufacturerId}))}}}); await createInlinePartyChildren(tx,ctx,companyId,"supplier",created.id,address,contacts); break; }
       case "manufacturers": { const v=manufacturerInput.parse(input); created=await tx.manufacturer.create({data:{...v,companyId,nameNormalized:normalized(v.name)!,codeNormalized:normalized(v.code)}}); break; }
-      case "parts": { const v=partInput.parse(input); created=await tx.part.create({data:{...v,companyId,partNumberNormalized:normalized(v.partNumber)!,defaultPurchaseCost:v.defaultPurchaseCost==null?null:new Prisma.Decimal(v.defaultPurchaseCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice),reorderMinimum:v.reorderMinimum==null?null:new Prisma.Decimal(v.reorderMinimum),reorderMaximum:v.reorderMaximum==null?null:new Prisma.Decimal(v.reorderMaximum),reorderQuantity:v.reorderQuantity==null?null:new Prisma.Decimal(v.reorderQuantity)}}); break; }
+      // 2026-09-29 — a new part's own number can't collide with an
+      // existing PART's number (the DB's own unique constraint already
+      // catches that as a P2002 -> "DUPLICATE"), but it can also never
+      // have been caught colliding with some OTHER part's ALTERNATE
+      // number — a different table the DB constraint can't see. Checked
+      // here in application code instead (see numberAlreadyInUse).
+      case "parts": { const v=partInput.parse(input); if(await numberAlreadyInUse(tx,companyId,v.partNumber)) throw new Error("PART_NUMBER_ALREADY_IN_USE"); created=await tx.part.create({data:{...v,companyId,partNumberNormalized:normalized(v.partNumber)!,defaultPurchaseCost:v.defaultPurchaseCost==null?null:new Prisma.Decimal(v.defaultPurchaseCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice),reorderMinimum:v.reorderMinimum==null?null:new Prisma.Decimal(v.reorderMinimum),reorderMaximum:v.reorderMaximum==null?null:new Prisma.Decimal(v.reorderMaximum),reorderQuantity:v.reorderQuantity==null?null:new Prisma.Decimal(v.reorderQuantity)}}); break; }
       case "storage-locations": { const v=locationInput.parse(input); if(v.parentId&&!await tx.storageLocation.findFirst({where:{id:v.parentId,companyId}})) throw new Error("PARENT_NOT_FOUND"); created=await tx.storageLocation.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
       case "services": { const v=serviceInput.parse(input); created=await tx.serviceItem.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,defaultCost:v.defaultCost==null?null:new Prisma.Decimal(v.defaultCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice)}}); break; }
       case "tax-codes": { const v=taxInput.parse(input); created=await tx.taxCode.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,rate:new Prisma.Decimal(v.rate)}}); break; }
@@ -107,6 +114,15 @@ export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: st
     const input=schemas[kind].parse({...before,...(raw as Record<string,unknown>)});
     const data: Record<string,unknown>={...input};
     if("name" in data) data.nameNormalized=normalized(data.name as string); if("accountCode" in data) data.accountCodeNormalized=normalized(data.accountCode as string); if("code" in data) data.codeNormalized=normalized(data.code as string); if("partNumber" in data) data.partNumberNormalized=normalized(data.partNumber as string);
+    // 2026-09-29 — a part's number being CHANGED to something else can't
+    // collide with an existing part (DB unique constraint already covers
+    // that) but, same gap as createMaster's "parts" case above, could
+    // still silently collide with some OTHER part's alternate number
+    // without this check — see numberAlreadyInUse. Skipped when the
+    // number isn't actually changing (every part edit re-parses
+    // partNumber whether or not the caller touched it), so a save that
+    // just changes, say, the description never pays for this check.
+    if(kind==="parts" && data.partNumber!==(before as {partNumber?:unknown}).partNumber && await numberAlreadyInUse(tx,companyId,data.partNumber as string,id)) throw new Error("PART_NUMBER_ALREADY_IN_USE");
     for(const k of ["creditLimit","defaultPurchaseCost","defaultSellingPrice","reorderMinimum","reorderMaximum","reorderQuantity","defaultCost","rate"]) if(data[k]!=null) data[k]=new Prisma.Decimal(data[k] as string);
     delete data.manufacturerIds;
     const updated=await (delegate as never as {update(a:unknown):Promise<Record<string,unknown>&{id:string}>}).update({where:{id},data});
@@ -207,6 +223,42 @@ export async function deleteAllParts(ctx: RequestContext) {
     else deactivated++;
   }
   return { total: parts.length, deleted, deactivated };
+}
+
+// New — 2026-09-29, user request: "how can we add additional part
+// numbers for parts that have superseded numbers and also have group
+// numbers... two different numbers but have multiple entries?" A part
+// can carry any number of alternate numbers (SUPERSEDED/GROUP), each
+// resolving back to this same Part rather than living on a separate
+// record — see findPartByNumber in inventory/parts-lookup.ts for where
+// those get looked up (Stock Levels search, adding a part to a job, job
+// kits, RFQs, imports), and the PartAlternateNumber model's own comment
+// in schema.prisma for why. Gated the same as editing the part itself
+// (PARTS_EDIT) — an alternate number is part of the part's own identity,
+// not a separate permission.
+export async function addPartAlternateNumber(ctx: RequestContext, partId: string, raw: unknown) {
+  const companyId = authorize(ctx, "parts", "WRITE", "edit");
+  const input = partAlternateNumberInput.parse(raw);
+  const part = await prisma.part.findFirst({ where: { id: partId, companyId }, select: { id: true } });
+  if (!part) throw new Error("NOT_FOUND");
+  // Can't rely on a DB unique constraint for this half of the check — see
+  // numberAlreadyInUse's own comment on why a real part's own number
+  // needs an application-level check here.
+  if (await numberAlreadyInUse(prisma, companyId, input.number)) throw new Error("PART_NUMBER_ALREADY_IN_USE");
+  const created = await prisma.partAlternateNumber.create({
+    data: { companyId, partId, number: input.number.trim(), numberNormalized: normalized(input.number)!, kind: input.kind },
+  });
+  await prisma.auditEvent.create({ data: audit(ctx, "parts.alternateNumbers", created.id, "CREATE", undefined, { partId, ...created }) });
+  return created;
+}
+
+export async function removePartAlternateNumber(ctx: RequestContext, partId: string, alternateNumberId: string) {
+  const companyId = authorize(ctx, "parts", "WRITE", "edit");
+  const existing = await prisma.partAlternateNumber.findFirst({ where: { id: alternateNumberId, partId, companyId } });
+  if (!existing) throw new Error("NOT_FOUND");
+  await prisma.partAlternateNumber.delete({ where: { id: existing.id } });
+  await prisma.auditEvent.create({ data: audit(ctx, "parts.alternateNumbers", existing.id, "DELETE", existing, undefined) });
+  return { ok: true };
 }
 
 type SoftDeletableKind = "manufacturers" | "storage-locations";

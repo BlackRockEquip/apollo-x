@@ -31,6 +31,21 @@ export default async function PartDetailPage({ params }: { params: Promise<{ id:
               multiple bins listed individually in the table below;
               this line is just the quick summary. */}
           <p className="small-line muted">Bin locations: {detail.part.binLocationLabel || "Not assigned"}</p>
+          {/* 2026-09-29 — user request: "how can we add additional part
+              numbers for parts that have superseded numbers and also
+              have group numbers?" Every alternate number recorded
+              against this part (see PartAlternateNumber in
+              schema.prisma) — added/removed from the Edit Part drawer on
+              Stock Levels, shown here for reference. */}
+          {detail.part.alternateNumbers.length > 0 && (
+            <div className="alt-number-badges">
+              {detail.part.alternateNumbers.map((a) => (
+                <span key={a.id} className={`status-pill ${a.kind === "SUPERSEDED" ? "tone-amber" : "tone-purple"}`}>
+                  {a.kind === "SUPERSEDED" ? "Superseded" : "Group"}: {a.number}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

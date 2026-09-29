@@ -41,6 +41,9 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "EMAIL_REQUIRED") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Email is required." } }, { status: 400 });
   if (error instanceof Error && error.message === "INVALID_EMAIL") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Enter a valid email address." } }, { status: 400 });
   if (error instanceof Error && error.message === "DISPLAY_NAME_TOO_SHORT") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Name must be at least 2 characters." } }, { status: 400 });
+  // 2026-09-29 — alternate (superseded/group) part numbers
+  // (master-data/service.ts's addPartAlternateNumber).
+  if (error instanceof Error && error.message === "PART_NUMBER_ALREADY_IN_USE") return NextResponse.json({ error: { code: "PART_NUMBER_ALREADY_IN_USE", message: "That number is already in use — either as another part's own part number, or as an alternate number already recorded against a part." } }, { status: 409 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }
