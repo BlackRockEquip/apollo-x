@@ -421,7 +421,19 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    content instead of the dialog's width; .data-table-wrap's own
    overflow-x:auto still kicks in and lets them scroll horizontally once
    enough suppliers make them genuinely wider than the dialog. */
-.quote-comparison-table, .quote-entry-table { width:auto; min-width:0; }
+.quote-comparison-table { width:auto; min-width:0; }
+
+/* 2026-09-29 — follow-up report on the Compare quotes dialog's editable
+   grid: "parts table is to far left aligned, space correctly as well as
+   columns should be equally spaced." Unlike .quote-comparison-table
+   above (few columns, sized to content is right), the entry grid can
+   have many supplier columns and needs the opposite treatment: an
+   explicit width plus table-layout:fixed so the two fixed-width leading
+   columns (Part, Qty — see the <colgroup> in JobWorkspace.tsx) take a
+   set amount of space and every supplier column left over shares the
+   REST equally, instead of the browser's normal auto-layout sizing each
+   column to its own loosest content and leaving uneven gaps. */
+.quote-entry-table { width:100%; table-layout:fixed; }
 
 /* the Compare quotes dialog's editable grid (JobWorkspace.tsx,
    showQuoteComparePopup): one column per supplier, each header cell packing
@@ -430,17 +442,33 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    .quote-comparison-table above keeps each supplier's column visually
    separated, but the header needs to stack its own controls vertically
    rather than sit inline like a normal single-line <th>. */
-.quote-entry-table th, .quote-entry-table td { padding:8px 10px; vertical-align:top; }
-.quote-entry-table td:first-child, .quote-entry-table th:first-child { white-space:normal; min-width:140px; }
+.quote-entry-table th, .quote-entry-table td { padding:8px 10px; vertical-align:top; overflow-wrap:break-word; white-space:normal; }
+.quote-entry-table td.quote-entry-qty, .quote-entry-table th.quote-entry-qty { text-align:center; }
 .quote-entry-head { text-transform:none; letter-spacing:normal; }
-.quote-entry-head-inner { display:flex; flex-direction:column; gap:6px; min-width:150px; }
-.quote-entry-head-inner strong { font-size:12px; color:var(--ink-900); }
+.quote-entry-head-inner { display:flex; flex-direction:column; gap:6px; }
+.quote-entry-head-inner strong { font-size:12px; color:var(--ink-900); overflow-wrap:break-word; }
+/* user request: "move the save button next to the status field" */
+.quote-entry-head-row { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.quote-entry-head-row .table-action { flex-shrink:0; white-space:nowrap; }
 .quote-entry-import { position:relative; display:flex; align-items:center; gap:5px; border:1px dashed var(--ink-300); border-radius:6px; padding:5px 8px; font-size:11px; font-weight:700; color:var(--ink-500); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .quote-entry-import input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; }
 .quote-entry-notes { font-size:11px; padding:5px 7px; border:1px solid var(--ink-150); border-radius:6px; width:100%; }
 .quote-entry-cell { display:flex; align-items:center; gap:6px; }
-.quote-entry-cell input[type="number"] { width:90px; }
+.quote-entry-cell input[type="number"] { width:90px; min-width:0; flex:1; }
 .quote-entry-unavailable { display:flex; align-items:center; gap:3px; font-size:10px; color:var(--ink-500); white-space:nowrap; }
+
+/* user reports: dialog body content (the entry grid, the "Saved quotes"
+   heading) sat flush against the dialog's edges — every other popup in
+   this app gets its left/right breathing room from being wrapped in
+   .drawer-fields, which this dialog deliberately isn't (a table doesn't
+   fit that 2-column grid). Same padding as .drawer-fields' own 22px, so
+   it lines up with the header above it. */
+.quote-compare-body { padding:0 22px 20px; }
+/* "make the dialog be able to maximize the screen as to get a better
+   view" — a second modifier class, same layered-class pattern as
+   .job-editor-drawer/.delivery-note-dialog, toggled by a header button
+   rather than fixed at open time. */
+.quote-compare-dialog.maximized { width:98vw; height:96vh; max-height:96vh; }
 
 .table-action { border:0; background:transparent; color:#8c6415; cursor:pointer; font-size:11px; font-weight:750; }
 /* 2026-09-19 — notifications bell, always visible in the topbar next to

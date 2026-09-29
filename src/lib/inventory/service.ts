@@ -1751,12 +1751,26 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, include: { customer: true } });
   if (!job) notFound();
 
+  // 2026-09-29 — follow-up to the multi-bin fix above: job BRE1116 was
+  // STILL failing with "No stock was available to pick right now" even
+  // after that fix landed. Root cause #2: this filter never included
+  // "IN_STOCK" at all. addPartLinesBulk (jobs/service.ts) sets a new line's
+  // status to IN_STOCK — not PENDING — whenever the part's aggregate
+  // on-hand stock already covers the requested quantity at add-time (see
+  // its own comment there); it does NOT set receivedQuantity, so such a
+  // line is genuinely un-picked, just like a PENDING one. Any job whose
+  // parts already showed the "In Stock" status badge (BRE1116 included) had
+  // every one of those lines silently excluded here before the multi-bin
+  // lookup below ever ran, no matter how good that lookup was. The
+  // remaining logic already treats "remaining = quantity - receivedQuantity
+  // (0 for these lines)" correctly, so including IN_STOCK needs no other
+  // change.
   const eligibleLines = await prisma.jobPartLine.findMany({
     where: {
       companyId: ctx.companyId,
       jobId: job.id,
       partId: { not: null },
-      status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"] as never },
+      status: { in: ["PENDING", "IN_STOCK", "ON_ORDER", "PARTIALLY_RECEIVED"] as never },
     },
   });
 

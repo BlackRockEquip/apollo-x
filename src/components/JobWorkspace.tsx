@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
+import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill } from "@/components/StatusPill";
@@ -536,6 +536,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [quoteAnalyzingId, setQuoteAnalyzingId] = useState("");
   const [quoteGuessCounts, setQuoteGuessCounts] = useState<Record<string, number>>({});
   const [quoteSavingId, setQuoteSavingId] = useState("");
+  // 2026-09-29 — follow-up polish on the Compare quotes dialog: the
+  // read-only "Saved quotes" comparison is now tucked behind its own
+  // "Compare Prices" toggle instead of always showing (user request:
+  // "move the saved quotes section behind a button that says 'Compare
+  // Prices'"), and the whole dialog can be expanded to use most of the
+  // screen (user request: "make the dialog be able to maximize the
+  // screen as to get a better view").
+  const [showSavedQuotesCompare, setShowSavedQuotesCompare] = useState(false);
+  const [quoteCompareMaximized, setQuoteCompareMaximized] = useState(false);
   const [partsFollowupResult, setPartsFollowupResult] = useState<{ sent: { supplierName: string }[]; skipped: { supplierName: string; reason: string }[] } | null>(null);
   const [jobKitQuery, setJobKitQuery] = useState("");
   const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
@@ -2212,6 +2221,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteFiles({});
     setQuoteGuessCounts({});
     setQuoteAnalyzingId("");
+    setShowSavedQuotesCompare(false);
+    setQuoteCompareMaximized(false);
   }
 
   function updateQuoteDraftLine(rfqRequestId: string, partLineId: string, patch: Partial<QuoteDraftLine>) {
@@ -3139,9 +3150,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               quote is actually saved) is kept below it, unchanged. */}
           {showQuoteComparePopup && (
           <div className="drawer-backdrop" role="dialog" aria-modal="true">
-          <aside className="form-drawer compact-dialog job-editor-drawer quote-compare-dialog" style={{ maxHeight: "90vh", overflowY: "auto" }}>
-            <header><div><h2>Compare quotes</h2><p>Every supplier asked to quote this job, side by side — import a received quote file or type prices in directly.</p></div><button type="button" onClick={closeQuoteCompare} aria-label="Close dialog"><X size={18} /></button></header>
+          <aside className={`form-drawer compact-dialog job-editor-drawer quote-compare-dialog${quoteCompareMaximized ? " maximized" : ""}`} style={{ maxHeight: "90vh", overflowY: "auto" }}>
+            <header>
+              <div><h2>Compare quotes</h2><p>Every supplier asked to quote this job, side by side — import a received quote file or type prices in directly.</p></div>
+              {/* user request: "make the dialog be able to maximize the
+                  screen as to get a better view" */}
+              <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                <button type="button" onClick={() => setQuoteCompareMaximized((v) => !v)} aria-label={quoteCompareMaximized ? "Restore dialog size" : "Maximize dialog"} title={quoteCompareMaximized ? "Restore" : "Maximize"}>
+                  {quoteCompareMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button type="button" onClick={closeQuoteCompare} aria-label="Close dialog"><X size={18} /></button>
+              </div>
+            </header>
 
+            <div className="quote-compare-body">
             {job.rfqRequests.length === 0 ? (
               <p className="table-state compact-empty-state">No suppliers have been asked to quote this job yet — use &quot;Request quotes (RFQ)&quot; first.</p>
             ) : job.partLines.length === 0 ? (
@@ -3150,9 +3172,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <>
                 <div className="data-table-wrap">
                   <table className="data-table quote-entry-table">
+                    {/* user request: "parts table is to far left aligned,
+                        space correctly as well as columns should be
+                        equally spaced" — fixed widths for Part/Qty, every
+                        supplier column shares the rest equally (see
+                        .quote-entry-table{{table-layout:fixed}} in
+                        globals.css). */}
+                    <colgroup>
+                      <col style={{ width: 170 }} />
+                      <col style={{ width: 64 }} />
+                      {job.rfqRequests.map((r) => <col key={r.id} />)}
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th>Part</th>
+                        {/* user request: "parts table does not show
+                            headers (Qty, Part number/Description, Unit,
+                            etc)" */}
+                        <th rowSpan={2}>Part</th>
+                        <th rowSpan={2} className="quote-entry-qty">Qty</th>
                         {job.rfqRequests.map((request) => {
                           const requestId = String(request.id);
                           const status = String(request.status || "SKIPPED");
@@ -3164,7 +3201,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                             <th key={request.id} className="supplier-group-start quote-entry-head">
                               <div className="quote-entry-head-inner">
                                 <strong>{text(request.supplier.name)}</strong>
-                                <span className={`status-pill ${tone}`}>{RFQ_STATUS_LABELS[status] || status.replaceAll("_", " ")}</span>
+                                {/* user request: "move the save button next
+                                    to the status field" */}
+                                <div className="quote-entry-head-row">
+                                  <span className={`status-pill ${tone}`}>{RFQ_STATUS_LABELS[status] || status.replaceAll("_", " ")}</span>
+                                  <button type="button" className="table-action" disabled={quoteSavingId === requestId} onClick={() => void saveQuoteForRequest(requestId)}>{quoteSavingId === requestId ? <Loader2 className="spin" size={12} /> : <Save size={12} />} {quoteSavingId === requestId ? "Saving…" : "Save"}</button>
+                                </div>
                                 <label className="quote-entry-import">
                                   <Upload size={12} />
                                   <span>{importedFile ? importedFile.name : "Import quote file"}</span>
@@ -3173,17 +3215,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                                 {analyzing && <span className="muted small-line">Analyzing file for prices…</span>}
                                 {!analyzing && guessCount > 0 && <span className="muted small-line">Guessed {guessCount} price{guessCount === 1 ? "" : "s"} — review below.</span>}
                                 <input className="quote-entry-notes" value={quoteNotesByRequest[requestId] || ""} onChange={(e) => setQuoteNotesByRequest((c) => ({ ...c, [requestId]: e.target.value }))} placeholder="Notes (optional)" />
-                                <button type="button" className="table-action" disabled={quoteSavingId === requestId} onClick={() => void saveQuoteForRequest(requestId)}>{quoteSavingId === requestId ? <Loader2 className="spin" size={12} /> : <Save size={12} />} {quoteSavingId === requestId ? "Saving…" : "Save"}</button>
                               </div>
                             </th>
                           );
                         })}
+                      </tr>
+                      <tr>
+                        {job.rfqRequests.map((request) => <th key={request.id} className="supplier-group-start">Unit price</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {job.partLines.map((line) => (
                         <tr key={line.id}>
                           <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
+                          <td className="quote-entry-qty">{text(line.quantity)}</td>
                           {job.rfqRequests.map((request) => {
                             const requestId = String(request.id);
                             const draft = quoteDrafts[requestId]?.[String(line.id)] || { unitPrice: "", available: true, notes: "" };
@@ -3204,7 +3249,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td><strong>Total (unsaved)</strong></td>
+                        <td colSpan={2}><strong>Total (unsaved)</strong></td>
                         {job.rfqRequests.map((request) => <td key={request.id} className="supplier-group-start"><strong>R{draftQuoteTotal(String(request.id)).toFixed(2)}</strong></td>)}
                       </tr>
                     </tfoot>
@@ -3214,69 +3259,82 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </>
             )}
 
-            {job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (() => {
-              const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-              const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
-              return <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                  <h3>Saved quotes</h3>
-                  <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
-                </div>
-                <div className="data-table-wrap"><table className="data-table quote-comparison-table"><thead>
-                  <tr>
-                    <th rowSpan={2}>Part</th>
-                    {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
-                  </tr>
-                  <tr>
-                    {quotedRequests.map((r) => <Fragment key={r.id}><th className="supplier-group-start">Unit</th><th>Total</th></Fragment>)}
-                  </tr>
-                </thead><tbody>
-                  {job.partLines.map((line) => {
-                    const cheapestQuoteId = cheapestRfqQuoteId(String(line.id), job.rfqRequests);
-                    const qty = Number(line.quantity ?? 0);
-                    return <tr key={line.id}>
-                      <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
-                      {quotedRequests.map((request) => {
-                        const quote = request.quote!;
-                        const quoteLine = quote.lines.find((l) => l.partLineId === String(line.id));
-                        const quoted = !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
-                        const isCheapest = quoted && String(quote.id) === cheapestQuoteId;
-                        const isPreferred = !!quoteLine?.preferred;
-                        const unit = quoted ? Number(quoteLine!.unitPrice) : null;
-                        const cellStyle = isCheapest ? { background: "rgba(59,130,246,0.1)" } : undefined;
-                        return <Fragment key={request.id}>
-                          <td className="supplier-group-start" style={cellStyle}>
-                            {quoteLine && quoteLine.available === false ? <span className="muted small-line">Unavailable</span> : quoted ? (
-                              <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => void togglePreferred(String(line.id), String(quote.id))}>
-                                <Star size={12} fill={isPreferred ? "currentColor" : "none"} /> R{unit!.toFixed(2)}
-                              </button>
-                            ) : <span className="muted small-line">—</span>}
-                          </td>
-                          <td style={cellStyle}>{quoted ? `R${(unit! * qty).toFixed(2)}` : <span className="muted small-line">—</span>}</td>
-                        </Fragment>;
+            {/* user request: "move the saved quotes section behind a
+                button that says 'Compare Prices' which will then bring
+                up the table shown" — was always-visible before; now a
+                toggle, still only offered once at least one quote has
+                actually been saved. */}
+            {job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <button type="button" className="quiet-button" onClick={() => setShowSavedQuotesCompare((v) => !v)}>
+                  <Columns3 size={14} /> {showSavedQuotesCompare ? "Hide saved quotes" : "Compare Prices"}
+                </button>
+                {showSavedQuotesCompare && (() => {
+                  const quotedRequests = job.rfqRequests.filter((r) => r.quote);
+                  const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
+                  return <div style={{ marginTop: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                      <h3>Saved quotes</h3>
+                      <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
+                    </div>
+                    <div className="data-table-wrap"><table className="data-table quote-comparison-table"><thead>
+                      <tr>
+                        <th rowSpan={2}>Part</th>
+                        {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
+                      </tr>
+                      <tr>
+                        {quotedRequests.map((r) => <Fragment key={r.id}><th className="supplier-group-start">Unit</th><th>Total</th></Fragment>)}
+                      </tr>
+                    </thead><tbody>
+                      {job.partLines.map((line) => {
+                        const cheapestQuoteId = cheapestRfqQuoteId(String(line.id), job.rfqRequests);
+                        const qty = Number(line.quantity ?? 0);
+                        return <tr key={line.id}>
+                          <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
+                          {quotedRequests.map((request) => {
+                            const quote = request.quote!;
+                            const quoteLine = quote.lines.find((l) => l.partLineId === String(line.id));
+                            const quoted = !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
+                            const isCheapest = quoted && String(quote.id) === cheapestQuoteId;
+                            const isPreferred = !!quoteLine?.preferred;
+                            const unit = quoted ? Number(quoteLine!.unitPrice) : null;
+                            const cellStyle = isCheapest ? { background: "rgba(59,130,246,0.1)" } : undefined;
+                            return <Fragment key={request.id}>
+                              <td className="supplier-group-start" style={cellStyle}>
+                                {quoteLine && quoteLine.available === false ? <span className="muted small-line">Unavailable</span> : quoted ? (
+                                  <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => void togglePreferred(String(line.id), String(quote.id))}>
+                                    <Star size={12} fill={isPreferred ? "currentColor" : "none"} /> R{unit!.toFixed(2)}
+                                  </button>
+                                ) : <span className="muted small-line">—</span>}
+                              </td>
+                              <td style={cellStyle}>{quoted ? `R${(unit! * qty).toFixed(2)}` : <span className="muted small-line">—</span>}</td>
+                            </Fragment>;
+                          })}
+                        </tr>;
                       })}
-                    </tr>;
-                  })}
-                </tbody><tfoot>
-                  <tr>
-                    <td><strong>Quote total</strong></td>
-                    {quotedRequests.map((request) => <Fragment key={request.id}><td className="supplier-group-start" /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
-                  </tr>
-                  {/* 2026-09-15, user request: "add total field to compare
-                      parts table" — the per-supplier "Quote total" row
-                      above already existed; this adds the combined total
-                      across whichever supplier's price is picked per part
-                      (the star toggle), previously only shown as plain
-                      text below the table, now also as a row in the table
-                      itself. */}
-                  <tr>
-                    <td><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
-                    <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
-                  </tr>
-                </tfoot></table></div>
-                <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier.</p>
-              </div>;
-            })()}
+                    </tbody><tfoot>
+                      <tr>
+                        <td><strong>Quote total</strong></td>
+                        {quotedRequests.map((request) => <Fragment key={request.id}><td className="supplier-group-start" /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
+                      </tr>
+                      {/* 2026-09-15, user request: "add total field to compare
+                          parts table" — the per-supplier "Quote total" row
+                          above already existed; this adds the combined total
+                          across whichever supplier's price is picked per part
+                          (the star toggle), previously only shown as plain
+                          text below the table, now also as a row in the table
+                          itself. */}
+                      <tr>
+                        <td><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
+                        <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
+                      </tr>
+                    </tfoot></table></div>
+                    <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier.</p>
+                  </div>;
+                })()}
+              </div>
+            )}
+            </div>
           </aside>
           </div>
           )}
