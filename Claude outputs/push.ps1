@@ -1,55 +1,40 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Add cancel picking slip action for job-scoped picks
+Add Delete to Picking Slip History and a per-job pick slip list
 
-"in a job, when creating a picking slip, need a way to cancel picking
-slip if a error was made."
+"Picking slip history, add a delete slip button and allocate stock
+back" plus "make viewing already created pickslips visible within the
+job self."
 
-New PickSlip.status (ACTIVE/CANCELLED, schema migration), plus
-cancelledAt/cancelledById/cancelReason audit fields, and three new
-PickSlipLine columns (jobPartLineId, previousStatus, stockMovementId)
-so a cancel can precisely reverse each line without guessing:
+1. Stock Levels' Picking Slip History table gets a Status column
+   (Active/Cancelled) and, on any still-active row, a Delete button --
+   reuses the cancelPickSlip action added earlier today (restores the
+   stock the slip took, same as Job Workspace's own "Cancel" button),
+   just labelled Delete here and gated behind the same manage
+   permission as the rest of that tab. A cancelled slip's row stays in
+   the list (as a record of what happened) but loses its Delete
+   button -- it can still be reprinted.
 
-- Restores the stock the line took, via a new UNPICK stock movement
-  (StockMovementType already reserved this value, unused until now)
-  linked back to the original ISSUE via reversalOfId.
-- Rolls the linked JobPartLine's pickedQuantity back by this slip's
-  share, and once that reaches zero restores the status the line had
-  right before THIS specific pick (PickSlipLine.previousStatus -- kept
-  separate from JobPartLine.previousStatus, which stays reserved for
-  the unrelated "Mark received" undo flow).
-- A line already marked Received since the pick (status has moved on
-  from PICKED) has its stock restored but its status/pickedQuantity
-  left alone -- silently un-receiving a person's own confirmation
-  would be a bigger surprise than a little stale pickedQuantity. The
-  response's skippedLines count surfaces this rather than staying
-  silent.
-- A PickSlipLine from before this migration, or from Stock Levels' own
-  separate createPickSlip path, simply has no jobPartLineId -- stock
-  is still restored, there's just no job line to roll back.
+2. A Job's own Parts screen now lists every picking slip ever created
+   for that job -- date, line count, status, Print/Cancel per row --
+   not just the ephemeral "just created" banner from this visit.
+   Backed by a small extension to listPickSlips (a new jobId filter on
+   GET /api/v1/inventory/pick-slips) rather than a new endpoint, so
+   Stock Levels' own company-wide history and this job-scoped one share
+   one code path. The existing single-slip "Cancel" button (from
+   earlier today) and this list's own per-row Cancel button now share
+   one generalized cancelJobPickSlip(id) handler instead of being
+   wired to the one most-recently-created slip only.
 
-New cancelPickSlip service function (inventory/service.ts) and POST
-/api/v1/inventory/pick-slips/[id]/cancel route. JobWorkspace's picking
-slip result banner gets a "Cancel" button next to the existing Print
-button.
+No schema changes -- PickSlip.status/cancelledAt/cancelReason already
+existed from today's earlier cancel-pick-slip work; this just surfaces
+them in the two list views and wires a second entry point to the same
+cancel action.
 
-Known simplification, documented in code: no reservation is recreated
-on cancel (the part goes back to needing a fresh reserve/pick like any
-other outstanding line). Also documented: fully cancelling several
-layered pick slips against the same line, in the wrong order, can
-leave it stuck at status PICKED with pickedQuantity 0 instead of its
-true original status -- a rare edge case, not solved with a full
-undo-history stack.
-
-Includes a schema migration (PickSlipStatus, PickSlip/PickSlipLine
-columns) -- Render's build command runs ``prisma migrate deploy`` on
-every deploy, so pushing is enough, no manual migration step needed.
-
-prisma/schema.prisma, prisma/migrations/20260929140000_pick_slip_cancel/,
 src/lib/inventory/service.ts, src/lib/inventory/validation.ts,
-src/app/api/v1/inventory/pick-slips/[id]/cancel/route.ts,
-src/components/JobWorkspace.tsx.
+src/app/api/v1/inventory/pick-slips/route.ts,
+src/components/StockLevelsWorkspace.tsx, src/components/JobWorkspace.tsx.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

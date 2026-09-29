@@ -120,7 +120,7 @@ const BLANK_FORM: PartForm = {
 type PickEntry = { partId: string; partNumber: string; description: string; binLocationLabel: string | null; quantityAvailable: number; quantity: number };
 type JobOption = { id: string; jobNumber: string; customerName: string | null };
 type PickSlipLineData = { partNumber: string; description: string; quantity: string; binLocationLabel: string | null };
-type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; lines: PickSlipLineData[] };
+type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; lines: PickSlipLineData[] };
 type BulkSearchRow = { partNumber: string; found: boolean; partId: string | null; description: string | null; binLocationLabel: string | null; quantityAvailable: string };
 
 function escapeHtml(s: string) {
@@ -276,6 +276,10 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [history, setHistory] = useState<PickSlipData[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  // 2026-09-29 — "Delete slip" (user request: "add a delete slip button
+  // and allocate stock back") — id of the slip currently being cancelled,
+  // so its own row can show a spinner without blocking the others.
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   // 2026-09-18 — user report: "when saving a part number, it jumps to the
   // top of the table again, does not carry on where we were." Root cause
@@ -340,6 +344,31 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     finally { setHistoryLoading(false); }
   }, []);
   useEffect(() => { if (tab === "pickslips") void loadHistory(); }, [tab, loadHistory]);
+
+  // 2026-09-29 — reverses a picking slip: restores the stock it took (see
+  // cancelPickSlip in inventory/service.ts — same action JobWorkspace's own
+  // "Cancel" button on a freshly-created slip uses) and marks it cancelled
+  // rather than actually removing the row, so it stays in this history as
+  // a record of what happened, just no longer actionable.
+  async function deletePickSlip(ps: PickSlipData) {
+    if (!confirm(`Delete this picking slip for ${ps.jobNumber}? The stock it took will be allocated back onto the shelf.`)) return;
+    setCancellingId(ps.id); setHistoryError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-slips/${ps.id}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to delete picking slip.");
+      await loadHistory();
+      void load(true);
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : "Unable to delete picking slip.");
+    } finally {
+      setCancellingId(null);
+    }
+  }
 
   function openCreate() {
     setEditing(null); setForm(BLANK_FORM); setNewBinCode(""); setNewBinName(""); setError("");
@@ -736,19 +765,27 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           {historyError ? <div className="inline-error">{historyError}</div> : null}
           <div className="data-table-wrap">
             <table className="data-table">
-              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
+              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th><th>Status</th><th className="actions">Actions</th></tr></thead>
               <tbody>
                 {historyLoading ? (
-                  <tr><td colSpan={5} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={6} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : history.length === 0 ? (
-                  <tr><td colSpan={5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
+                  <tr><td colSpan={6} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
                 ) : history.map((ps) => (
                   <tr key={ps.id}>
                     <td><Link href={`/jobs/${ps.jobId}`} className="action-link">{ps.jobNumber}</Link></td>
                     <td>{ps.customerName || "—"}</td>
                     <td>{new Date(ps.createdAt).toLocaleString()}</td>
                     <td>{ps.lines.length}</td>
-                    <td className="actions"><button type="button" className="table-action" onClick={() => setPickResult(ps)}><Printer size={14} /> Reprint</button></td>
+                    <td>{ps.status === "CANCELLED" ? <span className="status-pill tone-amber">Cancelled</span> : <span className="status-pill tone-green">Active</span>}</td>
+                    <td className="actions">
+                      <button type="button" className="table-action" onClick={() => setPickResult(ps)}><Printer size={14} /> Reprint</button>
+                      {hasManage && ps.status !== "CANCELLED" && (
+                        <button type="button" className="table-action" disabled={cancellingId === ps.id} onClick={() => void deletePickSlip(ps)}>
+                          {cancellingId === ps.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

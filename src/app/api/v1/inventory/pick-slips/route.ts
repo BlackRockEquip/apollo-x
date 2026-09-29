@@ -13,6 +13,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const input = pickSlipQuery.parse({
+      jobId: url.searchParams.get("jobId") ?? undefined,
       page: url.searchParams.get("page") ?? "1",
       pageSize: url.searchParams.get("pageSize") ?? "50",
     });

@@ -362,10 +362,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [creatingPickSlip, setCreatingPickSlip] = useState(false);
   const [pickSlipError, setPickSlipError] = useState("");
   const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
-  // 2026-09-29 — "Cancel" on the pick slip just created above (user
-  // request: "need a way to cancel picking slip if a error was made") —
-  // see cancelJobPickSlip below and cancelPickSlip in inventory/service.ts.
-  const [cancellingPickSlip, setCancellingPickSlip] = useState(false);
+  // 2026-09-29 — "Cancel"/"Delete" on a pick slip (user request: "need a
+  // way to cancel picking slip if a error was made", later "add a delete
+  // slip button and allocate stock back") — see cancelJobPickSlip below
+  // and cancelPickSlip in inventory/service.ts. Keyed by pick slip id
+  // (rather than a single boolean) since it now also gates each row of
+  // jobPickSlips below, not just the just-created banner.
+  const [cancellingPickSlipId, setCancellingPickSlipId] = useState<string | null>(null);
+  // 2026-09-29 — user request: "make viewing already created pickslips
+  // visible within the job self." Persistent list of every picking slip
+  // ever created for this job (via either "Create picking slip" button
+  // above, scoped by createPickSlipForJob, or Stock Levels' own separate
+  // pick flow against this same job — listPickSlips returns both), so a
+  // slip created in an earlier visit/session is still visible here, not
+  // just the ephemeral pickSlipResult banner from just now.
+  type JobPickSlipData = {
+    id: string;
+    createdAt: string;
+    status: string;
+    cancelledAt: string | null;
+    cancelReason: string | null;
+    jobNumber: string | null;
+    lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[];
+  };
+  const [jobPickSlips, setJobPickSlips] = useState<JobPickSlipData[]>([]);
+  const [jobPickSlipsLoading, setJobPickSlipsLoading] = useState(false);
+  const [jobPickSlipsError, setJobPickSlipsError] = useState("");
   // RFQ moved into a popup, triggered by a button next to the parts
   // list/"Add / cross-check with stock" area — matches ModApp's RfqPanel
   // (its own request-quotes button opens a modal rather than showing the
@@ -1233,6 +1255,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setTimeout(doPrint, 400);
   }
 
+  // 2026-09-29 — the persistent "Picking slips for this job" list (see
+  // jobPickSlips' own comment above) — separate from load()/job's own GET
+  // since PickSlip isn't part of the Job model's own nested includes.
+  const loadJobPickSlips = useCallback(async () => {
+    if (!jobId) return;
+    setJobPickSlipsLoading(true); setJobPickSlipsError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-slips?jobId=${jobId}&pageSize=50`, { cache: "no-store" });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to load picking slips.");
+      setJobPickSlips(b.items || []);
+    } catch (e) {
+      setJobPickSlipsError(e instanceof Error ? e.message : "Unable to load picking slips.");
+    } finally {
+      setJobPickSlipsLoading(false);
+    }
+  }, [jobId]);
+  useEffect(() => { void loadJobPickSlips(); }, [loadJobPickSlips]);
+
   async function createJobPickSlip() {
     if (!jobId) return;
     setCreatingPickSlip(true); setPickSlipError(""); setPickSlipResult(null);
@@ -1242,6 +1283,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to create picking slip.");
       setPickSlipResult(b);
       await load(true);
+      await loadJobPickSlips();
     } catch (e) {
       setPickSlipError(e instanceof Error ? e.message : "Unable to create picking slip.");
     } finally {
@@ -1249,29 +1291,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  // 2026-09-29 — reverses the pick slip just created above: restores the
-  // stock it took and, where the part line hasn't moved on since (see
-  // cancelPickSlip's own comment for the "already marked received" case),
-  // rolls its Picked status back too. Clears pickSlipResult on success so
-  // the banner (and its now-stale Print/Cancel buttons) goes away.
-  async function cancelJobPickSlip() {
-    const pickSlip = pickSlipResult?.pickSlip;
-    if (!pickSlip) return;
-    setCancellingPickSlip(true); setPickSlipError("");
+  // 2026-09-29 — reverses a pick slip (the one just created above, via the
+  // banner's own Cancel button, or an older one listed below via its row's
+  // Cancel/Delete button): restores the stock it took and, where the part
+  // line hasn't moved on since (see cancelPickSlip's own comment for the
+  // "already marked received" case), rolls its Picked status back too.
+  // Clears pickSlipResult on success if it was the one just cancelled, so
+  // a stale banner (with now-dead Print/Cancel buttons) doesn't linger.
+  async function cancelJobPickSlip(pickSlipId: string) {
+    setCancellingPickSlipId(pickSlipId); setPickSlipError(""); setJobPickSlipsError("");
     try {
-      const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlip.id}/cancel`, {
+      const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlipId}/cancel`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to cancel picking slip.");
-      setPickSlipResult(null);
+      if (pickSlipResult?.pickSlip?.id === pickSlipId) setPickSlipResult(null);
       await load(true);
+      await loadJobPickSlips();
     } catch (e) {
-      setPickSlipError(e instanceof Error ? e.message : "Unable to cancel picking slip.");
+      const message = e instanceof Error ? e.message : "Unable to cancel picking slip.";
+      setPickSlipError(message);
+      setJobPickSlipsError(message);
     } finally {
-      setCancellingPickSlip(false);
+      setCancellingPickSlipId(null);
     }
   }
 
@@ -2948,9 +2993,47 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {pickSlipResult.pickSlip ? (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
-                    <button type="button" className="quiet-button" disabled={cancellingPickSlip} onClick={() => void cancelJobPickSlip()}>{cancellingPickSlip ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlip ? "Cancelling…" : "Cancel"}</button>
+                    <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Cancelling…" : "Cancel"}</button>
                   </span>
                 ) : null}
+              </div>
+            ) : null}
+            {/* 2026-09-29 — user request: "make viewing already created
+                pickslips visible within the job self." Persistent list of
+                every picking slip ever created for this job (unlike the
+                banner above, which only shows the one just created this
+                visit) — see jobPickSlips' own comment near its useState
+                for why this needs its own fetch rather than riding along
+                on job's own GET. Collapsed away entirely once there's
+                nothing to show and nothing still loading, so a job with no
+                picking history doesn't grow an empty section. */}
+            {jobPickSlipsError ? <div className="inline-error">{jobPickSlipsError}</div> : null}
+            {jobPickSlipsLoading || jobPickSlips.length > 0 ? (
+              <div className="data-table-wrap" style={{ margin: "0 14px 10px" }}>
+                <table className="data-table">
+                  <thead><tr><th>Generated</th><th>Lines</th><th>Status</th><th className="actions">Actions</th></tr></thead>
+                  <tbody>
+                    {jobPickSlipsLoading ? (
+                      <tr><td colSpan={4} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
+                    ) : (
+                      jobPickSlips.map((ps) => (
+                        <tr key={ps.id}>
+                          <td>{new Date(ps.createdAt).toLocaleString()}</td>
+                          <td>{ps.lines.length}</td>
+                          <td>{ps.status === "CANCELLED" ? <span className="status-pill tone-amber">Cancelled</span> : <span className="status-pill tone-green">Active</span>}</td>
+                          <td className="actions">
+                            <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
+                            {ps.status !== "CANCELLED" && (
+                              <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
+                                {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Cancelling…" : "Cancel"}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             ) : null}
             {showAddParts && (

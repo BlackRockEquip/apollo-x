@@ -157,6 +157,10 @@ export const pickSlipCreateInput = z.object({
 });
 
 export const pickSlipQuery = z.object({
+  // 2026-09-29 — jobId added so a Job's own Parts screen can list just its
+  // own picking slips (see JobWorkspace's "Picking slips for this job"
+  // section) instead of only Stock Levels' company-wide history.
+  jobId: optionalId,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
