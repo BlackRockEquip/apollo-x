@@ -805,6 +805,24 @@ model CompanySettings {
   smtpFromName           String?
   smtpConfiguredAt       DateTime?
 
+  // Supplier email templates — added 2026-09-29 at the user's request
+  // ("Create a template tab under settings which allows me to edit the
+  // message/email sent to suppliers, add/edit a signature field..."). Null
+  // means "use the built-in default text" (see DEFAULT_RFQ_SUBJECT /
+  // DEFAULT_RFQ_BODY / DEFAULT_FOLLOWUP_SUBJECT / DEFAULT_FOLLOWUP_BODY /
+  // DEFAULT_SIGNATURE in src/lib/email-templates.ts), so a company that's
+  // never opened the new Templates tab sees no change in the emails it
+  // sends. emailSignature is shared by both the RFQ-request and
+  // parts-follow-up emails. The "from" address/name stay on
+  // smtpFromAddress/smtpFromName above — that's SMTP transport
+  // configuration, not message content, so the Templates tab only shows
+  // them as read-only reference next to the editors.
+  rfqEmailSubject        String?
+  rfqEmailBody           String?
+  followupEmailSubject   String?
+  followupEmailBody      String?
+  emailSignature         String?
+
   // Per-company file-storage override — added 2026-09-14, Super Admin
   // (Platform > Companies > [company]) setting only, not editable by the
   // company's own Company Admin. Null storageProvider means "use the

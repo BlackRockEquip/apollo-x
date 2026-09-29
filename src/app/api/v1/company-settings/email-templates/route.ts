@@ -1,0 +1,2 @@
+import {NextRequest,NextResponse} from "next/server";import {requireRequestContext} from "@/lib/auth/session";import {apiError} from "@/lib/http/errors";import {requireSameOrigin} from "@/lib/security/request";import {updateCompanyEmailTemplates} from "@/lib/master-data/company-settings-service";
+export async function PATCH(r:NextRequest){try{requireSameOrigin(r);return NextResponse.json(await updateCompanyEmailTemplates(await requireRequestContext(),await r.json()));}catch(e){return apiError(e);}}

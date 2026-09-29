@@ -4,6 +4,9 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { deleteAttachment, getAttachmentDownloadUrl, storeAttachment } from "@/lib/attachments/service";
+import { verifySmtpConnection } from "@/lib/email";
+import { SmtpTestError } from "@/lib/http/errors";
+import { recordAudit } from "@/lib/audit/service";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -14,6 +17,30 @@ const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable(
 // updateCompanySettings below — and getCompanySettings never returns the
 // real value, only a `smtpConfigured` boolean.
 export const settingsInput = z.object({ legalName: z.string().trim().min(2).max(200), tradingName: text, registrationNumber: text, vatNumber: text, mainTelephone: text, mainEmail: z.string().trim().email().optional().nullable().or(z.literal("")), website: text, defaultCurrencyCode: z.string().trim().length(3), defaultTaxJurisdiction: z.string().trim().length(2), defaultTaxCodeId: z.string().cuid().optional().nullable(), defaultPaymentTermId: z.string().cuid().optional().nullable(), quoteValidityDays: z.number().int().min(1).max(365), themeColor: color, accentColor: color, secondaryColor: color, documentHeaderText: text, documentFooterText: z.string().trim().max(2000).optional().nullable(), smtpHost: text, smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: text, smtpPassword: z.string().trim().max(500).optional().nullable(), smtpFromAddress: z.string().trim().email().optional().nullable().or(z.literal("")), smtpFromName: text });
+// 2026-09-29 — "Test connection" button on the SMTP settings section. Only
+// the fields .verify() actually needs — no fromName/fromAddress, since
+// those don't affect whether the server accepts the connection/login.
+// smtpPassword is optional here for the same reason it's optional on
+// settingsInput above: the field is blank whenever a password is already
+// stored (it's write-only), and testCompanySmtpConnection below falls back
+// to that stored value exactly the way updateCompanySettings does.
+const smtpTestInput = z.object({ smtpHost: z.string().trim().min(1, "SMTP host is required."), smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: z.string().trim().min(1, "SMTP username is required."), smtpPassword: z.string().trim().max(500).optional().nullable() });
+// 2026-09-29 — Settings > Templates tab (CompanyTemplatesForm.tsx). A
+// separate, smaller schema/endpoint from settingsInput/updateCompanySettings
+// above rather than folding these onto that same PATCH: that one requires
+// legalName (min 2 chars) and rewrites the whole Company/Branding form's
+// worth of fields, so a Templates-only save would either have to resend
+// every branding field too or fail validation. Blank/omitted here always
+// means "clear it and fall back to the built-in default text" (see
+// DEFAULT_RFQ_SUBJECT etc. in email-templates.ts) — there's no write-only
+// "leave unchanged" case like smtpPassword, since none of these are secrets.
+const emailTemplatesInput = z.object({
+  rfqEmailSubject: text,
+  rfqEmailBody: z.string().trim().max(5000).optional().nullable(),
+  followupEmailSubject: text,
+  followupEmailBody: z.string().trim().max(5000).optional().nullable(),
+  emailSignature: z.string().trim().max(2000).optional().nullable(),
+});
 function normalizeColor(value?: string | null) { const trimmed = value?.trim(); if (!trimmed) return null; return trimmed.startsWith("#") ? trimmed.toUpperCase() : `#${trimmed.toUpperCase()}`; }
 function auth(ctx: RequestContext, intent: "READ" | "WRITE") { requireModule(ctx, "DASHBOARD", intent); requireTenantPermission(ctx, intent === "READ" ? "COMPANY_SETTINGS_VIEW" : "COMPANY_SETTINGS_EDIT"); return ctx.companyId!; }
 export async function getCompanySettings(ctx: RequestContext) {
@@ -212,6 +239,50 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
     await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "SETTINGS", entityType: "CompanySettings", entityId: updated.id, action: "UPDATE", beforeData: JSON.parse(JSON.stringify({ ...before, settings: before.settings ? { ...before.settings, smtpPassword: undefined } : before.settings })) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify({ legalName, tradingName, ...updated, smtpPassword: undefined })) as Prisma.InputJsonValue, correlationId: ctx.correlationId } });
     return { ...updated, smtpPassword: undefined, smtpConfigured: willBeConfigured };
   });
+}
+
+// 2026-09-29 — user request: "when configuring smtp settings, add a test
+// connection button to test setup settings." Lets the form send whatever's
+// currently typed (so a host/port/username change can be tried before
+// Save) while still honoring the write-only-password convention: a blank
+// smtpPassword here means "use whatever's already stored", exactly like
+// updateCompanySettings above — otherwise testing right after opening the
+// page (password field always starts blank) would falsely fail with "bad
+// credentials" even though a password is already saved and working.
+export async function testCompanySmtpConnection(ctx: RequestContext, raw: unknown) {
+  const companyId = auth(ctx, "WRITE");
+  const input = smtpTestInput.parse(raw);
+  const password = input.smtpPassword || (await prisma.companySettings.findUnique({ where: { companyId }, select: { smtpPassword: true } }))?.smtpPassword;
+  if (!password) throw new Error("SMTP_PASSWORD_REQUIRED");
+  try {
+    await verifySmtpConnection({ host: input.smtpHost, port: input.smtpPort ?? 587, secure: input.smtpSecure ?? true, username: input.smtpUsername, password });
+  } catch (error) {
+    throw new SmtpTestError(error instanceof Error ? error.message : "Unable to connect. Check the host, port and credentials.");
+  }
+  return { ok: true };
+}
+
+// 2026-09-29 — user request: "Create a template tab under settings which
+// allows me to edit the message/email sent to suppliers, add/edit a
+// signature field, change sending from email address etc." (the "from"
+// address itself stays on updateCompanySettings/smtpFromAddress above —
+// see emailTemplatesInput's comment). Read back through getCompanySettings
+// (its settings spread already includes these columns) and rendered by
+// buildRfqEmailMessage/buildFollowupEmailMessage in email-templates.ts.
+export async function updateCompanyEmailTemplates(ctx: RequestContext, raw: unknown) {
+  const companyId = auth(ctx, "WRITE");
+  const input = emailTemplatesInput.parse(raw);
+  const before = await prisma.companySettings.findUnique({ where: { companyId }, select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, emailSignature: true } });
+  const data = {
+    rfqEmailSubject: input.rfqEmailSubject || null,
+    rfqEmailBody: input.rfqEmailBody || null,
+    followupEmailSubject: input.followupEmailSubject || null,
+    followupEmailBody: input.followupEmailBody || null,
+    emailSignature: input.emailSignature || null,
+  };
+  const updated = await prisma.companySettings.update({ where: { companyId }, data });
+  await recordAudit(ctx, { source: "API", module: "SETTINGS", entityType: "CompanySettings", entityId: updated.id, action: "UPDATE", beforeData: (before ?? {}) as Prisma.InputJsonValue, afterData: data as Prisma.InputJsonValue });
+  return { ok: true, ...data };
 }
 
 // 2026-09-14 — migrated to object storage (see

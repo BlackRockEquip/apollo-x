@@ -86,6 +86,26 @@ export async function isPlatformEmailConfigured(): Promise<boolean> {
   return isConfigured(await getPlatformSmtpSettings());
 }
 
+// 2026-09-29 — user request: "when configuring smtp settings, add a test
+// connection button to test setup settings." Reuses the exact same
+// createTransport call as sendEmail above, but .verify() only opens the
+// connection and authenticates — the standard nodemailer way to confirm
+// host/port/username/password actually work without sending a real
+// message. Throws (with nodemailer/SMTP-server's own message, e.g. "Invalid
+// login", "ECONNREFUSED", a self-signed-cert error, etc.) on any failure —
+// the caller (testCompanySmtpConnection in
+// master-data/company-settings-service.ts) wraps that into a SmtpTestError
+// so the UI shows the real reason instead of a generic failure.
+export async function verifySmtpConnection(settings: { host: string; port: number; secure: boolean; username: string; password: string }): Promise<void> {
+  const transporter = nodemailer.createTransport({
+    host: settings.host,
+    port: settings.port,
+    secure: settings.secure,
+    auth: { user: settings.username, pass: settings.password },
+  });
+  await transporter.verify();
+}
+
 // Throws EMAIL_NOT_CONFIGURED just like sendEmail — callers decide how to
 // handle it (the forgot-password flow deliberately swallows it, since a
 // reset request must never reveal, via a 500 vs. a silent success, whether

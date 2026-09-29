@@ -14,6 +14,13 @@ export type SettingsNavItem = { key: string; label: string; href: string; module
 // pick it up automatically — nothing to keep in sync by hand anymore.
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { key: "company-settings", label: "Company / Branding", href: "/settings", module: "DASHBOARD" },
+  // 2026-09-29 — user request: "Create a template tab under settings which
+  // allows me to edit the message/email sent to suppliers, add/edit a
+  // signature field..." (CompanyTemplatesForm.tsx). Same DASHBOARD module
+  // gate as Company / Branding, since it's the same
+  // COMPANY_SETTINGS_VIEW/EDIT-permissioned settings area, just a separate
+  // tab for message content instead of branding.
+  { key: "email-templates", label: "Templates", href: "/settings/templates", module: "DASHBOARD" },
   { key: "settings-dashboard", label: "Dashboard", href: "/settings/dashboard", module: "DASHBOARD" },
   { key: "users", label: "Users", href: "/users", module: "DASHBOARD" },
   { key: "tax-codes", label: "Tax Codes", href: "/tax-codes", module: "CUSTOMERS" },

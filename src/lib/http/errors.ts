@@ -10,8 +10,23 @@ export class StockError extends Error {
   }
 }
 
+// 2026-09-29 — SMTP "Test connection" button (company-settings-service.ts's
+// testCompanySmtpConnection). A failed test isn't really a 5xx server
+// error and isn't a Zod validation error either — it's the SMTP server (or
+// the network) rejecting the attempt, and the whole point of the button is
+// to show the caller *why* (bad credentials, wrong host, TLS mismatch,
+// etc.), so this carries nodemailer's own message straight through rather
+// than collapsing it into a generic string.
+export class SmtpTestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SmtpTestError";
+  }
+}
+
 export function apiError(error: unknown) {
   if (error instanceof StockError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: 409 });
+  if (error instanceof SmtpTestError) return NextResponse.json({ error: { code: "SMTP_TEST_FAILED", message: error.message } }, { status: 422 });
   if (error instanceof AuthorizationError) return NextResponse.json({ error: { code: "FORBIDDEN", message: error.message } }, { status: 403 });
   if (error instanceof ZodError) return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "The request is invalid.", fields: error.flatten().fieldErrors } }, { status: 400 });
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ error: { code: "DUPLICATE", message: "A record with the same company-specific code or name already exists." } }, { status: 409 });
@@ -44,6 +59,17 @@ export function apiError(error: unknown) {
   // 2026-09-29 — alternate (superseded/group) part numbers
   // (master-data/service.ts's addPartAlternateNumber).
   if (error instanceof Error && error.message === "PART_NUMBER_ALREADY_IN_USE") return NextResponse.json({ error: { code: "PART_NUMBER_ALREADY_IN_USE", message: "That number is already in use — either as another part's own part number, or as an alternate number already recorded against a part." } }, { status: 409 });
+  // 2026-09-29, user report: "on RFQ form inside a job, when resending an
+  // email (Clicking retry) no confirmation or notification is displayed" —
+  // resendRfqRequest (rfq/service.ts) already threw these three, but none
+  // were mapped here, so a retry that couldn't actually be attempted (no
+  // recipient, no SMTP set up, or a request that's already QUOTED) fell
+  // through to the generic 500 "could not be completed" message, which is
+  // exactly the kind of unhelpful non-feedback that report was about.
+  if (error instanceof Error && error.message === "RFQ_ALREADY_QUOTED") return NextResponse.json({ error: { code: "RFQ_ALREADY_QUOTED", message: "This supplier already sent back a quote — nothing to resend." } }, { status: 409 });
+  if (error instanceof Error && error.message === "SUPPLIER_HAS_NO_EMAIL") return NextResponse.json({ error: { code: "SUPPLIER_HAS_NO_EMAIL", message: "This supplier has no email address on file — add one on the Suppliers screen first." } }, { status: 409 });
+  if (error instanceof Error && error.message === "EMAIL_NOT_CONFIGURED") return NextResponse.json({ error: { code: "EMAIL_NOT_CONFIGURED", message: "Email isn't set up for this company yet — add SMTP details under Settings > Company / Branding first." } }, { status: 409 });
+  if (error instanceof Error && error.message === "SMTP_PASSWORD_REQUIRED") return NextResponse.json({ error: { code: "SMTP_PASSWORD_REQUIRED", message: "Enter the SMTP password (or save it first) before testing the connection." } }, { status: 400 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }

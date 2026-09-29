@@ -4,6 +4,7 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
+import { getCompanyEmailTemplates, buildFollowupEmailMessage, type CompanyEmailTemplates } from "@/lib/email-templates";
 
 // Parts follow-up — new, added 2026-09-09 at the user's request ("ModApp's
 // separate 'Parts follow-up' chase-email feature wasn't built"). Scoped
@@ -31,22 +32,14 @@ async function addActivity(tx: Prisma.TransactionClient, ctx: RequestContext, jo
   });
 }
 
-function buildFollowupEmailBody(job: { jobNumber: string | null; draftNumber: string }, supplierName: string, lines: { partNumber: string; description: string | null; outstandingQty: string }[]) {
+// 2026-09-29 — this used to build the subject/text inline; it now renders
+// through the per-company template (Settings > Templates), falling back to
+// this exact same text when nothing's been customized. See
+// src/lib/email-templates.ts (also used by the RFQ-request email).
+function buildFollowupEmailBody(templates: CompanyEmailTemplates, job: { jobNumber: string | null; draftNumber: string }, supplierName: string, lines: { partNumber: string; description: string | null; outstandingQty: string }[]) {
   const jobRef = job.jobNumber ?? job.draftNumber;
-  const subject = `Follow-up — outstanding parts for Job ${jobRef}`;
-  const body = lines.map((l) => `${l.partNumber} — ${l.description ?? "no description"} (outstanding qty ${l.outstandingQty})`).join("\n");
-  const text = [
-    `Hi ${supplierName},`,
-    "",
-    `Following up on the parts still outstanding for job ${jobRef}:`,
-    "",
-    body,
-    "",
-    "Please could you let us know an updated ETA for these?",
-    "",
-    "Thank you.",
-  ].join("\n");
-  return { subject, text };
+  const partsList = lines.map((l) => `${l.partNumber} — ${l.description ?? "no description"} (outstanding qty ${l.outstandingQty})`).join("\n");
+  return buildFollowupEmailMessage(templates, { supplierName, jobNumber: jobRef, partsList });
 }
 
 // Synthetic bucket id for part lines with no orderedFromSupplierId at all —
@@ -109,6 +102,7 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
   }
 
   const emailConfigured = await isCompanyEmailConfigured(companyId);
+  const templates = await getCompanyEmailTemplates(companyId);
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 
@@ -126,7 +120,7 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: "This supplier has no email address on file." });
       continue;
     }
-    const { subject, text } = buildFollowupEmailBody(job, entry.supplierName, entry.lines);
+    const { subject, text } = buildFollowupEmailBody(templates, job, entry.supplierName, entry.lines);
     try {
       await sendEmail(companyId, { to: entry.mainEmail, subject, text });
       sent.push({ supplierId: entry.supplierId, supplierName: entry.supplierName });

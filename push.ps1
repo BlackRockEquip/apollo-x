@@ -1,41 +1,39 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Dashboard cleanup, filterable Outwork/RFQ tables, RFQ form fixes, stock-on-hand
+Add supplier email templates, SMTP test connection, RFQ retry feedback
 
-- Dashboard: removed the "Inventory alerts" and "Low stock" cards -- both
-  showed the exact same low-stock count under two different labels.
-  Existing per-user saved dashboard layouts drop them automatically, no
-  migration needed.
+- Settings > Templates (new tab): edit the RFQ-request and parts-follow-up
+  supplier emails, plus a shared signature, using {{supplierName}},
+  {{jobNumber}}, {{machine}}, {{partsList}} placeholders. Leaving a field
+  blank keeps the existing hardcoded wording -- nothing changes for a
+  company that never opens this tab. The "from" address/name stay on
+  Company / Branding (shown read-only here for reference) since that's
+  SMTP transport config, not message content.
 
-- Suppliers > Outwork and > RFQs: both tables now have a filter row under
-  the column headers -- text filters for Job/Supplier/Description, a
-  Status dropdown -- with a clear-filters button once any filter is
-  active. Client-side, since neither list is server-paged.
+- Settings > Company / Branding: added a "Test connection" button next to
+  the SMTP section's Configured/Not configured pill. Opens and
+  authenticates against the mail server (no email sent) and shows the
+  real failure reason -- bad login, wrong host, connection refused, etc.
+  -- instead of only finding out the SMTP details are wrong when a real
+  RFQ email fails to send.
 
-- Request quote form (a job's RFQ popup): the "Add existing supplier"
-  field now shows a browsable, scrollable list of suppliers as soon as
-  you click into it, instead of only after typing 2+ characters.
+- Job > RFQ table: clicking Retry on a failed/skipped request now shows a
+  clear success/failure banner and a spinner on that row, instead of
+  silently reloading with no feedback. Also added specific error messages
+  for the three ways a retry can't go through (supplier already quoted,
+  supplier has no email on file, email not configured for this company)
+  -- these used to fall through to a generic "could not be completed"
+  error.
 
-- Fixed the real cause of the "Record quote" Save/Cancel buttons looking
-  like they filled the whole column: a CSS rule only spanned a <label
-  className="wide"> across the drawer's 2-column grid, not a plain
-  <div className="wide"> -- so that panel's pricing table and its button
-  row were both squeezed into a half-width column. Broadened the rule to
-  cover any .wide element, which also fixes the same long-standing bug on
-  a few other panels (parts follow-up, outwork items) that had the exact
-  same issue.
+- Job parts list: the "In stock: N" line (added in the previous session)
+  now shows under the Status field instead of under the part
+  number/description.
 
-- Job parts list: a part that resolves to an existing catalog part now
-  shows "In stock: N" under it, summed from that part's stock balances
-  across all bin locations.
-
-- Dashboard background: set explicitly on <html> as well as <body>, so a
-  short page on a tall screen can't reveal a plain white gap below the
-  content instead of the app's light-grey canvas color.
-
-Run against C:\Projects\Apollo X Working -- no new Prisma migration in
-this batch, just app code and CSS.
+Includes a new Prisma migration (20260929120000_supplier_email_templates)
+-- 5 new nullable columns on CompanySettings for the templates above. Runs
+automatically on the next deploy via the existing migrate-on-build step;
+no manual DB action needed.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

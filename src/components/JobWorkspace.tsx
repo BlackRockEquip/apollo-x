@@ -494,6 +494,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [rfqSupplierId, setRfqSupplierId] = useState("");
   const [rfqSupplierPickerOpen, setRfqSupplierPickerOpen] = useState(false);
   const [rfqSendEmail, setRfqSendEmail] = useState(true);
+  // 2026-09-29, user report: "on RFQ form inside a job, when resending an
+  // email (Clicking retry) no confirmation or notification is displayed, a
+  // user wont know what is happening." resendRfq used to go through the
+  // generic postAction helper, which only ever surfaces a message on
+  // failure (via the shared `error` banner) and reloads silently on
+  // success — so a successful retry looked identical to doing nothing at
+  // all, unless you happened to notice the status pill change. rfqResendId
+  // drives a per-row spinner on the exact button clicked (not the whole
+  // page's generic `saving` flag, so other rows stay usable); rfqResendResult
+  // is a banner right above the table, same "feedback next to the action
+  // that produced it" convention as the pick-slip/logo-upload banners
+  // elsewhere in this app.
+  const [rfqResendId, setRfqResendId] = useState("");
+  const [rfqResendResult, setRfqResendResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showRfqNewSupplierForm, setShowRfqNewSupplierForm] = useState(false);
   const [rfqNewSupplierName, setRfqNewSupplierName] = useState("");
   const [rfqNewSupplierEmail, setRfqNewSupplierEmail] = useState("");
@@ -2124,7 +2138,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // real email sending.
   async function resendRfq(rfqRequestId: string) {
     if (!jobId) return;
-    await postAction(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/resend`, {});
+    const supplierName = job?.rfqRequests.find((r) => String(r.id) === rfqRequestId)?.supplier.name || "the supplier";
+    setRfqResendId(rfqRequestId); setError(""); setRfqResendResult(null);
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/resend`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to resend the email.");
+      const sent = b.status === "SENT";
+      setRfqResendResult({ ok: sent, message: sent ? `Email sent to ${supplierName}.` : `Could not send to ${supplierName} — ${b.lastSendError || "see the error below."}` });
+      await load(true);
+    } catch (e) {
+      setRfqResendResult({ ok: false, message: e instanceof Error ? e.message : "Unable to resend the email." });
+    } finally {
+      setRfqResendId("");
+    }
   }
 
   async function removeRfq(rfqRequestId: string) {
@@ -2850,11 +2877,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td>
                     <strong>{text(line.partNumber)}</strong>
                     <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
-                    {(() => {
-                      const onHand = partStockOnHand(line.part);
-                      if (onHand == null) return null;
-                      return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}</div>;
-                    })()}
                   </td>
                   <td>
                     {quantity}{hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
@@ -2903,7 +2925,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     /></div>
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
-                  <td><span className={`status-pill ${fullyReceived ? "" : "neutral"}`}>{text(line.status).replaceAll("_", " ")}</span></td>
+                  <td>
+                    <span className={`status-pill ${fullyReceived ? "" : "neutral"}`}>{text(line.status).replaceAll("_", " ")}</span>
+                    {/* 2026-09-29, user request: moved from under the part
+                        number to here, under Status — see partStockOnHand's
+                        own comment above for what this shows and why. */}
+                    {(() => {
+                      const onHand = partStockOnHand(line.part);
+                      if (onHand == null) return null;
+                      return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}</div>;
+                    })()}
+                  </td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(lineId)}>Undo receive</button>}
@@ -2969,6 +3001,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
             )}
 
+            {rfqResendResult && (
+              <div className={rfqResendResult.ok ? "inline-success" : "inline-error"} style={{ marginBottom: 8 }}>{rfqResendResult.message}</div>
+            )}
+
             <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Supplier</th><th>Status</th><th>Requested</th><th>Attachment sent</th><th>Quote file</th><th></th></tr></thead><tbody>
               {job.rfqRequests.map((request) => {
                 const status = String(request.status || "SKIPPED");
@@ -2984,7 +3020,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td>{request.quote?.fileName ? <button type="button" className="table-action" onClick={() => void viewQuoteFile(String(request.id))}>{text(request.quote.fileName)}</button> : "—"}</td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {(status === "FAILED" || status === "SKIPPED") && <button type="button" className="table-action" disabled={saving} onClick={() => void resendRfq(String(request.id))}><RefreshCw size={13} /> {status === "FAILED" ? "Retry" : "Send email"}</button>}
+                      {(status === "FAILED" || status === "SKIPPED") && <button type="button" className="table-action" disabled={!!rfqResendId} onClick={() => void resendRfq(String(request.id))}>{rfqResendId === String(request.id) ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />} {rfqResendId === String(request.id) ? "Sending…" : status === "FAILED" ? "Retry" : "Send email"}</button>}
                       <button type="button" className="table-action" disabled={saving} onClick={() => openRecordQuote(request)}>{request.quote ? "Edit quote" : "Record quote"}</button>
                       <button type="button" className="table-action danger" onClick={() => void removeRfq(String(request.id))}>Remove</button>
                     </div>

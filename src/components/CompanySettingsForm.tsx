@@ -5,7 +5,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ImagePlus, RotateCcw, Save, Upload, X } from "lucide-react";
+import { ImagePlus, Loader2, RotateCcw, Save, Upload, Wifi, X } from "lucide-react";
 
 type SettingsData = {
   internalCode: string;
@@ -39,6 +39,12 @@ export function CompanySettingsForm() {
   const [successMessage, setSuccessMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  // 2026-09-29 — user request: "add a test connection button to test setup
+  // settings" for SMTP. Separate from saving/error/successMessage above so
+  // testing doesn't clobber (or get clobbered by) the main Save flow's own
+  // messaging — the two can be used independently, in either order.
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   async function load() {
     const response = await fetch("/api/v1/company-settings", { cache: "no-store" });
@@ -124,6 +130,27 @@ export function CompanySettingsForm() {
       setError(e instanceof Error ? e.message : "Unable to save company settings.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Sends whatever's currently typed in the SMTP fields (not necessarily
+  // saved yet) so a host/port/username change can be tried before hitting
+  // Save. A blank password field means "use the already-stored password"
+  // (see testCompanySmtpConnection's own comment) — the field always
+  // starts blank since the server never returns it.
+  async function testSmtpConnection() {
+    if (!form) return;
+    setSmtpTesting(true); setSmtpTestResult(null);
+    try {
+      const payload = { smtpHost: form.smtpHost, smtpPort: form.smtpPort ? Number(form.smtpPort) : null, smtpSecure: form.smtpSecure === "true", smtpUsername: form.smtpUsername, smtpPassword: form.smtpPassword };
+      const response = await fetch("/api/v1/company-settings/smtp-test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to test the SMTP connection.");
+      setSmtpTestResult({ ok: true, message: "Connection successful — the SMTP server accepted the login." });
+    } catch (e) {
+      setSmtpTestResult({ ok: false, message: e instanceof Error ? e.message : "Unable to test the SMTP connection." });
+    } finally {
+      setSmtpTesting(false);
     }
   }
 
@@ -216,8 +243,12 @@ export function CompanySettingsForm() {
       <section className="detail-panel">
         <header>
           <div><h2>Email / SMTP</h2><p>Used to send real RFQ request and parts follow-up emails to suppliers. Nothing is sent until this is filled in.</p></div>
-          <span className={smtpConfigured ? "status-pill tone-green" : "status-pill neutral"}>{smtpConfigured ? "Configured" : "Not configured"}</span>
+          <div className="header-actions">
+            <button type="button" className="quiet-button" disabled={smtpTesting || !form.smtpHost || !form.smtpUsername} onClick={() => void testSmtpConnection()}>{smtpTesting ? <Loader2 className="spin" size={14} /> : <Wifi size={14} />} {smtpTesting ? "Testing…" : "Test connection"}</button>
+            <span className={smtpConfigured ? "status-pill tone-green" : "status-pill neutral"}>{smtpConfigured ? "Configured" : "Not configured"}</span>
+          </div>
         </header>
+        {smtpTestResult ? <div className={smtpTestResult.ok ? "inline-success" : "inline-error"}>{smtpTestResult.message}</div> : null}
         <div className="drawer-fields">
           <label><span>SMTP host</span><input value={form.smtpHost} placeholder="smtp.example.com" onChange={(e) => setForm((current) => current ? { ...current, smtpHost: e.target.value } : current)} /></label>
           <label><span>SMTP port</span><input type="number" min={1} max={65535} value={form.smtpPort} onChange={(e) => setForm((current) => current ? { ...current, smtpPort: e.target.value } : current)} /></label>

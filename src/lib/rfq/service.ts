@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { rfqRequestInput, rfqQuoteRecordInput, rfqQuoteLinesSaveInput, rfqPreferredInput, rfqNewSupplierRequestInput, generalRfqCreateInput, generalRfqUpdateInput } from "@/lib/rfq/validation";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
+import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
 import { guessPricesFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
 
@@ -88,22 +89,16 @@ async function buildPartsSummary(companyId: string, jobId: string) {
   return lines.map((l) => `${l.partNumber} — ${l.description ?? "no description"} (qty ${l.quantity})`).join("\n");
 }
 
-function buildRfqEmailBody(job: { jobNumber: string | null; draftNumber: string; machineMake: string | null; machineModel: string | null }, supplierName: string, partsSummary: string) {
+// 2026-09-29 — this used to build the subject/text inline; it now renders
+// through the per-company template (Settings > Templates), falling back to
+// this exact same text when nothing's been customized. See
+// src/lib/email-templates.ts for the shared subject/body/signature
+// merge logic (also used by the parts-follow-up email).
+async function buildRfqEmailBody(companyId: string, job: { jobNumber: string | null; draftNumber: string; machineMake: string | null; machineModel: string | null }, supplierName: string, partsSummary: string) {
   const jobRef = job.jobNumber ?? job.draftNumber;
   const machine = [job.machineMake, job.machineModel].filter(Boolean).join(" ") || "the unit";
-  const subject = `Request for quote — Job ${jobRef}`;
-  const text = [
-    `Hi ${supplierName},`,
-    "",
-    `Could you please quote on the following parts for job ${jobRef} (${machine})?`,
-    "",
-    partsSummary,
-    "",
-    "Please reply with pricing and availability at your earliest convenience.",
-    "",
-    "Thank you.",
-  ].join("\n");
-  return { subject, text };
+  const templates = await getCompanyEmailTemplates(companyId);
+  return buildRfqEmailMessage(templates, { supplierName, jobNumber: jobRef, machine, partsList: partsSummary });
 }
 
 // Builds the RFQ email's recipient list: the supplier's mainEmail plus any
@@ -133,7 +128,7 @@ async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequest
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true, machineMake: true, machineModel: true } });
   if (!job) return { status: "SKIPPED", lastSendError: null };
 
-  const { subject, text } = buildRfqEmailBody(job, supplier.name, partsSummary);
+  const { subject, text } = await buildRfqEmailBody(companyId, job, supplier.name, partsSummary);
   try {
     await sendEmail(companyId, { to, subject, text, attachments: attachment ? [{ filename: attachment.fileName, content: attachment.data, contentType: attachment.mimeType }] : undefined });
     return { status: "SENT", lastSendError: null };
