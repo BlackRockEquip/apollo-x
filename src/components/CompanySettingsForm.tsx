@@ -285,6 +285,33 @@ export function CompanySettingsForm() {
         </div>
       </section>
 
+      {/* 2026-09-29 — user request: "move the logo field below the address
+          field." Moved this whole section (unchanged) to sit directly
+          after Address and before Email/SMTP — previously it was the last
+          section on the page, after SMTP. */}
+      <section className="detail-panel">
+        <header><div><h2>Logo & preview</h2><p>Transparent PNG/JPG/WebP logos supported. Tenant-scoped only.</p></div></header>
+        <div className="brand-preview-panel" style={previewStyle}>
+          <div className="brand-preview-sidebar"><div className="brand-preview-logo">{logoPreview ? <Image src={logoPreview} alt="Logo preview" className="brand-logo-preview" width={84} height={84} unoptimized /> : <ImagePlus size={28} />}</div><strong>{form.tradingName || form.legalName}</strong><span>Apollo X remains visible</span></div>
+          <div className="brand-preview-workspace"><div className="brand-preview-topbar" /><div className="brand-preview-card-grid"><div /><div /><div /></div></div>
+        </div>
+        {/* 2026-09-19, user request: "When adding/removing a logo, move the
+            confirmation message to next to the buttons" + "change the
+            Upload / replace button label to 'Upload'." The message used to
+            render as its own full-width banner below this row; it's now an
+            inline-flex item inside the same .stack-row as the buttons
+            instead, so it reads immediately next to whichever action
+            produced it rather than below the whole row. */}
+        <div className="stack-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
+          <label className="quiet-button" htmlFor="company-logo-input"><Upload size={14} /> Choose logo</label>
+          <input id="company-logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => void onLogoSelected(e.target.files?.[0] ?? null)} />
+          <button type="button" className="table-action" disabled={saving} onClick={() => void uploadLogo()}>Upload</button>
+          <button type="button" className="table-action danger" disabled={saving} onClick={() => void removeLogo()}><X size={14} /> Remove</button>
+          {error ? <span className="inline-error" style={{ borderBottom: "none", borderRadius: 6 }}>{error}</span> : null}
+          {successMessage ? <span className="inline-success" style={{ borderBottom: "none", borderRadius: 6 }}>{successMessage}</span> : null}
+        </div>
+      </section>
+
       <section className="detail-panel">
         <header>
           <div><h2>Email / SMTP</h2><p>Used to send real RFQ request and parts follow-up emails to suppliers. Nothing is sent until this is filled in.</p></div>
@@ -307,29 +334,6 @@ export function CompanySettingsForm() {
           <label><span>SMTP password</span><input type="password" value={form.smtpPassword} placeholder={smtpConfigured ? "Leave blank to keep the current password" : ""} onChange={(e) => setForm((current) => current ? { ...current, smtpPassword: e.target.value } : current)} /></label>
           <label><span>&quot;From&quot; email address</span><input value={form.smtpFromAddress} onChange={(e) => setForm((current) => current ? { ...current, smtpFromAddress: e.target.value } : current)} /></label>
           <label><span>&quot;From&quot; display name</span><input value={form.smtpFromName} placeholder={form.tradingName || form.legalName} onChange={(e) => setForm((current) => current ? { ...current, smtpFromName: e.target.value } : current)} /></label>
-        </div>
-      </section>
-
-      <section className="detail-panel">
-        <header><div><h2>Logo & preview</h2><p>Transparent PNG/JPG/WebP logos supported. Tenant-scoped only.</p></div></header>
-        <div className="brand-preview-panel" style={previewStyle}>
-          <div className="brand-preview-sidebar"><div className="brand-preview-logo">{logoPreview ? <Image src={logoPreview} alt="Logo preview" className="brand-logo-preview" width={84} height={84} unoptimized /> : <ImagePlus size={28} />}</div><strong>{form.tradingName || form.legalName}</strong><span>Apollo X remains visible</span></div>
-          <div className="brand-preview-workspace"><div className="brand-preview-topbar" /><div className="brand-preview-card-grid"><div /><div /><div /></div></div>
-        </div>
-        {/* 2026-09-19, user request: "When adding/removing a logo, move the
-            confirmation message to next to the buttons" + "change the
-            Upload / replace button label to 'Upload'." The message used to
-            render as its own full-width banner below this row; it's now an
-            inline-flex item inside the same .stack-row as the buttons
-            instead, so it reads immediately next to whichever action
-            produced it rather than below the whole row. */}
-        <div className="stack-row" style={{ marginTop: 12, flexWrap: "wrap" }}>
-          <label className="quiet-button" htmlFor="company-logo-input"><Upload size={14} /> Choose logo</label>
-          <input id="company-logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => void onLogoSelected(e.target.files?.[0] ?? null)} />
-          <button type="button" className="table-action" disabled={saving} onClick={() => void uploadLogo()}>Upload</button>
-          <button type="button" className="table-action danger" disabled={saving} onClick={() => void removeLogo()}><X size={14} /> Remove</button>
-          {error ? <span className="inline-error" style={{ borderBottom: "none", borderRadius: 6 }}>{error}</span> : null}
-          {successMessage ? <span className="inline-success" style={{ borderBottom: "none", borderRadius: 6 }}>{successMessage}</span> : null}
         </div>
       </section>
     </div>

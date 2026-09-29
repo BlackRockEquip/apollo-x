@@ -2076,31 +2076,43 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <td>${escapeHtml(String(item.status || "").replaceAll("_", " "))}</td>
       </tr>`).join("");
     win.document.write(`<!doctype html><html><head><title>Job ${escapeHtml(String(jobLabel))} - Full details</title><meta charset="utf-8" /><style>
-      body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
+      /* 2026-09-29 — user request: "fit all sections on one page, dont let
+         overflow; move logo above job record heading." Padding, table cell
+         padding, heading margins and font sizes are all tightened from the
+         original (which matched printJobCard/printJobDeliveryNote's own
+         sizing) specifically for this view — it has more sections on one
+         sheet than any other print in this file (Customer + Machine,
+         Job details + Commercial, plus the conditional Notes/Field
+         service/Warranty blocks, all before Parts list's own page break —
+         see .page-break below, unchanged from the earlier request). h2
+         keeps page-break-after:avoid and .two-col/table keep
+         page-break-inside:avoid so a heading or a table doesn't get split
+         right at a page boundary if the content does still run long. */
+      body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#111;font-size:12px}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
-      h1{font-size:18px;margin:0 0 12px}
-      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
-      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-      .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
-      .org-details{text-align:left;margin-bottom:6px}
-      .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
-      .org-details p{font-size:11px;color:#444;margin:1px 0}
-      .job-number{font-size:16px;font-weight:bold;text-align:right}
-      table{width:100%;border-collapse:collapse}
-      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
+      h1{font-size:17px;margin:0 0 8px}
+      h2{font-size:12px;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.04em;color:#555;page-break-after:avoid}
+      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+      .logo{max-height:70px;max-width:220px;object-fit:contain;margin-bottom:8px;display:block}
+      .org-details{text-align:left;margin-bottom:4px}
+      .org-details .org-name{font-weight:bold;font-size:12px;color:#111;margin:0 0 2px}
+      .org-details p{font-size:10px;color:#444;margin:0}
+      .job-number{font-size:15px;font-weight:bold;text-align:right}
+      table{width:100%;border-collapse:collapse;page-break-inside:avoid}
+      th,td{border:1px solid #ccc;padding:4px 7px;text-align:left;font-size:12px}
       th{width:32%;background:#f6f6f6;font-weight:600}
       .description{white-space:pre-wrap}
       table.list-table th{width:auto;background:#f9fafb;border-bottom:2px solid #7a5c14}
       table.list-table td.qty{text-align:center;font-weight:600}
-      table.list-table{font-size:12px}
-      .two-col{display:flex;gap:24px;align-items:flex-start}
+      table.list-table{font-size:11px}
+      .two-col{display:flex;gap:18px;align-items:flex-start;page-break-inside:avoid}
       .two-col > div{flex:1;min-width:0}
       .page-break{page-break-before:always}
     </style></head><body>
+      <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
       <div class="note-head">
         <h1>Job record</h1>
         <div class="note-right">
-          <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
         </div>
@@ -2256,11 +2268,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (form.invoiceNumber) commercialLines.push(`Invoice number: ${escapeHtml(form.invoiceNumber)}`);
     if (form.purchaseOrderNumber) commercialLines.push(`Purchase order number: ${escapeHtml(form.purchaseOrderNumber)}`);
     if (form.deliveryType) commercialLines.push(`Delivery type: ${escapeHtml(form.deliveryType.replaceAll("_", " "))}`);
+    // 2026-09-29 — user request: "Description field, make model component
+    // serial to be on same line without the field labels." Was one <br />
+    // separated line per field, each prefixed with its own label ("Make:
+    // X"); now a single line, values only, "·" separated — same separator
+    // convention as contactLine above and the Job Kit applicability line
+    // elsewhere in this file (kit.machineMake/kit.machineModel/
+    // kit.componentType joined the same way).
     const descriptionLines: string[] = [];
-    if (form.machineMake) descriptionLines.push(`Make: ${escapeHtml(form.machineMake)}`);
-    if (form.machineModel) descriptionLines.push(`Model: ${escapeHtml(form.machineModel)}`);
-    if (form.component) descriptionLines.push(`Component: ${escapeHtml(form.component)}`);
-    if (form.componentSerial) descriptionLines.push(`Serial: ${escapeHtml(form.componentSerial)}`);
+    if (form.machineMake) descriptionLines.push(escapeHtml(form.machineMake));
+    if (form.machineModel) descriptionLines.push(escapeHtml(form.machineModel));
+    if (form.component) descriptionLines.push(escapeHtml(form.component));
+    if (form.componentSerial) descriptionLines.push(escapeHtml(form.componentSerial));
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(String(jobLabel))} - Delivery Note</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
@@ -2316,7 +2335,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </div>
       </div>
       <table><thead><tr><th>Description</th><th class="qty-col">Qty</th></tr></thead><tbody>
-        <tr><td>${descriptionLines.length > 0 ? descriptionLines.join("<br />") : "—"}</td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
+        <tr><td>${descriptionLines.length > 0 ? descriptionLines.join(" · ") : "—"}</td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
       </tbody></table>
       <div class="sign-blocks">
         <div class="sign-block">
