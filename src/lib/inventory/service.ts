@@ -1855,7 +1855,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       // in this file.
       if (remaining.gt(0)) {
         const candidates = await tx.stockBalance.findMany({
-          where: { companyId: ctx.companyId, partId: part.id, onHand: { gt: 0 } },
+          where: { companyId: ctx.companyId, partId: part.id, quantityOnHand: { gt: 0 } },
           select: { locationId: true },
         });
         const orderedLocationIds = [
