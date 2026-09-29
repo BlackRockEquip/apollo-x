@@ -1,10 +1,9 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Fix outwork delivery note dialog: table width, supplier detail spacing
+Fix outwork delivery note dialog spacing/width; align parts follow-up list
 
-Both follow-up reports on the delivery note preview dialog widened last
-commit:
+Delivery note dialog (two follow-up reports on the widened dialog):
 
 - "the table is still cramped not the width of the window" -- the
   table's wrapper div was missing the "wide" class, so inside
@@ -25,6 +24,21 @@ commit:
   block -- same "small-line as a <div>, no default margin" convention
   already used everywhere else in this app; this dialog was the one
   place still using <p>.
+
+Consistency pass ("ensure this is the same throughout the app"):
+
+- Audited every .drawer-fields (2-column grid) usage across the app for
+  the same two bug patterns -- a data-table-wrap missing "wide", or
+  stacked <p> elements as separate grid rows. Found one more genuine
+  instance: the parts follow-up "skipped suppliers" list (job workspace,
+  Parts screen) rendered one <p className="muted small-line"> per skipped
+  supplier as siblings -- same margin-stacking issue. Converted to a
+  tight-gap <div> block, matching the delivery note dialog's fix.
+- Everything else checked (Stock levels, Import/Export, Platform users,
+  Platform modules, Users/mechanics/sales reps, Job kits, Master data,
+  RFQ/Outwork lists, and the "Record quote" drawer's own parts table)
+  is either outside any .drawer-fields grid or already wrapped in "wide"
+  -- no further changes needed there.
 
 No schema change, JobWorkspace.tsx only.
 "@ | Set-Content -Encoding utf8 commit-msg.txt

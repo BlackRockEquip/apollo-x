@@ -3166,7 +3166,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {partsFollowupResult && (
               <div className="drawer-fields" style={{ marginTop: 8 }}>
                 {partsFollowupResult.sent.length > 0 && <p className="muted small-line wide">Sent to: {partsFollowupResult.sent.map((s) => s.supplierName).join(", ")}.</p>}
-                {partsFollowupResult.skipped.length > 0 && <div className="wide">{partsFollowupResult.skipped.map((s, idx) => <p key={idx} className="muted small-line">{s.supplierName}: {s.reason}</p>)}</div>}
+                {partsFollowupResult.skipped.length > 0 && (
+                  <div className="wide" style={{ display: "grid", gap: 3 }}>
+                    {partsFollowupResult.skipped.map((s, idx) => <div key={idx} className="muted small-line">{s.supplierName}: {s.reason}</div>)}
+                  </div>
+                )}
                 {partsFollowupResult.sent.length === 0 && partsFollowupResult.skipped.length === 0 && <p className="muted small-line wide">No outstanding ordered parts on this job.</p>}
               </div>
             )}
@@ -3297,12 +3301,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   {/* 2026-09-16 — matches printDeliveryNote's own layout:
                       bold name + stacked address lines instead of a
                       "Supplier: " line, and "Date captured" instead of
-                      "Date sent out". */}
-                  <p className="muted small-line wide" style={{ fontWeight: 700, color: "var(--ink-900)" }}>{deliveryNote.supplierName}</p>
-                  {deliveryNote.supplierAddressLines.map((l, idx) => <p key={idx} className="muted small-line wide">{l}</p>)}
-                  {deliveryNote.supplierVat && <p className="muted small-line wide">VAT: {deliveryNote.supplierVat}</p>}
-                  <p className="muted small-line wide">Date captured: {deliveryNote.dateCaptured ? new Date(deliveryNote.dateCaptured).toLocaleDateString("en-ZA") : "—"}</p>
-                  <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>
+                      "Date sent out".
+                      2026-09-29 — user report: "make the suppliers details
+                      more together, they are spaced very far apart making
+                      it look ugly." These used to be separate <p> "wide"
+                      grid items — each one its own row in .drawer-fields'
+                      grid, so on top of the grid's own 12px row-gap, every
+                      line ALSO carried the browser's default <p> margin
+                      (~1em top+bottom), which doesn't collapse between
+                      separate CSS grid items the way it would in normal
+                      flow — stacking up to ~30-40px between lines. Now one
+                      "wide" grid item (a single row) with the address
+                      lines packed at a tight 3px gap like a real address
+                      block, same "small-line as a <div>, no default
+                      margin" convention already used everywhere else in
+                      this app (e.g. the RFQ table's supplier email line) —
+                      this dialog was the one place still using <p>. */}
+                  <div className="wide" style={{ display: "grid", gap: 3 }}>
+                    <div className="muted small-line" style={{ fontWeight: 700, color: "var(--ink-900)" }}>{deliveryNote.supplierName}</div>
+                    {deliveryNote.supplierAddressLines.map((l, idx) => <div key={idx} className="muted small-line">{l}</div>)}
+                    {deliveryNote.supplierVat && <div className="muted small-line">VAT: {deliveryNote.supplierVat}</div>}
+                    <div className="muted small-line" style={{ marginTop: 4 }}>Date captured: {deliveryNote.dateCaptured ? new Date(deliveryNote.dateCaptured).toLocaleDateString("en-ZA") : "—"}</div>
+                  </div>
+                  {/* 2026-09-29 — user report: "the table is still cramped
+                      not the width of the window." This div was missing
+                      the "wide" class, so within .drawer-fields' 2-column
+                      grid it only ever got ONE column (roughly half the
+                      dialog's width) no matter how wide the dialog itself
+                      was made — the table's own width:100% just filled
+                      that half-width box, and .data-table-wrap's
+                      overflow-x:auto kicked in and clipped it. */}
+                  <div className="data-table-wrap wide"><table className="data-table"><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>
                     {deliveryNote.items.map((i, idx) => <tr key={idx}><td>{i.description}</td><td>{i.quantity}</td><td></td></tr>)}
                   </tbody></table></div>
                   {/* Vehicle reg + signature fields are print-only (see
