@@ -471,6 +471,7 @@ model UserIdentity {
   jobPartLinesCreated JobPartLine[]            @relation("JobPartLineCreatedBy")
   jobPartLinesUpdated JobPartLine[]            @relation("JobPartLineUpdatedBy")
   pickSlipsCreated    PickSlip[]               @relation("PickSlipCreatedBy")
+  pickSlipsCancelled  PickSlip[]               @relation("PickSlipCancelledBy")
   outworkItemsCreated OutworkItem[]            @relation("OutworkItemCreatedBy")
   outworkItemsUpdated OutworkItem[]            @relation("OutworkItemUpdatedBy")
   rfqRequestsCreated  JobRfqRequest[]          @relation("JobRfqRequestCreatedBy")
@@ -1291,6 +1292,7 @@ model StockMovement {
   actor        UserIdentity?    @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: SetNull)
   reversalOf   StockMovement?   @relation("MovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversals    StockMovement[]  @relation("MovementReversal")
+  pickSlipLines PickSlipLine[]
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, occurredAt])
@@ -1915,6 +1917,7 @@ model JobPartLine {
   createdBy              UserIdentity?  @relation("JobPartLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy              UserIdentity?  @relation("JobPartLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   rfqQuoteLines          JobRfqQuoteLine[]
+  pickSlipLines          PickSlipLine[]
 
   @@index([companyId, jobId])
   @@index([companyId, partId])
@@ -1942,17 +1945,37 @@ model JobPartLine {
 // PENDING JobPartLine rows to the job, but creates no PickSlip at all
 // (nothing was actually picked) — same "nullable pick slip" behavior
 // ModApp's generatePickSlip has.
-model PickSlip {
-  id          String   @id @default(cuid())
-  companyId   String
-  jobId       String
-  createdById String?
-  createdAt   DateTime @default(now())
+// 2026-09-29 — user request: "in a job, when creating a picking slip,
+// need a way to cancel picking slip if a error was made." status/
+// cancelledAt/cancelledById/cancelReason added so a mistaken pick slip
+// can be reversed rather than left standing forever — see
+// cancelPickSlip in inventory/service.ts, which restores the stock each
+// line took (a new UNPICK StockMovement per line, StockMovementType
+// already had this value reserved and unused until now) and, where the
+// affected JobPartLine hasn't moved on since (still status PICKED —
+// see PartLineStatus's own comment), reverts its pickedQuantity/status
+// too.
+enum PickSlipStatus {
+  ACTIVE
+  CANCELLED
+}
 
-  company     Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  createdBy   UserIdentity? @relation("PickSlipCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  lines       PickSlipLine[]
+model PickSlip {
+  id           String         @id @default(cuid())
+  companyId    String
+  jobId        String
+  createdById  String?
+  createdAt    DateTime       @default(now())
+  status       PickSlipStatus @default(ACTIVE)
+  cancelledAt  DateTime?
+  cancelledById String?
+  cancelReason String?
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job          Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy    UserIdentity? @relation("PickSlipCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledBy  UserIdentity? @relation("PickSlipCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  lines        PickSlipLine[]
 
   @@index([companyId, jobId])
   @@index([companyId, createdAt])
@@ -1966,22 +1989,43 @@ model PickSlip {
 // printable facts, keep the FK for traceability" approach JobPartLine
 // already uses for partNumber/description alongside its own optional
 // partId link.
+//
+// 2026-09-29 — jobPartLineId/previousStatus/stockMovementId added
+// alongside PickSlip.status above, so cancelPickSlip can precisely
+// reverse each line: jobPartLineId says which JobPartLine's
+// pickedQuantity to roll back (nullable — a line picked before this
+// migration has no back-reference and is skipped, stock-only, on
+// cancel); previousStatus is that JobPartLine's own status right
+// before THIS pick (not JobPartLine.previousStatus, which is reserved
+// for the separate Mark received undo flow, and would be overwritten
+// by a second pick before a first cancel) — restored only once
+// pickedQuantity drops back to zero, so cancelling one of several
+// partial picks on the same line correctly leaves it PICKED rather
+// than jumping back to PENDING while other picks still stand;
+// stockMovementId links the reversing UNPICK movement back to the
+// original ISSUE via StockMovement.reversalOfId.
 model PickSlipLine {
-  id            String   @id @default(cuid())
-  pickSlipId    String
-  partId        String
-  partNumber    String
-  description   String
-  binLocationId String?
-  quantity      Decimal  @db.Decimal(19, 4)
-  createdAt     DateTime @default(now())
+  id              String          @id @default(cuid())
+  pickSlipId      String
+  partId          String
+  partNumber      String
+  description     String
+  binLocationId   String?
+  quantity        Decimal         @db.Decimal(19, 4)
+  createdAt       DateTime        @default(now())
+  jobPartLineId   String?
+  previousStatus  PartLineStatus?
+  stockMovementId String?
 
   pickSlip      PickSlip         @relation(fields: [pickSlipId], references: [id], onDelete: Cascade)
   part          Part             @relation(fields: [partId], references: [id], onDelete: Restrict)
   binLocation   StorageLocation? @relation(fields: [binLocationId], references: [id], onDelete: SetNull)
+  jobPartLine   JobPartLine?     @relation(fields: [jobPartLineId], references: [id], onDelete: SetNull)
+  stockMovement StockMovement?   @relation(fields: [stockMovementId], references: [id], onDelete: SetNull)
 
   @@index([pickSlipId])
   @@index([partId])
+  @@index([jobPartLineId])
 }
 
 // New — added 2026-09-09 alongside the JobPartLine change above, at the

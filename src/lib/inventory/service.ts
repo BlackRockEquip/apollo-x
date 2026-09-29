@@ -21,6 +21,7 @@ import type {
   countQuery,
   pickSlipCreateInput,
   pickSlipQuery,
+  pickSlipCancelInput,
   bulkPartSearchInput,
 } from "@/lib/inventory/validation";
 import { deriveStockState } from "@/lib/inventory/stock-state";
@@ -1781,7 +1782,13 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
     },
   });
 
-  type PickedLine = { partId: string; partNumber: string; description: string; binLocationId: string; binLocationLabel: string; quantity: Quantity };
+  // 2026-09-29 — jobPartLineId/previousStatus/stockMovementId added
+  // alongside the "cancel picking slip" feature (user request: "need a
+  // way to cancel picking slip if a error was made") — see
+  // cancelPickSlip below, and PickSlipLine's own schema comment for why
+  // each is captured per split (a line's pick can land on more than one
+  // PickSlipLine, one per location it was actually pulled from).
+  type PickedLine = { partId: string; partNumber: string; description: string; binLocationId: string; binLocationLabel: string; quantity: Quantity; jobPartLineId: string; previousStatus: string; stockMovementId: string };
 
   const result = await prisma.$transaction(async (tx) => {
     const picked: PickedLine[] = [];
@@ -1794,6 +1801,13 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       // the job) — skipping instead keeps this function's own "pick what's
       // there, backorder the rest" promise intact even for this case.
       if (!part.active) continue;
+
+      // Captured once, before this line's own status gets overwritten to
+      // PICKED further down — this run's "before" snapshot, restored by
+      // cancelPickSlip only once every pick against this line (this run's
+      // and any earlier still-active one) has been cancelled or the
+      // line's pickedQuantity otherwise returns to zero.
+      const statusBeforeThisPick = String(line.status);
 
       // 2026-09-29, user request: "when clicking create picking slip
       // inside a job, it should not change the status to received as
@@ -1837,7 +1851,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         if (pickQty.lte(0)) continue;
         const nextOnHand = balance.onHand.minus(pickQty);
         const nextReserved = balance.reserved.minus(pickQty);
-        await tx.stockMovement.create({
+        const movement = await tx.stockMovement.create({
           data: buildMovement({
             companyId: ctx.companyId,
             partId: part.id,
@@ -1857,7 +1871,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         if (usage.remaining.eq(pickQty)) {
           await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
         }
-        pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty });
+        pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
         remaining = remaining.minus(pickQty);
       }
 
@@ -1905,7 +1919,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
           const pickQty = D.min(remaining, available);
           const nextOnHand = balance.onHand.minus(pickQty);
 
-          await tx.stockMovement.create({
+          const movement = await tx.stockMovement.create({
             data: buildMovement({
               companyId: ctx.companyId,
               partId: part.id,
@@ -1922,7 +1936,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
             }),
           });
           await saveBalance(tx, balance, { onHand: nextOnHand });
-          pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty });
+          pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
           remaining = remaining.minus(pickQty);
         }
       }
@@ -1959,7 +1973,17 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
 
     const pickSlip = await tx.pickSlip.create({ data: { companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
     await tx.pickSlipLine.createMany({
-      data: picked.map((l) => ({ pickSlipId: pickSlip.id, partId: l.partId, partNumber: l.partNumber, description: l.description, binLocationId: l.binLocationId, quantity: l.quantity })),
+      data: picked.map((l) => ({
+        pickSlipId: pickSlip.id,
+        partId: l.partId,
+        partNumber: l.partNumber,
+        description: l.description,
+        binLocationId: l.binLocationId,
+        quantity: l.quantity,
+        jobPartLineId: l.jobPartLineId,
+        previousStatus: l.previousStatus as never,
+        stockMovementId: l.stockMovementId,
+      })),
     });
     return { pickSlipId: pickSlip.id as string | null, picked };
   });
@@ -1993,6 +2017,117 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
     pickedCount: result.picked.length,
     outstandingCount,
   };
+}
+
+// 2026-09-29 — user request: "in a job, when creating a picking slip,
+// need a way to cancel picking slip if a error was made." Reverses a
+// pick slip: restores the stock each line took (a new UNPICK
+// StockMovement per line — a value StockMovementType already had
+// reserved and unused until now — with reversalOfId pointing back at
+// the original ISSUE), then, only for a line whose JobPartLine hasn't
+// moved on since (still status PICKED — see PartLineStatus's own
+// comment), rolls its pickedQuantity back by this slip's share and, if
+// that brings it to zero, restores whatever status it had right before
+// THIS specific pick (PickSlipLine.previousStatus — see that model's
+// own comment for why it's captured per pick-slip-line rather than
+// reusing JobPartLine.previousStatus, which is reserved for the
+// separate Mark received undo flow). A line that's since been marked
+// received (status no longer PICKED) is left alone — its stock is
+// still restored, but silently un-receiving a person's own explicit
+// confirmation would be a much bigger surprise than leaving its
+// pickedQuantity a little stale; the response's skippedLines count
+// flags this so it's visible after the fact rather than silent. A
+// PickSlipLine from before this migration has no jobPartLineId at all
+// (older data) — its stock is still restored, there's just no
+// JobPartLine to roll back.
+//
+// Works on a pick slip from either creation path (this job-scoped one,
+// or Stock Levels' own createPickSlip) — the latter's lines simply
+// have no jobPartLineId either, so cancelling one of those restores
+// stock only, same as a pre-migration row.
+export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, input: z.infer<typeof pickSlipCancelInput>) {
+  requireInventory(ctx, "INVENTORY_ISSUE");
+
+  const pickSlip = await prisma.pickSlip.findFirst({
+    where: { id: pickSlipId, companyId: ctx.companyId },
+    include: { lines: true, job: { select: { id: true, jobNumber: true, draftNumber: true } } },
+  });
+  if (!pickSlip) notFound();
+  if (pickSlip.status === "CANCELLED") throw new StockError("PICK_SLIP_ALREADY_CANCELLED", "This picking slip has already been cancelled.");
+
+  const result = await prisma.$transaction(async (tx) => {
+    let revertedLines = 0;
+    let skippedLines = 0;
+
+    for (const line of pickSlip.lines) {
+      // binLocationId only goes null if that StorageLocation was later
+      // deleted (onDelete: SetNull) — nowhere left to put the stock back,
+      // so this line's physical reversal can't happen; still cancels the
+      // slip overall rather than blocking on one unrestorable line.
+      if (!line.binLocationId) continue;
+
+      const balance = await lockBalance(tx, ctx.companyId, line.partId, line.binLocationId, { createIfMissing: true });
+      if (!balance) continue;
+      const nextOnHand = balance.onHand.plus(line.quantity);
+      await tx.stockMovement.create({
+        data: buildMovement({
+          companyId: ctx.companyId,
+          partId: line.partId,
+          movementType: "UNPICK",
+          quantity: line.quantity,
+          toLocationId: line.binLocationId,
+          referenceType: "JOB",
+          referenceId: pickSlip.jobId,
+          referenceNumber: pickSlip.job.jobNumber ?? pickSlip.job.draftNumber,
+          reason: input.reason ? `Pick slip cancelled: ${input.reason}` : "Pick slip cancelled",
+          actorId: ctx.userId,
+          resultingToQuantity: nextOnHand,
+          reversalOfId: line.stockMovementId,
+          correlationId: ctx.correlationId,
+        }),
+      });
+      await saveBalance(tx, balance, { onHand: nextOnHand });
+
+      if (line.jobPartLineId) {
+        const jobPartLine = await tx.jobPartLine.findFirst({ where: { id: line.jobPartLineId, companyId: ctx.companyId } });
+        if (jobPartLine && jobPartLine.status === "PICKED") {
+          const newPickedQuantity = D.max((jobPartLine.pickedQuantity ?? new D(0)).minus(line.quantity), new D(0));
+          if (newPickedQuantity.lte(0)) {
+            await tx.jobPartLine.update({
+              where: { id: jobPartLine.id },
+              data: { status: (line.previousStatus ?? "PENDING") as never, pickedQuantity: null, updatedById: ctx.userId },
+            });
+          } else {
+            await tx.jobPartLine.update({
+              where: { id: jobPartLine.id },
+              data: { pickedQuantity: newPickedQuantity, updatedById: ctx.userId },
+            });
+          }
+          revertedLines += 1;
+        } else if (jobPartLine) {
+          skippedLines += 1;
+        }
+      }
+    }
+
+    await tx.pickSlip.update({
+      where: { id: pickSlip.id },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelledById: ctx.userId, cancelReason: input.reason ?? null },
+    });
+
+    return { revertedLines, skippedLines };
+  });
+
+  await recordAudit(ctx, {
+    source: "UI",
+    module: "INVENTORY",
+    entityType: "PickSlip",
+    entityId: pickSlip.id,
+    action: "PICK_SLIP_CANCELLED",
+    afterData: { jobId: pickSlip.jobId, revertedLines: result.revertedLines, skippedLines: result.skippedLines, reason: input.reason ?? null },
+  });
+
+  return { ok: true, revertedLines: result.revertedLines, skippedLines: result.skippedLines };
 }
 
 export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof pickSlipQuery>) {

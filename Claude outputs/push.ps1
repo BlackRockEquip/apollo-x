@@ -1,47 +1,55 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Picking slip no longer marks parts Received; fix reserve-part feature
+Add cancel picking slip action for job-scoped picks
 
-Two related fixes, both from "check the reserve part feature if its
-working correctly, i dont see that it reserves the part" and "when
-clicking create picking slip inside a job, it should not change the
-status to received as the part might not be in stock physically":
+"in a job, when creating a picking slip, need a way to cancel picking
+slip if a error was made."
 
-1. Create picking slip used to set a part line's status straight to
-   RECEIVED/PARTIALLY_RECEIVED the moment stock was pulled from the
-   shelf -- but pulling stock isn't the same as a person confirming the
-   part is physically on the job. New PartLineStatus.PICKED (schema
-   migration) plus a new JobPartLine.pickedQuantity field track "how
-   much has been picked" completely separately from receivedQuantity,
-   which now belongs entirely to the existing "Mark received" action --
-   picking never touches it, so Mark received still works exactly as
-   before once a part is actually in hand. Parts list shows a new
-   "Picked X of Y" line and a distinct blue "Picked" status pill.
+New PickSlip.status (ACTIVE/CANCELLED, schema migration), plus
+cancelledAt/cancelledById/cancelReason audit fields, and three new
+PickSlipLine columns (jobPartLineId, previousStatus, stockMovementId)
+so a cancel can precisely reverse each line without guessing:
 
-2. The automatic reservation made when a part is added to a job's parts
-   list (or a job kit is applied) only ever tried to reserve stock at
-   the part's single default bin location -- the exact same
-   one-location-only mistake the picking slip's multi-bin fix caught
-   earlier today. A part whose stock actually sits at a different bin,
-   or has no default bin set, showed as "in stock" but silently reserved
-   nothing at all, so Stock Levels' Reserved column never moved. Now
-   reserves across every location the part actually has stock at,
-   default bin first, splitting across more than one reservation if
-   that's genuinely where the stock is -- fixed in both addPartLinesBulk
-   (jobs/service.ts) and applyJobKitToJob (job-kits/service.ts).
-   createPickSlipForJob's own reservation-consumption step was updated
-   to match, so a reservation made at a non-default bin is still found
-   and correctly consumed when the part is later picked.
+- Restores the stock the line took, via a new UNPICK stock movement
+  (StockMovementType already reserved this value, unused until now)
+  linked back to the original ISSUE via reversalOfId.
+- Rolls the linked JobPartLine's pickedQuantity back by this slip's
+  share, and once that reaches zero restores the status the line had
+  right before THIS specific pick (PickSlipLine.previousStatus -- kept
+  separate from JobPartLine.previousStatus, which stays reserved for
+  the unrelated "Mark received" undo flow).
+- A line already marked Received since the pick (status has moved on
+  from PICKED) has its stock restored but its status/pickedQuantity
+  left alone -- silently un-receiving a person's own confirmation
+  would be a bigger surprise than a little stale pickedQuantity. The
+  response's skippedLines count surfaces this rather than staying
+  silent.
+- A PickSlipLine from before this migration, or from Stock Levels' own
+  separate createPickSlip path, simply has no jobPartLineId -- stock
+  is still restored, there's just no job line to roll back.
 
-Includes a schema migration (PartLineStatus.PICKED,
-JobPartLine.pickedQuantity) -- Render's build command runs
-`prisma migrate deploy` on every deploy, so pushing is enough, no
-manual migration step needed.
+New cancelPickSlip service function (inventory/service.ts) and POST
+/api/v1/inventory/pick-slips/[id]/cancel route. JobWorkspace's picking
+slip result banner gets a "Cancel" button next to the existing Print
+button.
 
-prisma/schema.prisma, prisma/migrations/20260929130000_job_part_line_picked_status/,
-src/lib/inventory/service.ts, src/lib/jobs/service.ts,
-src/lib/job-kits/service.ts, src/components/JobWorkspace.tsx.
+Known simplification, documented in code: no reservation is recreated
+on cancel (the part goes back to needing a fresh reserve/pick like any
+other outstanding line). Also documented: fully cancelling several
+layered pick slips against the same line, in the wrong order, can
+leave it stuck at status PICKED with pickedQuantity 0 instead of its
+true original status -- a rare edge case, not solved with a full
+undo-history stack.
+
+Includes a schema migration (PickSlipStatus, PickSlip/PickSlipLine
+columns) -- Render's build command runs ``prisma migrate deploy`` on
+every deploy, so pushing is enough, no manual migration step needed.
+
+prisma/schema.prisma, prisma/migrations/20260929140000_pick_slip_cancel/,
+src/lib/inventory/service.ts, src/lib/inventory/validation.ts,
+src/app/api/v1/inventory/pick-slips/[id]/cancel/route.ts,
+src/components/JobWorkspace.tsx.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

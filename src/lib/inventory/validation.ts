@@ -88,6 +88,12 @@ export const reservationInput = z.object({
 
 export const releaseInput = z.object({ reason: z.string().trim().max(500).optional() });
 
+// 2026-09-29 — user request: "in a job, when creating a picking slip,
+// need a way to cancel picking slip if a error was made." Same shape as
+// releaseInput above (an optional free-text reason) but named for its
+// own feature — see cancelPickSlip in service.ts.
+export const pickSlipCancelInput = z.object({ reason: z.string().trim().max(500).optional() });
+
 export const reversalInput = z.object({ reason: z.string().trim().min(3).max(500) });
 
 export const countCreateInput = z.object({

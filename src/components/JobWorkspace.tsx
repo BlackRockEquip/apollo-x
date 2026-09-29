@@ -361,7 +361,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // new ones the way Stock Levels' own pick flow does.
   const [creatingPickSlip, setCreatingPickSlip] = useState(false);
   const [pickSlipError, setPickSlipError] = useState("");
-  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; pickSlip: { jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
+  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
+  // 2026-09-29 — "Cancel" on the pick slip just created above (user
+  // request: "need a way to cancel picking slip if a error was made") —
+  // see cancelJobPickSlip below and cancelPickSlip in inventory/service.ts.
+  const [cancellingPickSlip, setCancellingPickSlip] = useState(false);
   // RFQ moved into a popup, triggered by a button next to the parts
   // list/"Add / cross-check with stock" area — matches ModApp's RfqPanel
   // (its own request-quotes button opens a modal rather than showing the
@@ -1242,6 +1246,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setPickSlipError(e instanceof Error ? e.message : "Unable to create picking slip.");
     } finally {
       setCreatingPickSlip(false);
+    }
+  }
+
+  // 2026-09-29 — reverses the pick slip just created above: restores the
+  // stock it took and, where the part line hasn't moved on since (see
+  // cancelPickSlip's own comment for the "already marked received" case),
+  // rolls its Picked status back too. Clears pickSlipResult on success so
+  // the banner (and its now-stale Print/Cancel buttons) goes away.
+  async function cancelJobPickSlip() {
+    const pickSlip = pickSlipResult?.pickSlip;
+    if (!pickSlip) return;
+    setCancellingPickSlip(true); setPickSlipError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlip.id}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to cancel picking slip.");
+      setPickSlipResult(null);
+      await load(true);
+    } catch (e) {
+      setPickSlipError(e instanceof Error ? e.message : "Unable to cancel picking slip.");
+    } finally {
+      setCancellingPickSlip(false);
     }
   }
 
@@ -2915,7 +2945,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     : "No stock was available to pick right now."}
                   {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
                 </span>
-                {pickSlipResult.pickSlip && <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>}
+                {pickSlipResult.pickSlip ? (
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
+                    <button type="button" className="quiet-button" disabled={cancellingPickSlip} onClick={() => void cancelJobPickSlip()}>{cancellingPickSlip ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlip ? "Cancelling…" : "Cancel"}</button>
+                  </span>
+                ) : null}
               </div>
             ) : null}
             {showAddParts && (
