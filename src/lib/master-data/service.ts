@@ -248,7 +248,7 @@ export async function addPartAlternateNumber(ctx: RequestContext, partId: string
   const created = await prisma.partAlternateNumber.create({
     data: { companyId, partId, number: input.number.trim(), numberNormalized: normalized(input.number)!, kind: input.kind },
   });
-  await prisma.auditEvent.create({ data: audit(ctx, "parts.alternateNumbers", created.id, "CREATE", undefined, { partId, ...created }) });
+  await prisma.auditEvent.create({ data: audit(ctx, "parts.alternateNumbers", created.id, "CREATE", undefined, created) });
   return created;
 }
 
