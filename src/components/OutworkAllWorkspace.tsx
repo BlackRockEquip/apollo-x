@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
@@ -58,6 +58,21 @@ export function OutworkAllWorkspace() {
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [dateSentOut, setDateSentOut] = useState("");
   const [lines, setLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
+
+  // 2026-09-29, user request: "Suppliers/Outwork - Make table headers
+  // filterable." A filter row under the headers: text boxes for the
+  // free-text columns, a dropdown for Status (only two real values). All
+  // client-side against the already-loaded `rows` — this list isn't paged,
+  // so there's nothing to round-trip to the server for.
+  const [filters, setFilters] = useState({ job: "", supplier: "", description: "", status: "ALL" });
+  const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
+    if (filters.job && !jobRef(row.job).toLowerCase().includes(filters.job.toLowerCase())) return false;
+    if (filters.supplier && !(row.supplier.name || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
+    if (filters.description && !(row.description || "").toLowerCase().includes(filters.description.toLowerCase())) return false;
+    if (filters.status !== "ALL" && row.status !== filters.status) return false;
+    return true;
+  }), [rows, filters]);
+  const filtersActive = filters.job || filters.supplier || filters.description || filters.status !== "ALL";
 
   async function load() {
     try {
@@ -128,12 +143,23 @@ export function OutworkAllWorkspace() {
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{rows.length} item{rows.length === 1 ? "" : "s"}</span>
+      <span>{filtersActive ? `${filteredRows.length} of ${rows.length} item${rows.length === 1 ? "" : "s"}` : `${rows.length} item${rows.length === 1 ? "" : "s"}`}</span>
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Create outwork</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
-    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th>Days outstanding</th><th></th></tr></thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={9} className="table-state">No outwork recorded yet.</td></tr> : rows.map((row) => (
+    <div className="data-table-wrap"><table className="data-table"><thead>
+      <tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th>Days outstanding</th><th></th></tr>
+      <tr className="filter-row">
+        <th><input value={filters.job} onChange={(e) => setFilters((f) => ({ ...f, job: e.target.value }))} placeholder="Filter job…" aria-label="Filter by job" /></th>
+        <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
+        <th><input value={filters.description} onChange={(e) => setFilters((f) => ({ ...f, description: e.target.value }))} placeholder="Filter description…" aria-label="Filter by description" /></th>
+        <th></th>
+        <th><select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} aria-label="Filter by status"><option value="ALL">All</option><option value="SENT_OUT">Sent out</option><option value="RECEIVED">Received</option></select></th>
+        <th></th><th></th><th></th>
+        <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", description: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
+      </tr>
+    </thead><tbody>
+      {rows.length === 0 ? <tr><td colSpan={9} className="table-state">No outwork recorded yet.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={9} className="table-state compact-empty-state">No outwork matches these filters.</td></tr> : filteredRows.map((row) => (
         <tr key={row.id}>
           <td><Link href={`/jobs/${row.job.id}`}>{jobRef(row.job)}</Link></td>
           <td>{text(row.supplier.name)}</td>

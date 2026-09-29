@@ -15,16 +15,15 @@ type OutstandingPartLine = { id: string; job: { id: string; jobNumber: string | 
 // backend already picked (up to 3, dashboard/service.ts's
 // DASHBOARD_ANALYTICS_METRIC_DEFS).
 type AnalyticsSeries = { key: string; label: string; points: AnalyticsSeriesPoint[] };
-type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; lowStock: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; procurementOpen: number; pexStatus: Record<string, number>; supportTickets: Record<string, number>; analyticsSeries: AnalyticsSeries[] };
+type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ id: string }>; outstandingParts: OutstandingPartLine[]; procurementOpen: number; pexStatus: Record<string, number>; supportTickets: Record<string, number>; analyticsSeries: AnalyticsSeries[] };
 
 // 2026-09-14 — "Update the dashboard and make it clickable to take a user
 // to the relevant place" (explicit request). Every widget card is now a
 // <Link> to wherever that number actually comes from, instead of a static
-// <article>. Also fills in the two widgets (wip-status-counts,
-// inventory-alerts) whose figures the backend (dashboard/service.ts) was
-// already computing — they share a query with jobs-summary/low-stock
-// respectively — but the old inline ternary chain never rendered: they fell
-// through its `default` to an empty string, so enabling either from
+// <article>. Also fills in the wip-status-counts widget's figure, which the
+// backend (dashboard/service.ts) was already computing (it shares a query
+// with jobs-summary) — but the old inline ternary chain never rendered: it
+// fell through its `default` to an empty string, so enabling it from
 // Settings > Dashboard produced a blank card. "notifications" is left as-is
 // (Notifications is still a permission-only module stub with no data source
 // or destination page — see codebase-overview.md's module list).
@@ -36,12 +35,15 @@ type DashboardData = { jobsSummary: Record<string, number>; recentJobs: Array<{ 
 // dashboard/service.ts now computes a real count (open outwork items +
 // RFQs still awaiting a quote) and regates it to match where that data
 // actually lives — see that file's DASHBOARD_WIDGET_DEFS comment.
+//
+// 2026-09-29, user request: "Remove cards Inventory alerts, Low stock" —
+// both widgets pointed at the same lowStock count under two labels; removed
+// entirely (see DASHBOARD_WIDGET_DEFS in dashboard/service.ts), so there's
+// no href or value case for either here anymore.
 const WIDGET_HREF: Record<string, string> = {
   "jobs-summary": "/jobs",
   "wip-status-counts": "/jobs?view=wip",
   "recent-jobs": "/jobs",
-  "low-stock": "/inventory",
-  "inventory-alerts": "/inventory",
   "outstanding-parts": "/jobs?view=wip",
   "procurement-summary": "/suppliers/outwork",
   "pex-status": "/pex-tracking",
@@ -60,9 +62,6 @@ function widgetValue(key: string, data: DashboardData | null): string {
       return String(Object.values(data?.jobsSummary || {}).reduce((sum, value) => sum + Number(value || 0), 0));
     case "wip-status-counts":
       return String(Object.entries(data?.jobsSummary || {}).reduce((sum, [label, value]) => sum + (TERMINAL_JOB_STATUS_LABELS.has(label) ? 0 : Number(value || 0)), 0));
-    case "low-stock":
-    case "inventory-alerts":
-      return String((data?.lowStock || []).length);
     case "support-tickets":
       return String(Object.values(data?.supportTickets || {}).reduce((sum, value) => sum + Number(value || 0), 0));
     case "pex-status":

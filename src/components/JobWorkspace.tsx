@@ -27,7 +27,7 @@ type PartLineRow = Row & {
   previousStatus?: string | null;
   orderNumber?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
-  part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null }) | null;
+  part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; stockBalances?: Array<{ quantityOnHand?: unknown }> }) | null;
 };
 // Outwork — new (see schema.prisma's OutworkItem comment). batchId groups
 // every item from the same "Record outwork" submission — added 2026-09-09
@@ -169,6 +169,20 @@ function text(value: unknown) {
 function decimalText(value: unknown) {
   if (value == null || value === "") return "0";
   return String(value);
+}
+
+// 2026-09-29, user request: "when in a job, adding a part checks the stock
+// but does not show qty on hand." A pasted/imported part line already gets
+// auto-linked to the matching catalog Part (JobPartLine.partId — see that
+// model's schema comment) but nothing showed its current stock, so summed
+// here from the per-location balances jobs/service.ts now includes (same
+// sum-across-locations Stock Levels itself does) and rendered under the
+// part number below. null (not 0) when the line isn't linked to a real
+// Part at all, so "not in the catalog" reads differently from "in the
+// catalog with zero on hand".
+function partStockOnHand(part: PartLineRow["part"]): number | null {
+  if (!part || !Array.isArray(part.stockBalances)) return null;
+  return part.stockBalances.reduce((sum, b) => sum + Number(b.quantityOnHand ?? 0), 0);
 }
 
 function escapeHtml(value: string) {
@@ -777,12 +791,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return () => clearTimeout(timer);
   }, [editOutworkSupplierQuery, editingOutworkId, editOutworkSupplierPickerOpen]);
 
+  // 2026-09-29, user request: "adding a supplier field must be searchable
+  // and scrollable" on the Request quote form — this used to show nothing
+  // at all until 2+ characters were typed, so there was no way to just
+  // browse the supplier list. /api/v1/master-data/suppliers already
+  // returns every active supplier (alphabetical) when `q` is empty — see
+  // listMaster's "suppliers" case in master-data/service.ts, which only
+  // adds the name/code/description filter `q.q &&` — so opening the picker
+  // with nothing typed now loads that first page straight away, and typing
+  // narrows it the same as before. The dropdown itself (.selector-results)
+  // already scrolls at 280px max-height.
   useEffect(() => {
     if (!rfqSupplierPickerOpen) { setRfqSupplierOptions([]); return; }
     const q = rfqSupplierQuery.trim();
-    if (q.length < 2) { setRfqSupplierOptions([]); return; }
     const timer = setTimeout(async () => {
-      const r = await fetch(`/api/v1/master-data/suppliers?q=${encodeURIComponent(q)}&status=active&pageSize=20`, { cache: "no-store" });
+      const r = await fetch(`/api/v1/master-data/suppliers?${q ? `q=${encodeURIComponent(q)}&` : ""}status=active&pageSize=20`, { cache: "no-store" });
       const b = await r.json();
       setRfqSupplierOptions(b.items || []);
     }, 200);
@@ -2827,6 +2850,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td>
                     <strong>{text(line.partNumber)}</strong>
                     <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
+                    {(() => {
+                      const onHand = partStockOnHand(line.part);
+                      if (onHand == null) return null;
+                      return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}</div>;
+                    })()}
                   </td>
                   <td>
                     {quantity}{hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
@@ -2989,7 +3017,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {job.partLines.length === 0 && <tr><td colSpan={4} className="table-state compact-empty-state">No parts on this job to price yet.</td></tr>}
                   </tbody></table></div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div className="wide" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" className="gold-button" disabled={saving} onClick={() => void saveRfqQuote(rfqQuoteEditId)}>Save quote</button>
                   <button type="button" className="quiet-button" disabled={saving} onClick={cancelRecordQuote}>Cancel</button>
                 </div>

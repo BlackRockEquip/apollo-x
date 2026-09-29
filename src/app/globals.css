@@ -23,6 +23,17 @@
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
+/* 2026-09-29, user report: "on some screens there is a light grey
+   background and on others its white" on the Dashboard. Only `body` had
+   `background: var(--canvas)` set — browsers are supposed to propagate
+   that to the full viewport canvas when `html` itself has no background
+   (the CSS background-propagation rule), but that propagation is exactly
+   the kind of thing that's historically been inconsistent across
+   browsers/engines, especially on a short page like the Dashboard where
+   body's own content doesn't reach the bottom of a tall monitor. Setting
+   it on `html` too removes any dependency on that propagation working —
+   costs nothing, can only help. */
+html { background: var(--canvas); }
 body { margin: 0; background: var(--canvas); color: var(--ink-900); }
 button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -422,6 +433,19 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    content needs. */
 .data-table-wrap { max-height: calc(100vh - 300px); overflow-y: auto; }
 .data-table-wrap .data-table thead th { position: sticky; top: 0; z-index: 1; }
+/* 2026-09-29, user request: "Suppliers/Outwork - Make table headers
+   filterable" (OutworkAllWorkspace.tsx, RfqAllWorkspace.tsx) — a second
+   <tr className="filter-row"> right under the label row, one input/select
+   per filterable column, filtering the already-loaded rows client-side
+   (neither table is server-paged). Not sticky like the label row above it
+   (the general .data-table thead th rule already makes every thead th
+   sticky at top:0) — two stacked sticky rows both pinned to top:0 would
+   overlap each other while scrolling, so this row scrolls away normally
+   once you scroll past it instead. */
+.data-table-wrap .data-table thead tr.filter-row th { position: static; top: auto; z-index: auto; background: #fff; padding: 5px 9px; border-bottom: 1px solid var(--ink-150); text-transform: none; letter-spacing: normal; }
+.data-table thead tr.filter-row input, .data-table thead tr.filter-row select { width: 100%; min-height: 27px; border: 1px solid var(--ink-300); border-radius: 5px; padding: 2px 7px; font-size: 11px; font-weight: 400; color: var(--ink-700); background: white; }
+.data-table thead tr.filter-row th:has(button) { text-align: right; }
+.data-table thead tr.filter-row button { display: inline-flex; align-items: center; justify-content: center; padding: 4px; }
 /* Jobs & WIP keeps its own slightly-shorter height override — it has one
    extra toolbar row (the status filter-chip strip) above the table that
    the generic 300px budget above doesn't account for. */
@@ -462,14 +486,21 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .form-drawer header button { border:0; background:transparent; cursor:pointer; color:var(--ink-500); }
 .drawer-fields { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:22px; }
 .drawer-fields label { display:grid; align-content:start; gap:6px; color:var(--ink-700); font-size:11px; font-weight:700; }
-.drawer-fields label.wide { grid-column:1/-1; }
+/* 2026-09-29 — was `.drawer-fields label.wide` only, so a plain
+   non-<label> element (a table wrapper, a button row) with className="wide"
+   silently did NOT span both columns and got squeezed into one — e.g. the
+   Request-quote drawer's "Record quote" table and its Save/Cancel button
+   row (JobWorkspace.tsx), which is exactly what produced the reported "save
+   and cancel buttons fill the whole column" look: crammed into a half-width
+   grid cell instead of spanning full width like the rest of the drawer.
+   Broadened to any `.wide` element so every existing `<div className="wide">`
+   in the app (there are several — parts-followup panels, the alt-number
+   editor, etc.) gets the same full-width span a `<label className="wide">`
+   already got, without needing a one-off override per element. */
+.drawer-fields label.wide, .drawer-fields .wide { grid-column:1/-1; }
 .drawer-fields label:has(input[type=checkbox]) { display:flex; align-items:center; grid-column:1/-1; }
 .drawer-fields textarea { resize:vertical; }
-/* 2026-09-29 — Alternate part numbers editor on the Add/Edit Part drawer
-   (StockLevelsWorkspace.tsx). Not a <label> like its siblings (nothing
-   here is one control), so .wide alone won't span it under the
-   label.wide rule above — spanned explicitly here instead. */
-.drawer-fields .alt-number-editor { grid-column:1/-1; display:grid; gap:8px; }
+.drawer-fields .alt-number-editor { display:grid; gap:8px; }
 .drawer-fields .alt-number-editor > span { font-size:11px; font-weight:700; color:var(--ink-700); }
 .alt-number-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
 .alt-number-list li { display:flex; align-items:center; gap:8px; border:1px solid var(--ink-150); border-radius:8px; padding:6px 9px; }
@@ -798,7 +829,7 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
   .search-control { width:100%; }
   .master-toolbar > span { margin-left:0; }
   .drawer-fields { grid-template-columns:1fr; }
-  .drawer-fields label.wide { grid-column:auto; }
+  .drawer-fields label.wide, .drawer-fields .wide { grid-column:auto; }
   .settings-grid { grid-template-columns:1fr; }
   .header-tabs { width:100%; justify-content:flex-start; flex-wrap:wrap; }
   .detail-head { align-items:stretch;flex-direction:column }.detail-grid,.brand-grid { grid-template-columns:1fr }.record-list article { grid-template-columns:auto 1fr auto }.record-list article .table-action { grid-column:auto }.history-list article{grid-template-columns:1fr}

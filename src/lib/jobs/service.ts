@@ -244,7 +244,16 @@ async function getJobScoped(companyId: string, id: string) {
       // is its own record with a direct status, no derived summary needed.
       partLines: {
         include: {
-          part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true } },
+          // 2026-09-29, user request: "when in a job, adding a part checks
+          // the stock but does not show qty on hand." A pasted/imported
+          // part number is already cross-checked against the catalog (see
+          // JobPartLine.partId's own schema comment) — this just also
+          // pulls that matched part's current stock balance per location
+          // so the UI can total and show it, the same sum-across-locations
+          // the Stock Levels screen already does (see sumBalances in
+          // inventory/service.ts) — not selecting anything else about
+          // location here since only the total is shown on this table.
+          part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true, stockBalances: { select: { quantityOnHand: true } } } },
           orderedFromSupplier: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "asc" },

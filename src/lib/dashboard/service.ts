@@ -8,8 +8,6 @@ export type DashboardWidgetKey =
   | "jobs-summary"
   | "wip-status-counts"
   | "recent-jobs"
-  | "inventory-alerts"
-  | "low-stock"
   | "pex-status"
   | "outstanding-parts"
   | "procurement-summary"
@@ -18,12 +16,17 @@ export type DashboardWidgetKey =
 
 type DashboardWidget = { key: DashboardWidgetKey; enabled: boolean; order: number };
 
+// 2026-09-29, user request: "Remove cards Inventory alerts, Low stock" —
+// both widgets showed the exact same low-stock part count (see the shared
+// `lowStock` query this used to gate below), just under two different
+// labels/icons; removing both here drops them from Settings > Dashboard's
+// widget picker and from any already-saved per-user layout (normalizeWidgets
+// below silently drops a saved key that's no longer in this list — no
+// migration needed).
 export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: string; module: ModuleKey; permission: string }> = [
   { key: "jobs-summary", label: "Jobs summary", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "wip-status-counts", label: "WIP status counts", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "recent-jobs", label: "Recent jobs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
-  { key: "inventory-alerts", label: "Inventory alerts", module: "INVENTORY", permission: "INVENTORY_VIEW" },
-  { key: "low-stock", label: "Low stock", module: "INVENTORY", permission: "INVENTORY_VIEW" },
   { key: "pex-status", label: "PEX status", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW" },
   { key: "outstanding-parts", label: "Outstanding parts", module: "INVENTORY", permission: "INVENTORY_VIEW" },
   // 2026-09-18 — user asked "What is procurement summary on dashboard?"
@@ -237,15 +240,12 @@ export async function getDashboardData(ctx: RequestContext) {
   const { widgets, analyticsCharts } = await getDashboardConfig(ctx);
   const enabled = widgets.filter((row) => row.enabled).map((row) => row.key);
 
-  const [jobsByStatus, recentJobs, lowStock, outstandingPartLines, pexOpen, tickets, procurementOpen] = await Promise.all([
+  const [jobsByStatus, recentJobs, outstandingPartLines, pexOpen, tickets, procurementOpen] = await Promise.all([
     enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts")
       ? prisma.job.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("recent-jobs")
       ? prisma.job.findMany({ where: { companyId }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, jobNumber: true, status: true, customerReference: true, customerPo: true, component: true, machineModel: true, customer: { select: { name: true } } } })
-      : Promise.resolve([]),
-    enabled.includes("low-stock") || enabled.includes("inventory-alerts")
-      ? prisma.part.findMany({ where: { companyId, stockBalances: { some: { quantityOnHand: { lte: prisma.stockBalance.fields.lowStockThreshold } } } }, take: 8, orderBy: { updatedAt: "desc" }, select: { id: true, partNumber: true, description: true, stockBalances: { take: 1, select: { quantityOnHand: true, lowStockThreshold: true } } } })
       : Promise.resolve([]),
     // "Outstanding" now means a JobPartLine that hasn't been fully received
     // yet (see PartLineStatus) — replaces the old reserve/issue/return
@@ -298,7 +298,6 @@ export async function getDashboardData(ctx: RequestContext) {
     data: {
       jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[JOB_STATUS_LABELS[row.status]] = row._count._all; return acc; }, {}),
       recentJobs,
-      lowStock: lowStock.map((part) => ({ ...part, balance: part.stockBalances[0] ?? null })),
       outstandingParts: outstandingPartLines,
       procurementOpen,
       pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),

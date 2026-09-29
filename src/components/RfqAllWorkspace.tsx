@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
@@ -65,6 +65,21 @@ function daysOutstanding(row: RfqRow) {
   return `${days} day${days === 1 ? "" : "s"}`;
 }
 
+// 2026-09-29, user request: "Make table headers filterable" (same request
+// as the Outwork tab). The Status column shows two different things
+// depending on row.kind (see receivingStatusInfo above for job rows, the
+// raw dropdown for general rows) — this gives both a single label set so
+// one Status filter dropdown covers either kind.
+function rowStatusLabel(row: RfqRow): string {
+  if (row.kind === "general") {
+    if (row.status === "SENT") return "Sent";
+    if (row.status === "RECEIVED") return "Received";
+    if (row.status === "SKIPPED") return "Skipped";
+    return row.status;
+  }
+  return receivingStatusInfo(row.receivingStatus).label;
+}
+
 // New — 2026-09-14, Suppliers screen's RFQ tab (see that route's comment).
 // Lists every RFQ, job-linked and job-less, from GET /api/v1/rfqs. "Add
 // RFQ" optionally picks a job: with one picked this reuses the exact same
@@ -93,6 +108,18 @@ export function RfqAllWorkspace() {
   // — added 2026-09-14, shared by both the job-linked and job-less paths
   // below since only one is used per submit.
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+
+  // 2026-09-29, user request: "Suppliers/Outwork - Make table headers
+  // filterable" — same treatment on this RFQ tab. All client-side against
+  // the already-loaded `rows`.
+  const [filters, setFilters] = useState({ job: "", supplier: "", status: "ALL" });
+  const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
+    if (filters.job && !(row.jobId ? text(row.jobNumber) : "General").toLowerCase().includes(filters.job.toLowerCase())) return false;
+    if (filters.supplier && !(row.supplierName || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
+    if (filters.status !== "ALL" && rowStatusLabel(row) !== filters.status) return false;
+    return true;
+  }), [rows, filters]);
+  const filtersActive = filters.job || filters.supplier || filters.status !== "ALL";
 
   function fileToBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -193,7 +220,7 @@ export function RfqAllWorkspace() {
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{rows.length} RFQ{rows.length === 1 ? "" : "s"}</span>
+      <span>{filtersActive ? `${filteredRows.length} of ${rows.length} RFQ${rows.length === 1 ? "" : "s"}` : `${rows.length} RFQ${rows.length === 1 ? "" : "s"}`}</span>
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Add RFQ</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
@@ -202,8 +229,17 @@ export function RfqAllWorkspace() {
         Attachment upload on Add RFQ (below) is unchanged — this only drops
         the column that let you view one from the list, plus swaps Notes
         for a computed Days Outstanding (see that function's own comment). */}
-    <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Days Outstanding</th><th></th></tr></thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : rows.map((row) => {
+    <div className="data-table-wrap"><table className="data-table"><thead>
+      <tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Days Outstanding</th><th></th></tr>
+      <tr className="filter-row">
+        <th><input value={filters.job} onChange={(e) => setFilters((f) => ({ ...f, job: e.target.value }))} placeholder="Filter job…" aria-label="Filter by job" /></th>
+        <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
+        <th><select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} aria-label="Filter by status"><option value="ALL">All</option><option value="Sent">Sent</option><option value="Received">Received</option><option value="Partially received">Partially received</option><option value="Outstanding">Outstanding</option><option value="Skipped">Skipped</option></select></th>
+        <th></th><th></th><th></th>
+        <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
+      </tr>
+    </thead><tbody>
+      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={7} className="table-state compact-empty-state">No RFQs match these filters.</td></tr> : filteredRows.map((row) => {
         const info = receivingStatusInfo(row.receivingStatus);
         return <tr key={`${row.kind}-${row.id}`}>
           <td>{row.jobId ? <Link href={`/jobs/${row.jobId}`}>{text(row.jobNumber)}</Link> : <span className="muted">General</span>}</td>
