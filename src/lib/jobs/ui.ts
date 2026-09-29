@@ -129,6 +129,17 @@ export function flowFamilyForJobType(type: JobType): JobFlowFamily {
 // instead (see JobWorkspace.tsx's <StatusStepper status={...}> normalizing
 // the value it passes in), and clicking that step on such a job moves it to
 // AWAIT_OUTWORK going forward.
+// 2026-09-29, user request ("combine to be received and to be collected as
+// they are the same thing, change label to 'To be received/collected'") —
+// TO_BE_COLLECTED is deliberately still listed below (unlike
+// WAITING_FOR_PARTS above, it's a display-only merge: no enum/migration
+// change, and this array is also what drives the job "Initial status"/
+// "Reopen to status" dropdowns in JobWorkspace.tsx, which still need to
+// offer "To be collected" as its own choice at registration time). The
+// merge itself — filtering TO_BE_COLLECTED out of the *stepper's* steps,
+// and relabeling the surviving TO_BE_RECEIVED node "To be received/
+// collected" for that one call only — lives entirely in JobWorkspace.tsx's
+// <StatusStepper steps=.../labels=.../status=...> call, not here.
 export const MAIN_WORKSHOP_STATUS_STEPS: JobStatus[] = [
   "TO_BE_COLLECTED",
   "TO_BE_RECEIVED",

@@ -670,6 +670,19 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .status-stepper-connector.done { background: var(--gold-600); }
 .status-stepper-note { margin: 0; padding: 13px 15px; color: var(--ink-500); font-size: 12px; }
 
+/* Job header title row (job number + status pill) and the status stepper's
+   new home directly under the job header, both 2026-09-29 — see the "Status
+   pill moved up..." comment in JobWorkspace.tsx. The stepper itself is
+   still the plain .status-stepper markup above, just no longer wrapped in
+   its own bordered .detail-panel card, so these two overrides strip the
+   card-oriented padding it had (13px/15px) down to flush with the rest of
+   the header. */
+.header-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.header-title-row h1 { margin: 0; }
+.job-header-stepper .status-stepper { padding: 0; }
+.job-header-stepper .status-stepper-note { padding: 0; }
+.job-header-stepper-hint { margin: 0 0 6px; color: var(--ink-500); font-size: 11.5px; }
+
 /* Compact bento-style layout for the inline job-edit form (JobWorkspace.tsx
    jobFormSections) — panels sit side by side instead of stacking full-width,
    and each panel's own field grid packs as many small fields per row as

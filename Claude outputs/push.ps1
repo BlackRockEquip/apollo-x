@@ -1,30 +1,30 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Reorder Settings-Company fields, fit Job History on one page, tidy
-delivery note description line
+Move job status stepper inline with job header, merge To be
+collected/received display
 
-Settings > Company: moved the Logo & preview section to sit directly
-below Address (it was previously the last section on the page, after
-Email/SMTP).
+Job detail page header: added a status pill next to the job number
+(new, uses the same StatusPill everywhere else already shows a job's
+status), and moved the whole status stepper up from its own separate
+"Job status" panel to sit directly under the header block instead -
+customer name and job type stay stacked below the job number/pill
+line, same as before. Dropped the old plain-text " - <status label>"
+under the job type, since the new pill already carries that.
 
-Print Job History: tightened padding, margins and font sizes across
-the view (body padding, heading margins, table cell padding) so the
-Customer/Machine, Job details/Commercial, and any Notes/Field service/
-Warranty sections reliably fit on one printed page before Parts list's
-own page break kicks in; added page-break-after/page-break-inside
-guards on headings, two-column blocks and tables so a section doesn't
-get split awkwardly across a page boundary if content does still run
-long. Also moved the company logo to sit on its own line above the
-"Job record" heading, rather than beside it in the top-right corner.
+Status stepper: To be collected and To be received now render as one
+combined stage on the stepper, labelled "To be received/collected" -
+a job sitting on either status highlights on that same node (same
+mechanism already used for Waiting for parts / Await outwork). This
+is a display-only merge scoped to the stepper: the two statuses are
+untouched everywhere else - a job actually registered as To be
+collected keeps that literal status and label on its pill, the Jobs
+list and every print, and the "Initial status"/"Reopen to status"
+dropdowns still offer To be collected as its own choice, since those
+read the underlying status list directly rather than the stepper's
+own filtered view of it. No database change, no migration.
 
-Print Delivery Note (job-facing): the new items table's Description
-cell used to show Make/Model/Component/Serial each on its own line
-with a field label ("Make: X"). Now they're all on one line, values
-only, separated the same way as the customer contact line and the Job
-Kit applicability line elsewhere in this file (" · ").
-
-src/components/JobWorkspace.tsx, src/components/CompanySettingsForm.tsx.
+src/components/JobWorkspace.tsx, src/lib/jobs/ui.ts, src/app/globals.css.
 "@ | Set-Content -Encoding utf8 commit-msg.txt
 git commit -F commit-msg.txt
 Remove-Item commit-msg.txt

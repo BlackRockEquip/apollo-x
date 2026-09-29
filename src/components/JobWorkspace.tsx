@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
-import { PexStatusPill } from "@/components/StatusPill";
+import { PexStatusPill, StatusPill } from "@/components/StatusPill";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -2964,11 +2964,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <div>
             <Link href="/jobs" className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
             <p className="eyebrow">Jobs</p>
-            <h1>{title}</h1>
+            {/* Status pill moved up next to the job number, and the status
+                stepper (below, still inside .job-sticky-header) moved from
+                its own separate "Job status" section up to sit directly
+                under this header block — both 2026-09-29, user request
+                ("mockup of how the job status slider will look inline with
+                the job number field"). The plain-text " · <status label>"
+                that used to follow the job type below has been dropped
+                since the pill now carries that same information. */}
+            <div className="header-title-row">
+              <h1>{title}</h1>
+              {job && <StatusPill status={job.status} />}
+            </div>
             {mode === "detail" && job?.customer && (
               <p className="header-customer-line"><Link href={`/customers/${job.customer.id}`}>{job.customer.name}</Link></p>
             )}
-            <p>{mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : `${JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]} · ${JOB_STATUS_LABELS[(job?.status || "DRAFT") as keyof typeof JOB_STATUS_LABELS]}`}</p>
+            <p>{mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]}</p>
           </div>
           <div className="header-actions">
             {mode === "create" ? (
@@ -3002,29 +3013,57 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         {error && <div className="inline-error">{error}</div>}
 
         {job && job.status !== "DRAFT" && (
-          <section className="detail-panel">
-            <header><div><h2>Job status</h2><p>Click a stage to move the job straight there — saves immediately.</p></div></header>
+          <div className="job-header-stepper">
             {["CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"].includes(job.status) ? (
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({JOB_STATUS_LABELS[job.status]}) — use Reopen above to bring it back onto the stepper.
               </p>
             ) : (
-              <StatusStepper
-                steps={statusStepsForJobType(job.type)}
-                labels={JOB_STATUS_LABELS}
-                // WAITING_FOR_PARTS was folded into the AWAIT_OUTWORK
-                // stepper stage on 2026-09-10 (see MAIN_WORKSHOP_STATUS_STEPS'
-                // comment in @/lib/jobs/ui) — normalize it here so a job
-                // still sitting on WAITING_FOR_PARTS highlights on that
-                // merged step instead of showing no current stage at all
-                // (StatusStepper's currentIndex is steps.indexOf(status),
-                // and WAITING_FOR_PARTS is no longer in `steps`).
-                status={job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status}
-                disabled={saving}
-                onSelect={(step) => void postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null })}
-              />
+              <>
+                <p className="job-header-stepper-hint">Click a stage to move the job straight there — saves immediately.</p>
+                <StatusStepper
+                  // TO_BE_COLLECTED is deliberately left OUT of this call's
+                  // `steps` only — @/lib/jobs/ui's MAIN_WORKSHOP_STATUS_STEPS
+                  // itself is untouched, so the "Initial status"/"Reopen to
+                  // status" dropdowns below (which read that same array
+                  // directly) still offer "To be collected" as its own
+                  // choice. This is purely a stepper *display* merge
+                  // (2026-09-29, user request: "combine to be received and
+                  // to be collected as they are the same thing") — a job
+                  // actually registered as TO_BE_COLLECTED keeps that exact
+                  // status (and its own "To be collected" label everywhere
+                  // else: the pill above, the Jobs list, prints) and just
+                  // shows as the current stage on TO_BE_RECEIVED's node
+                  // here, same mechanism as WAITING_FOR_PARTS/AWAIT_OUTWORK
+                  // below.
+                  steps={statusStepsForJobType(job.type).filter((step) => step !== "TO_BE_COLLECTED")}
+                  // Relabels only the merged node for this stepper — the
+                  // shared JOB_STATUS_LABELS.TO_BE_RECEIVED entry itself is
+                  // untouched, so every other place a TO_BE_RECEIVED job's
+                  // status is shown (pill, Jobs list, prints) still just
+                  // reads "To be received".
+                  labels={{ ...JOB_STATUS_LABELS, TO_BE_RECEIVED: "To be received/collected" }}
+                  // WAITING_FOR_PARTS was folded into the AWAIT_OUTWORK
+                  // stepper stage on 2026-09-10, and TO_BE_COLLECTED folded
+                  // into TO_BE_RECEIVED on 2026-09-29 (see the `steps`/
+                  // `labels` comments above) — normalize both here so a job
+                  // still sitting on either merged-away status highlights on
+                  // its surviving stepper stage instead of showing no
+                  // current stage at all (StatusStepper's currentIndex is
+                  // steps.indexOf(status)).
+                  status={
+                    job.status === "WAITING_FOR_PARTS"
+                      ? "AWAIT_OUTWORK"
+                      : job.status === "TO_BE_COLLECTED"
+                        ? "TO_BE_RECEIVED"
+                        : job.status
+                  }
+                  disabled={saving}
+                  onSelect={(step) => void postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null })}
+                />
+              </>
             )}
-          </section>
+          </div>
         )}
       </div>
       {/* Reserves the space the now-fixed header above no longer occupies
