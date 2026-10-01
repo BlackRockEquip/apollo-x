@@ -2825,17 +2825,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   if (loading) return <div className="table-state"><Loader2 className="spin" size={20} /> Loading job…</div>;
 
-  // 2026-10-01 — user request, then narrowed to "yes only for mechanic
-  // view": the Machine/component + Commercial & logistics reorder below
-  // Notes (introduced earlier the same day) turned out to be wanted for
-  // the User/Mechanic role's job view only, not every role's layout.
-  // Machine/component details, Commercial & logistics and Job details
-  // are pulled out into their own variables here so jobFormSections
-  // below can render them in a different order per role without
-  // duplicating their (identical) field markup: a Mechanic gets Machine
-  // -> Commercial -> Job details, stacked under a full-width Notes panel;
-  // every other role keeps the original Machine -> Job details ->
-  // Commercial order, with Notes back to its normal half-width panel.
+  // 2026-10-01 — Machine/component details, Commercial & logistics and
+  // Job details are kept as their own variables (rather than written
+  // inline in jobFormSections below) because their relative order has
+  // already changed twice today, mechanic-view-only then back to the
+  // original Machine -> Job details -> Commercial order for everyone —
+  // reordering three JSX blocks beats re-copying three blocks' worth of
+  // (identical) field markup. The only layout difference left for a
+  // Mechanic is Notes claiming the full row above instead of sharing one
+  // (see Notes' own `full-row` comment).
   const machineSection = (
     <section className="detail-panel">
       <header><div><h2>Machine / component details</h2></div></header>
@@ -3036,37 +3034,30 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 mechanic view": `full-row` (grid-column: 1/-1, see
                 .job-edit-grid rules in globals.css) is now only applied
                 when mechanicFieldsLocked, so only a Mechanic's Notes panel
-                claims the whole row — see machineSection/commercialSection/
-                jobDetailsSection and the conditional ordering below for why
-                that matters (every other role keeps Notes as a normal
-                2-of-4-column wide-panel, same as before this request). */}
+                claims the whole row — Machine/component details then
+                lands alone at the start of the next row rather than
+                sharing it with Job details (every other role keeps Notes
+                as a normal 2-of-4-column wide-panel, same as before this
+                request, so nothing below it moves). */}
             <header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header>
             <div className="drawer-fields"><label className="wide"><span>Notes</span><textarea rows={4} value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label></div>
           </section>
         )}
 
         {/* 2026-10-01 — user request, then narrowed to "yes only for
-            mechanic view": a Mechanic sees Machine/component details ->
-            Commercial & logistics -> Job details, landing in a row below
-            the now full-width Notes panel (Machine/component on the left,
-            Commercial & logistics to its right). Every other role keeps
-            the original Machine/component -> Job details -> Commercial &
-            logistics order. See the machineSection/commercialSection/
-            jobDetailsSection consts above for the (identical, role-
-            independent) markup each of these renders. */}
-        {mechanicFieldsLocked ? (
-          <>
-            {machineSection}
-            {commercialSection}
-            {jobDetailsSection}
-          </>
-        ) : (
-          <>
-            {machineSection}
-            {jobDetailsSection}
-            {commercialSection}
-          </>
-        )}
+            mechanic view", then: "swop Job details section and Commercial
+            and logistics sections with each other" — back to Machine/
+            component -> Job details -> Commercial & logistics for every
+            role, Mechanic included. The only layout difference left for a
+            Mechanic is Notes claiming the full row above (see its
+            `full-row` class/comment) rather than sharing a row with
+            whatever landed beside it; machineSection/commercialSection/
+            jobDetailsSection (above) stay split into their own consts
+            since a role-specific order has come back before and may
+            again. */}
+        {machineSection}
+        {jobDetailsSection}
+        {commercialSection}
       </div>
     </>
   );
@@ -3311,9 +3302,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <button type="button" className="quiet-button" disabled={job.rfqRequests.length === 0} title={job.rfqRequests.length === 0 ? "Request a quote from at least one supplier first" : undefined} onClick={openQuoteCompare}><Columns3 size={14} /> Compare quotes</button>
                 )}
                 {job.partLines.length > 0 && (
-                  <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
-                )}
-                {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" onClick={printPartsList}><Printer size={14} /> Print Parts List</button>
                 )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
@@ -3337,72 +3325,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </div>
               </div>
             )}
-            {/* 2026-09-16 — result banner for "Create picking slip" above:
-                picks this job's own outstanding parts against warehouse
-                stock in place (see createPickSlipForJob's comment) rather
-                than sending the user to Stock Levels to search for this
-                job. Shown right under the header, next to the button that
-                triggered it — same "don't bury feedback at the top of a
-                very long page" fix applied elsewhere on this page. */}
-            {pickSlipError ? <div className="inline-error">{pickSlipError}</div> : null}
-            {pickSlipResult ? (
-              <div className="inline-success" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span>
-                  {pickSlipResult.pickedCount > 0
-                    ? `Picked ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} from stock.`
-                    : "No stock was available to pick right now."}
-                  {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
-                </span>
-                {pickSlipResult.pickSlip ? (
-                  <span style={{ display: "flex", gap: 8 }}>
-                    <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
-                    <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Deleting…" : "Delete"}</button>
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            {/* 2026-09-29 — user request: "make viewing already created
-                pickslips visible within the job self." Persistent list of
-                every picking slip ever created for this job (unlike the
-                banner above, which only shows the one just created this
-                visit) — see jobPickSlips' own comment near its useState
-                for why this needs its own fetch rather than riding along
-                on job's own GET. Collapsed away entirely once there's
-                nothing to show and nothing still loading, so a job with no
-                picking history doesn't grow an empty section. */}
-            {/* 2026-09-29 — user request: "deleted pickslips must delete
-                completely from the system." Delete now genuinely removes
-                the PickSlip row (see cancelPickSlip's own comment in
-                inventory/service.ts), so every row this list can ever
-                show is by definition still active — no more Status
-                column/pill, which only ever existed to distinguish a
-                soft-cancelled row from an active one. */}
-            {jobPickSlipsError ? <div className="inline-error">{jobPickSlipsError}</div> : null}
-            {jobPickSlipsLoading || jobPickSlips.length > 0 ? (
-              <div className="data-table-wrap" style={{ margin: "0 14px 10px" }}>
-                <table className="data-table">
-                  <thead><tr><th>Generated</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
-                  <tbody>
-                    {jobPickSlipsLoading ? (
-                      <tr><td colSpan={3} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
-                    ) : (
-                      jobPickSlips.map((ps) => (
-                        <tr key={ps.id}>
-                          <td>{new Date(ps.createdAt).toLocaleString()}</td>
-                          <td>{ps.lines.length}</td>
-                          <td className="actions">
-                            <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
-                            <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
-                              {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Deleting…" : "Delete"}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
             {showAddParts && (
               <>
                 <div className="drawer-fields">
@@ -3874,6 +3796,97 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
             );
           })()}
+
+          {/* 2026-10-01 — user request: "generated pickslips (label each
+              'Pickslip 1 date etc' not just date and time (For all users),
+              move buttons more inline with actions header; move generated
+              pickslips to above the parts follow up section." Previously
+              embedded inside the Parts list section (sharing its header's
+              already-crowded button row); now its own section with its own
+              header — "Create picking slip" moved here, right next to this
+              section's own title, instead of competing for space in Parts
+              list's header. Each row is labelled "Pickslip N" ahead of the
+              date — N counts up from the oldest slip (jobPickSlips comes
+              back newest-first from listPickSlips, so N is the row's
+              position counting from the end of the array) so a job with
+              several slips can be talked about by number ("Pickslip 2")
+              instead of only by timestamp. */}
+          <section className="detail-panel">
+            <header>
+              <div><h2>Generated pick slips</h2><p>Every picking slip created for this job so far.</p></div>
+              {job.partLines.length > 0 && (
+                <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
+              )}
+            </header>
+            {/* 2026-09-16 — result banner for "Create picking slip" above:
+                picks this job's own outstanding parts against warehouse
+                stock in place (see createPickSlipForJob's comment) rather
+                than sending the user to Stock Levels to search for this
+                job. Shown right under the header, next to the button that
+                triggered it — same "don't bury feedback at the top of a
+                very long page" fix applied elsewhere on this page. */}
+            {pickSlipError ? <div className="inline-error">{pickSlipError}</div> : null}
+            {pickSlipResult ? (
+              <div className="inline-success" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span>
+                  {pickSlipResult.pickedCount > 0
+                    ? `Picked ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} from stock.`
+                    : "No stock was available to pick right now."}
+                  {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
+                </span>
+                {pickSlipResult.pickSlip ? (
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
+                    <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Deleting…" : "Delete"}</button>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {/* 2026-09-29 — user request: "make viewing already created
+                pickslips visible within the job self." Persistent list of
+                every picking slip ever created for this job (unlike the
+                banner above, which only shows the one just created this
+                visit) — see jobPickSlips' own comment near its useState
+                for why this needs its own fetch rather than riding along
+                on job's own GET. Collapsed away entirely once there's
+                nothing to show and nothing still loading, so a job with no
+                picking history doesn't grow an empty section. */}
+            {/* 2026-09-29 — user request: "deleted pickslips must delete
+                completely from the system." Delete now genuinely removes
+                the PickSlip row (see cancelPickSlip's own comment in
+                inventory/service.ts), so every row this list can ever
+                show is by definition still active — no more Status
+                column/pill, which only ever existed to distinguish a
+                soft-cancelled row from an active one. */}
+            {jobPickSlipsError ? <div className="inline-error">{jobPickSlipsError}</div> : null}
+            {jobPickSlipsLoading || jobPickSlips.length > 0 ? (
+              <div className="data-table-wrap" style={{ margin: "0 14px 10px" }}>
+                <table className="data-table">
+                  <thead><tr><th>Pick slip</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
+                  <tbody>
+                    {jobPickSlipsLoading ? (
+                      <tr><td colSpan={3} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
+                    ) : (
+                      jobPickSlips.map((ps, index) => (
+                        <tr key={ps.id}>
+                          <td>Pickslip {jobPickSlips.length - index} — {new Date(ps.createdAt).toLocaleString()}</td>
+                          <td>{ps.lines.length}</td>
+                          <td className="actions">
+                            <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
+                            <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
+                              {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : jobPickSlipsLoading ? null : (
+              <p className="table-state compact-empty-state">No picking slips have been generated for this job yet.</p>
+            )}
+          </section>
 
           <section className="detail-panel">
             <header><div><h2>Parts follow-up</h2><p>Chase every supplier with outstanding ordered parts on this job — one email per supplier listing everything still outstanding from them.</p></div></header>

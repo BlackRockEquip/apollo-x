@@ -4,6 +4,7 @@ import type { TenantPermission } from "@/lib/auth/permissions";
 import { AuthorizationError, requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
+import { notifyAdminsAndManagers } from "@/lib/notifications/service";
 import { isCompanyEmailConfigured } from "@/lib/email";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
@@ -1122,6 +1123,24 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: jobId, action: "BULK_ADD", afterData: { jobId, count: rows.length } });
+
+  // 2026-10-01 — user request: "when a mechanic user adds parts to a job,
+  // notification should be sent to Admins/Managers." Same
+  // notifyAdminsAndManagers helper PARTS_LIST_IMPORTED already uses (see
+  // its own comment in notifications/service.ts) — fire-and-forget, never
+  // blocks or fails this action over a notification-insert problem. Only
+  // fires for a Mechanic (TenantRole.USER); every other role adding parts
+  // already has the access an admin/manager would be told about anyway.
+  if (ctx.tenantRole === "USER") {
+    void notifyAdminsAndManagers(
+      companyId,
+      "JOB_PARTS_ADDED_BY_MECHANIC",
+      "Parts added to job by Mechanic",
+      `${ctx.displayName} added ${rows.length} part${rows.length === 1 ? "" : "s"} to job ${jobNumberLabel}.`,
+      `/jobs/${jobId}`,
+    );
+  }
+
   return { addedFromPaste: pasteRows.length, addedFromFile: fileRows.length };
 }
 

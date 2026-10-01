@@ -331,6 +331,13 @@ enum JobActivityType {
 // — PARTS_LIST_IMPORTED below fires from Stock Levels' import, not a job.
 enum NotificationType {
   PARTS_LIST_IMPORTED
+  // 2026-10-01 — user request: "when a mechanic user adds parts to a job,
+  // notification should be sent to Admins/Managers." Fired from
+  // addPartLinesBulk (jobs/service.ts) whenever the actor adding the
+  // part(s) is a User/Mechanic (TenantRole.USER) — same
+  // notifyAdminsAndManagers helper PARTS_LIST_IMPORTED already uses, just
+  // a second trigger for it.
+  JOB_PARTS_ADDED_BY_MECHANIC
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,

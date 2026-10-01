@@ -33,6 +33,21 @@ export function requireTenantPageAccess(context: RequestContext | null, permissi
   if (!context.tenantPermissions.has(permission)) redirect(defaultTenantDestination(context.tenantPermissions));
 }
 
+// 2026-10-01 — role-based counterpart to requireTenantPageAccess above, for
+// the rare page that needs blocking for one specific role even though that
+// role holds the permission the page would otherwise check. Suppliers is
+// the first case: a User/Mechanic keeps SUPPLIERS_VIEW (the Outwork
+// supplier-name search in JobWorkspace.tsx — /api/v1/master-data/suppliers
+// — depends on it), but per "users should not be able to view suppliers
+// menu, only access name for outwork purposes" the standalone Suppliers
+// section itself (list, Outwork tab, RFQ tab, and a supplier's own detail
+// page) should still be unreachable for them. Call it after
+// requireTenantPageAccess, as a second check — same redirect-not-throw
+// behavior, same reason (no error.tsx boundary in this app).
+export function requireNotMechanicPage(context: RequestContext): void {
+  if (context.tenantRole === "USER") redirect(defaultTenantDestination(context.tenantPermissions));
+}
+
 // Picks a safe landing page for a given permission set, in rough order of
 // "most users have this" — used both as the requireTenantPageAccess
 // fallback (bounce a now-unauthorized user somewhere real rather than a

@@ -663,12 +663,20 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
         )}
       </div>
 
-      <div className="tab-strip">
-        <button type="button" className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>Stock</button>
-        <button type="button" className={tab === "pickslips" ? "active" : ""} onClick={() => setTab("pickslips")}>Picking Slip History</button>
-      </div>
+      {/* 2026-10-01 — user request: "users should not have be able to
+          view picking slip history." A Mechanic now never sees this tab
+          bar at all (nothing left to switch to besides Stock, the only
+          tab this page ever shows them), and the content below falls
+          back to the Stock view regardless of `tab` state as a second,
+          defensive layer. */}
+      {!mechanicReadOnly && (
+        <div className="tab-strip">
+          <button type="button" className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>Stock</button>
+          <button type="button" className={tab === "pickslips" ? "active" : ""} onClick={() => setTab("pickslips")}>Picking Slip History</button>
+        </div>
+      )}
 
-      {tab === "stock" ? (
+      {tab === "stock" || mechanicReadOnly ? (
         <section className="master-panel inventory-panel">
           <div className="master-toolbar inventory-toolbar">
             <label className="search-control inventory-search-control">

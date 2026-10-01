@@ -15,7 +15,18 @@ import { SupportExitButton } from "@/components/SupportExitButton";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 
-type NavItem = { key: string; label: string; href: string; module: ModuleKey; permission: TenantPermission; icon: typeof LayoutDashboard };
+// 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
+// keeps the SUPPLIERS_VIEW permission (the Outwork supplier-name search in
+// JobWorkspace.tsx — /api/v1/master-data/suppliers — depends on it, and the
+// user explicitly wants that kept), but per "users should not be able to
+// view suppliers menu, only access name for outwork purposes" the
+// standalone Suppliers section itself should still be unreachable for that
+// role. A permission-only filter can't express "has the permission, but
+// still can't see this nav item" — this is the same deliberate role check
+// used throughout JobWorkspace.tsx's own mechanic lockdown
+// (mechanicFieldsLocked) rather than inventing a second, narrower
+// permission nothing else would use.
+type NavItem = { key: string; label: string; href: string; module: ModuleKey; permission: TenantPermission; icon: typeof LayoutDashboard; hiddenForMechanic?: boolean };
 type NavGroup = { key: string; label: string; icon: typeof LayoutDashboard; items: NavItem[]; footer?: boolean };
 
 const DASHBOARD_ITEM: NavItem = { key: "dashboard", label: "Dashboard", href: "/dashboard", module: "DASHBOARD", permission: "DASHBOARD_VIEW", icon: LayoutDashboard };
@@ -71,7 +82,7 @@ const NAV_GROUPS: NavGroup[] = [
   // 2026-09-19 — user request: rename the "CRM" sidebar group to
   // "Customers/Suppliers" (clearer than the internal acronym for what's
   // actually just those two pages).
-  { key: "crm", label: "Customers/Suppliers", icon: Users, items: [{ key: "customers", label: "Customers", href: "/customers", module: "CUSTOMERS", permission: "CUSTOMERS_VIEW", icon: Users }, { key: "suppliers", label: "Suppliers", href: "/suppliers", module: "SUPPLIERS", permission: "SUPPLIERS_VIEW", icon: Building2 }] },
+  { key: "crm", label: "Customers/Suppliers", icon: Users, items: [{ key: "customers", label: "Customers", href: "/customers", module: "CUSTOMERS", permission: "CUSTOMERS_VIEW", icon: Users }, { key: "suppliers", label: "Suppliers", href: "/suppliers", module: "SUPPLIERS", permission: "SUPPLIERS_VIEW", icon: Building2, hiddenForMechanic: true }] },
   { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", permission: "JOB_KITS_VIEW", icon: PackageOpen }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW", icon: Repeat }] },
   // 2026-09-10 — Parts Catalog folded into Stock Levels (single merged
   // page at /inventory: catalog fields + stock columns + bin location +
@@ -96,8 +107,10 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
   // viewer's own role-derived permission set), not just moduleAccess
   // (company-level licensing) — previously a Mechanic still saw every nav
   // item their company had licensed, regardless of whether their own role
-  // was allowed to use it.
-  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => (context.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED" && context.tenantPermissions.has(item.permission)) })), [context.moduleAccess, context.tenantPermissions]);
+  // was allowed to use it. Also drops any item flagged hiddenForMechanic
+  // (see NavItem's own comment — Suppliers today) for a Mechanic
+  // specifically, even though their tenantPermissions already includes it.
+  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => (context.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED" && context.tenantPermissions.has(item.permission) && !(item.hiddenForMechanic && context.tenantRole === "USER")) })), [context.moduleAccess, context.tenantPermissions, context.tenantRole]);
   const topGroups = groups.filter((group) => !group.footer && group.items.length > 0);
   const footerGroups = groups.filter((group) => group.footer && group.items.length > 0);
   const shellStyle = useMemo(() => ({ ["--tenant-theme" as string]: context.themeColor || undefined, ["--tenant-accent" as string]: context.accentColor || undefined, ["--tenant-secondary" as string]: context.secondaryColor || undefined }), [context.themeColor, context.accentColor, context.secondaryColor]);
