@@ -1,64 +1,61 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Mechanic job-view section order, hide Picking Slip History + Suppliers
-for Mechanics, reorganise generated pick slips, notify admins on
-Mechanic parts-add
+Remove customer-name search for Mechanics, bulk part delete, rework
+Returned Unrepaired as a flag, fix quote import reading Total instead
+of Unit Price
 
-Job page (Mechanic only): Job details and Commercial & logistics swap
-back to their original relative order (Machine -> Job details ->
-Commercial), undoing the split introduced in the previous round. Both
-role branches render identically now, so the role-conditional ternary
-in JobWorkspace.tsx was simplified away to a single unconditional
-render of machineSection/jobDetailsSection/commercialSection - the
-only layout difference left for a Mechanic is Notes still claiming the
-full row above instead of sharing one.
+Jobs search (Mechanic only): the Jobs & WIP search box no longer
+matches on customer name/trading name/account code for a Mechanic
+(listJobs in jobs/service.ts) - same CUSTOMERS_VIEW permission gate
+already used to hide the Customer columns and redact a job's customer
+object for that role. customerReference/customerPo are untouched
+(job-side reference numbers, not customer identity). The search
+placeholder drops "customer" from its hint for the same audience.
 
-Stock Levels (Mechanic only): the Stock / Picking Slip History tab
-switcher is now hidden entirely for Mechanics - they only ever see the
-Stock tab (StockLevelsWorkspace.tsx), on top of the existing view-only
-lockdown from the previous round.
+Parts list bulk update: "Delete (N)" added alongside the existing
+Apply/Mark received buttons in the bulk-update toolbar
+(JobWorkspace.tsx) - deletes every selected part line in parallel via
+the same endpoint each row's own Remove button uses, behind a
+confirmation dialog since this one can't be undone.
 
-Suppliers (Mechanic only): the Suppliers nav item is hidden from the
-sidebar for Mechanics (AppShell.tsx, new hiddenForMechanic NavItem
-flag), and all four Suppliers pages - the list, the Outwork tab, the
-RFQ tab, and a supplier's own detail page - now redirect a Mechanic
-away if they reach one directly by URL (new requireNotMechanicPage in
-page-guard.ts). The SUPPLIERS_VIEW permission itself is left alone, on
-purpose: it's what powers the supplier-name search inside a job's
-Outwork section, which Mechanics still need. This is a role check
-layered alongside the permission, not a permission change - a Mechanic
-keeps SUPPLIERS_VIEW but the standalone Suppliers section is blocked
-for them regardless.
+Mark returned unrepaired: this used to overwrite the job's status with
+a terminal RETURNED_UNREPAIRED value that skipped the rest of its
+workflow. It's now an independent flag (new Job.returnedUnrepaired
+column) layered alongside the job's real, still-progressing status -
+the job keeps moving through its normal stepper. A "Return Unrepaired"
+pill shows next to the status pill until the job reaches Completed, at
+which point it folds into the status itself as "Completed /
+Unrepaired" (same convention "Completed / Closed"/"Completed /
+Cancelled" already use). The Jobs & WIP table's "Returned unrepaired"
+filter chip now filters by this flag instead of by status, and the
+Excel WIP auto-sync (excel-sync.ts) sets the same flag from matching
+spreadsheet text instead of writing the old status value. The
+RETURNED_UNREPAIRED JobStatus enum value itself stays defined (Postgres
+can't drop an enum value in place) but nothing writes it anymore - the
+new migration moves every job already sitting on it onto the flag and
+back to Awaiting go ahead, the same status the old "Reopen" action
+already sent these jobs to by hand.
 
-Generated pick slips (all users): the picking-slip list inside a job
-is no longer buried in the Parts list section's header - it's its own
-"Generated pick slips" section now, moved to sit directly above Parts
-follow-up, with its own header and the "Create picking slip" button
-moved there instead of competing for space in Parts list's crowded
-toolbar. Each row is now labelled "Pickslip N - <date>" (numbered from
-the oldest slip) instead of showing only a bare date/time.
+Quote import pricing: importing a supplier's quote spreadsheet to
+compare prices was reading a line-total column (e.g. "Total Price",
+"Extended Price", or "Amount") as if it were a per-unit price whenever
+that column's header happened to contain a word like "price" or
+"cost" - the dedicated total-column handling (which divides back down
+by quantity) never ran because the generic Unit/Price/Cost column
+search matched first. Fixed in quote-extraction.ts: any header that
+looks like a total-style column is now excluded from the generic
+price-column search, so it's only ever picked up by the total-handling
+path and divided back down to a unit price. "Amount" moved from the
+generic price labels to the total-style labels to match standard quote
+layouts (Qty / Unit Price / Amount, where Amount = Qty x Unit Price).
 
-Notifications: when a Mechanic adds parts to a job (paste or file
-import), Admins and Managers for that company now get a notification
-("Parts added to job by Mechanic") linking to the job - same
-notifyAdminsAndManagers helper the existing parts-import notification
-already uses, just a second trigger for the Mechanic case
-(jobs/service.ts). This adds one new NotificationType value
-(JOB_PARTS_ADDED_BY_MECHANIC) to the Prisma schema with its own
-migration - run your usual Prisma migrate step
-(prisma/migrations/20261001150000_job_parts_added_by_mechanic_notification)
-to apply it to the database; nothing else in this push needs a
-migration.
-
-src/components/JobWorkspace.tsx, src/components/StockLevelsWorkspace.tsx,
-src/components/AppShell.tsx, src/lib/auth/page-guard.ts,
-src/app/(tenant)/suppliers/page.tsx,
-src/app/(tenant)/suppliers/outwork/page.tsx,
-src/app/(tenant)/suppliers/rfq/page.tsx,
-src/app/(tenant)/suppliers/[id]/page.tsx, src/lib/jobs/service.ts,
-prisma/schema.prisma,
-prisma/migrations/20261001150000_job_parts_added_by_mechanic_notification/migration.sql.
+src/lib/jobs/service.ts, src/app/(tenant)/jobs/page.tsx,
+src/components/JobWorkspace.tsx, src/app/globals.css,
+src/lib/jobs/ui.ts, src/lib/jobs/validation.ts,
+src/lib/jobs/excel-sync.ts, src/components/StatusPill.tsx,
+src/lib/rfq/quote-extraction.ts, prisma/schema.prisma,
+prisma/migrations/20261001160000_job_returned_unrepaired_flag/migration.sql.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

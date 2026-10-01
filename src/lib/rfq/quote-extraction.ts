@@ -112,15 +112,36 @@ function escapeRegExp(value: string): string {
 // it's checked after the more specific labels, and never trusted blindly,
 // since a column called "Unit" can just as easily mean "unit of measure"
 // (e.g. "EA", "Box") rather than "unit price".
-const PRICE_HEADER_LABELS = ["unit price", "unit cost", "price per unit", "cost per unit", "price/unit", "unit rate", "rate", "unit", "price", "cost", "amount"];
-// A plain "Total" (or "Line total" / "Ext price") column is a last resort,
-// not tried until every PRICE_HEADER_LABELS candidate has failed — it's a
-// line total (unit price × quantity), not a unit price, so using it
-// directly would be wrong for any line with quantity > 1. If a quantity
-// column can also be found, the total is divided back down to an
+// 2026-10-01 — user report ("importing quotes for comparing prices, it is
+// currently reading total values and not unit/price values"): "amount"
+// used to be listed here as a generic per-unit label, but in the standard
+// quote/invoice layout most suppliers actually use (Qty, Description, Unit
+// Price, Amount) "Amount" is the LINE TOTAL (qty × unit price), not a
+// per-unit figure — moved to TOTAL_ONLY_LABELS below, where it's divided
+// back down by quantity like any other total column instead of being
+// trusted as-is.
+const PRICE_HEADER_LABELS = ["unit price", "unit cost", "price per unit", "cost per unit", "price/unit", "unit rate", "rate", "unit", "price", "cost"];
+// A plain "Total" (or "Line total" / "Ext price" / "Amount") column is a
+// last resort, not tried until every PRICE_HEADER_LABELS candidate has
+// failed — it's a line total (unit price × quantity), not a unit price, so
+// using it directly would be wrong for any line with quantity > 1. If a
+// quantity column can also be found, the total is divided back down to an
 // approximate unit price; otherwise it's used as-is (still just a guess,
 // always shown for review before anything is saved).
-const TOTAL_ONLY_LABELS = ["line total", "ext price", "extended price", "ext. price", "total"];
+const TOTAL_ONLY_LABELS = ["line total", "line price", "ext price", "extended price", "ext. price", "amount", "total"];
+// 2026-10-01 — same report: a column literally labelled "Total Price" or
+// "Total Cost" (or "Extended Price"/"Ext Price", already in
+// TOTAL_ONLY_LABELS verbatim) was being matched by the PRICE_HEADER_LABELS
+// loop below FIRST, since "total price".includes("price") is true — the
+// more specific, deliberately-ordered TOTAL_ONLY_LABELS check never even
+// ran, so the raw line total was used directly as if it were a unit price.
+// Any header cell that itself looks like a TOTAL_ONLY_LABELS column is now
+// excluded from the PRICE_HEADER_LABELS loop entirely, so it's only ever
+// matched by (and divided back down to a unit price via) the dedicated
+// total-column handling just below.
+function looksLikeTotalColumnLabel(cell: string): boolean {
+  return TOTAL_ONLY_LABELS.some((label) => cell.includes(label));
+}
 const QTY_HEADER_LABELS = ["qty", "quantity"];
 const PART_HEADER_LABELS = ["part number", "part no", "part", "item no", "item"];
 
@@ -183,7 +204,7 @@ async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promi
   let priceCol = -1;
   let priceIsLineTotal = false;
   for (const label of PRICE_HEADER_LABELS) {
-    const idx = headerRow.findIndex((c, i) => c.includes(label) && i !== partCol);
+    const idx = headerRow.findIndex((c, i) => c.includes(label) && i !== partCol && !looksLikeTotalColumnLabel(c));
     if (idx !== -1 && columnLooksNumeric(rows, headerIndex + 1, idx)) {
       priceCol = idx;
       break;

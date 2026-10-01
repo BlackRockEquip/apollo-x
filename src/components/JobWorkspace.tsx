@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
+import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
-import { PexStatusPill, StatusPill, WarrantyStatusPill } from "@/components/StatusPill";
+import { PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -138,6 +138,12 @@ type JobDetail = Row & {
   jobNumber?: string | null;
   draftNumber: string;
   status: keyof typeof JOB_STATUS_LABELS;
+  // 2026-10-01 — see Job.returnedUnrepaired's own comment in
+  // schema.prisma: an independent flag alongside `status` above, not a
+  // status value of its own.
+  returnedUnrepaired?: boolean;
+  returnedUnrepairedReason?: string | null;
+  returnedUnrepairedAt?: string | null;
   type: keyof typeof JOB_TYPE_LABELS;
   customerId: string;
   customer: CustomerSelection & { contacts?: Row[]; addresses?: Row[]; branches?: Row[] };
@@ -1559,6 +1565,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to mark the selected part lines received.");
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  // 2026-10-01 — user request: "When bulk updating of parts, allow to
+  // delete all selected parts." Same shape as applyBulkPartUpdate/
+  // applyBulkMarkReceived above (fires the existing single-line action —
+  // removePartLineRow's own DELETE — once per selected line, in parallel),
+  // but confirmed first since this one can't be undone (removePartLineRow's
+  // own single-row "Remove" button has never asked, but deleting several
+  // lines at once in one click is a bigger mistake to make silently).
+  async function applyBulkDelete() {
+    if (!jobId || bulkSelectedIds.size === 0) return;
+    const ids = Array.from(bulkSelectedIds);
+    if (!(await confirm({ message: `Delete ${ids.length} selected part line${ids.length === 1 ? "" : "s"}? This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
+    setBulkApplying(true); setError("");
+    try {
+      const results = await Promise.all(ids.map(async (lineId) => {
+        const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, { method: "DELETE" });
+        return r.ok;
+      }));
+      const failed = results.filter((ok) => !ok).length;
+      if (failed > 0) setError(`${failed} of ${ids.length} selected part line${ids.length === 1 ? "" : "s"} could not be deleted.`);
+      setBulkSelectedIds(new Set());
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to delete the selected part lines.");
     } finally {
       setBulkApplying(false);
     }
@@ -3079,7 +3113,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 since the pill now carries that same information. */}
             <div className="header-title-row">
               <h1>{title}</h1>
-              {job && <StatusPill status={job.status} />}
+              {/* 2026-10-01 — user request ("let it add a status pill next
+                  to the job status 'Return Unrepaired' and once the job is
+                  completed the status will become 'Completed /
+                  Unrepaired'"): the flag shows as its own pill alongside
+                  the normal status pill right up until the job reaches
+                  COMPLETE, at which point it's folded into the main pill's
+                  own label instead (jobStatusLabel in StatusPill.tsx) —
+                  see ReturnUnrepairedPill's own comment there. */}
+              {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />}
+              {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
             </div>
             {/* 2026-10-01 — gated by canViewCustomer alongside the
                 Customer details section itself (see jobFormSections
@@ -3124,10 +3167,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     the locked stepper. Server-side: requireNotMechanicRestricted
                     in jobs/service.ts rejects all of these regardless. */}
                 {!mechanicFieldsLocked && job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
-                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
-                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
-                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
-                {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
+                {/* 2026-10-01 — no longer excludes a "RETURNED_UNREPAIRED"
+                    status (that status is retired — see
+                    Job.returnedUnrepaired's own comment in schema.prisma);
+                    instead hidden once the flag itself is already set,
+                    since the job can only be flagged once. */}
+                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
+                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
+                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
+                {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
               </>
             )}
           </div>
@@ -3137,7 +3185,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
         {job && job.status !== "DRAFT" && (
           <div className="job-header-stepper">
-            {["CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"].includes(job.status) ? (
+            {["CLOSED", "CANCELLED"].includes(job.status) ? (
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({JOB_STATUS_LABELS[job.status]}) — use Reopen above to bring it back onto the stepper.
               </p>
@@ -3248,6 +3296,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <aside className="form-drawer compact-dialog">
                 <header><div><p className="eyebrow">Jobs</p><h2>Mark returned unrepaired</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
+                  {/* 2026-10-01 — user request: this no longer closes the
+                      job or changes its status — it just adds a "Return
+                      Unrepaired" pill next to the normal status pill, and
+                      the job keeps moving through its usual stepper as
+                      before. Once it reaches Completed, the pill folds into
+                      that status instead, reading "Completed / Unrepaired". */}
+                  <p className="muted small-line">This flags the job as returned unrepaired — it keeps moving through its normal status stepper. A &quot;Return Unrepaired&quot; pill shows next to its status until the job is completed, at which point the status itself reads &quot;Completed / Unrepaired&quot;.</p>
                   <label className="wide"><span>Reason</span><textarea rows={3} value={form.returnedUnrepairedReason} onChange={(e) => updateField("returnedUnrepairedReason", e.target.value)} /></label>
                 </div>
                 <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving || form.returnedUnrepairedReason.trim().length < 2} onClick={() => { void postAction(`/api/v1/jobs/${job.id}/returned-unrepaired`, { reason: form.returnedUnrepairedReason }).then(() => setDialog(null)); }}>Mark returned unrepaired</button></footer>
@@ -3354,6 +3409,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <label className="party-selector"><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
                 <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button></label>
                 <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button></label>
+                <label><span>&nbsp;</span><button type="button" className="quiet-button danger" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkDelete()}><Trash2 size={14} /> {bulkApplying ? "Applying…" : `Delete (${bulkSelectedIds.size})`}</button></label>
               </div>
             )}
             {(() => {

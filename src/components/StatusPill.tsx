@@ -54,7 +54,30 @@ const JOB_STATUS_TONE: Record<string, string> = {
 };
 
 export function jobStatusTone(status: string) { return JOB_STATUS_TONE[status] ?? "neutral"; }
-export function StatusPill({ status, label }: { status: string; label?: string }) { return <span className={`status-pill tone-${jobStatusTone(status)}`}>{label ?? JOB_STATUS_LABELS[status as keyof typeof JOB_STATUS_LABELS] ?? status}</span>; }
+
+// 2026-10-01 — user request ("mark unrepaired return ... instead of
+// closing the job let it add a status pill next to the job status 'Return
+// Unrepaired' and once the job is completed the status will become
+// 'Completed / Unrepaired'"). Job.returnedUnrepaired is now an independent
+// flag layered alongside the job's real, still-progressing status (see its
+// own comment in schema.prisma) rather than a status value of its own, so
+// combining it into a label is a pure display-time decision, not anything
+// stored — same "Completed / X" convention CLOSED/CANCELLED already use
+// below in JOB_STATUS_LABELS, just computed instead of a fixed map entry
+// since it depends on two fields together.
+export function jobStatusLabel(status: string, returnedUnrepaired?: boolean): string {
+  if (status === "COMPLETE" && returnedUnrepaired) return "Completed / Unrepaired";
+  return JOB_STATUS_LABELS[status as keyof typeof JOB_STATUS_LABELS] ?? status;
+}
+
+export function StatusPill({ status, label, returnedUnrepaired }: { status: string; label?: string; returnedUnrepaired?: boolean }) { return <span className={`status-pill tone-${jobStatusTone(status)}`}>{label ?? jobStatusLabel(status, returnedUnrepaired)}</span>; }
+
+// Shown next to the main StatusPill while a flagged job hasn't reached
+// COMPLETE yet — once it has, the flag folds into StatusPill's own label
+// instead (jobStatusLabel above), so a finished-and-flagged job carries one
+// pill, not two redundant ones. See both call sites: JobWorkspace.tsx's
+// header and the Jobs & WIP table's status column in app/(tenant)/jobs/page.tsx.
+export function ReturnUnrepairedPill() { return <span className="status-pill tone-red">Return Unrepaired</span>; }
 
 // PexRecord's own status lifecycle (TO_BE_DELIVERED -> AWAIT_CORE ->
 // OUTSTANDING -> RECEIVED -> IN_REPAIR -> COMPLETED, with SCRAPPED as a

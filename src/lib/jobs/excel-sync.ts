@@ -272,7 +272,6 @@ const STATUS_KEYWORD_RULES: [RegExp, Status][] = [
   [/\bpaint\b|\bwrap\b/, "TO_PAINT_WRAP"],
   [/delivered.*(await|owing).*payment|(await|owing).*payment.*delivered/, "DELIVERED_AWAITING_PAYMENT"],
   [/to be delivered|ready for delivery|\bdispatch/, "TO_BE_DELIVERED"],
-  [/returned unrepaired|unrepaired return|declined.*return/, "RETURNED_UNREPAIRED"],
   [/\bcancel/, "CANCELLED"],
   [/\bclosed\b/, "CLOSED"],
   [/complete|\bdone\b|invoiced|delivered|paid in full/, "COMPLETE"],
@@ -284,14 +283,34 @@ const STATUS_KEYWORD_RULES: [RegExp, Status][] = [
   [/in progress/, "IN_PROGRESS"],
 ];
 
+// 2026-10-01 — RETURNED_UNREPAIRED is retired as a status anything can be
+// SET to (see Job.returnedUnrepaired's own comment in schema.prisma), so
+// it's excluded even from the exact-match path below (a cell literally
+// spelled "Returned Unrepaired" would otherwise still match
+// normalizeEnumValue against the enum's own spelling and slip through).
+// The free text that used to map here now sets a boolean flag instead —
+// see textIndicatesReturnedUnrepaired below, checked independently of this
+// function at both of this file's call sites.
 function mapStatusBestEffort(raw: string | null): Status | null {
   if (!raw) return null;
   const exact = normalizeEnumValue(raw, ALL_JOB_STATUSES);
-  if (exact) return exact;
+  if (exact && exact !== "RETURNED_UNREPAIRED") return exact;
   const text = raw.trim().toLowerCase();
   if (!text) return null;
   for (const [pattern, status] of STATUS_KEYWORD_RULES) if (pattern.test(text)) return status;
   return null;
+}
+
+// Same phrasing STATUS_KEYWORD_RULES used to map onto RETURNED_UNREPAIRED
+// before it was retired as a status — now sets Job.returnedUnrepaired
+// directly instead (see mapStatusBestEffort's own comment above). Checked
+// independently of the status match, so a row isn't counted as
+// "unrecognized" in unmappedStatus just because this is the only thing its
+// Status cell said.
+const RETURNED_UNREPAIRED_TEXT_PATTERN = /returned unrepaired|unrepaired return|declined.*return/;
+function textIndicatesReturnedUnrepaired(raw: string | null): boolean {
+  if (!raw) return false;
+  return RETURNED_UNREPAIRED_TEXT_PATTERN.test(raw.trim().toLowerCase());
 }
 
 // ---------------------------------------------------------------------------
@@ -808,7 +827,11 @@ export async function runJobExcelSync(input?: JobExcelSyncInput): Promise<JobExc
 
       const statusRaw = cellStr(row, headerIndex, COL.status);
       const targetStatus = mapStatusBestEffort(statusRaw);
-      if (statusRaw && !targetStatus) unmappedStatus.add(statusRaw);
+      // 2026-10-01 — "returned unrepaired" text is recognized (it sets the
+      // flag below) even though it no longer resolves to a targetStatus —
+      // see textIndicatesReturnedUnrepaired's own comment.
+      const returnedUnrepairedFlag = textIndicatesReturnedUnrepaired(statusRaw);
+      if (statusRaw && !targetStatus && !returnedUnrepairedFlag) unmappedStatus.add(statusRaw);
 
       const poStatusRaw = cellStr(row, headerIndex, COL.purchaseOrderStatus);
       if (poStatusRaw && !normalizeEnumValue(poStatusRaw, PURCHASE_ORDER_STATUS_VALUES)) unmappedPurchaseOrderStatus.add(poStatusRaw);
@@ -836,7 +859,13 @@ export async function runJobExcelSync(input?: JobExcelSyncInput): Promise<JobExc
         const initialStatus = flowFamilyForJobType(type) === "FIELD_SERVICE" ? "TO_ATTEND" : "TO_BE_RECEIVED";
         await registerJob(ctx, job.id, { initialStatus });
         const finalStatus = targetStatus && targetStatus !== initialStatus ? targetStatus : initialStatus;
-        if (finalStatus !== initialStatus) await updateJob(ctx, job.id, { status: finalStatus });
+        // 2026-10-01 — returnedUnrepairedFlag is independent of status now
+        // (see Job.returnedUnrepaired's own comment in schema.prisma), so a
+        // brand-new job can be both registered onto its normal initial
+        // status AND flagged in the same follow-up update.
+        if (finalStatus !== initialStatus || returnedUnrepairedFlag) {
+          await updateJob(ctx, job.id, { ...(finalStatus !== initialStatus ? { status: finalStatus } : {}), ...(returnedUnrepairedFlag ? { returnedUnrepaired: true } : {}) });
+        }
         created++;
         // First-ever snapshot for this job — nothing protected yet, so
         // every OVERWRITE_FIELDS value just written becomes the baseline
@@ -864,6 +893,13 @@ export async function runJobExcelSync(input?: JobExcelSyncInput): Promise<JobExc
           ...merged,
           ...(type ? { type } : {}),
           ...(targetStatus ? { status: targetStatus } : {}),
+          // 2026-10-01 — only ever sets `true`, never `false`: like
+          // APPEND_TEXT_FIELDS above (just for a boolean rather than text),
+          // the sheet can flag a job but should never silently un-flag one
+          // — same reasoning `returnedUnrepaired` is left out of
+          // OVERWRITE_FIELDS/the manual-edit protection mechanism entirely,
+          // it's not a "straight overwrite" field.
+          ...(returnedUnrepairedFlag ? { returnedUnrepaired: true } : {}),
         };
 
         // Per-field conflict protection ("if changes on the system have

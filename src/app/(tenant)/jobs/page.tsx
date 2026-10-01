@@ -1,6 +1,6 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
-import { StatusPill } from "@/components/StatusPill";
+import { StatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
@@ -54,7 +54,14 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
     case "type":
       return JOB_TYPE_LABELS[job.type];
     case "status":
-      return <StatusPill status={job.status} />;
+      // 2026-10-01 — same "pill next to status, folded in once Completed"
+      // treatment as the job detail header (JobWorkspace.tsx) — see
+      // ReturnUnrepairedPill/jobStatusLabel's own comments in
+      // StatusPill.tsx.
+      return <>
+        <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />
+        {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
+      </>;
     case "dateReceived":
       return fmtDate(job.dateReceived);
     case "machineMake":
@@ -142,15 +149,20 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   // matching comment on jobsListQuery in src/lib/jobs/validation.ts.
   const type = typeof sp.type === "string" && sp.type ? sp.type : undefined;
   const status = typeof sp.status === "string" && sp.status ? sp.status : undefined;
+  // 2026-10-01 — backs the "Returned unrepaired" filter chip below, now a
+  // flag rather than a status (see JOB_WIP_FILTERS' own comment in
+  // jobs/ui.ts).
+  const returnedUnrepaired = sp.returnedUnrepaired === "true";
   // pageSize is deliberately high, not the usual ~50 — there's no page-number
   // UI on this list, so it scrolls internally within a fixed-height panel
   // instead (see .jobs-panel .data-table-wrap in globals.css). 5000 is the
   // validated ceiling in jobsListQuery; see the comment there.
   const [data, columns] = await Promise.all([
-    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, sort: "newest", page: 1, pageSize: 5000 }),
+    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, returnedUnrepaired: returnedUnrepaired || undefined, sort: "newest", page: 1, pageSize: 5000 }),
     getJobsWipColumns(ctx),
   ]);
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
+  const canSearchCustomerName = ctx.tenantPermissions.has("CUSTOMERS_VIEW");
 
   return (
     <div>
@@ -172,7 +184,14 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         <div className="master-toolbar jobs-toolbar">
           <form id="jobs-filter-form" method="GET" action="/jobs" className="search-control inventory-search-control">
             <Search size={15} />
-            <input type="text" name="q" placeholder="Search BRE, draft, linked job #, customer, machine, component or reference" defaultValue={q} />
+            {/* 2026-10-01 — user request ("Mechanic users - search fields, by
+                customer name need to be removed"): the placeholder itself
+                advertised "customer" as a searchable field — misleading once
+                listJobs stopped matching on it for anyone without
+                CUSTOMERS_VIEW (see mapListWhere's own comment in
+                jobs/service.ts), so the hint drops "customer" for that same
+                audience. */}
+            <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, draft, linked job #, customer, machine, component or reference" : "Search BRE, draft, linked job #, machine, component or reference"} defaultValue={q} />
             <input type="hidden" name="view" value={view} />
           </form>
           <select name="type" defaultValue={type || ""} form="jobs-filter-form">
@@ -204,14 +223,19 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
 
         <div className="jobs-filter-strip">
           {JOB_WIP_FILTERS.map((filter) => {
-            const active = filter.key === "all" ? view === "all" : filter.key === "completed" ? view === "completed" : filter.key === "drafts" ? status === "DRAFT" : false;
+            const active = filter.key === "all" ? view === "all" : filter.key === "completed" ? view === "completed" : filter.key === "drafts" ? status === "DRAFT" : filter.key === "returned-unrepaired" ? returnedUnrepaired : false;
             const href = filter.key === "all"
               ? `/jobs?view=all${q ? `&q=${encodeURIComponent(q)}` : ""}`
               : filter.key === "completed"
                 ? `/jobs?view=completed${q ? `&q=${encodeURIComponent(q)}` : ""}`
                 : filter.key === "drafts"
                   ? `/jobs?view=all&status=DRAFT${q ? `&q=${encodeURIComponent(q)}` : ""}`
-                  : `/jobs?view=all&status=${encodeURIComponent(filter.statuses?.[0] ?? "")}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+                  // 2026-10-01 — "Returned unrepaired" now filters by the
+                  // returnedUnrepaired flag, not a status (see JOB_WIP_FILTERS'
+                  // own comment in jobs/ui.ts).
+                  : filter.key === "returned-unrepaired"
+                    ? `/jobs?view=all&returnedUnrepaired=true${q ? `&q=${encodeURIComponent(q)}` : ""}`
+                    : `/jobs?view=all&status=${encodeURIComponent(filter.statuses?.[0] ?? "")}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
             return <Link key={filter.key} href={href} className={active ? "status-chip active" : "status-chip"}>{filter.label}</Link>;
           })}
           <Link href="/jobs?view=wip" className={view === "wip" ? "status-chip active" : "status-chip"}>All WIP</Link>

@@ -70,6 +70,11 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   // are untouched.
   CLOSED: "Completed / Closed",
   CANCELLED: "Completed / Cancelled",
+  // 2026-10-01 — kept only for any legacy row/activity-log entry still
+  // referencing this value by name; nothing writes it anymore (see
+  // Job.returnedUnrepaired's own comment in schema.prisma). The
+  // user-facing "Return Unrepaired"/"Completed / Unrepaired" wording now
+  // lives in StatusPill.tsx's ReturnUnrepairedPill/jobStatusLabel instead.
   RETURNED_UNREPAIRED: "Returned unrepaired",
   TO_ATTEND: "To attend",
   ON_ROUTE: "On route",
@@ -173,17 +178,22 @@ export function statusStepsForJobType(type: JobType): JobStatus[] {
 // work in JobWorkspace.tsx's REGISTERABLE_STATUSES/CHANGEABLE_STATUSES.
 export const UNIVERSAL_STATUSES: JobStatus[] = ["CANCELLED"];
 
-// RETURNED_UNREPAIRED is deliberately not part of any stepper's ordered
-// list (see the JobStatus enum comment in schema.prisma) — it's reachable
-// from several earlier main-workshop stages via its own action, and
-// reversible back to AWAITING_GO_AHEAD if the client changes their mind.
-// Main workshop flow only; not offered for field-service jobs.
-export const RETURNED_UNREPAIRED_REOPEN_STATUS: JobStatus = "AWAITING_GO_AHEAD";
+// "Mark returned unrepaired" is reachable from several earlier
+// main-workshop stages — main workshop flow only; not offered for
+// field-service jobs. 2026-10-01 — no longer a status/reopen target (see
+// Job.returnedUnrepaired's own comment in schema.prisma); this gate is
+// unchanged, only what the action itself does once allowed has changed.
 export function canMarkReturnedUnrepaired(type: JobType): boolean {
   return flowFamilyForJobType(type) === "MAIN_WORKSHOP";
 }
 
-export const JOB_WIP_FILTERS: Array<{ key: string; label: string; statuses?: JobStatus[] }> = [
+// 2026-10-01 — "returned-unrepaired" switched from `statuses` to its own
+// `returnedUnrepaired` flag (see Job.returnedUnrepaired's own comment in
+// schema.prisma): it's no longer a JobStatus value a job can sit on, so
+// filtering for it is a different query param now — see jobsListQuery in
+// jobs/validation.ts and this filter's own href-building case in
+// app/(tenant)/jobs/page.tsx.
+export const JOB_WIP_FILTERS: Array<{ key: string; label: string; statuses?: JobStatus[]; returnedUnrepaired?: boolean }> = [
   { key: "all", label: "All jobs" },
   { key: "drafts", label: "Drafts", statuses: ["DRAFT"] },
   { key: "collection", label: "Collection / receipt", statuses: ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP"] },
@@ -192,6 +202,6 @@ export const JOB_WIP_FILTERS: Array<{ key: string; label: string; statuses?: Job
   { key: "parts", label: "Waiting for parts", statuses: ["WAITING_FOR_PARTS"] },
   { key: "delivery", label: "Delivery", statuses: ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT"] },
   { key: "field", label: "Field service", statuses: ["TO_ATTEND", "ON_ROUTE", "IN_PROGRESS", "AWAIT_PAYMENT"] },
-  { key: "returned-unrepaired", label: "Returned unrepaired", statuses: ["RETURNED_UNREPAIRED"] },
+  { key: "returned-unrepaired", label: "Returned unrepaired", returnedUnrepaired: true },
   { key: "completed", label: "Completed / closed", statuses: ["COMPLETE", "CLOSED", "CANCELLED"] },
 ];

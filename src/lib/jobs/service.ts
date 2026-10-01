@@ -33,7 +33,7 @@ import {
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
 import { reserveStockTx, releaseReservationTx } from "@/lib/inventory/service";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
-import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, RETURNED_UNREPAIRED_REOPEN_STATUS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
@@ -56,6 +56,11 @@ const jobListSelect = {
   jobNumber: true,
   draftNumber: true,
   status: true,
+  // 2026-10-01 — Jobs & WIP table's status column shows the flag next to
+  // (or, once COMPLETE, folded into) the status pill — see jobStatusLabel/
+  // ReturnUnrepairedPill in StatusPill.tsx and this column's own render in
+  // app/(tenant)/jobs/page.tsx.
+  returnedUnrepaired: true,
   type: true,
   customerReference: true,
   customerPo: true,
@@ -366,10 +371,28 @@ function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobW
     ...(query.type ? { type: query.type } : {}),
     ...(query.view === "wip" ? { status: { in: WIP_STATUSES } } : {}),
     ...(query.view === "completed" ? { status: { in: ["COMPLETE", "CLOSED", "CANCELLED"] } } : {}),
+    // 2026-10-01 — backs the Jobs & WIP "Returned unrepaired" filter chip,
+    // now a flag filter rather than a status filter (see JOB_WIP_FILTERS'
+    // own comment in jobs/ui.ts).
+    ...(query.returnedUnrepaired ? { returnedUnrepaired: true } : {}),
   };
 }
 
-function mapListWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereInput {
+// 2026-10-01 — user request ("Mechanic users - search fields, by customer
+// name need to be removed"): the three `customer: {...}` branches below
+// match on the customer's own name/trading name/account code — exactly the
+// identity data a Mechanic is already blocked from seeing everywhere else
+// (the Customer/Customer trading name columns on this same list are hidden
+// behind CUSTOMERS_VIEW — see filterColumnsByPermission's COLUMN_PERMISSIONS
+// in wip-columns.ts — and a job's own customer object is redacted from the
+// API response for anyone without it — see getJob's `ctx.tenantPermissions.
+// has("CUSTOMERS_VIEW") ? job.customer : null`). Letting a Mechanic search
+// BY that same data, even while unable to see it in the results, defeats
+// the point of hiding it, so this reuses the same CUSTOMERS_VIEW gate.
+// customerReference/customerPo are left in regardless of this flag — those
+// are job-side reference/PO numbers someone typed in, not the customer's own
+// identity, and a Mechanic may well know a job by its PO number.
+function mapListWhere(companyId: string, query: JobsListQuery, canSearchCustomerName: boolean): Prisma.JobWhereInput {
   const contains = { contains: query.q, mode: "insensitive" as const };
   return {
     ...mapListScopeWhere(companyId, query),
@@ -400,9 +423,11 @@ function mapListWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereI
         { componentSerial: contains },
         { componentPartNumber: contains },
         { description: contains },
-        { customer: { name: contains } },
-        { customer: { tradingName: contains } },
-        { customer: { accountCode: contains } },
+        ...(canSearchCustomerName ? [
+          { customer: { name: contains } },
+          { customer: { tradingName: contains } },
+          { customer: { accountCode: contains } },
+        ] : []),
       ],
     } : {}),
   };
@@ -492,7 +517,7 @@ export async function listJobs(ctx: RequestContext, raw: unknown) {
   // this stays cheap even for a company with several thousand jobs).
   const rows = query.q
     ? await (async () => {
-        const textWhere = mapListWhere(companyId, query);
+        const textWhere = mapListWhere(companyId, query, ctx.tenantPermissions.has("CUSTOMERS_VIEW"));
         const seed = await prisma.job.findMany({ where: textWhere, select: { id: true, jobNumber: true, previousJobNumber: true } });
         const ids = await expandLinkedJobIds(scopeWhere, seed);
         return prisma.job.findMany({ where: { ...scopeWhere, id: { in: ids } }, select: jobListSelect });
@@ -715,6 +740,15 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.reportNumber !== undefined ? { reportNumber: input.reportNumber } : {}),
         ...(input.importTrackingNumber !== undefined ? { importTrackingNumber: input.importTrackingNumber } : {}),
         ...(input.previousJobNumber !== undefined ? { previousJobNumber: input.previousJobNumber } : {}),
+        // 2026-10-01 — lets the Excel WIP auto-sync (excel-sync.ts) set the
+        // flag from matching free-text without going through
+        // jobMarkReturnedUnrepairedInput's reason-requiring dedicated
+        // action (the sheet has no reason column) — see jobUpdateInput's
+        // own comment in validation.ts. Only ever sets the timestamp on the
+        // false->true transition, same as markJobReturnedUnrepaired's own
+        // returnedUnrepairedAt — a caller explicitly re-sending `true` on an
+        // already-flagged job (or sending `false`) doesn't touch it.
+        ...(input.returnedUnrepaired !== undefined ? { returnedUnrepaired: input.returnedUnrepaired, ...(input.returnedUnrepaired && !existing.returnedUnrepaired ? { returnedUnrepairedAt: new Date() } : {}) } : {}),
         stripMechanicId,
         buildMechanicId,
         salesRepresentativeId,
@@ -836,8 +870,12 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   requireNotMechanicRestricted(ctx);
   const input = jobReopenInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  if (!["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(existing.status)) {
-    throw new Error("Only closed, cancelled, complete or returned-unrepaired jobs can be reopened.");
+  // 2026-10-01 — RETURNED_UNREPAIRED dropped from this list: it's no
+  // longer a status a job can be sitting on at all (see
+  // Job.returnedUnrepaired's own comment in schema.prisma), so there's
+  // nothing left to reopen it FROM.
+  if (!["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
+    throw new Error("Only closed, cancelled or complete jobs can be reopened.");
   }
   if (!statusStepsForJobType(existing.type as JobType).includes(input.status as JobStatus)) {
     throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
@@ -852,6 +890,13 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   return updated;
 }
 
+// 2026-10-01 — user request ("mark unrepaired return ... instead of
+// closing the job let it add a status pill next to the job status 'Return
+// Unrepaired' and once the job is completed the status will become
+// 'Completed / Unrepaired'"). No longer touches `status` at all — the job
+// keeps moving through its normal stepper exactly as before; this just
+// flags it (Job.returnedUnrepaired) and records the reason. See that
+// field's own comment in schema.prisma.
 export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
@@ -860,16 +905,18 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
   if (!canMarkReturnedUnrepaired(existing.type as JobType)) {
     throw new Error(`${existing.type} jobs cannot be marked returned unrepaired — this action is only available for the main workshop flow.`);
   }
-  if (["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(existing.status)) {
+  if (["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
     throw new Error(`A job with status ${existing.status} cannot be marked returned unrepaired.`);
   }
+  if (existing.returnedUnrepaired) {
+    throw new Error("This job is already marked returned unrepaired.");
+  }
   const updated = await prisma.$transaction(async (tx) => {
-    const marked = await tx.job.update({ where: { id: existing.id }, data: { status: "RETURNED_UNREPAIRED" as JobStatus, updatedById: ctx.userId } });
-    await addActivity(tx, ctx, existing.id, "JOB_RETURNED_UNREPAIRED", `Job returned unrepaired. Reason: ${input.reason}.`, { from: existing.status, to: "RETURNED_UNREPAIRED", reason: input.reason, reopensTo: RETURNED_UNREPAIRED_REOPEN_STATUS });
-    await syncPexStatusFromJobStatus(tx, ctx, companyId, marked, marked.status as JobStatus);
+    const marked = await tx.job.update({ where: { id: existing.id }, data: { returnedUnrepaired: true, returnedUnrepairedReason: input.reason, returnedUnrepairedAt: new Date(), updatedById: ctx.userId } });
+    await addActivity(tx, ctx, existing.id, "JOB_RETURNED_UNREPAIRED", `Job flagged returned unrepaired. Reason: ${input.reason}.`, { reason: input.reason });
     return marked;
   });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "RETURNED_UNREPAIRED", afterData: { from: existing.status, to: updated.status, reason: input.reason } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "RETURNED_UNREPAIRED", afterData: { reason: input.reason } });
   return updated;
 }
 
@@ -1263,8 +1310,12 @@ export async function updatePartLineDescription(ctx: RequestContext, jobId: stri
 // Levels' available pool forever. Once the job reaches a status where no
 // more parts will be picked against it — the same terminal set
 // reopenJob already treats as "done" — release whatever's left. Called
-// from changeJobStatus/updateJob/closeJob below.
-const RESERVATION_RELEASE_STATUSES: readonly string[] = ["COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"];
+// from changeJobStatus/updateJob/closeJob below. RETURNED_UNREPAIRED
+// dropped 2026-10-01 — it's a flag now, not a status a job's reservations
+// would ever need releasing over (see Job.returnedUnrepaired's own comment
+// in schema.prisma); a flagged job keeps running its normal stepper, parts
+// and all, same as any other job.
+const RESERVATION_RELEASE_STATUSES: readonly string[] = ["COMPLETE", "CLOSED", "CANCELLED"];
 
 async function releaseJobPartReservationsTx(tx: Prisma.TransactionClient, ctx: RequestContext, companyId: string, jobId: string) {
   const lineIds = (await tx.jobPartLine.findMany({ where: { companyId, jobId }, select: { id: true } })).map((l) => l.id);

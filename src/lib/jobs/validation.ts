@@ -21,11 +21,24 @@ export const ALL_JOB_STATUSES = [
 // Valid as an initial/mid-flow status for register, status-change and
 // reopen actions — excludes the DRAFT/CLOSED/CANCELLED wrapper states
 // (those go through their own dedicated register/close actions, not a
-// plain status set) and RETURNED_UNREPAIRED (only reachable via its own
-// dedicated "mark returned unrepaired" action, since it carries a reason
-// and is a deliberate off-ramp rather than a stepper stage).
+// plain status set) and RETURNED_UNREPAIRED, which as of 2026-10-01 is no
+// longer a status anything can be SET to at all — see
+// SETTABLE_JOB_STATUSES below and Job.returnedUnrepaired's own comment in
+// schema.prisma.
 export const FLOW_JOB_STATUSES = ALL_JOB_STATUSES.filter(
   (status) => !["DRAFT", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"].includes(status),
+) as [(typeof ALL_JOB_STATUSES)[number], ...(typeof ALL_JOB_STATUSES)[number][]];
+
+// 2026-10-01 — the general job-update endpoint (jobUpdateInput.status
+// below) used to allow writing RETURNED_UNREPAIRED directly like any other
+// status value. Now that it's a separate flag (Job.returnedUnrepaired) that
+// the job's real status just keeps running alongside, nothing should ever
+// write that status value again — unlike FLOW_JOB_STATUSES above (which
+// also excludes DRAFT/CLOSED/CANCELLED, each with its own dedicated
+// action), this is jobUpdateInput's own full set minus just the one retired
+// value.
+const SETTABLE_JOB_STATUSES = ALL_JOB_STATUSES.filter(
+  (status) => status !== "RETURNED_UNREPAIRED",
 ) as [(typeof ALL_JOB_STATUSES)[number], ...(typeof ALL_JOB_STATUSES)[number][]];
 
 const jobTypeEnum = z.enum(["STANDARD_REPAIR", "PARTIAL_REPAIR", "PEX_SUPPLY", "PEX_RETURN", "OUTRIGHT_SALE", "FIELD_SERVICE", "WARRANTY"]);
@@ -79,7 +92,14 @@ export const jobCreateDraftInput = z.object({
 });
 
 export const jobUpdateInput = jobCreateDraftInput.partial().extend({
-  status: z.enum(ALL_JOB_STATUSES).optional(),
+  status: z.enum(SETTABLE_JOB_STATUSES).optional(),
+  // 2026-10-01 — user request ("mark unrepaired return ... let it add a
+  // status pill next to the job status 'Return Unrepaired'"): settable here
+  // too, not just via jobMarkReturnedUnrepairedInput's dedicated action, so
+  // the Excel WIP auto-sync (excel-sync.ts) can set it from matching
+  // free-text without needing a reason the sheet has no column for. See
+  // Job.returnedUnrepaired's own comment in schema.prisma.
+  returnedUnrepaired: z.boolean().optional(),
 });
 
 export const jobRegisterInput = z.object({
@@ -102,10 +122,12 @@ export const jobReopenInput = z.object({
 });
 
 // A job that was quoted and the client declined, asking for it back
-// unrepaired — reversible via jobReopenInput (reopens back onto
-// AWAITING_GO_AHEAD, see RETURNED_UNREPAIRED_REOPEN_STATUS in
-// src/lib/jobs/ui.ts). Main workshop flow only — the service layer should
-// reject this for FIELD_SERVICE jobs (see canMarkReturnedUnrepaired).
+// unrepaired. 2026-10-01 — no longer changes the job's status at all (see
+// Job.returnedUnrepaired's own comment in schema.prisma): this just flags
+// the job, which keeps progressing through its normal stepper same as any
+// other job, with a reason recorded for the record. Main workshop flow
+// only — the service layer should reject this for FIELD_SERVICE jobs (see
+// canMarkReturnedUnrepaired).
 export const jobMarkReturnedUnrepairedInput = z.object({
   reason: z.string().trim().min(2).max(500),
 });
@@ -257,6 +279,13 @@ export const jobsListQuery = z.object({
   view: z.enum(["all", "wip", "completed"]).default("all"),
   status: blankToUndefined(z.enum(ALL_JOB_STATUSES)),
   type: blankToUndefined(jobTypeEnum),
+  // 2026-10-01 — the Jobs & WIP "Returned unrepaired" filter chip used to
+  // just be `status=RETURNED_UNREPAIRED` like any other status filter; now
+  // that it's a flag rather than a status (see Job.returnedUnrepaired's own
+  // comment in schema.prisma) it needs its own query param instead — see
+  // JOB_WIP_FILTERS in jobs/ui.ts and this filter's own href-building case
+  // in app/(tenant)/jobs/page.tsx.
+  returnedUnrepaired: z.coerce.boolean().optional(),
   sort: z.enum(["newest", "oldest"]).default("newest"),
   page: z.coerce.number().int().min(1).default(1),
   // Higher ceiling than the usual 100 (see e.g. master-data/validation.ts's

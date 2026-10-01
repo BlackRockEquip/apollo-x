@@ -239,11 +239,19 @@ enum JobStatus {
   COMPLETE
   CLOSED
   CANCELLED
-  // Quoted, client declined and asked for the unit back unrepaired.
-  // Deliberately not part of any flow's ordered step list (it can happen
-  // from several earlier stages, most commonly AWAITING_GO_AHEAD, and
-  // skips everything after it) — reversible back to AWAITING_GO_AHEAD if
-  // the client changes their mind. Main workshop flow only.
+  // 2026-10-01 — retired as a status a job can actually be SET to: user
+  // request ("mark unrepaired return ... instead of closing the job let it
+  // add a status pill next to the job status 'Return Unrepaired' ...").
+  // Previously this value replaced the job's real status and skipped
+  // everything after it (reversible back to AWAITING_GO_AHEAD); it's now
+  // Job.returnedUnrepaired below instead — an independent flag layered
+  // alongside the job's real, still-progressing status, so the job keeps
+  // moving through its normal stepper. Left in this enum only because
+  // Postgres can't drop an enum value in place — nothing writes it anymore
+  // (see jobUpdateInput's SETTABLE_JOB_STATUSES in jobs/validation.ts,
+  // which excludes it), and the one migration that introduced
+  // returnedUnrepaired also moved every existing row off of it (see that
+  // migration's own comment).
   RETURNED_UNREPAIRED
 
   // --- Field service flow only ---
@@ -1635,6 +1643,21 @@ model Job {
   // migration 20260922110000_sales_representatives for how any already-
   // typed value was preserved across the retarget).
   salesRepresentativeId String?
+
+  // 2026-10-01 — user request ("mark unrepaired return ... instead of
+  // closing the job let it add a status pill next to the job status
+  // 'Return Unrepaired' and once the job is completed the status will
+  // become 'Completed / Unrepaired'"). Replaces the old behavior of
+  // overwriting `status` with the now-retired JobStatus.RETURNED_UNREPAIRED
+  // value (see that enum value's own comment) — this is an independent
+  // flag instead, so the job keeps progressing through its real status's
+  // normal stepper. Once set it's never cleared automatically; the
+  // "Completed / Unrepaired" combined label (see jobStatusLabel in
+  // StatusPill.tsx) is purely a display-time combination of this flag with
+  // status === COMPLETE, not a stored value of its own.
+  returnedUnrepaired       Boolean   @default(false)
+  returnedUnrepairedReason String?
+  returnedUnrepairedAt     DateTime?
 
   // 2026-09-14 — WIP Excel auto-sync's per-field conflict protection ("if
   // changes on the system have been made, spreadsheet must not overwrite
