@@ -1353,10 +1353,36 @@ export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId
   const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true } });
   if (!supplier) notFound();
 
+  // 2026-10-01, user request ("be able to edit receive date like sent
+  // date") — dateReceived is now editable here too, not just via the
+  // dedicated markOutworkItemsReceived/unmarkOutworkItemReceived actions
+  // below. Keep `status` consistent with the date the same way those two
+  // actions already do: giving the item a receive date marks it RECEIVED,
+  // clearing it reverts to SENT_OUT — but only when that's an actual
+  // change, so saving unrelated fields on an item whose receive date isn't
+  // touched doesn't flip its status either way.
+  const nextStatus =
+    input.dateReceived === undefined
+      ? undefined // field omitted entirely — leave status untouched, same as Prisma treats an omitted/undefined data field
+      : input.dateReceived && item.status === "SENT_OUT"
+        ? "RECEIVED"
+        : !input.dateReceived && item.status === "RECEIVED"
+          ? "SENT_OUT"
+          : undefined;
+
   const updated = await prisma.$transaction(async (tx) => {
     const record = await tx.outworkItem.update({
       where: { id: item.id },
-      data: { supplierId: input.supplierId, description: input.description, quantity: input.quantity, dateSentOut: input.dateSentOut, notes: input.notes || null, updatedById: ctx.userId },
+      data: {
+        supplierId: input.supplierId,
+        description: input.description,
+        quantity: input.quantity,
+        dateSentOut: input.dateSentOut,
+        dateReceived: input.dateReceived,
+        notes: input.notes || null,
+        updatedById: ctx.userId,
+        ...(nextStatus ? { status: nextStatus } : {}),
+      },
     });
     await addActivity(tx, ctx, jobId, "OUTWORK_EDITED", `Outwork item updated: ${input.description}.`, { itemId: item.id });
     return record;

@@ -202,6 +202,13 @@ export const outworkEditInput = z.object({
   description: z.string().trim().min(1).max(500),
   quantity: z.coerce.number().int().positive(),
   dateSentOut: optionalDate,
+  // 2026-10-01, user request ("be able to edit receive date like sent
+  // date") — previously dateReceived could only be set (to "now") or
+  // cleared via the dedicated Mark received/Undo receive actions; this
+  // lets it be corrected directly from the same edit form as dateSentOut.
+  // See editOutworkItem in @/lib/jobs/service for how this keeps `status`
+  // in sync with whether a date is present.
+  dateReceived: optionalDate,
   // Free-text note — added 2026-09-10 at the user's request ("a note field
   // next to each item sent out"). "" and null both mean "no note" — the
   // service layer normalizes either to null before saving.

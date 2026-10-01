@@ -101,3 +101,26 @@ const PEX_STATUS_TONE: Record<string, string> = {
 export function pexStatusTone(status: string) { return PEX_STATUS_TONE[status] ?? "neutral"; }
 export function pexStatusLabel(status: string) { return PEX_STATUS_LABELS[status] ?? status; }
 export function PexStatusPill({ status, label }: { status: string; label?: string }) { return <span className={`status-pill tone-${pexStatusTone(status)}`}>{label ?? pexStatusLabel(status)}</span>; }
+
+// JobWarranty's own status lifecycle (JobWarrantyStatus in schema.prisma:
+// PENDING -> GRANTED or DECLINED) — separate from JobStatus above, shown
+// next to the job type in a Warranty job's header. New 2026-10-01, user
+// request ("if job type is Warranty, Add warranty status (Granted,
+// Decline, Pending) next to job type in header"). Labels match the
+// existing Warranty panel's own <select> options in JobWorkspace.tsx
+// verbatim ("Pending"/"Granted"/"Declined") so the two don't drift.
+const JOB_WARRANTY_STATUS_LABELS: Record<string, string> = {
+  PENDING: "Pending",
+  GRANTED: "Granted",
+  DECLINED: "Declined",
+};
+
+const JOB_WARRANTY_STATUS_TONE: Record<string, string> = {
+  PENDING: "amber",
+  GRANTED: "green",
+  DECLINED: "red",
+};
+
+export function warrantyStatusTone(status: string) { return JOB_WARRANTY_STATUS_TONE[status] ?? "neutral"; }
+export function warrantyStatusLabel(status: string) { return JOB_WARRANTY_STATUS_LABELS[status] ?? status; }
+export function WarrantyStatusPill({ status, label }: { status: string; label?: string }) { return <span className={`status-pill tone-${warrantyStatusTone(status)}`}>{label ?? warrantyStatusLabel(status)}</span>; }

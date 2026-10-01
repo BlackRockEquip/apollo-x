@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
-import { PexStatusPill, StatusPill } from "@/components/StatusPill";
+import { PexStatusPill, StatusPill, WarrantyStatusPill } from "@/components/StatusPill";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -459,6 +459,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [editOutworkDescription, setEditOutworkDescription] = useState("");
   const [editOutworkQuantity, setEditOutworkQuantity] = useState("1");
   const [editOutworkDateSentOut, setEditOutworkDateSentOut] = useState("");
+  // 2026-10-01, user request ("be able to edit receive date like sent
+  // date") — see editOutworkItem's comment in @/lib/jobs/service for how
+  // this now also keeps `status` in sync (giving a date marks it
+  // received, clearing it un-receives, same as the dedicated Mark
+  // received/Undo receive actions).
+  const [editOutworkDateReceived, setEditOutworkDateReceived] = useState("");
   const [editOutworkNotes, setEditOutworkNotes] = useState("");
   // Outwork's "record a new batch" form (supplier/date/items) moved into a
   // popup — 2026-09-10, user request: "make the outwork section a popup
@@ -1713,11 +1719,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setEditOutworkDescription(item.description || "");
     setEditOutworkQuantity(decimalText(item.quantity));
     setEditOutworkDateSentOut(item.dateSentOut ? String(item.dateSentOut).slice(0, 10) : "");
+    setEditOutworkDateReceived(item.dateReceived ? String(item.dateReceived).slice(0, 10) : "");
     setEditOutworkNotes(item.notes || "");
   }
 
   function cancelEditOutwork() {
-    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkNotes("");
+    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkDateReceived(""); setEditOutworkNotes("");
   }
 
   async function saveOutworkEdit(itemId: string) {
@@ -1732,6 +1739,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           description: editOutworkDescription.trim(),
           quantity: Math.max(1, parseInt(editOutworkQuantity, 10) || 1),
           dateSentOut: editOutworkDateSentOut || null,
+          dateReceived: editOutworkDateReceived || null,
           notes: editOutworkNotes.trim() || null,
         }),
       });
@@ -2979,7 +2987,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {mode === "detail" && job?.customer && (
               <p className="header-customer-line"><Link href={`/customers/${job.customer.id}`}>{job.customer.name}</Link></p>
             )}
-            <p>{mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]}</p>
+            <p>
+              {mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]}
+              {/* 2026-10-01, user request — warranty status shown next to
+                  the job type, only for Warranty-type jobs. job.warranty is
+                  only set once a JobWarranty row exists (saved from the
+                  Warranty panel below); defaults to PENDING same as that
+                  panel's own form.warrantyStatus default until then. */}
+              {mode === "detail" && job?.type === "WARRANTY" && <> · <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} /></>}
+            </p>
           </div>
           <div className="header-actions">
             {mode === "create" ? (
@@ -3820,7 +3836,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /></td>
                     <td><input type="number" min={1} value={editOutworkQuantity} onChange={(e) => setEditOutworkQuantity(e.target.value)} style={{ width: 70 }} /></td>
                     <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={editOutworkCreatingSupplier} onClick={() => void createEditOutworkSupplier()}><Plus size={12} style={{ verticalAlign: "-2px" }} /> {editOutworkCreatingSupplier ? "Creating…" : `Create supplier "${editOutworkSupplierQuery.trim()}"`}</button></div>}</td>
-                    <td><input type="date" value={editOutworkDateSentOut} onChange={(e) => setEditOutworkDateSentOut(e.target.value)} /></td>
+                    {/* 2026-10-01, user request ("be able to edit receive
+                        date like sent date") — Date received added
+                        alongside Date sent out, same cell as the "Sent /
+                        received" column shows both as stacked muted lines
+                        in the non-editing row below. Clearing this reverts
+                        the item to SENT_OUT, setting it marks RECEIVED —
+                        see editOutworkItem's comment in @/lib/jobs/service. */}
+                    <td className="outwork-edit-dates">
+                      <div className="outwork-edit-date-row"><span>Sent</span><input type="date" value={editOutworkDateSentOut} onChange={(e) => setEditOutworkDateSentOut(e.target.value)} /></div>
+                      <div className="outwork-edit-date-row"><span>Received</span><input type="date" value={editOutworkDateReceived} onChange={(e) => setEditOutworkDateReceived(e.target.value)} /></div>
+                    </td>
                     <td>{outworkDaysOutstanding(item)}</td>
                     <td><span className={`status-pill ${item.status === "RECEIVED" ? "" : "neutral"}`}>{text(item.status).replaceAll("_", " ")}</span></td>
                     <td><input value={editOutworkNotes} onChange={(e) => setEditOutworkNotes(e.target.value)} placeholder="Note" style={{ width: 140 }} /></td>
