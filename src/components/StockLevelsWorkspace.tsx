@@ -8,6 +8,8 @@ import { Eye, Loader2, Plus, Printer, Search, Trash2, Upload, X } from "lucide-r
 import { STOCK_STATE_LABEL, STOCK_STATE_CLASS, type StockState } from "@/lib/inventory/stock-state";
 import { ImportModule } from "@/components/ImportExportWorkspace";
 import { PART_IMPORT_FIELDS } from "@/lib/import-export/fields";
+import { useTenantPermissions } from "@/components/AppShell";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 // 2026-09-10 — Parts Catalog merged into Stock Levels at the user's request
 // ("combine parts catalog to Stock levels... One page, Stock Levels only").
@@ -189,6 +191,34 @@ function printPickSlip(ps: PickSlipData) {
 }
 
 export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
+  // 2026-10-01 — user request: "Mechanic user ... make that a mechanic
+  // user can not delete / edit / adjust parts, basically only check
+  // whats in stock." A Mechanic (TenantRole.USER) already keeps
+  // INVENTORY_VIEW + INVENTORY_ISSUE (the latter so they can still
+  // create a picking slip from inside a job — see JobWorkspace.tsx — and
+  // so adding a part line to a Parts List, which only needs JOBS_EDIT,
+  // is unaffected either way), so this can't be done by just removing a
+  // permission: it's the same deliberate role check used throughout
+  // JobWorkspace.tsx's own mechanic lockdown (mechanicFieldsLocked)
+  // rather than a new fine-grained permission nothing else would use.
+  // `canManage` replaces every existing `hasManage`-gated control
+  // (Adjust / Create picking slip / Delete picking slip) so a Mechanic
+  // never sees them even though INVENTORY_ISSUE alone would otherwise
+  // satisfy `hasManage`'s "any of RECEIVE/TRANSFER/ISSUE/ADJUST" check;
+  // Edit / Delete / Delete all / Add or Import Part aren't gated by
+  // `hasManage` at all today (every role sees them, relying entirely on
+  // server-side PARTS_CREATE/PARTS_EDIT/PARTS_DEACTIVATE, none of which
+  // USER holds) so those are gated directly off `mechanicReadOnly`
+  // instead, below.
+  const { tenantRole } = useTenantPermissions();
+  const mechanicReadOnly = tenantRole === "USER";
+  const canManage = hasManage && !mechanicReadOnly;
+  // Same system-wide colored confirm dialog as everywhere else (see
+  // ConfirmDialog.tsx) — this file's three window-less `confirm(...)`
+  // calls (deletePickSlip/deleteRow/deleteAll below) were missed by that
+  // earlier sweep because it searched for `window.confirm` specifically;
+  // fixed here while already touching this file's delete actions.
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [tab, setTab] = useState<"stock" | "pickslips">("stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
@@ -351,7 +381,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // rather than actually removing the row, so it stays in this history as
   // a record of what happened, just no longer actionable.
   async function deletePickSlip(ps: PickSlipData) {
-    if (!confirm(`Permanently delete this picking slip for ${ps.jobNumber}? The stock it took will be allocated back onto the shelf, and the slip itself will be removed from this list for good.`)) return;
+    if (!(await confirm({ message: `Permanently delete this picking slip for ${ps.jobNumber}? The stock it took will be allocated back onto the shelf, and the slip itself will be removed from this list for good.`, tone: "danger", confirmLabel: "Delete" }))) return;
     setCancellingId(ps.id); setHistoryError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips/${ps.id}/cancel`, {
@@ -462,7 +492,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   }
 
   async function deleteRow(row: PositionRow) {
-    if (!confirm(`Delete ${row.partNumber}? Parts with stock or job history can't actually be removed — those are kept as a historical reference instead, and you'll be told which happened.`)) return;
+    if (!(await confirm({ message: `Delete ${row.partNumber}? Parts with stock or job history can't actually be removed — those are kept as a historical reference instead, and you'll be told which happened.`, tone: "danger", confirmLabel: "Delete" }))) return;
     setRowBusy(row.id); setError("");
     try {
       const r = await fetch(`/api/v1/master-data/parts/${row.id}`, { method: "DELETE" });
@@ -474,7 +504,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   }
 
   async function deleteAll() {
-    if (!confirm(`Delete all ${data.total} part${data.total === 1 ? "" : "s"}? Parts with stock or job history can't actually be removed — those are kept as a historical reference instead.`)) return;
+    if (!(await confirm({ message: `Delete all ${data.total} part${data.total === 1 ? "" : "s"}? Parts with stock or job history can't actually be removed — those are kept as a historical reference instead.`, tone: "danger", confirmLabel: "Delete all" }))) return;
     setDeletingAll(true); setError("");
     try {
       const r = await fetch("/api/v1/master-data/parts", { method: "DELETE" });
@@ -655,8 +685,8 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             </div>
             <span>{data.total} item{data.total === 1 ? "" : "s"}</span>
             <button type="button" className="table-action" onClick={openCheck}><Search size={14} /> Check stock</button>
-            <button type="button" className="table-action danger" disabled={deletingAll || data.total === 0} onClick={() => void deleteAll()}>{deletingAll ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete all</button>
-            <button type="button" className="gold-button" onClick={() => { setAddImportOpen(true); setAddImportTab("choose"); }}><Plus size={15} /> Add or Import Part</button>
+            {!mechanicReadOnly && <button type="button" className="table-action danger" disabled={deletingAll || data.total === 0} onClick={() => void deleteAll()}>{deletingAll ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete all</button>}
+            {!mechanicReadOnly && <button type="button" className="gold-button" onClick={() => { setAddImportOpen(true); setAddImportTab("choose"); }}><Plus size={15} /> Add or Import Part</button>}
           </div>
 
           {error ? <div className="inline-error">{error}</div> : null}
@@ -743,9 +773,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                       <td><span className={`state-badge ${STOCK_STATE_CLASS[row.stockState as StockState]}`}>{STOCK_STATE_LABEL[row.stockState as StockState]}</span></td>
                       <td className="actions">
                         <Link href={`/inventory/parts/${row.id}`} className="action-link" title="View part detail"><Eye size={15} /></Link>
-                        {hasManage && <button type="button" className="table-action" onClick={() => openAdjust(row)}>Adjust</button>}
-                        <button type="button" className="table-action" onClick={() => openEdit(row)}>Edit</button>
-                        <button type="button" className="table-action danger" disabled={rowBusy === row.id} onClick={() => void deleteRow(row)}>{rowBusy === row.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}</button>
+                        {canManage && <button type="button" className="table-action" onClick={() => openAdjust(row)}>Adjust</button>}
+                        {!mechanicReadOnly && <button type="button" className="table-action" onClick={() => openEdit(row)}>Edit</button>}
+                        {!mechanicReadOnly && <button type="button" className="table-action danger" disabled={rowBusy === row.id} onClick={() => void deleteRow(row)}>{rowBusy === row.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}</button>}
                       </td>
                     </tr>
                   );
@@ -786,7 +816,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                     <td>{ps.lines.length}</td>
                     <td className="actions">
                       <button type="button" className="table-action" onClick={() => setPickResult(ps)}><Printer size={14} /> Reprint</button>
-                      {hasManage && (
+                      {canManage && (
                         <button type="button" className="table-action" disabled={cancellingId === ps.id} onClick={() => void deletePickSlip(ps)}>
                           {cancellingId === ps.id ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete
                         </button>
@@ -806,7 +836,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       {pickItems.length > 0 && (
         <div className="pick-bar">
           <span>{pickItems.length} part{pickItems.length === 1 ? "" : "s"} selected</span>
-          {hasManage && <button type="button" className="gold-button" onClick={openPickBar}>Create picking slip</button>}
+          {canManage && <button type="button" className="gold-button" onClick={openPickBar}>Create picking slip</button>}
           <button type="button" className="quiet-button" onClick={clearPick}>Clear</button>
         </div>
       )}
@@ -1098,6 +1128,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           </aside>
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }

@@ -1339,7 +1339,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Levels' own Delete button does — there's no "cancelled" state to fall
   // back into any more if this is clicked by mistake.
   async function cancelJobPickSlip(pickSlipId: string) {
-    if (!confirm("Permanently delete this picking slip? The stock it took will be allocated back onto the shelf, and the slip itself will be removed for good.")) return;
+    if (!(await confirm({ message: "Permanently delete this picking slip? The stock it took will be allocated back onto the shelf, and the slip itself will be removed for good.", tone: "danger", confirmLabel: "Delete" }))) return;
     setCancellingPickSlipId(pickSlipId); setPickSlipError(""); setJobPickSlipsError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlipId}/cancel`, {
@@ -2825,6 +2825,124 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   if (loading) return <div className="table-state"><Loader2 className="spin" size={20} /> Loading job…</div>;
 
+  // 2026-10-01 — user request, then narrowed to "yes only for mechanic
+  // view": the Machine/component + Commercial & logistics reorder below
+  // Notes (introduced earlier the same day) turned out to be wanted for
+  // the User/Mechanic role's job view only, not every role's layout.
+  // Machine/component details, Commercial & logistics and Job details
+  // are pulled out into their own variables here so jobFormSections
+  // below can render them in a different order per role without
+  // duplicating their (identical) field markup: a Mechanic gets Machine
+  // -> Commercial -> Job details, stacked under a full-width Notes panel;
+  // every other role keeps the original Machine -> Job details ->
+  // Commercial order, with Notes back to its normal half-width panel.
+  const machineSection = (
+    <section className="detail-panel">
+      <header><div><h2>Machine / component details</h2></div></header>
+      {/* 2026-10-01 — locked (not hidden) for mechanicFieldsLocked:
+          per the user's choice, only Notes/Parts List/Outwork remain
+          editable for a Mechanic — see the hook comment above. */}
+      <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
+      <div className="drawer-fields">
+        <label className="party-selector">
+          <span>Machine make</span>
+          <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
+          {showMachineMakeOptions && machineMakeOptions.length > 0 && (
+            <div className="selector-results">
+              {machineMakeOptions.map((m) => <button key={m.id} type="button" onClick={() => { updateField("machineMake", m.name); setShowMachineMakeOptions(false); }}><strong>{m.name}</strong></button>)}
+            </div>
+          )}
+        </label>
+        <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
+        <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
+        <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
+        {/* 2026-09-29 — user request: "Remove the field Component type
+            within jobs and remove from all printed locations." Removed
+            just this input and its rows in printJobCard/printJobHistory
+            below — form.componentType/buildJobPayload/the underlying
+            Job.componentType column are all left completely untouched
+            (still readable/writable via Import/Export, Excel sync, and
+            the PEX unit-description fallback, none of which this
+            request named), so nothing else relying on that data
+            breaks. It simply can no longer be seen or edited here. */}
+        <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
+        <label><span>Part number</span><input value={form.componentPartNumber} onChange={(e) => updateField("componentPartNumber", e.target.value)} /></label>
+        <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
+        <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
+      </div>
+      </fieldset>
+    </section>
+  );
+
+  const commercialSection = (
+    <section className="detail-panel wide-panel">
+      <header><div><h2>Commercial &amp; logistics</h2></div></header>
+      <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
+      <div className="drawer-fields commercial-fields">
+        <label><span>Quote number</span><input value={form.quoteNumber} onChange={(e) => updateField("quoteNumber", e.target.value)} /></label>
+        <label><span>Quote date</span><input type="date" value={form.quoteDate} onChange={(e) => updateField("quoteDate", e.target.value)} /></label>
+        <label><span>Sales order number</span><input value={form.salesOrderNumber} onChange={(e) => updateField("salesOrderNumber", e.target.value)} /></label>
+        <label><span>Sales order date</span><input type="date" value={form.salesOrderDate} onChange={(e) => updateField("salesOrderDate", e.target.value)} /></label>
+
+        <label><span>Invoice number</span><input value={form.invoiceNumber} onChange={(e) => updateField("invoiceNumber", e.target.value)} /></label>
+        <label><span>Invoice date</span><input type="date" value={form.invoiceDate} onChange={(e) => updateField("invoiceDate", e.target.value)} /></label>
+        <label>
+          <span>Payment date received</span>
+          <div className="field-with-check">
+            <input type="date" value={form.paymentDateReceived} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
+            <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentNotApplicable", e.target.checked ? "true" : "")} /><span>N/A</span></label>
+          </div>
+        </label>
+        <span className="row-break" aria-hidden="true" />
+
+        <label><span>Purchase order number</span><input value={form.purchaseOrderNumber} onChange={(e) => updateField("purchaseOrderNumber", e.target.value)} /></label>
+        <label><span>Purchase order date</span><input type="date" value={form.purchaseOrderDate} onChange={(e) => updateField("purchaseOrderDate", e.target.value)} /></label>
+        <label><span>Purchase order status</span><select value={form.purchaseOrderStatus} onChange={(e) => updateField("purchaseOrderStatus", e.target.value)}>{PURCHASE_ORDER_STATUSES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
+        <span className="row-break" aria-hidden="true" />
+
+        <label><span>Receiving transport</span><select value={form.receivingTransport} onChange={(e) => updateField("receivingTransport", e.target.value)}><option value="">—</option>{DELIVERY_TYPES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
+        <label><span>Delivery type</span><select value={form.deliveryType} onChange={(e) => updateField("deliveryType", e.target.value)}><option value="">—</option>{DELIVERY_TYPES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
+        <label><span>Delivery date</span><input type="date" value={form.deliveryDate} onChange={(e) => updateField("deliveryDate", e.target.value)} /></label>
+      </div>
+      </fieldset>
+    </section>
+  );
+
+  const jobDetailsSection = (
+    <section className="detail-panel">
+      <header><div><h2>Job details</h2></div></header>
+      <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
+      <div className="drawer-fields">
+        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
+        <label><span>Mechanic ETA date</span><input type="date" value={form.mechanicEtaDate} onChange={(e) => updateField("mechanicEtaDate", e.target.value)} /></label>
+        {/* 2026-09-19, user request: "add under job details sections 2
+            fields, 'Mechanic Strip' and 'Mechanic Assemble'."
+            Job.stripMechanicId/buildMechanicId were already fully wired
+            server-side (see jobs/service.ts) — just never had a field
+            here. Options come from the new JOBS_VIEW-gated
+            /api/v1/jobs/mechanics list (see listMechanicOptions's own
+            comment for why not /api/v1/users). */}
+        <label><span>Mechanic strip</span>
+          <select value={form.stripMechanicId} onChange={(e) => updateField("stripMechanicId", e.target.value)}>
+            <option value="">—</option>
+            {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
+        <label><span>Mechanic assemble</span>
+          <select value={form.buildMechanicId} onChange={(e) => updateField("buildMechanicId", e.target.value)}>
+            <option value="">—</option>
+            {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
+        <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
+        <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
+        <label className="wide"><span>Job description</span><textarea rows={2} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
+      </div>
+      </fieldset>
+    </section>
+  );
+
   const jobFormSections = (
     <>
       <div className="job-edit-grid">
@@ -2903,7 +3021,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         )}
 
         {job && mode === "detail" && (
-          <section className="detail-panel wide-panel job-notes-panel">
+          <section className={mechanicFieldsLocked ? "detail-panel wide-panel full-row job-notes-panel" : "detail-panel wide-panel job-notes-panel"}>
             {/* 2026-09-16 — user request: "make the Notes field like the Job
                 description field, remove the add note button, notes will
                 stay in the field as you type." Replaced the old
@@ -2913,112 +3031,42 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 path — see form.notes above). Existing per-entry notes were
                 merged into this field (oldest first) by the migration that
                 added it; the JobNote rows themselves are left in the
-                database, just no longer read or written here. */}
+                database, just no longer read or written here.
+                2026-10-01 — user request, then narrowed to "yes only for
+                mechanic view": `full-row` (grid-column: 1/-1, see
+                .job-edit-grid rules in globals.css) is now only applied
+                when mechanicFieldsLocked, so only a Mechanic's Notes panel
+                claims the whole row — see machineSection/commercialSection/
+                jobDetailsSection and the conditional ordering below for why
+                that matters (every other role keeps Notes as a normal
+                2-of-4-column wide-panel, same as before this request). */}
             <header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header>
             <div className="drawer-fields"><label className="wide"><span>Notes</span><textarea rows={4} value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label></div>
           </section>
         )}
 
-        <section className="detail-panel">
-          <header><div><h2>Machine / component details</h2></div></header>
-          {/* 2026-10-01 — locked (not hidden) for mechanicFieldsLocked:
-              per the user's choice, only Notes/Parts List/Outwork remain
-              editable for a Mechanic — see the hook comment above. */}
-          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
-          <div className="drawer-fields">
-            <label className="party-selector">
-              <span>Machine make</span>
-              <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
-              {showMachineMakeOptions && machineMakeOptions.length > 0 && (
-                <div className="selector-results">
-                  {machineMakeOptions.map((m) => <button key={m.id} type="button" onClick={() => { updateField("machineMake", m.name); setShowMachineMakeOptions(false); }}><strong>{m.name}</strong></button>)}
-                </div>
-              )}
-            </label>
-            <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
-            <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
-            <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
-            {/* 2026-09-29 — user request: "Remove the field Component type
-                within jobs and remove from all printed locations." Removed
-                just this input and its rows in printJobCard/printJobHistory
-                below — form.componentType/buildJobPayload/the underlying
-                Job.componentType column are all left completely untouched
-                (still readable/writable via Import/Export, Excel sync, and
-                the PEX unit-description fallback, none of which this
-                request named), so nothing else relying on that data
-                breaks. It simply can no longer be seen or edited here. */}
-            <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
-            <label><span>Part number</span><input value={form.componentPartNumber} onChange={(e) => updateField("componentPartNumber", e.target.value)} /></label>
-            <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
-            <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
-          </div>
-          </fieldset>
-        </section>
-
-        <section className="detail-panel">
-          <header><div><h2>Job details</h2></div></header>
-          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
-          <div className="drawer-fields">
-            <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
-            <label><span>Mechanic ETA date</span><input type="date" value={form.mechanicEtaDate} onChange={(e) => updateField("mechanicEtaDate", e.target.value)} /></label>
-            {/* 2026-09-19, user request: "add under job details sections 2
-                fields, 'Mechanic Strip' and 'Mechanic Assemble'."
-                Job.stripMechanicId/buildMechanicId were already fully wired
-                server-side (see jobs/service.ts) — just never had a field
-                here. Options come from the new JOBS_VIEW-gated
-                /api/v1/jobs/mechanics list (see listMechanicOptions's own
-                comment for why not /api/v1/users). */}
-            <label><span>Mechanic strip</span>
-              <select value={form.stripMechanicId} onChange={(e) => updateField("stripMechanicId", e.target.value)}>
-                <option value="">—</option>
-                {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            </label>
-            <label><span>Mechanic assemble</span>
-              <select value={form.buildMechanicId} onChange={(e) => updateField("buildMechanicId", e.target.value)}>
-                <option value="">—</option>
-                {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            </label>
-            <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
-            <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
-            <label className="wide"><span>Job description</span><textarea rows={2} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
-          </div>
-          </fieldset>
-        </section>
-
-        <section className="detail-panel wide-panel">
-          <header><div><h2>Commercial &amp; logistics</h2></div></header>
-          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
-          <div className="drawer-fields commercial-fields">
-            <label><span>Quote number</span><input value={form.quoteNumber} onChange={(e) => updateField("quoteNumber", e.target.value)} /></label>
-            <label><span>Quote date</span><input type="date" value={form.quoteDate} onChange={(e) => updateField("quoteDate", e.target.value)} /></label>
-            <label><span>Sales order number</span><input value={form.salesOrderNumber} onChange={(e) => updateField("salesOrderNumber", e.target.value)} /></label>
-            <label><span>Sales order date</span><input type="date" value={form.salesOrderDate} onChange={(e) => updateField("salesOrderDate", e.target.value)} /></label>
-
-            <label><span>Invoice number</span><input value={form.invoiceNumber} onChange={(e) => updateField("invoiceNumber", e.target.value)} /></label>
-            <label><span>Invoice date</span><input type="date" value={form.invoiceDate} onChange={(e) => updateField("invoiceDate", e.target.value)} /></label>
-            <label>
-              <span>Payment date received</span>
-              <div className="field-with-check">
-                <input type="date" value={form.paymentDateReceived} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
-                <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentNotApplicable", e.target.checked ? "true" : "")} /><span>N/A</span></label>
-              </div>
-            </label>
-            <span className="row-break" aria-hidden="true" />
-
-            <label><span>Purchase order number</span><input value={form.purchaseOrderNumber} onChange={(e) => updateField("purchaseOrderNumber", e.target.value)} /></label>
-            <label><span>Purchase order date</span><input type="date" value={form.purchaseOrderDate} onChange={(e) => updateField("purchaseOrderDate", e.target.value)} /></label>
-            <label><span>Purchase order status</span><select value={form.purchaseOrderStatus} onChange={(e) => updateField("purchaseOrderStatus", e.target.value)}>{PURCHASE_ORDER_STATUSES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
-            <span className="row-break" aria-hidden="true" />
-
-            <label><span>Receiving transport</span><select value={form.receivingTransport} onChange={(e) => updateField("receivingTransport", e.target.value)}><option value="">—</option>{DELIVERY_TYPES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
-            <label><span>Delivery type</span><select value={form.deliveryType} onChange={(e) => updateField("deliveryType", e.target.value)}><option value="">—</option>{DELIVERY_TYPES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
-            <label><span>Delivery date</span><input type="date" value={form.deliveryDate} onChange={(e) => updateField("deliveryDate", e.target.value)} /></label>
-          </div>
-          </fieldset>
-        </section>
+        {/* 2026-10-01 — user request, then narrowed to "yes only for
+            mechanic view": a Mechanic sees Machine/component details ->
+            Commercial & logistics -> Job details, landing in a row below
+            the now full-width Notes panel (Machine/component on the left,
+            Commercial & logistics to its right). Every other role keeps
+            the original Machine/component -> Job details -> Commercial &
+            logistics order. See the machineSection/commercialSection/
+            jobDetailsSection consts above for the (identical, role-
+            independent) markup each of these renders. */}
+        {mechanicFieldsLocked ? (
+          <>
+            {machineSection}
+            {commercialSection}
+            {jobDetailsSection}
+          </>
+        ) : (
+          <>
+            {machineSection}
+            {jobDetailsSection}
+            {commercialSection}
+          </>
+        )}
       </div>
     </>
   );

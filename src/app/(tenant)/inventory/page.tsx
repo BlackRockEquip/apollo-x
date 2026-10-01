@@ -1,5 +1,6 @@
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule } from "@/lib/auth/guards";
+import { requireTenantPageAccess } from "@/lib/auth/page-guard";
 import { StockLevelsWorkspace } from "@/components/StockLevelsWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,13 @@ export const dynamic = "force-dynamic";
 // now folded into this one (see StockLevelsWorkspace.tsx header comment).
 export default async function InventoryPage() {
   const ctx = await requireRequestContext();
+  // 2026-10-01 — this page was missed by the earlier page-level-guard
+  // sweep (requireTenantPageAccess, see src/lib/auth/page-guard.ts) since
+  // every role that could reach it already held INVENTORY_VIEW; added for
+  // consistency with every other (tenant) page now that a Mechanic's own
+  // write actions are being locked down below — same redirect-not-throw
+  // guard as the rest, since this app still has no error.tsx boundary.
+  requireTenantPageAccess(ctx, "INVENTORY_VIEW");
   requireModule(ctx, "INVENTORY", "READ");
   const hasManage = ["INVENTORY_RECEIVE", "INVENTORY_TRANSFER", "INVENTORY_ISSUE", "INVENTORY_ADJUST"].some((p) => ctx.tenantPermissions.has(p as never));
   return <StockLevelsWorkspace hasManage={hasManage} />;
