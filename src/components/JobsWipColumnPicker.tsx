@@ -30,8 +30,15 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
   return body?.error?.message || fallback;
 }
 
-export function JobsWipColumnPicker({ selected }: { selected: JobsWipColumnId[] }) {
+// 2026-10-01 — `available` (new prop; see jobs/page.tsx) is the subset of
+// JOBS_WIP_COLUMNS this viewer's role may pick from — a column like
+// "Customer" is dropped before it ever reaches this component for a
+// viewer lacking CUSTOMERS_VIEW. Defaults to every column so every other
+// existing caller keeps working unchanged.
+export function JobsWipColumnPicker({ selected, available }: { selected: JobsWipColumnId[]; available?: JobsWipColumnId[] }) {
   const router = useRouter();
+  const availableSet = available ? new Set(available) : null;
+  const pickableColumns = availableSet ? JOBS_WIP_COLUMNS.filter((col) => availableSet.has(col.id)) : JOBS_WIP_COLUMNS;
   const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState<Set<JobsWipColumnId>>(new Set(selected));
   const [saving, setSaving] = useState(false);
@@ -112,7 +119,7 @@ export function JobsWipColumnPicker({ selected }: { selected: JobsWipColumnId[] 
               </p>
               {error && <div className="inline-error">{error}</div>}
               <div style={{ display: "grid", gap: 6 }}>
-                {JOBS_WIP_COLUMNS.map((col) => (
+                {pickableColumns.map((col) => (
                   <label
                     key={col.id}
                     style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: col.locked ? "var(--ink-400)" : "var(--ink-700)" }}

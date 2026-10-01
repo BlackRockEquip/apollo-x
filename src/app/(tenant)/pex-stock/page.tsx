@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { requireModule } from "@/lib/auth/guards";
+import { requireTenantPageAccess } from "@/lib/auth/page-guard";
 import { listPexInventory } from "@/lib/pex/service";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
 
@@ -17,8 +18,13 @@ export const dynamic = "force-dynamic";
 // is per-column, client-side only) — added for consistency, not parity.
 export default async function PexStockPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
+  // 2026-10-01 — was requireTenantPermission (throws, which hits Next's
+  // generic error page with no error.tsx boundary in this app). Switched
+  // to the redirect-based page guard so an unauthorized role (e.g.
+  // Mechanic, which no longer has PEX_STOCK_VIEW) is bounced to a real
+  // page instead of a crash screen — see page-guard.ts.
+  requireTenantPageAccess(ctx, "PEX_STOCK_VIEW");
   requireModule(ctx, "PEX_STOCK", "READ");
-  requireTenantPermission(ctx, "PEX_STOCK_VIEW");
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
 type RfqRow = {
@@ -92,6 +93,8 @@ export function RfqAllWorkspace() {
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 2026-10-01, user request (system-wide) — see ConfirmDialog.tsx.
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   const [supplierQuery, setSupplierQuery] = useState("");
   const [supplierOptions, setSupplierOptions] = useState<Option[]>([]);
@@ -206,7 +209,7 @@ export function RfqAllWorkspace() {
   }
 
   async function removeGeneral(id: string) {
-    if (!window.confirm("Remove this RFQ?")) return;
+    if (!(await confirm({ message: "Remove this RFQ?", tone: "danger", confirmLabel: "Remove" }))) return;
     try {
       const r = await fetch(`/api/v1/rfqs/general/${id}`, { method: "DELETE" });
       if (!r.ok) { const b = await r.json(); throw new Error(b.error?.message); }
@@ -291,5 +294,6 @@ export function RfqAllWorkspace() {
       </div>
       <footer><button type="button" className="quiet-button" onClick={() => setShowAdd(false)}>Cancel</button><button className="gold-button" disabled={saving} onClick={() => void submit()}>{saving && <Loader2 className="spin" size={14} />} Save</button></footer>
     </aside></div>}
+    {confirmDialog}
   </section>;
 }

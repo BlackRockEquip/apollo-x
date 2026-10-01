@@ -3,6 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async user loading intentionally mirrors existing workspace patterns */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 type ModuleOption = { moduleKey: string; label: string; category: string };
 type UserRow = { id: string; email: string; displayName: string; active: boolean; membershipStatus: string; role: string; roleLabel: string; moduleLabels: string[]; moduleKeys?: string[] };
@@ -34,6 +35,8 @@ export function UsersWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // 2026-10-01, user request (system-wide) — see ConfirmDialog.tsx.
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   // 2026-09-10 — resetSessions previously gave no feedback at all: clicking
   // "Reset" (after confirming) either silently succeeded or silently threw
   // an error only ever surfaced via `error`, so a successful reset looked
@@ -91,7 +94,7 @@ export function UsersWorkspace() {
   }
 
   async function removeMechanic(mechanic: MechanicRow) {
-    if (!window.confirm(`Remove mechanic "${mechanic.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`)) return;
+    if (!(await confirm({ message: `Remove mechanic "${mechanic.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`, tone: "danger", confirmLabel: "Remove" }))) return;
     setMechanicSaving(true); setMechanicError(""); setMechanicNotice("");
     try {
       const response = await fetch(`/api/v1/mechanics/${mechanic.id}`, { method: "DELETE" });
@@ -155,7 +158,7 @@ export function UsersWorkspace() {
   }
 
   async function removeSalesRep(salesRep: SalesRepresentativeRow) {
-    if (!window.confirm(`Remove sales representative "${salesRep.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`)) return;
+    if (!(await confirm({ message: `Remove sales representative "${salesRep.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`, tone: "danger", confirmLabel: "Remove" }))) return;
     setSalesRepSaving(true); setSalesRepError(""); setSalesRepNotice("");
     try {
       const response = await fetch(`/api/v1/sales-representatives/${salesRep.id}`, { method: "DELETE" });
@@ -235,7 +238,7 @@ export function UsersWorkspace() {
   }
 
   async function resetSessions(id: string) {
-    if (!window.confirm("Reset this user's active sessions?")) return;
+    if (!(await confirm({ message: "Reset this user's active sessions?", tone: "warning", confirmLabel: "Reset" }))) return;
     setSaving(true); setError(""); setNotice("");
     try {
       const response = await fetch(`/api/v1/users/${id}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -375,5 +378,6 @@ export function UsersWorkspace() {
         </section>
       </div>
     </>}
+    {confirmDialog}
   </div>;
 }

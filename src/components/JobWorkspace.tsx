@@ -7,6 +7,8 @@ import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Mini
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexStatusPill, StatusPill, WarrantyStatusPill } from "@/components/StatusPill";
+import { useTenantPermissions } from "@/components/AppShell";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -311,6 +313,26 @@ const RFQ_STATUS_LABELS: Record<string, string> = {
 
 export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId?: string }) {
   const router = useRouter();
+  // 2026-10-01 — user request ("User type: User/Mechanic — inside a job,
+  // customer details section to be hidden from user" / "Users are not
+  // allowed to edit fields except the following: Notes, Parts List
+  // section, Outwork", clarified to also lock the status stepper and the
+  // Warranty panel). canViewCustomer is permission-based (so it tracks
+  // CUSTOMERS_VIEW for any role, not just this one). mechanicFieldsLocked
+  // is deliberately role-specific rather than permission-based: the
+  // restriction is finer-grained than JOBS_EDIT itself (which this role
+  // still needs, for Notes/Parts/Outwork) — there's no separate permission
+  // today for "can edit a job's other fields", so this names the role the
+  // user actually described. See jobs/service.ts's requireNotMechanicRestricted
+  // and updateJob for the matching server-side enforcement.
+  const { tenantRole, tenantPermissions } = useTenantPermissions();
+  const canViewCustomer = tenantPermissions.has("CUSTOMERS_VIEW");
+  const mechanicFieldsLocked = tenantRole === "USER";
+  // 2026-10-01, user request (system-wide): replaces every window.confirm()
+  // in this file with the shared coloured confirm dialog — see
+  // ConfirmDialog.tsx's own header comment. `dialog` is rendered once near
+  // the bottom of this component's JSX.
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [job, setJob] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(mode === "detail");
   const [saving, setSaving] = useState(false);
@@ -1083,13 +1105,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // explicit choice ("Full autosave, Save button removed") — with
   // autosave on, "unsaved changes" should only be a real possibility while
   // a save is actually in the air or just failed.
+  // 2026-10-01 — switched from window.confirm (synchronous — the browser
+  // blocks right there until the person answers) to the async coloured
+  // confirm dialog, which can't block like that. So this now always
+  // prevents the Link's own navigation up front whenever a confirmation is
+  // needed, shows the dialog, and — only on "yes" — navigates there itself
+  // via the router. When no confirmation is needed (the common case,
+  // autosaveState idle) nothing changes: the Link navigates normally.
   function handleBackClick(e: React.MouseEvent<HTMLAnchorElement>) {
     if (mode !== "detail") return;
-    if (autosaveState === "saving" && !window.confirm("Your changes are still saving. Leave this job anyway?")) {
-      e.preventDefault();
-    } else if (autosaveState === "error" && !window.confirm("Your last change failed to save. Leave anyway and lose it?")) {
-      e.preventDefault();
-    }
+    if (autosaveState !== "saving" && autosaveState !== "error") return;
+    e.preventDefault();
+    const message = autosaveState === "saving" ? "Your changes are still saving. Leave this job anyway?" : "Your last change failed to save. Leave anyway and lose it?";
+    void confirm({ message, tone: "warning", confirmLabel: "Leave anyway" }).then((ok) => { if (ok) router.push("/jobs"); });
   }
 
   async function postAction(path: string, payload: Record<string, unknown>) {
@@ -1637,7 +1665,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   async function deleteOutworkRow(itemId: string) {
     if (!jobId) return;
-    if (!window.confirm("Remove this outwork item?")) return;
+    if (!(await confirm({ message: "Remove this outwork item?", tone: "danger", confirmLabel: "Remove" }))) return;
     await deleteAction(`/api/v1/jobs/${jobId}/outwork/${itemId}`, {});
   }
 
@@ -1683,7 +1711,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   async function deleteAttachment(attachmentId: string) {
     if (!jobId) return;
-    if (!window.confirm("Remove this attachment?")) return;
+    if (!(await confirm({ message: "Remove this attachment?", tone: "danger", confirmLabel: "Remove" }))) return;
     await deleteAction(`/api/v1/jobs/${jobId}/attachments/${attachmentId}`, {});
   }
 
@@ -2308,6 +2336,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
       .qty-col{width:90px;text-align:center}
       .qty-input{width:64px;font-size:13px;border:1px solid #999;padding:3px;text-align:center}
+      .description-input{width:100%;font-size:13px;border:1px solid #999;padding:3px;box-sizing:border-box;font-family:inherit}
+      .notes-block{margin-top:18px}
+      .notes-textarea{width:100%;min-height:70px;font-size:13px;border:1px solid #999;padding:6px;box-sizing:border-box;font-family:inherit;resize:vertical}
       .sign-blocks{display:flex;gap:40px;margin-top:36px}
       .sign-block{flex:1}
       .sign-block h2{font-size:13px;margin:0 0 18px}
@@ -2317,7 +2348,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       @media print{.no-print{display:none}}
     </style></head><body>
       <div class="no-print-bar no-print">
-        <span>Enter the quantity, then print.</span>
+        <span>Edit the description, quantity or notes if needed, then print.</span>
         <button type="button" class="print-btn" onclick="window.print()">Print delivery note</button>
       </div>
       <div class="note-head">
@@ -2343,8 +2374,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </div>
       </div>
       <table><thead><tr><th>Description</th><th class="qty-col">Qty</th></tr></thead><tbody>
-        <tr><td>${descriptionLines.length > 0 ? descriptionLines.join(" · ") : "—"}</td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
+        <tr><td><input type="text" class="description-input" value="${escapeHtml(descriptionLines.length > 0 ? descriptionLines.join(" · ") : "")}" /></td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
       </tbody></table>
+      <div class="notes-block">
+        <h2>Notes</h2>
+        <textarea class="notes-textarea"></textarea>
+      </div>
       <div class="sign-blocks">
         <div class="sign-block">
           <h2>Dispatched by</h2>
@@ -2423,7 +2458,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   async function removeRfq(rfqRequestId: string) {
     if (!jobId) return;
-    if (!window.confirm("Remove this quote request?")) return;
+    if (!(await confirm({ message: "Remove this quote request?", tone: "danger", confirmLabel: "Remove" }))) return;
     await deleteAction(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}`, {});
   }
 
@@ -2799,8 +2834,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             in detail mode, where there's a job (and its notes) to show
             beside it — in create mode there's no job yet, so it keeps the
             full-width layout it always had. */}
+        {/* 2026-10-01 — user request ("inside a job, customer details
+            section to be hidden from user"): hidden entirely in detail
+            mode for a viewer lacking CUSTOMERS_VIEW (e.g. a Mechanic) —
+            not just visually collapsed. Still shown in create mode since
+            picking a customer is required to create a job at all, and
+            only roles with JOBS_CREATE (which Mechanics lack — see
+            permissions.ts) ever reach create mode. The fieldset below
+            additionally locks every field in here for mechanicFieldsLocked,
+            covering the rare case of a role with CUSTOMERS_VIEW granted by
+            an override but no JOBS_EDIT-field access. */}
+        {(mode !== "detail" || canViewCustomer) && (
         <section className={`detail-panel ${job && mode === "detail" ? "wide-panel" : "full-row"}`}>
           <header><div><h2>Customer details</h2></div></header>
+          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields customer-fields">
             <label className="wide party-selector">
               <span>Customer *</span>
@@ -2851,7 +2898,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </label>
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
           </div>
+          </fieldset>
         </section>
+        )}
 
         {job && mode === "detail" && (
           <section className="detail-panel wide-panel job-notes-panel">
@@ -2872,6 +2921,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
         <section className="detail-panel">
           <header><div><h2>Machine / component details</h2></div></header>
+          {/* 2026-10-01 — locked (not hidden) for mechanicFieldsLocked:
+              per the user's choice, only Notes/Parts List/Outwork remain
+              editable for a Mechanic — see the hook comment above. */}
+          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields">
             <label className="party-selector">
               <span>Machine make</span>
@@ -2899,10 +2952,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
             <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
           </div>
+          </fieldset>
         </section>
 
         <section className="detail-panel">
           <header><div><h2>Job details</h2></div></header>
+          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields">
             <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
@@ -2930,10 +2985,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
             <label className="wide"><span>Job description</span><textarea rows={2} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
           </div>
+          </fieldset>
         </section>
 
         <section className="detail-panel wide-panel">
           <header><div><h2>Commercial &amp; logistics</h2></div></header>
+          <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields commercial-fields">
             <label><span>Quote number</span><input value={form.quoteNumber} onChange={(e) => updateField("quoteNumber", e.target.value)} /></label>
             <label><span>Quote date</span><input type="date" value={form.quoteDate} onChange={(e) => updateField("quoteDate", e.target.value)} /></label>
@@ -2960,6 +3017,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Delivery type</span><select value={form.deliveryType} onChange={(e) => updateField("deliveryType", e.target.value)}><option value="">—</option>{DELIVERY_TYPES.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>
             <label><span>Delivery date</span><input type="date" value={form.deliveryDate} onChange={(e) => updateField("deliveryDate", e.target.value)} /></label>
           </div>
+          </fieldset>
         </section>
       </div>
     </>
@@ -2984,7 +3042,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <h1>{title}</h1>
               {job && <StatusPill status={job.status} />}
             </div>
-            {mode === "detail" && job?.customer && (
+            {/* 2026-10-01 — gated by canViewCustomer alongside the
+                Customer details section itself (see jobFormSections
+                above); this clickable name is also customer information. */}
+            {mode === "detail" && job?.customer && canViewCustomer && (
               <p className="header-customer-line"><Link href={`/customers/${job.customer.id}`}>{job.customer.name}</Link></p>
             )}
             <p>
@@ -3016,11 +3077,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     printJobDeliveryNote's own comments above for scope. */}
                 <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>
                 <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>
-                {job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
-                {canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
-                {!["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { if (window.confirm("Cancel this job?")) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }}>Cancel job</button>}
-                {!["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
-                {["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
+                {/* 2026-10-01 — every button below changes job.status (the
+                    same action the status stepper performs, just via a
+                    dedicated dialog/confirm instead of a stepper click), so
+                    they're hidden together with it for mechanicFieldsLocked
+                    — leaving them visible would let a Mechanic route around
+                    the locked stepper. Server-side: requireNotMechanicRestricted
+                    in jobs/service.ts rejects all of these regardless. */}
+                {!mechanicFieldsLocked && job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
+                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
+                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
+                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
+                {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
               </>
             )}
           </div>
@@ -3036,7 +3104,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </p>
             ) : (
               <>
-                <p className="job-header-stepper-hint">Click a stage to move the job straight there — saves immediately.</p>
+                {/* 2026-10-01 — user's explicit choice: lock the status
+                    stepper for a Mechanic (tenantRole === "USER"), not
+                    just hide its hint text. disabled below additionally
+                    covers `saving`, same as before. */}
+                <p className="job-header-stepper-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office/admin team." : "Click a stage to move the job straight there — saves immediately."}</p>
                 <StatusStepper
                   // TO_BE_COLLECTED is deliberately left OUT of this call's
                   // `steps` only — @/lib/jobs/ui's MAIN_WORKSHOP_STATUS_STEPS
@@ -3074,7 +3146,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         ? "TO_BE_RECEIVED"
                         : job.status
                   }
-                  disabled={saving}
+                  disabled={saving || mechanicFieldsLocked}
                   onSelect={(step) => void postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null })}
                 />
               </>
@@ -3977,9 +4049,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
           )}
 
-          {job.type === "FIELD_SERVICE" && <section className="detail-panel"><header><div><h2>Field service</h2><p>Capture site, technician and report details for field-service work.</p></div></header><div className="drawer-fields"><label><span>Site</span><input value={form.fieldSite} onChange={(e) => updateField("fieldSite", e.target.value)} /></label><label><span>Technician</span><input value={form.fieldTechnician} onChange={(e) => updateField("fieldTechnician", e.target.value)} /></label><label><span>Vehicle</span><input value={form.fieldVehicle} onChange={(e) => updateField("fieldVehicle", e.target.value)} /></label><label><span>Hours</span><input type="number" min="0" step="0.25" value={form.fieldHours} onChange={(e) => updateField("fieldHours", e.target.value)} /></label>{/* Kms travelled only applies to field-service visits, so it lives here rather than in Commercial & logistics — matches ModApp's placement. It's a Job column, so it's saved via this same field-service action. */}<label><span>Kms travelled</span><input type="number" min="0" value={form.kmsTravelled} onChange={(e) => updateField("kmsTravelled", e.target.value)} /></label><label className="wide"><span>Report</span><textarea rows={4} value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void putAction(`/api/v1/jobs/${job.id}/field-service`, { site: form.fieldSite || null, technician: form.fieldTechnician || null, vehicle: form.fieldVehicle || null, hours: form.fieldHours ? Number(form.fieldHours) : null, report: form.fieldReport || null, kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null })}>Save field-service info</button></footer></section>}
+          {/* 2026-10-01 — both panels below now wrapped in a disabled
+              fieldset (and their own Save button) for mechanicFieldsLocked
+              — "everything except Notes/Parts List/Outwork" is locked for
+              a Mechanic, and these job-type-specific detail panels are
+              that same kind of field, same as Customer/Machine/Job/
+              Commercial details above. Server-side: upsertJobFieldService
+              and upsertJobWarranty both reject this role via
+              requireNotMechanicRestricted regardless. */}
+          {job.type === "FIELD_SERVICE" && <section className="detail-panel"><header><div><h2>Field service</h2><p>Capture site, technician and report details for field-service work.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Site</span><input value={form.fieldSite} onChange={(e) => updateField("fieldSite", e.target.value)} /></label><label><span>Technician</span><input value={form.fieldTechnician} onChange={(e) => updateField("fieldTechnician", e.target.value)} /></label><label><span>Vehicle</span><input value={form.fieldVehicle} onChange={(e) => updateField("fieldVehicle", e.target.value)} /></label><label><span>Hours</span><input type="number" min="0" step="0.25" value={form.fieldHours} onChange={(e) => updateField("fieldHours", e.target.value)} /></label>{/* Kms travelled only applies to field-service visits, so it lives here rather than in Commercial & logistics — matches ModApp's placement. It's a Job column, so it's saved via this same field-service action. */}<label><span>Kms travelled</span><input type="number" min="0" value={form.kmsTravelled} onChange={(e) => updateField("kmsTravelled", e.target.value)} /></label><label className="wide"><span>Report</span><textarea rows={4} value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/field-service`, { site: form.fieldSite || null, technician: form.fieldTechnician || null, vehicle: form.fieldVehicle || null, hours: form.fieldHours ? Number(form.fieldHours) : null, report: form.fieldReport || null, kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null })}>Save field-service info</button></footer></fieldset></section>}
 
-          {job.type === "WARRANTY" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></section>}
+          {job.type === "WARRANTY" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
 
           {job.type === "PEX_SUPPLY" && job.pexAsSupply && <section className="detail-panel"><header><div><h2>PEX Supply</h2><p>Track the linked return job and its redeployment cycle. Mirrors ModApp's PEX supply/return chain.</p></div></header>
             <div className="record-list pex-record-list"><article>
@@ -3991,7 +4071,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
               <div className="stack-row">
                 <button type="button" className="quiet-button" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsSupply?.id))}>View history</button>
-                {job.pexAsSupply.returnJob && <button type="button" className="table-action" disabled={saving} onClick={() => { if (window.confirm("Unlink the return job? It will not be deleted — you can relink or create a new one afterwards.")) void deleteAction(`/api/v1/jobs/${job.id}/pex/link-return`, {}); }}>Unlink return job</button>}
+                {job.pexAsSupply.returnJob && <button type="button" className="table-action" disabled={saving} onClick={() => { void confirm({ message: "Unlink the return job? It will not be deleted — you can relink or create a new one afterwards.", tone: "warning", confirmLabel: "Unlink" }).then((ok) => { if (ok) void deleteAction(`/api/v1/jobs/${job.id}/pex/link-return`, {}); }); }}>Unlink return job</button>}
               </div>
             </article></div>
             {!job.pexAsSupply.returnJob && <div className="drawer-fields">
@@ -4056,6 +4136,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           </section>
         </>
       )}
+      {confirmDialog}
     </div>
   );
 }

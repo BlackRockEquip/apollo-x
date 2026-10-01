@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { JOBS_WIP_TABLE_KEY, JOBS_WIP_DEFAULT_COLUMNS, normalizeJobsWipColumns, type JobsWipColumnId } from "./wip-columns";
+import { JOBS_WIP_TABLE_KEY, JOBS_WIP_DEFAULT_COLUMNS, normalizeJobsWipColumns, filterColumnsByPermission, type JobsWipColumnId } from "./wip-columns";
 
 // ---------------------------------------------------------------------------
 // Jobs & WIP list — persistence for the customizable-columns feature (see
@@ -25,19 +25,29 @@ function authorize(ctx: RequestContext) {
 // Falls back to the default set (rather than erroring) when a user hasn't
 // picked anything yet — same "no row yet just means defaults" convention as
 // getDashboardConfig.
+//
+// 2026-10-01 — user request ("on Job / WIP table, Column customer must be
+// hidden (not viewable by this user)"): both branches now run through
+// filterColumnsByPermission so a column like "Customer" is dropped for a
+// viewer lacking CUSTOMERS_VIEW — this is the real enforcement (the page
+// never fetches/renders the column at all, see jobs/page.tsx), not just the
+// picker hiding a checkbox.
 export async function getJobsWipColumns(ctx: RequestContext): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
   const row = await prisma.userTableColumns.findUnique({
     where: { userId_companyId_tableKey: { userId: ctx.userId, companyId, tableKey: JOBS_WIP_TABLE_KEY } },
   });
-  if (!row) return JOBS_WIP_DEFAULT_COLUMNS;
-  return normalizeJobsWipColumns(row.columns);
+  const columns = row ? normalizeJobsWipColumns(row.columns) : JOBS_WIP_DEFAULT_COLUMNS;
+  return filterColumnsByPermission(columns, ctx.tenantPermissions);
 }
 
 export async function saveJobsWipColumns(ctx: RequestContext, raw: unknown): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
   requireModule(ctx, "JOBS_WIP", "WRITE");
-  const columns = normalizeJobsWipColumns(raw);
+  // filterColumnsByPermission here stops a crafted PUT request from saving
+  // a column selection the viewer isn't entitled to — defense in depth
+  // behind the same check in getJobsWipColumns.
+  const columns = filterColumnsByPermission(normalizeJobsWipColumns(raw), ctx.tenantPermissions);
   await prisma.$transaction(async (tx) => {
     const saved = await tx.userTableColumns.upsert({
       where: { userId_companyId_tableKey: { userId: ctx.userId, companyId, tableKey: JOBS_WIP_TABLE_KEY } },
@@ -69,5 +79,5 @@ export async function saveJobsWipColumns(ctx: RequestContext, raw: unknown): Pro
 export async function resetJobsWipColumns(ctx: RequestContext): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
   await prisma.userTableColumns.deleteMany({ where: { userId: ctx.userId, companyId, tableKey: JOBS_WIP_TABLE_KEY } });
-  return JOBS_WIP_DEFAULT_COLUMNS;
+  return filterColumnsByPermission(JOBS_WIP_DEFAULT_COLUMNS, ctx.tenantPermissions);
 }

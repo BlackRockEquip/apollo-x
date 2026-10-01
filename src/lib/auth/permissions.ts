@@ -73,7 +73,20 @@ const MANAGER = new Set<TenantPermission>([
   "SALES_ORDERS_EDIT_DRAFT", "SALES_ORDERS_LINK_JOBS", "SALES_ORDERS_LINK_PEX",
   "REPORTS_VIEW", "REPORTS_EXPORT", "AUDIT_VIEW",
 ]);
-const USER = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "JOBS_EDIT", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_ISSUE", "PEX_VIEW"]);
+// 2026-10-01 — user request ("User type: User/Mechanic — Only modules
+// allowed to view are: Jobs/WIP, Job Kits, Inventory (Stock Levels),
+// Suppliers (view only, also able to select for outwork)"): tightened from
+// the previous set (which also granted DASHBOARD_VIEW, CUSTOMERS_VIEW,
+// PEX_VIEW) down to exactly the four allowed modules. SUPPLIERS_VIEW is new
+// here — mechanics can now see the Suppliers list/pick a supplier for
+// outwork, but SUPPLIERS_CREATE/EDIT/DEACTIVATE are deliberately absent
+// (view + select only, per the request). This is the real server-side
+// ceiling: every requireTenantPermission/requireModule call in the app
+// already reads from this set via ctx.tenantPermissions, so narrowing it
+// here is both necessary and sufficient to enforce the restriction
+// everywhere (API layer, not just the UI) — see page-guard.ts for the
+// page-reachability half of "hidden completely".
+const USER = new Set<TenantPermission>(["JOBS_VIEW", "JOBS_EDIT", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_ISSUE", "SUPPLIERS_VIEW"]);
 const STORES = new Set<TenantPermission>(["DASHBOARD_VIEW", "JOBS_VIEW", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_RECEIVE", "INVENTORY_ISSUE", "INVENTORY_TRANSFER", "INVENTORY_ADJUST", "INVENTORY_RETURN", "INVENTORY_RESERVE", "INVENTORY_RELEASE_RESERVATION", "INVENTORY_RECONCILE", "INVENTORY_EXPORT", "STOCK_MOVEMENTS_VIEW", "PEX_VIEW", "REPORTS_VIEW"]);
 const SALES = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT", "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "SUPPLIERS_VIEW", "JOBS_VIEW", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT", "QUOTES_EDIT_PRICE", "QUOTES_APPLY_DISCOUNT", "QUOTES_SEND", "QUOTES_REVISE", "QUOTES_EXPORT", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE", "SALES_ORDERS_EDIT_DRAFT"]);
 const FINANCE = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "INVENTORY_VIEW", "INVENTORY_VIEW_COST", "STOCK_MOVEMENTS_VIEW", "QUOTES_VIEW","QUOTES_VIEW_COST", "QUOTES_VIEW_MARGIN", "SALES_ORDERS_VIEW", "SALES_ORDERS_VIEW_COST", "SALES_ORDERS_CREATE_INVOICE", "INVOICES_VIEW", "INVOICES_CREATE", "INVOICES_CREATE_FROM_JOB", "INVOICES_CREATE_FROM_SALES_ORDER", "INVOICES_EDIT_DRAFT", "INVOICES_VIEW_COST_MARGIN", "INVOICES_APPROVE", "INVOICES_ISSUE", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT", "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT", "REPORTS_VIEW"]);

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { AuthorizationError, requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { isCompanyEmailConfigured } from "@/lib/email";
@@ -106,6 +106,20 @@ function requireJobsRead(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   return ctx.companyId!;
+}
+
+// 2026-10-01 — user request ("User type: User/Mechanic — Users are not
+// allowed to edit fields except the following: Notes / Parts List section
+// / Outwork", clarified to also lock the status stepper and the Warranty
+// panel): server-side defense-in-depth behind the UI lock in
+// JobWorkspace.tsx. Status transitions, field-service info and warranty
+// info are all discrete button-triggered actions (not continuous autosave
+// like updateJob's form fields), so an outright rejection is correct and
+// safe here — unlike updateJob, which instead silently drops disallowed
+// fields (see its own comment below) because its autosave payload always
+// resends the *whole* form, not just what changed.
+function requireNotMechanicRestricted(ctx: RequestContext) {
+  if (ctx.tenantRole === "USER") throw new AuthorizationError("Your role can only edit Notes, the parts list and outwork on a job.");
 }
 
 // 2026-09-19 — "Mechanic Strip"/"Mechanic Assemble" fields (user request).
@@ -627,12 +641,30 @@ export async function getJobById(ctx: RequestContext, id: string) {
   // boolean, not the SMTP details themselves — safe to include for anyone
   // who can already view this job.
   const emailConfigured = await isCompanyEmailConfigured(companyId);
-  return { ...job, emailConfigured };
+  // 2026-10-01 — user request ("inside a job, customer details section to
+  // be hidden from user"): redact customer data from the API payload
+  // itself for a viewer lacking CUSTOMERS_VIEW (e.g. Mechanic), not just
+  // hide the section in JobWorkspace.tsx's UI — otherwise the full
+  // customer record (name, branches, contacts, addresses) would still be
+  // visible in the raw API response regardless of what the page renders.
+  // Same real-redaction approach as the Jobs/WIP list's column data (see
+  // wip-columns-service.ts).
+  const customer = ctx.tenantPermissions.has("CUSTOMERS_VIEW") ? job.customer : null;
+  return { ...job, customer, emailConfigured };
 }
 
 export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const input = jobUpdateInput.parse(raw);
+  const parsedInput = jobUpdateInput.parse(raw);
+  // 2026-10-01 — Mechanics may only edit Notes via this endpoint; every
+  // other field here (customer/machine/job/commercial details) is
+  // UI-locked in JobWorkspace.tsx, but the autosave payload always resends
+  // the full form, not just what changed — rejecting the request outright
+  // would break saving Notes itself the moment any other (unchanged) field
+  // is present. Dropping them instead keeps Notes autosave working while
+  // making every other field a silent no-op for this role, matching what
+  // the UI already shows as read-only.
+  const input = ctx.tenantRole === "USER" ? ({ notes: parsedInput.notes } as typeof parsedInput) : parsedInput;
   const existing = await getJobScoped(companyId, id);
   if (input.customerId) await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = input.stripMechanicId === undefined ? existing.stripMechanicId : await getMechanicOrNull(companyId, input.stripMechanicId);
@@ -727,6 +759,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
 
 export async function registerJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobRegisterInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   // "Already registered" is now a status question, not a numbering one —
@@ -762,6 +795,7 @@ export async function registerJob(ctx: RequestContext, id: string, raw: unknown)
 
 export async function changeJobStatus(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobStatusChangeInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (existing.status === "DRAFT") throw new Error("Draft jobs must be registered before status changes.");
@@ -782,6 +816,7 @@ export async function changeJobStatus(ctx: RequestContext, id: string, raw: unkn
 
 export async function closeJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobCloseInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   const updated = await prisma.$transaction(async (tx) => {
@@ -797,6 +832,7 @@ export async function closeJob(ctx: RequestContext, id: string, raw: unknown) {
 
 export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobReopenInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (!["CLOSED", "CANCELLED", "COMPLETE", "RETURNED_UNREPAIRED"].includes(existing.status)) {
@@ -817,6 +853,7 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
 
 export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobMarkReturnedUnrepairedInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
   if (!canMarkReturnedUnrepaired(existing.type as JobType)) {
@@ -848,6 +885,7 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
 
 export async function upsertJobFieldService(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobFieldServiceInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
   if (job.type !== "FIELD_SERVICE") throw new Error("Field-service information is only available for field service jobs.");
@@ -872,6 +910,7 @@ export async function upsertJobFieldService(ctx: RequestContext, jobId: string, 
 
 export async function upsertJobWarranty(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
   const input = jobWarrantyInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
   if (job.type !== "WARRANTY") throw new Error("Warranty information is only available for warranty jobs.");

@@ -3,12 +3,16 @@ import { Boxes, BriefcaseBusiness, Repeat2, ShieldCheck } from "lucide-react";
 import { LoginForm } from "@/components/LoginForm";
 import { PlatformCompaniesStrip } from "@/components/PlatformCompaniesStrip";
 import { getRequestContext } from "@/lib/auth/session";
+import { defaultTenantDestination } from "@/lib/auth/page-guard";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage() {
   const context = await getRequestContext();
-  if (context) redirect(context.companyId ? "/dashboard" : "/platform");
+  // 2026-10-01 — was hardcoded "/dashboard"; context here is the fully
+  // resolved RequestContext (role defaults + any per-user overrides), so
+  // this picks the same landing page a Mechanic would actually keep.
+  if (context) redirect(context.companyId ? defaultTenantDestination(context.tenantPermissions) : "/platform");
   return (
     <main className="login-page">
       <section className="login-story">

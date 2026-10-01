@@ -10,7 +10,7 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, JOB_WIP_FILTERS } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
-import { JOBS_WIP_COLUMNS, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
+import { JOBS_WIP_COLUMNS, filterColumnsByPermission, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
 export const dynamic = "force-dynamic";
 
@@ -192,7 +192,14 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               it (their previous position, immediately after the filters). */}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
           <button type="submit" form="jobs-filter-form" className="quiet-button">Apply</button>
-          <JobsWipColumnPicker selected={columns} />
+          {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
+              viewer's role is entitled to) now travels down alongside
+              `selected`, so e.g. a Mechanic never even sees "Customer" as a
+              checkbox to turn back on — see filterColumnsByPermission in
+              wip-columns.ts, and getJobsWipColumns above (the real
+              enforcement: that column is never in `columns` to begin
+              with). */}
+          <JobsWipColumnPicker selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
         </div>
 
         <div className="jobs-filter-strip">

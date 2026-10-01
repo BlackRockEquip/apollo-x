@@ -641,6 +641,15 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .detail-tabs button.active { border-color:var(--gold-500); color:#79560e; }
 .detail-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .info-card,.detail-panel { border:1px solid var(--ink-150); border-radius:9px; background:white; box-shadow:0 2px 7px rgba(15,23,42,.035); }
+/* 2026-10-01 — user request (User/Mechanic role: lock every job field
+   except Notes/Parts List/Outwork). <fieldset disabled> is the simplest
+   correct way to lock a whole block of form controls at once (native
+   HTML behaviour — every descendant input/select/textarea/button inside
+   becomes non-interactive, no per-field disabled prop needed), but a bare
+   <fieldset> carries a default border/margin/padding/min-width that would
+   visibly change these sections' layout. This neutralizes all of that so
+   the fieldset is invisible when not disabled. See JobWorkspace.tsx. */
+.unstyled-fieldset { all: unset; display: contents; }
 .info-card > header { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--ink-100); padding:12px 14px; }.info-card header svg { width:16px;color:var(--gold-600); }.info-card h2,.detail-panel h2 { margin:0;font-size:13px; }
 .info-card dl { margin:0;padding:8px 14px 14px; }.info-card dl div { display:grid;grid-template-columns:120px 1fr;gap:8px;border-bottom:1px solid var(--ink-100);padding:8px 0; }.info-card dt { color:var(--ink-500);font-size:10px; }.info-card dd { margin:0;font-size:11px;font-weight:650; }
 .detail-panel > header { display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--ink-150);padding:13px 15px; }.detail-panel header p { margin:3px 0 0;color:var(--ink-500);font-size:10px; }
@@ -985,6 +994,27 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
    width-only-modifier pattern as .job-editor-drawer/.delivery-note-dialog
    above. */
 .quote-compare-dialog { width: min(1200px, 96vw); }
+/* 2026-10-01, user request (system-wide): "When errors or warning message
+   notifications are thrown, make that it opens a mini coloured dialog
+   where a user must confirm." See ConfirmDialog.tsx — this replaces every
+   window.confirm() in the app with this small, toned, app-styled dialog.
+   Narrower than the usual .compact-dialog (this is a short confirmation,
+   not a form) and coloured by severity via a left accent bar + icon tint,
+   same tone-naming convention as .status-pill's tone-red/tone-amber. */
+.confirm-dialog { width: min(420px, 92vw); max-height: none; border-left: 4px solid var(--ink-300); }
+.confirm-dialog.tone-danger { border-left-color: var(--danger); }
+.confirm-dialog.tone-warning { border-left-color: #c99a1f; }
+.confirm-dialog.tone-neutral { border-left-color: #3a6fd1; }
+.confirm-dialog-heading { display: flex; align-items: flex-start; gap: 9px; }
+.confirm-dialog-icon { flex: 0 0 auto; margin-top: 1px; color: var(--ink-400); }
+.confirm-dialog.tone-danger .confirm-dialog-icon { color: var(--danger); }
+.confirm-dialog.tone-warning .confirm-dialog-icon { color: #96700f; }
+.confirm-dialog.tone-neutral .confirm-dialog-icon { color: #3a6fd1; }
+.confirm-dialog.tone-danger .confirm-dialog-heading .eyebrow { color: var(--danger); }
+.confirm-dialog.tone-warning .confirm-dialog-heading .eyebrow { color: #96700f; }
+.confirm-dialog-body { padding: 4px 14px 16px; }
+.confirm-dialog-body p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-700); }
+.gold-button.danger { border-color: #8f2a20; background: linear-gradient(#e2574a, #b42318); color: white; }
 .settings-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 /* 2026-09-10 — the settings tab bar (SettingsTabNav.tsx) now appears on
    every Settings destination, not just 2 of them, and highlights whichever

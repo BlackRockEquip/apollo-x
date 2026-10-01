@@ -17,6 +17,8 @@
 // device/browser rather than resetting per-browser.
 // ---------------------------------------------------------------------------
 
+import type { TenantPermission } from "@/lib/auth/permissions";
+
 export const JOBS_WIP_TABLE_KEY = "jobs-wip";
 
 export type JobsWipColumnId =
@@ -137,6 +139,32 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
   { id: "createdAt", label: "Created", defaultWidth: 110 },
   { id: "updatedAt", label: "Updated", defaultVisible: true, defaultWidth: 140 },
 ];
+
+// 2026-10-01 — user request ("on Job / WIP table, Column customer must be
+// hidden (not viewable by this user)" for the User/Mechanic role): which
+// columns need a permission beyond plain JOBS_VIEW to even be offered.
+// Deliberately kept in this prisma-free file (not wip-columns-service.ts)
+// so the client-side picker (JobsWipColumnPicker.tsx) can filter its own
+// checkbox list without importing anything server-only — `TenantPermission`
+// here is a type-only import, erased at compile time, so permissions.ts's
+// own @prisma/client import never reaches the client bundle.
+export const JOBS_WIP_COLUMN_PERMISSION: Partial<Record<JobsWipColumnId, TenantPermission>> = {
+  customerName: "CUSTOMERS_VIEW",
+  customerTradingName: "CUSTOMERS_VIEW",
+  customerReference: "CUSTOMERS_VIEW",
+  customerPo: "CUSTOMERS_VIEW",
+};
+
+// Drops any column the given permission set isn't entitled to — used both
+// server-side (wip-columns-service.ts, gating what's actually fetched/
+// persisted — the real enforcement) and client-side (the picker, so a
+// column a viewer can't use isn't even offered as a checkbox).
+export function filterColumnsByPermission(columns: JobsWipColumnId[], permissions: ReadonlySet<TenantPermission>): JobsWipColumnId[] {
+  return columns.filter((id) => {
+    const required = JOBS_WIP_COLUMN_PERMISSION[id];
+    return !required || permissions.has(required);
+  });
+}
 
 const VALID_COLUMN_IDS = new Set<string>(JOBS_WIP_COLUMNS.map((c) => c.id));
 const LOCKED_COLUMN_IDS: JobsWipColumnId[] = JOBS_WIP_COLUMNS.filter((c) => c.locked).map((c) => c.id);

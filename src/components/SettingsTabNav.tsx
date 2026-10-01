@@ -12,8 +12,14 @@ import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 // these (e.g. no INVOICES/QUOTES licence) doesn't see a dead link here
 // either. `current` is this page's own item key, used only to visually
 // highlight where you already are — every page passes its own key in.
+//
+// 2026-10-01 — also filtered by ctx.tenantPermissions (each item's own
+// `permission`, matching the requireTenantPageAccess call on that item's
+// page.tsx) — previously this only checked company-level licensing, so a
+// role lacking e.g. USERS_MANAGE would still see a "Users" tab here that
+// immediately redirected them away the moment they clicked it.
 export function SettingsTabNav({ ctx, current }: { ctx: RequestContext; current: string }) {
-  const items = SETTINGS_NAV_ITEMS.filter((item) => (ctx.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED");
+  const items = SETTINGS_NAV_ITEMS.filter((item) => (ctx.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED" && ctx.tenantPermissions.has(item.permission));
   return (
     <nav className="settings-nav">
       {items.map((item) => (

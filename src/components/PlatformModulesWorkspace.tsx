@@ -3,6 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async platform module loading intentionally mirrors existing workspace patterns */
 import { useEffect, useState } from "react";
 import { Info, Pencil, Plus, Trash2 } from "lucide-react";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 // 2026-09-22, user request: "on modules menu -- make modules editable
 // (Enable/disable/delete); also breakdown what this section is for a a
@@ -51,6 +52,8 @@ export function PlatformModulesWorkspace() {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK_FORM);
+  // 2026-10-01, user request (system-wide) — see ConfirmDialog.tsx.
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   async function load() {
     const r = await fetch("/api/v1/platform/modules", { cache: "no-store" });
@@ -112,7 +115,7 @@ export function PlatformModulesWorkspace() {
   }
 
   async function deleteModule(item: ModuleEntry) {
-    if (!window.confirm(`Delete "${item.name}" from the module catalog? This only removes the catalog listing/documentation — it does not affect any company's actual access.`)) return;
+    if (!(await confirm({ message: `Delete "${item.name}" from the module catalog? This only removes the catalog listing/documentation — it does not affect any company's actual access.`, tone: "danger", confirmLabel: "Delete" }))) return;
     setError(""); setNotice("");
     try {
       const r = await fetch(`/api/v1/platform/modules/${item.id}`, { method: "DELETE" });
@@ -203,6 +206,7 @@ export function PlatformModulesWorkspace() {
           </table>
         </div>
       </section>
+      {confirmDialog}
     </div>
   );
 }

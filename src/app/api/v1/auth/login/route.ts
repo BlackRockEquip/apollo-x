@@ -6,6 +6,8 @@ import { createSession, setSessionCookie } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { clearLoginFailures, isLoginBlocked, recordLoginFailure } from "@/lib/security/login-throttle";
 import { requestIp, requireSameOrigin } from "@/lib/security/request";
+import { defaultTenantDestination } from "@/lib/auth/page-guard";
+import { DEFAULT_TENANT_PERMISSIONS } from "@/lib/auth/permissions";
 
 const schema = z.object({
   email: z.string().email().transform((value) => value.trim().toLowerCase()),
@@ -52,7 +54,17 @@ export async function POST(request: NextRequest) {
     await clearLoginFailures(input.email, ip);
     const session = await createSession(user.id, membership?.id ?? null);
     await setSessionCookie(session.token, session.expiresAt);
-    return NextResponse.json({ ok: true, destination: membership ? "/dashboard" : "/platform" });
+    // 2026-10-01 — was hardcoded "/dashboard" for every membership; a role
+    // like Mechanic no longer has DASHBOARD_VIEW (see permissions.ts), so
+    // that would have landed them on a page they're immediately bounced
+    // off of by the new page guard. This uses the role's *default*
+    // permission set (not the fully-resolved, override-aware set
+    // getRequestContext() would compute) as a lightweight heuristic for
+    // picking a landing page — a cheap, good-enough choice since the real
+    // enforcement is requireTenantPageAccess on the destination page
+    // itself, not this redirect.
+    const destination = membership ? defaultTenantDestination(DEFAULT_TENANT_PERMISSIONS[membership.role]) : "/platform";
+    return NextResponse.json({ ok: true, destination });
   } catch (error) {
     return apiError(error);
   }

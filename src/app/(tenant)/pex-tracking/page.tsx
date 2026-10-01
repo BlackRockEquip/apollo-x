@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { requireModule } from "@/lib/auth/guards";
+import { requireTenantPageAccess } from "@/lib/auth/page-guard";
 import { listPexTracking } from "@/lib/pex/service";
 import { PexTrackingWorkspace } from "@/components/PexTrackingWorkspace";
 
@@ -17,8 +18,11 @@ export const dynamic = "force-dynamic";
 // not parity.
 export default async function PexTrackingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
+  // 2026-10-01 — see pex-stock/page.tsx's comment: switched to the
+  // redirect-based page guard so an unauthorized role is bounced to a real
+  // page instead of hitting Next's generic error page.
+  requireTenantPageAccess(ctx, "PEX_TRACKING_VIEW");
   requireModule(ctx, "PEX_TRACKING", "READ");
-  requireTenantPermission(ctx, "PEX_TRACKING_VIEW");
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";
