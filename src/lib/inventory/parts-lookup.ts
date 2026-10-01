@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { normalized } from "@/lib/master-data/validation";
+import { looseNormalized, normalized } from "@/lib/master-data/validation";
 
 // New — 2026-09-29, at the user's request ("how can we add additional
 // part numbers for parts that have superseded numbers and also have
@@ -34,8 +34,30 @@ export async function findPartByNumber<T extends Prisma.PartSelect>(
   const direct = await client.part.findFirst({ where: { companyId, partNumberNormalized: numberNormalized }, select });
   if (direct) return direct;
   const alt = await client.partAlternateNumber.findFirst({ where: { companyId, numberNormalized }, select: { partId: true } });
-  if (!alt) return null;
-  return client.part.findFirst({ where: { id: alt.partId }, select });
+  if (alt) return client.part.findFirst({ where: { id: alt.partId }, select });
+
+  // 2026-10-01 — user request: "the cross check with stock does not pickup
+  // 3j1907 but does pickup 3J-1907... it should check all numbers
+  // with/without hyphens, spaces, dashes etc that are in stock." The two
+  // lookups above only ever match an exact (trimmed/uppercased) string, so
+  // "3J1907" typed/pasted without the hyphen never matches a stored
+  // "3J-1907". This third tier strips every non-alphanumeric character from
+  // both sides (looseNormalized, see its own comment in validation.ts) and
+  // compares that instead — done with a raw query rather than a Prisma
+  // where-clause because the comparison has to run against a *computed*
+  // (stripped) version of the stored column, which Prisma's query builder
+  // can't express; regexp_replace does the stripping on the Postgres side so
+  // this still only touches the rows for this company, same as the other
+  // two lookups, and never changes what's actually stored. Only reached when
+  // both exact-match tiers above have already missed, so the common case
+  // (typing the part's real number) pays no extra cost.
+  const loose = looseNormalized(rawNumber);
+  if (!loose) return null;
+  const loosePart = await client.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Part" WHERE "companyId" = ${companyId} AND regexp_replace("partNumberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`;
+  if (loosePart[0]) return client.part.findFirst({ where: { id: loosePart[0].id }, select });
+  const looseAlt = await client.$queryRaw<{ partId: string }[]>`SELECT "partId" FROM "PartAlternateNumber" WHERE "companyId" = ${companyId} AND regexp_replace("numberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`;
+  if (looseAlt[0]) return client.part.findFirst({ where: { id: looseAlt[0].partId }, select });
+  return null;
 }
 
 // Same resolution, but only the id — for call sites that just need to

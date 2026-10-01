@@ -3426,8 +3426,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     called 'Add/Import Parts', move the button below the
                     choose file section." See addOrImportParts above —
                     imports the chosen file when one's selected, otherwise
-                    adds/cross-checks the pasted lines. */}
-                <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
+                    adds/cross-checks the pasted lines.
+                    2026-10-01 follow-up — user request: "the add/import
+                    button to be on the left, same style as the pickslip
+                    button." .detail-actions is shared by every other footer
+                    in this app and right-aligns by default (justify-content:
+                    flex-end) — left-aligned here via an inline override
+                    rather than touching that shared class. "Same style as
+                    the pickslip button" = .section-action-button, the gold
+                    accent style "Create picking slip" and "Add parts to Job"
+                    above both already use, replacing the plain
+                    .quiet-button this had. */}
+                <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
               </>
             )}
             {/* 2026-09-15, user request: "Parts list table, make it that

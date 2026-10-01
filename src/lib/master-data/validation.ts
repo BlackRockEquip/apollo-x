@@ -98,3 +98,20 @@ export const sequenceInput = z.object({ type: z.enum(["JOB","PEX_JOB","QUOTE","S
 
 export const listQuery = z.object({ q: z.string().trim().max(100).default(""), status: z.enum(["all","active","inactive"]).default("active"), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) });
 export function normalized(value: string | null | undefined) { return value?.trim().toLocaleUpperCase("en-ZA") || null; }
+// 2026-10-01 — user request: "when adding part numbers, the cross check with
+// stock does not pickup 3j1907 but does pickup 3J-1907... it should check
+// all numbers with/without hyphens, spaces, dashes etc that are in stock."
+// normalized() above only trims/uppercases — "3J1907" and "3J-1907" stay two
+// different strings, so an exact-match lookup on partNumberNormalized misses
+// a part whenever the typed/pasted number and the stored one differ only by
+// punctuation. This strips every non-alphanumeric character on top of
+// normalized()'s own trim/uppercase, so "3j1907", "3J-1907", "3J 1907" and
+// "3J.1907" all collapse to the same "3J1907" for comparison. Used as a
+// fallback tier (not a replacement) in findPartByNumber below — the stored
+// partNumberNormalized/numberNormalized columns and their unique constraints
+// are untouched, so this never changes what's stored, only what's willing to
+// match when the exact/alternate-number lookups miss.
+export function looseNormalized(value: string | null | undefined) {
+  const n = normalized(value);
+  return n ? n.replace(/[^A-Z0-9]/g, "") || null : null;
+}

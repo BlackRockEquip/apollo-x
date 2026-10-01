@@ -1,43 +1,33 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Support tickets: table view, modal detail, reply notifications, delete, status
+Loose part-number matching for stock cross-check; Add/Import Parts button styling
 
-Org Admin ticket list (Settings -> Support) is now a table - Ticket Number,
-Date received, User, Priority, Status - instead of a card list, replacing
-SupportWorkspace.tsx's old .record-list. Clicking a row (or its Open button)
-opens the ticket in a centered modal dialog (createPortal + the same
-.drawer-backdrop/.form-drawer.compact-dialog pattern used by
-SupportRequestDialog.tsx/ConfirmDialog.tsx, new .support-ticket-dialog width
-modifier in globals.css) instead of rendering the detail inline below the
-grid.
+Adding/importing parts to a job ("Add / cross-check with stock" and the
+Excel/CSV import) resolves the typed/pasted part number through
+findPartByNumber (inventory/parts-lookup.ts). That only ever did an exact
+match (after trim/uppercase) against the part's own number or an alternate
+number, so "3j1907" never matched a stock part filed as "3J-1907" - punctuation
+and spacing had to match exactly. Added a third fallback tier that strips
+every non-alphanumeric character from both sides (new looseNormalized helper,
+master-data/validation.ts) before comparing, via a raw query using Postgres's
+regexp_replace so the stored partNumberNormalized/numberNormalized columns
+and their unique constraints are untouched - this only changes what's willing
+to match, never what's stored. Only reached when the two exact-match tiers
+above have already missed, so the common case (typing the part's real number)
+is unaffected. findPartByNumber is the one shared lookup used everywhere a
+raw part number is resolved (Stock Levels search, job kits, RFQ matching, as
+well as adding/importing parts to a job), so this fix applies everywhere that
+matching happens, not just the job parts flow that surfaced it.
 
-Added a delete button (Org Admins only, gated on USERS_MANAGE same as the
-rest of this page's admin-only controls) - new deleteTenantSupportTicket in
-support/service.ts, new DELETE handler on
-app/api/v1/support/[id]/route.ts. SupportTicketMessage/Event/Attachment all
-cascade-delete with their parent SupportTicket already, so this is a plain
-delete.
+Also: the "Add/Import Parts" button (job parts panel) moved to the left of
+its row (was right-aligned via the shared .detail-actions footer class - left
+aligned here with an inline override rather than touching that shared class)
+and now uses .section-action-button, the same gold-accent style as the
+"Create picking slip" button, instead of the plain .quiet-button it had.
 
-Replies now close the loop both ways: when an Org Admin replies, the
-original reporter gets a notification; when the reporter replies, Org
-Admins get notified - new SUPPORT_TICKET_REPLY NotificationType (schema.prisma
-+ matching migration), new single-recipient notifyUser helper
-(notifications/service.ts), both wired into replyToSupportTicket
-(support/service.ts).
-
-Org Admins can change a ticket's status - Open / In Process / Closed - from
-a select in the ticket modal. New updateTenantSupportTicketStatus in
-support/service.ts (deliberately a narrower 3-state enum than the
-platform-support status field - WAITING_ON_CUSTOMER/RESOLVED stay
-platform-only, set automatically elsewhere), new PATCH handler on
-app/api/v1/support/[id]/route.ts.
-
-prisma/schema.prisma,
-prisma/migrations/20261001190000_support_ticket_reply_notification/migration.sql,
-src/lib/notifications/service.ts, src/lib/support/service.ts,
-src/app/api/v1/support/[id]/route.ts, src/components/SupportWorkspace.tsx,
-src/app/globals.css.
+src/lib/master-data/validation.ts, src/lib/inventory/parts-lookup.ts,
+src/components/JobWorkspace.tsx.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
