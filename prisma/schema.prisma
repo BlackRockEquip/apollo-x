@@ -346,6 +346,20 @@ enum NotificationType {
   // notifyAdminsAndManagers helper PARTS_LIST_IMPORTED already uses, just
   // a second trigger for it.
   JOB_PARTS_ADDED_BY_MECHANIC
+  // 2026-10-01 — user request: "when clicking the support button... a
+  // notification gets sent to Org Admins" (for a ticket raised by anyone
+  // other than a COMPANY_ADMIN — see createSupportTicket in
+  // support/service.ts, and notifyCompanyAdmins below, which deliberately
+  // targets COMPANY_ADMIN only, not MANAGER, matching "Org Admins"
+  // specifically).
+  SUPPORT_TICKET_CREATED
+  // 2026-10-01 — user request: "Allow a Org Admin to send out a message to
+  // all users/individual users (Notification banner that popsup)." See
+  // sendCompanyBroadcast below and BroadcastBanner.tsx — delivered through
+  // this same Notification model so it gets the same read-tracking, bell
+  // count and History tab as every other notification, plus a dismissible
+  // banner (BroadcastBanner.tsx) on top for its "popsup" requirement.
+  ORG_BROADCAST
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
@@ -519,6 +533,9 @@ model UserIdentity {
   // admins/managers whenever a parts list is imported). See Notification
   // below.
   notifications        Notification[]
+  // Platform-side counterpart of notifications above — see
+  // PlatformNotification's own comment.
+  platformNotifications PlatformNotification[]
 }
 
 model Company {
@@ -2370,6 +2387,16 @@ model Notification {
   message   String
   link      String?
   readAt    DateTime?
+  // 2026-10-01 — user request: "once notifications is there, allow a user
+  // to remove the notification which would move it to a History tab."
+  // Deliberately a separate nullable timestamp from readAt (same
+  // nullable-timestamp convention), not a delete — dismissing just moves a
+  // notification out of the active/bell-count list and into the History
+  // tab (see NotificationsList.tsx), it never discards the row. A
+  // dismissed notification is always implicitly read too (see
+  // dismissNotification in notifications/service.ts), so the unread-count
+  // query below doesn't need its own dismissedAt check.
+  dismissedAt DateTime?
   createdAt DateTime         @default(now())
 
   company   Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
@@ -2379,6 +2406,37 @@ model Notification {
   // null) is the one this needs to be fastest for, since it's the query
   // behind the always-visible bell badge on every single page load.
   @@index([companyId, userId, readAt])
+  // Active-tab / History-tab split (companyId, userId, dismissedAt) — the
+  // other query this list makes on every /notifications page load.
+  @@index([companyId, userId, dismissedAt])
+}
+
+// 2026-10-01 — user request: "when clicking the support button... if Org
+// Admins click support then it should go to System Admin, a proper system
+// flow." Platform Admins/support staff aren't tenant members (no
+// companyId), so the tenant-scoped Notification model above can't address
+// them — this is its platform-side equivalent, same one-row-per-recipient
+// shape and read-state semantics, just without a company. See
+// notifyPlatformSupportRecipients in lib/platform/notifications.ts for who
+// gets a row (every active PlatformRoleAssignment holder whose effective
+// permissions include PLATFORM_SUPPORT_READ).
+enum PlatformNotificationType {
+  SUPPORT_TICKET_ESCALATED
+}
+
+model PlatformNotification {
+  id        String                   @id @default(cuid())
+  userId    String
+  type      PlatformNotificationType
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime                 @default(now())
+
+  user      UserIdentity             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
 }
 
 model JobFieldServiceReport {

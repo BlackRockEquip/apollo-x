@@ -13,6 +13,8 @@ import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
 import { SupportExitButton } from "@/components/SupportExitButton";
 import { NotificationBell } from "@/components/NotificationBell";
+import { SupportRequestDialog } from "@/components/SupportRequestDialog";
+import { BroadcastBanner } from "@/components/BroadcastBanner";
 import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 
 // 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
@@ -136,11 +138,20 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
       </aside>
       <div className="workspace">
         {context.supportAccessId && <div className="support-banner"><strong>Platform support context</strong><span>{companyName} · {context.supportMode === "READ_ONLY" ? "Read-only access" : "Read-write access"}</span><Link href="/platform" className="table-action"><ShieldCheck size={14} /> Platform Admin</Link><SupportExitButton /></div>}
+        {/* 2026-10-01, user request: "Allow a Org Admin to send out a
+            message to all users/individual users (Notification banner that
+            popsup)." Same placement as the support-banner above — always
+            visible, at the top of every tenant page — so it reads as a
+            popup regardless of which page the recipient happens to be on. */}
+        <BroadcastBanner />
         <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div></div>{/* 2026-09-19, user request: bell icon next to the Support link, always
     visible from every page — AppShell renders on every tenant page, so
     placing it here (rather than on any one page) is what makes it
-    "always visible from every page". See NotificationBell.tsx. */}
-<div className="topbar-user"><NotificationBell /><Link href="/support" className="table-action"><Headset size={14} /> Support</Link><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
+    "always visible from every page". See NotificationBell.tsx.
+    2026-10-01 — Support is now SupportRequestDialog (a quick popup to log
+    a problem) rather than a plain Link straight to /support; see its own
+    comment for why. */}
+<div className="topbar-user"><NotificationBell /><SupportRequestDialog /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
         <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions }}>{children}</PermissionsContext.Provider></main>
       </div>
     </div>

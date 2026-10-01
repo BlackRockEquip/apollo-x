@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { BroadcastComposer } from "@/components/BroadcastComposer";
 
 type ModuleOption = { moduleKey: string; label: string; category: string };
 type UserRow = { id: string; email: string; displayName: string; active: boolean; membershipStatus: string; role: string; roleLabel: string; moduleLabels: string[]; moduleKeys?: string[] };
@@ -45,7 +46,7 @@ export function UsersWorkspace() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: [] as string[] });
 
-  const [tab, setTab] = useState<"add" | "setup">("add");
+  const [tab, setTab] = useState<"add" | "setup" | "broadcast">("add");
   const [mechanics, setMechanics] = useState<MechanicRow[]>([]);
   const [mechanicsLoading, setMechanicsLoading] = useState(true);
   const [mechanicSaving, setMechanicSaving] = useState(false);
@@ -280,6 +281,11 @@ export function UsersWorkspace() {
     <div className="tab-strip">
       <button type="button" className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>Add System Users</button>
       <button type="button" className={tab === "setup" ? "active" : ""} onClick={() => setTab("setup")}>User Setup</button>
+      {/* 2026-10-01, user request: "Allow a Org Admin to send out a message
+          to all users/individual users (Notification banner that popsup)."
+          Third tab here rather than a new Settings destination — same
+          USERS_MANAGE gate already covers the whole page. */}
+      <button type="button" className={tab === "broadcast" ? "active" : ""} onClick={() => setTab("broadcast")}>Broadcast message</button>
     </div>
     {tab === "add" ? <>
       <div className="header-actions" style={{ marginBottom: 12 }}><button type="button" className="gold-button" onClick={resetForm}><Plus size={14} /> Add User</button></div>
@@ -331,7 +337,7 @@ export function UsersWorkspace() {
           : <div className="module-picker-groups">{groupedModules.map(([category, items]) => <section key={category} className="module-picker-group"><h3>{category}</h3><div className="module-pill-grid">{items.map((item) => { const selected = form.selectedModuleKeys.includes(item.moduleKey); return <button key={item.moduleKey} type="button" className={selected ? "module-pill selected" : "module-pill"} onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: selected ? current.selectedModuleKeys.filter((key) => key !== item.moduleKey) : [...current.selectedModuleKeys, item.moduleKey] }))}><span>{selected ? "✓" : "○"}</span><strong>{item.label}</strong></button>; })}</div></section>)}</div>}
       </section>
       <div className="platform-inline-note"><ShieldAlert size={14} /> Backend entitlement checks remain authoritative. UI choices cannot grant unlicensed access.</div>
-    </> : <>
+    </> : tab === "setup" ? <>
       {mechanicError ? <div className="inline-error">{mechanicError}</div> : null}
       {mechanicNotice ? <div className="inline-success">{mechanicNotice}</div> : null}
       <div className="platform-grid">
@@ -377,7 +383,7 @@ export function UsersWorkspace() {
           {salesRepsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{salesRepresentatives.map((salesRep) => <tr key={salesRep.id}><td><strong>{salesRep.name}</strong></td><td>{salesRep.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditSalesRep(salesRep)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeSalesRep(salesRep)}><Trash2 size={14} /> Remove</button></td></tr>)}{salesRepresentatives.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No sales representatives set up yet.</td></tr>}</tbody></table></div>}
         </section>
       </div>
-    </>}
+    </> : <BroadcastComposer users={users.map((u) => ({ id: u.id, email: u.email, displayName: u.displayName }))} />}
     {confirmDialog}
   </div>;
 }

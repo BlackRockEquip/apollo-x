@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell } from "lucide-react";
+import { getNotificationSoundPrefs, playNotificationSound } from "@/lib/notification-sound";
 
 // 2026-09-19 — user request: "notifications move to icon next to the
 // support link at the top of page, always visible from every page, once
@@ -15,8 +16,17 @@ import { Bell } from "lucide-react";
 // Polls the lightweight /api/v1/notifications/unread-count route (not the
 // full list) on an interval, same visibility-gated pattern as
 // AutoRefresh.tsx, so a backgrounded tab isn't polling for no one to see.
+//
+// 2026-10-01 — user request: "Make a sound when a notification is
+// received." Since this only ever sees the unread *count* (not the rows
+// themselves), "received" is detected as the count going up between two
+// polls — not just being nonzero, which would replay on every single poll
+// for as long as anything stayed unread. The very first poll after mount
+// just seeds the baseline (hasPolled) so reopening a tab with existing
+// unread notifications doesn't itself play a sound.
 export function NotificationBell() {
   const [count, setCount] = useState(0);
+  const previousCount = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,7 +36,14 @@ export function NotificationBell() {
         const r = await fetch("/api/v1/notifications/unread-count", { cache: "no-store" });
         if (!r.ok || cancelled) return;
         const body = await r.json();
-        if (!cancelled) setCount(Number(body.count) || 0);
+        const nextCount = Number(body.count) || 0;
+        if (cancelled) return;
+        if (previousCount.current !== null && nextCount > previousCount.current) {
+          const prefs = getNotificationSoundPrefs();
+          if (prefs.enabled) playNotificationSound(prefs.sound);
+        }
+        previousCount.current = nextCount;
+        setCount(nextCount);
       } catch {
         // Best-effort — a failed poll just leaves the last-known count.
       }

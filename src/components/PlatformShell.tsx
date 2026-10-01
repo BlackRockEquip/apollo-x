@@ -6,6 +6,7 @@ import { Building2, Headset, LayoutDashboard, Package, Settings, ShieldCheck, Us
 import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
+import { PlatformNotificationBell } from "@/components/PlatformNotificationBell";
 
 // 2026-09-22, user report: "Support Access menu -- remove from sidebar as
 // its looks like another way to access companies, you tell me if its
@@ -33,5 +34,8 @@ const NAV = [
 
 export function PlatformShell({ context, title, subtitle, children }: { context: RequestContext; title: string; subtitle?: string; children: React.ReactNode }) {
   const pathname = usePathname();
-  return <div className="platform-shell"><aside className="platform-sidebar"><div className="platform-sidebar-brand"><span className="brand-mark small">AX</span><div><p className="eyebrow">Apollo X Platform</p><strong>Admin</strong></div></div><nav className="platform-nav">{NAV.map((item) => { const Icon = item.icon; const active = item.href === "/platform" ? pathname === "/platform" : pathname === item.href || pathname.startsWith(`${item.href}/`); return <Link key={`${item.href}:${item.label}`} href={item.href} className={active ? "platform-nav-item active" : "platform-nav-item"}><Icon size={16} /><span>{item.label}</span></Link>; })}</nav><div className="platform-side-note"><ShieldCheck size={15} /><span>Platform authority never bypasses explicit support context.</span></div></aside><div className="platform-workspace"><header className="platform-header compact-shell"><div><p className="eyebrow">Apollo X Platform</p><h1>{title}</h1>{subtitle ? <p className="muted small-line">{subtitle}</p> : null}</div><div className="topbar-user"><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header><main className="platform-page">{children}</main></div></div>;
+  return <div className="platform-shell"><aside className="platform-sidebar"><div className="platform-sidebar-brand"><span className="brand-mark small">AX</span><div><p className="eyebrow">Apollo X Platform</p><strong>Admin</strong></div></div><nav className="platform-nav">{NAV.map((item) => { const Icon = item.icon; const active = item.href === "/platform" ? pathname === "/platform" : pathname === item.href || pathname.startsWith(`${item.href}/`); return <Link key={`${item.href}:${item.label}`} href={item.href} className={active ? "platform-nav-item active" : "platform-nav-item"}><Icon size={16} /><span>{item.label}</span></Link>; })}</nav><div className="platform-side-note"><ShieldCheck size={15} /><span>Platform authority never bypasses explicit support context.</span></div></aside><div className="platform-workspace"><header className="platform-header compact-shell"><div><p className="eyebrow">Apollo X Platform</p><h1>{title}</h1>{subtitle ? <p className="muted small-line">{subtitle}</p> : null}</div>{/* 2026-10-01, user request: "if Org Admins click support then it
+    should go to System Admin, a proper system flow" — platform staff's
+    own bell for those escalations. See PlatformNotificationBell.tsx. */}
+<div className="topbar-user"><PlatformNotificationBell /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header><main className="platform-page">{children}</main></div></div>;
 }

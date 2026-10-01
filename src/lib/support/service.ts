@@ -4,6 +4,8 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requirePlatformPermission, requireTenant } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/security/request";
+import { notifyCompanyAdmins } from "@/lib/notifications/service";
+import { notifyPlatformSupportRecipients } from "@/lib/platform/notifications";
 
 const attachmentInput = z.object({ fileName: z.string().trim().min(1).max(160), mimeType: z.string().trim().min(3).max(120), contentBase64: z.string().min(4) });
 const createTicketInput = z.object({
@@ -66,6 +68,24 @@ export async function createSupportTicket(ctx: RequestContext, raw: unknown, met
       include: { messages: true, attachments: true },
     });
     await tx.auditEvent.create({ data: { companyId: ctx.companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "SUPPORT", entityType: "SupportTicket", entityId: ticket.id, action: "SUPPORT_TICKET_CREATED", correlationId: ctx.correlationId, ipAddress: meta?.ipAddress, userAgent: meta?.userAgent, afterData: { ticketNumber, priority: ticket.priority, status: ticket.status } } });
+    return ticket;
+  }).then(async (ticket) => {
+    // 2026-10-01 — user request: "make it that every user that clicks
+    // support except Org Admins, a dialog popsup... then a notification
+    // gets sent to Org Admins, if Org Admins click support then it should
+    // go to System Admin, a proper system flow." Routes on the reporter's
+    // own tenant role: a COMPANY_ADMIN's own ticket has no "more senior"
+    // tenant recipient to notify, so it escalates straight to platform
+    // support staff instead; anyone else's goes to this company's Org
+    // Admins. Fire-and-forget (both helpers already swallow their own
+    // errors) — a notification failing to send must never fail ticket
+    // creation itself.
+    const link = `/support`;
+    if (ctx.tenantRole === "COMPANY_ADMIN") {
+      void notifyPlatformSupportRecipients("SUPPORT_TICKET_ESCALATED", `Support ticket from an Org Admin: ${ticket.ticketNumber}`, `${ctx.displayName} (Org Admin) raised "${ticket.subject}" for ${ticket.companyId}.`, null);
+    } else {
+      void notifyCompanyAdmins(ctx.companyId!, "SUPPORT_TICKET_CREATED", `New support ticket: ${ticket.ticketNumber}`, `${ctx.displayName} raised "${ticket.subject}".`, link);
+    }
     return ticket;
   });
 }

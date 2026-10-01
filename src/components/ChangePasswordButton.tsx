@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { KeyRound, Save, X } from "lucide-react";
 
@@ -13,6 +14,23 @@ import { KeyRound, Save, X } from "lucide-react";
 // (this one included, per changeOwnPassword) and clears the cookie
 // server-side, so this redirects straight to /login afterwards rather
 // than trying to keep the current page alive with a now-dead session.
+//
+// 2026-10-01, user report: "when clicking change password in header, window
+// must popup in center, at the moment it opens behind." Root cause: this
+// button (and its dialog) render as a DOM descendant of <header
+// className="topbar">, and .topbar has backdrop-filter: blur(12px) —
+// backdrop-filter (like filter/transform) creates a new containing block
+// for any position:fixed descendant, per the CSS spec. So the dialog's
+// backdrop/aside were being positioned and sized relative to the 64px-tall
+// topbar strip instead of the viewport, not actually "behind" anything but
+// clipped to a sliver at the top of the page. Fixed two ways together: (1)
+// render through a portal straight onto document.body, escaping that
+// ancestor entirely — the one fix that's robust regardless of whatever CSS
+// the topbar carries, now or later; (2) switch from the right-side-sliding
+// .form-drawer to the centered .form-drawer.compact-dialog combination
+// already used everywhere else in this app (JobWorkspace.tsx's Register/
+// Close/Reopen job popups, ConfirmDialog.tsx, etc.) to match the user's
+// explicit "must popup in center" wording.
 export function ChangePasswordButton() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -48,9 +66,9 @@ export function ChangePasswordButton() {
   return (
     <>
       <button type="button" className="table-action" onClick={() => setOpen(true)}><KeyRound size={14} /> Change password</button>
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-          <aside className="form-drawer" aria-modal="true">
+          <aside className="form-drawer compact-dialog" aria-modal="true">
             <header>
               <div><p className="eyebrow">Account</p><h2>Change password</h2></div>
               <button aria-label="Close" onClick={close}><X size={18} /></button>
@@ -67,7 +85,8 @@ export function ChangePasswordButton() {
               </div>
             </form>
           </aside>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

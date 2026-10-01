@@ -920,6 +920,29 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
   return updated;
 }
 
+// 2026-10-01 — user request: "Mark return unrepaired button, allow to undo
+// once clicked." Straightforward given markJobReturnedUnrepaired above is
+// just a flag (not a status transition) — this simply clears it back out.
+// Allowed any time the flag is set, including once the job has reached
+// COMPLETE (where it's folding into "Completed / Unrepaired" — see
+// ReturnUnrepairedPill's own comment) since a person can still have ticked
+// it by mistake after closing out the job.
+export async function undoJobReturnedUnrepaired(ctx: RequestContext, id: string) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
+  const existing = await getJobScoped(companyId, id);
+  if (!existing.returnedUnrepaired) {
+    throw new Error("This job isn't marked returned unrepaired.");
+  }
+  const updated = await prisma.$transaction(async (tx) => {
+    const cleared = await tx.job.update({ where: { id: existing.id }, data: { returnedUnrepaired: false, returnedUnrepairedReason: null, returnedUnrepairedAt: null, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", "Returned-unrepaired flag undone.", {});
+    return cleared;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "RETURNED_UNREPAIRED_UNDONE" });
+  return updated;
+}
+
 // 2026-09-16 — addJobNote/updateJobNote/deleteJobNote (the old
 // add/edit/delete list of separately-timestamped JobNote entries) and
 // the /api/v1/jobs/[id]/notes route that called them were removed here

@@ -144,6 +144,17 @@ a { color: inherit; text-decoration: none; }
 .quiet-button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ink-150); border-radius: 7px; background: white; padding: 7px 9px; color: var(--ink-700); cursor: pointer; font-size: 11px; font-weight: 650; }
 .support-banner { display: flex; align-items: center; gap: 12px; min-height: 40px; background: #fff4d6; padding: 7px 28px; color: #684c00; font-size: 11px; }
 .support-banner span { flex: 1; }
+/* 2026-10-01, user request: "Allow a Org Admin to send out a message to
+   all users/individual users (Notification banner that popsup)." Same
+   intrusive-strip treatment as .support-banner above, its own colour
+   (blue, not amber) so it reads as a distinct kind of notice rather than a
+   platform-support one. See BroadcastBanner.tsx. */
+.org-broadcast-banner { display: flex; align-items: flex-start; gap: 12px; min-height: 40px; background: #eaf2ff; padding: 10px 28px; color: #0b3a7a; font-size: 12px; border-bottom: 1px solid #c7ddff; }
+.org-broadcast-banner > svg { flex: none; margin-top: 2px; }
+.org-broadcast-banner > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.org-broadcast-banner strong { font-size: 12.5px; }
+.org-broadcast-banner span { color: #0b3a7a; opacity: .85; }
+.org-broadcast-banner button { border: 0; background: transparent; cursor: pointer; color: #0b3a7a; flex: none; }
 .support-exit { border: 1px solid #d3a731; border-radius: 6px; background: #fffaf0; padding: 5px 8px; color: #684c00; cursor: pointer; font-size: 10px; font-weight: 750; }
 .page-content { padding: 28px; }
 /* 2026-09-14 — "Make all headings non-scrollable" (explicit request,
@@ -481,6 +492,17 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    with a highlighted background + bold title while unread. */
 .history-list article.notification-unread { background:#fff8e8; }
 .history-list article.notification-unread strong { color:#111; }
+/* 2026-10-01, user request: "allow a user to remove the notification which
+   would move it to a History tab." Adds a fourth column (the Remove
+   button) to the shared 3-column .history-list article grid — scoped to
+   this page only (.notifications-history-list) so the un-modified grid
+   still applies everywhere else .history-list is used (e.g. Job's
+   Activity history tab). */
+.notifications-history-list article { grid-template-columns: 180px 1fr auto auto; align-items: center; }
+.notifications-history-list article .table-action { justify-self: end; }
+@media (max-width: 720px) {
+  .notifications-history-list article { grid-template-columns: 1fr; }
+}
 .table-state { display:flex; min-height:140px; align-items:center; justify-content:center; gap:8px; color:var(--ink-500); font-size:12px; }
 .compact-empty-state { min-height: 84px; }
 /* 2026-09-16 — a colSpan empty-state <td> (e.g. "No PEX units in
@@ -828,6 +850,27 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 @media (max-width: 900px) {
   .job-edit-grid { grid-template-columns: 1fr; }
   .job-edit-grid .wide-panel { grid-column: auto; }
+}
+
+/* Parts list bulk-update toolbar (2026-10-01, user report: "make the fields
+   smaller as it looks oversize and not appropriate for the system maybe 1/4
+   size per field, buttons also to be next to each other"). This used to
+   just be a plain .drawer-fields grid — a 2-column layout meant for a full
+   edit form, so the Order number/Supplier fields rendered at roughly half
+   the toolbar's width each, and the three action buttons (each its own
+   "<label><span>&nbsp;</span><button>" grid cell, purely to line up with
+   the fields above) landed one per row underneath. Its own class now: a
+   single flex row, fields capped to roughly a quarter of the toolbar's
+   width, and the buttons grouped into one flex-wrapping group that sits
+   next to the fields rather than stacked below them. */
+.bulk-update-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.bulk-update-toolbar > label { flex: 0 1 190px; min-width: 150px; display: grid; gap: 5px; font-size: 11px; font-weight: 700; color: var(--ink-700); }
+.bulk-update-toolbar > label.party-selector { flex-basis: 220px; }
+.bulk-update-toolbar input { width: 100%; }
+.bulk-update-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+@media (max-width: 640px) {
+  .bulk-update-toolbar > label { flex: 1 1 100%; }
+  .bulk-update-actions { margin-left: 0; width: 100%; }
 }
 
 /* Notes panel beside Customer details (2026-09-14, user request: "Move

@@ -3173,6 +3173,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     instead hidden once the flag itself is already set,
                     since the job can only be flagged once. */}
                 {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
+                {/* 2026-10-01, user request: "Mark return unrepaired button,
+                    allow to undo once clicked." Shown whenever the flag is
+                    set, including once the job has reached COMPLETE (it's
+                    showing as "Completed / Unrepaired" by then — see
+                    ReturnUnrepairedPill), since it was still set by mistake
+                    and should still be clearable. */}
+                {!mechanicFieldsLocked && job.returnedUnrepaired && !["CLOSED", "CANCELLED"].includes(job.status) && <button type="button" className="table-action" onClick={() => { void confirm({ message: "Undo \"Returned unrepaired\" on this job?", tone: "neutral", confirmLabel: "Undo" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/returned-unrepaired/undo`, {}); }); }}>Undo returned unrepaired</button>}
                 {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
                 {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
                 {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
@@ -3404,12 +3411,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 column appears while this toolbar is open; leaving a field
                 blank here leaves it unchanged on every selected line. */}
             {bulkEditMode && (
-              <div className="drawer-fields" style={{ padding: "10px 14px", background: "#fbf8f0", borderBottom: "1px solid var(--ink-150)" }}>
+              <div className="bulk-update-toolbar" style={{ padding: "10px 14px", background: "#fbf8f0", borderBottom: "1px solid var(--ink-150)" }}>
                 <label><span>Order number (optional)</span><input value={bulkOrderNumber} onChange={(e) => setBulkOrderNumber(e.target.value)} placeholder="Applies to every selected row" /></label>
                 <label className="party-selector"><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
-                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button></label>
-                <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button></label>
-                <label><span>&nbsp;</span><button type="button" className="quiet-button danger" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkDelete()}><Trash2 size={14} /> {bulkApplying ? "Applying…" : `Delete (${bulkSelectedIds.size})`}</button></label>
+                <div className="bulk-update-actions">
+                  <button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button>
+                  <button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button>
+                  <button type="button" className="quiet-button danger" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkDelete()}><Trash2 size={14} /> {bulkApplying ? "Applying…" : `Delete (${bulkSelectedIds.size})`}</button>
+                </div>
               </div>
             )}
             {(() => {
@@ -3871,7 +3880,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <header>
               <div><h2>Generated pick slips</h2><p>Every picking slip created for this job so far.</p></div>
               {job.partLines.length > 0 && (
-                <button type="button" className="quiet-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
+                <button type="button" className="section-action-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip()}>{creatingPickSlip ? <Loader2 className="spin" size={14} /> : null} {creatingPickSlip ? "Creating…" : "Create picking slip"}</button>
               )}
             </header>
             {/* 2026-09-16 — result banner for "Create picking slip" above:
