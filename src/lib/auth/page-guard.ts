@@ -33,6 +33,19 @@ export function requireTenantPageAccess(context: RequestContext | null, permissi
   if (!context.tenantPermissions.has(permission)) redirect(defaultTenantDestination(context.tenantPermissions));
 }
 
+// 2026-10-01 — counterpart to requireTenantPageAccess for a page that
+// combines more than one formerly-separate destination behind a single
+// route (Configuration = Tax Codes + Commercial Terms + Numbering — see
+// configuration/page.tsx and settings-nav.ts's "configuration" item). Lets
+// the page through if the viewer holds ANY one of the listed permissions;
+// the page itself is responsible for only rendering the tabs the viewer
+// actually holds the specific permission for.
+export function requireAnyTenantPageAccess(context: RequestContext | null, permissions: TenantPermission[]): asserts context is RequestContext {
+  if (!context) redirect("/login");
+  if (!context.companyId) redirect("/platform");
+  if (!permissions.some((p) => context.tenantPermissions.has(p))) redirect(defaultTenantDestination(context.tenantPermissions));
+}
+
 // 2026-10-01 — role-based counterpart to requireTenantPageAccess above, for
 // the rare page that needs blocking for one specific role even though that
 // role holds the permission the page would otherwise check. Suppliers is

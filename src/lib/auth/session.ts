@@ -124,6 +124,7 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     themeColor: company?.settings?.themeColor ?? null,
     accentColor: company?.settings?.accentColor ?? null,
     secondaryColor: company?.settings?.secondaryColor ?? null,
+    backgroundColor: company?.settings?.backgroundColor ?? null,
     hasCompanyLogo: Boolean(company?.settings?.logoMimeType),
     moduleAccess,
     correlationId: randomUUID(),

@@ -1,19 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect -- async user loading intentionally mirrors existing workspace patterns */
+import { useEffect, useMemo, useState } from "react";
 import { Megaphone, Send } from "lucide-react";
 
 type UserOption = { id: string; email: string; displayName: string };
 
 // 2026-10-01 — user request: "Allow a Org Admin to send out a message to
-// all users/individual users (Notification banner that popsup)." Embedded
-// as a third tab in UsersWorkspace.tsx (its page is already USERS_MANAGE-
-// gated — COMPANY_ADMIN-only by default, matching "Org Admin" — see
-// users/page.tsx), reusing the user list that workspace already loads
-// rather than fetching its own. Posts to /api/v1/notifications/broadcast
-// (sendCompanyBroadcast), which re-checks USERS_MANAGE itself regardless
-// of this page's own gating.
-export function BroadcastComposer({ users }: { users: UserOption[] }) {
+// all users/individual users (Notification banner that popsup)." Originally
+// embedded as a third tab inside UsersWorkspace.tsx; moved to its own
+// Settings destination (/settings/broadcast — see settings-nav.ts and that
+// page) per a follow-up request so it isn't buried inside the Users tab
+// strip. No longer handed a `users` list by a parent — it loads its own via
+// GET /api/v1/users (the same endpoint UsersWorkspace.tsx itself uses) now
+// that it's not guaranteed to be rendered alongside that workspace. Posts
+// to /api/v1/notifications/broadcast (sendCompanyBroadcast), which
+// re-checks USERS_MANAGE itself regardless of this page's own gating.
+export function BroadcastComposer() {
+  const [users, setUsers] = useState<UserOption[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
   const [mode, setMode] = useState<"all" | "individual">("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
@@ -21,6 +26,24 @@ export function BroadcastComposer({ users }: { users: UserOption[] }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const response = await fetch("/api/v1/users", { cache: "no-store" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error?.message || "Unable to load users.");
+        if (!cancelled) setUsers((body.users || []).map((u: { id: string; email: string; displayName: string }) => ({ id: u.id, email: u.email, displayName: u.displayName })));
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load users.");
+      } finally {
+        if (!cancelled) setUsersLoading(false);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
 
   const canSend = title.trim().length > 0 && message.trim().length > 0 && (mode === "all" || selected.size > 0);
 
@@ -71,10 +94,10 @@ export function BroadcastComposer({ users }: { users: UserOption[] }) {
       {mode === "individual" && (
         <section className="detail-panel">
           <header><div><h2>Recipients</h2><p className="muted small-line">{selected.size} selected</p></div></header>
-          <div className="data-table-wrap"><table className="data-table"><thead><tr><th></th><th>Name</th><th>Email</th></tr></thead><tbody>
+          {usersLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th></th><th>Name</th><th>Email</th></tr></thead><tbody>
             {sorted.map((u) => <tr key={u.id}><td><input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} /></td><td><strong>{u.displayName}</strong></td><td>{u.email}</td></tr>)}
             {sorted.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No users to message yet.</td></tr>}
-          </tbody></table></div>
+          </tbody></table></div>}
         </section>
       )}
     </div>

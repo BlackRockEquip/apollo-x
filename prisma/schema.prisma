@@ -830,6 +830,14 @@ model CompanySettings {
   documentFooterText     String?
   accentColor            String?
   secondaryColor         String?
+  // 2026-10-01 — user request: "Add a colour field to change the main
+  // background colour" (alongside renaming the other three colour labels
+  // to Sidebar Button/Background Colour and Horizontal Bar Colour — see
+  // CompanySettingsForm.tsx). Same convention as themeColor/accentColor/
+  // secondaryColor above: a plain hex string, applied as --tenant-canvas
+  // on the themed shell (AppShell.tsx), overriding --canvas for every page
+  // inside it (see .tenant-themed-shell in globals.css).
+  backgroundColor        String?
   logoData               Bytes?
   logoMimeType           String?
   logoFileName           String?

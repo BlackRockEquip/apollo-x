@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { RequestContext } from "@/lib/auth/context-types";
-import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
+import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavPermissionAllowed } from "@/lib/settings-nav";
 
 // 2026-09-10 — the settings tab bar shown at the top of every Settings
 // destination (Company/Branding, Dashboard, Users, Tax Codes, Commercial
@@ -19,7 +19,7 @@ import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 // role lacking e.g. USERS_MANAGE would still see a "Users" tab here that
 // immediately redirected them away the moment they clicked it.
 export function SettingsTabNav({ ctx, current }: { ctx: RequestContext; current: string }) {
-  const items = SETTINGS_NAV_ITEMS.filter((item) => (ctx.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED" && ctx.tenantPermissions.has(item.permission));
+  const items = SETTINGS_NAV_ITEMS.filter((item) => settingsNavModuleAllowed(ctx.moduleAccess, item.module) && settingsNavPermissionAllowed(ctx.tenantPermissions, item.permission));
   return (
     <nav className="settings-nav">
       {items.map((item) => (

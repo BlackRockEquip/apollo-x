@@ -16,6 +16,7 @@ export type RequestContext = {
   themeColor?: string | null;
   accentColor?: string | null;
   secondaryColor?: string | null;
+  backgroundColor?: string | null;
   hasCompanyLogo?: boolean;
   moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode>;
   correlationId: string;

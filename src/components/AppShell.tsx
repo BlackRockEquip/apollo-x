@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
+import { Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -15,7 +15,7 @@ import { SupportExitButton } from "@/components/SupportExitButton";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SupportRequestDialog } from "@/components/SupportRequestDialog";
 import { BroadcastBanner } from "@/components/BroadcastBanner";
-import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
+import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavModuleReadOnly, settingsNavPermissionAllowed } from "@/lib/settings-nav";
 
 // 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
 // keeps the SUPPLIERS_VIEW permission (the Outwork supplier-name search in
@@ -28,10 +28,29 @@ import { SETTINGS_NAV_ITEMS } from "@/lib/settings-nav";
 // used throughout JobWorkspace.tsx's own mechanic lockdown
 // (mechanicFieldsLocked) rather than inventing a second, narrower
 // permission nothing else would use.
-type NavItem = { key: string; label: string; href: string; module: ModuleKey; permission: TenantPermission; icon: typeof LayoutDashboard; hiddenForMechanic?: boolean };
+type NavItem = { key: string; label: string; href: string; module: ModuleKey | ModuleKey[]; permission: TenantPermission | TenantPermission[]; icon: typeof LayoutDashboard; hiddenForMechanic?: boolean };
 type NavGroup = { key: string; label: string; icon: typeof LayoutDashboard; items: NavItem[]; footer?: boolean };
 
 const DASHBOARD_ITEM: NavItem = { key: "dashboard", label: "Dashboard", href: "/dashboard", module: "DASHBOARD", permission: "DASHBOARD_VIEW", icon: LayoutDashboard };
+
+// 2026-10-01 — user report: "When clicking templates button or dashboard
+// button, company branding is still highlighted." Every item's active
+// state used to be computed independently (`pathname === item.href ||
+// pathname.startsWith(item.href + "/")`) — fine on its own, but the
+// Settings group's "Company / Branding" item has href "/settings", and
+// "Templates"/"Dashboard"/"Import / Export" all live under "/settings/...",
+// so visiting any of those also satisfied Company/Branding's own
+// startsWith check, highlighting both at once. This picks the single
+// longest-href match per group instead (the most specific nav item wins),
+// same "longest prefix wins" rule any router would use.
+function bestNavMatchHref(items: NavItem[], pathname: string): string | null {
+  let best: string | null = null;
+  for (const item of items) {
+    const matches = pathname === item.href || pathname.startsWith(`${item.href}/`);
+    if (matches && (best === null || item.href.length > best.length)) best = item.href;
+  }
+  return best;
+}
 
 // ---------------------------------------------------------------------------
 // 2026-10-01 — user request ("User type: User/Mechanic" RBAC pass): a
@@ -69,9 +88,8 @@ const SETTINGS_ICONS: Record<string, typeof LayoutDashboard> = {
   "company-settings": Settings,
   "settings-dashboard": LayoutDashboard,
   users: Users,
-  "tax-codes": Settings,
-  "commercial-terms": Wrench,
-  numbering: PackageOpen,
+  broadcast: Megaphone,
+  configuration: Wrench,
   "import-export": FileSpreadsheet,
   support: Headset,
 };
@@ -112,10 +130,10 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
   // was allowed to use it. Also drops any item flagged hiddenForMechanic
   // (see NavItem's own comment — Suppliers today) for a Mechanic
   // specifically, even though their tenantPermissions already includes it.
-  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => (context.moduleAccess.get(item.module) ?? "DENIED") !== "DENIED" && context.tenantPermissions.has(item.permission) && !(item.hiddenForMechanic && context.tenantRole === "USER")) })), [context.moduleAccess, context.tenantPermissions, context.tenantRole]);
+  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => settingsNavModuleAllowed(context.moduleAccess, item.module) && settingsNavPermissionAllowed(context.tenantPermissions, item.permission) && !(item.hiddenForMechanic && context.tenantRole === "USER")) })), [context.moduleAccess, context.tenantPermissions, context.tenantRole]);
   const topGroups = groups.filter((group) => !group.footer && group.items.length > 0);
   const footerGroups = groups.filter((group) => group.footer && group.items.length > 0);
-  const shellStyle = useMemo(() => ({ ["--tenant-theme" as string]: context.themeColor || undefined, ["--tenant-accent" as string]: context.accentColor || undefined, ["--tenant-secondary" as string]: context.secondaryColor || undefined }), [context.themeColor, context.accentColor, context.secondaryColor]);
+  const shellStyle = useMemo(() => ({ ["--tenant-theme" as string]: context.themeColor || undefined, ["--tenant-accent" as string]: context.accentColor || undefined, ["--tenant-secondary" as string]: context.secondaryColor || undefined, ["--tenant-canvas" as string]: context.backgroundColor || undefined }), [context.themeColor, context.accentColor, context.secondaryColor, context.backgroundColor]);
   const logoSrc = initialLogoSrc ?? (context.hasCompanyLogo && context.companyId ? `/api/v1/company-settings/logo?company=${encodeURIComponent(context.companyId)}&v=${encodeURIComponent(`${context.themeColor || ''}:${context.accentColor || ''}`)}` : null);
   function toggleGroup(key: string) { setExpandedGroupKey((current) => current === key ? null : key); }
   return (
@@ -132,9 +150,9 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
             user; now gated by DASHBOARD_VIEW same as every other nav item
             (a Mechanic, for instance, no longer has it — see
             permissions.ts). */}
-        {context.tenantPermissions.has(DASHBOARD_ITEM.permission) && <Link href={DASHBOARD_ITEM.href} className={pathname === DASHBOARD_ITEM.href ? "nav-item active" : "nav-item"}><DASHBOARD_ITEM.icon size={18} /><span>{DASHBOARD_ITEM.label}</span></Link>}
-        <nav>{topGroups.map((group) => { const isActiveGroup = group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)); const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const readOnly = context.moduleAccess.get(item.module) === "READ_ONLY"; const ItemIcon = item.icon; const active = pathname === item.href || pathname.startsWith(`${item.href}/`); return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</nav>
-        <div className="sidebar-footer">{footerGroups.map((group) => { const isActiveGroup = group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)); const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const active = pathname === item.href || pathname.startsWith(`${item.href}/`); const readOnly = context.moduleAccess.get(item.module) === "READ_ONLY"; const ItemIcon = item.icon; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</div>
+        {settingsNavPermissionAllowed(context.tenantPermissions, DASHBOARD_ITEM.permission) && <Link href={DASHBOARD_ITEM.href} className={pathname === DASHBOARD_ITEM.href ? "nav-item active" : "nav-item"}><DASHBOARD_ITEM.icon size={18} /><span>{DASHBOARD_ITEM.label}</span></Link>}
+        <nav>{topGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; const active = item.href === bestHref; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</nav>
+        <div className="sidebar-footer">{footerGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const active = item.href === bestHref; const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</div>
       </aside>
       <div className="workspace">
         {context.supportAccessId && <div className="support-banner"><strong>Platform support context</strong><span>{companyName} · {context.supportMode === "READ_ONLY" ? "Read-only access" : "Read-write access"}</span><Link href="/platform" className="table-action"><ShieldCheck size={14} /> Platform Admin</Link><SupportExitButton /></div>}

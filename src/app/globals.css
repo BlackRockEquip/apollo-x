@@ -79,7 +79,7 @@ a { color: inherit; text-decoration: none; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.app-frame { min-height: 100vh; }
+.app-frame { min-height: 100vh; background: var(--canvas); }
 /* 2026-09-22 — user report: "Primary colour not changing anything, check
    all colour fields." Root cause: AppShell.tsx has always set
    --tenant-theme/--tenant-accent/--tenant-secondary as inline custom
@@ -103,7 +103,7 @@ a { color: inherit; text-decoration: none; }
    unauthenticated /login page and the platform-admin shell are both
    outside .tenant-themed-shell, so neither is affected by this — correct,
    since neither belongs to one specific tenant. */
-.tenant-themed-shell { --blue-700: var(--tenant-theme, #155fca); --gold-500: var(--tenant-accent, #d6a83b); --navy-950: var(--tenant-secondary, #07111f); }
+.tenant-themed-shell { --blue-700: var(--tenant-theme, #155fca); --gold-500: var(--tenant-accent, #d6a83b); --navy-950: var(--tenant-secondary, #07111f); --canvas: var(--tenant-canvas, #f5f7fa); }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: 242px; flex-direction: column; padding: 20px 14px; background: var(--navy-950); color: #d8e4f3; }
 .sidebar-brand { display: flex; align-items: center; gap: 11px; padding: 0 7px 22px; }
 .sidebar-brand > span { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 10px; background: var(--blue-600); color: white; font-size: 13px; font-weight: 900; }
@@ -148,13 +148,18 @@ a { color: inherit; text-decoration: none; }
    all users/individual users (Notification banner that popsup)." Same
    intrusive-strip treatment as .support-banner above, its own colour
    (blue, not amber) so it reads as a distinct kind of notice rather than a
-   platform-support one. See BroadcastBanner.tsx. */
-.org-broadcast-banner { display: flex; align-items: flex-start; gap: 12px; min-height: 40px; background: #eaf2ff; padding: 10px 28px; color: #0b3a7a; font-size: 12px; border-bottom: 1px solid #c7ddff; }
+   platform-support one. See BroadcastBanner.tsx.
+   2026-10-01 — user report: "make the banner background more noticable."
+   The original #eaf2ff was a near-white pastel, barely distinguishable
+   from the page background behind it — switched to a solid, saturated
+   blue with white text/icons so it reads as a real attention-grabbing
+   strip rather than a faint tint. */
+.org-broadcast-banner { display: flex; align-items: flex-start; gap: 12px; min-height: 40px; background: #155fca; padding: 10px 28px; color: #ffffff; font-size: 12px; border-bottom: 2px solid #0b3a7a; }
 .org-broadcast-banner > svg { flex: none; margin-top: 2px; }
 .org-broadcast-banner > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .org-broadcast-banner strong { font-size: 12.5px; }
-.org-broadcast-banner span { color: #0b3a7a; opacity: .85; }
-.org-broadcast-banner button { border: 0; background: transparent; cursor: pointer; color: #0b3a7a; flex: none; }
+.org-broadcast-banner span { color: #ffffff; opacity: .9; }
+.org-broadcast-banner button { border: 0; background: transparent; cursor: pointer; color: #ffffff; flex: none; }
 .support-exit { border: 1px solid #d3a731; border-radius: 6px; background: #fffaf0; padding: 5px 8px; color: #684c00; cursor: pointer; font-size: 10px; font-weight: 750; }
 .page-content { padding: 28px; }
 /* 2026-09-14 — "Make all headings non-scrollable" (explicit request,
@@ -1105,7 +1110,7 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
 .brand-preview-sidebar { background: var(--tenant-secondary, var(--navy-950)); color: #fff; padding: 16px; display: grid; align-content: start; gap: 10px; }
 .brand-preview-logo { width: 84px; height: 84px; border-radius: 14px; background: rgba(255,255,255,.08); display: grid; place-items: center; overflow: hidden; }
 .brand-logo-preview { width: 100%; height: 100%; object-fit: contain; }
-.brand-preview-workspace { background: #f7f9fc; padding: 18px; }
+.brand-preview-workspace { background: var(--tenant-canvas, #f7f9fc); padding: 18px; }
 .brand-preview-topbar { height: 38px; border-radius: 9px; background: var(--tenant-theme, var(--blue-700)); margin-bottom: 16px; }
 .brand-preview-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .brand-preview-card-grid > div { min-height: 96px; background: white; border: 1px solid var(--ink-150); border-top: 4px solid var(--tenant-accent, var(--gold-500)); border-radius: 10px; }

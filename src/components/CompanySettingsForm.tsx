@@ -90,6 +90,7 @@ export function CompanySettingsForm() {
       themeColor: String(s.themeColor || ""),
       accentColor: String(s.accentColor || s.themeColor || ""),
       secondaryColor: String(s.secondaryColor || ""),
+      backgroundColor: String(s.backgroundColor || ""),
       documentHeaderText: String(s.documentHeaderText || ""),
       documentFooterText: String(s.documentFooterText || ""),
       // SMTP — added 2026-09-09 so real RFQ / Parts-follow-up emails can be
@@ -115,6 +116,7 @@ export function CompanySettingsForm() {
     ["--tenant-theme" as string]: normalizeColor(form?.themeColor || "#155fca"),
     ["--tenant-accent" as string]: normalizeColor(form?.accentColor || form?.themeColor || "#d6a83b"),
     ["--tenant-secondary" as string]: normalizeColor(form?.secondaryColor || "#07111f"),
+    ["--tenant-canvas" as string]: normalizeColor(form?.backgroundColor || "#f7f9fc"),
   }), [form]);
 
   async function onSave() {
@@ -241,22 +243,38 @@ export function CompanySettingsForm() {
           <label><span>Main email</span><input value={form.mainEmail} onChange={(e) => setForm((current) => current ? { ...current, mainEmail: e.target.value } : current)} /></label>
           <label><span>Website</span><input value={form.website} onChange={(e) => setForm((current) => current ? { ...current, website: e.target.value } : current)} /></label>
           <label><span>Quote validity (days)</span><input type="number" min={1} value={form.quoteValidityDays} onChange={(e) => setForm((current) => current ? { ...current, quoteValidityDays: e.target.value } : current)} /></label>
-          <label><span>Primary colour</span>
+          <label><span>Sidebar Button Colour</span>
             <div className="color-picker-field">
               <input type="color" value={normalizeColor(form.themeColor) || "#155fca"} onChange={(e) => setForm((current) => current ? { ...current, themeColor: e.target.value } : current)} />
               <input className="color-picker-hex" value={form.themeColor} placeholder="#155fca" onChange={(e) => setForm((current) => current ? { ...current, themeColor: e.target.value } : current)} />
             </div>
           </label>
-          <label><span>Accent colour</span>
+          <label><span>Horizontal Bar Colour</span>
             <div className="color-picker-field">
               <input type="color" value={normalizeColor(form.accentColor) || "#d6a83b"} onChange={(e) => setForm((current) => current ? { ...current, accentColor: e.target.value } : current)} />
               <input className="color-picker-hex" value={form.accentColor} placeholder="#d6a83b" onChange={(e) => setForm((current) => current ? { ...current, accentColor: e.target.value } : current)} />
             </div>
           </label>
-          <label><span>Secondary colour</span>
+          <label><span>Sidebar Background Colour</span>
             <div className="color-picker-field">
               <input type="color" value={normalizeColor(form.secondaryColor) || "#07111f"} onChange={(e) => setForm((current) => current ? { ...current, secondaryColor: e.target.value } : current)} />
               <input className="color-picker-hex" value={form.secondaryColor} placeholder="#07111f" onChange={(e) => setForm((current) => current ? { ...current, secondaryColor: e.target.value } : current)} />
+            </div>
+          </label>
+          {/* 2026-10-01 — user request: "Add a colour field to change the
+              main background colour." Written through to Company.settings
+              as backgroundColor (same JSON field as the other three colours
+              — see company-settings-service.ts), read back into
+              RequestContext.backgroundColor (session.ts), and applied as
+              --tenant-canvas on the themed shell (AppShell.tsx), which
+              overrides --canvas for every page inside it (see
+              .tenant-themed-shell in globals.css) — the actual page
+              background behind the sidebar/topbar, not a branding-panel-only
+              preview colour. */}
+          <label><span>Main Background Colour</span>
+            <div className="color-picker-field">
+              <input type="color" value={normalizeColor(form.backgroundColor) || "#f5f7fa"} onChange={(e) => setForm((current) => current ? { ...current, backgroundColor: e.target.value } : current)} />
+              <input className="color-picker-hex" value={form.backgroundColor} placeholder="#f5f7fa" onChange={(e) => setForm((current) => current ? { ...current, backgroundColor: e.target.value } : current)} />
             </div>
           </label>
           <label className="wide"><span>Document header text</span><textarea rows={3} value={form.documentHeaderText} onChange={(e) => setForm((current) => current ? { ...current, documentHeaderText: e.target.value } : current)} /></label>

@@ -1,86 +1,61 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Notification history/sound, support ticket escalation flow, Org Admin
-broadcasts, bulk-update toolbar/button restyle, change-password modal
-centering fix, undo for Returned Unrepaired
+Move Broadcast to its own Settings page, rename/add branding colour fields,
+fix Company/Branding nav highlight, consolidate Tax Codes/Commercial
+Terms/Numbering into one Configuration page
 
-Notifications: removing one now moves it to a History tab instead of
-deleting it (new Notification.dismissedAt column; dismissNotification in
-notifications/service.ts) - the /notifications page (NotificationsList.tsx)
-gets an Active/History tab strip, a Remove button per active row, and a
-small "Notification sound" settings panel at the bottom (on/off + a choice
-of generated tones - Chime/Ping/Soft bell/No sound - via the new
-notification-sound.ts, Web Audio API, no audio files shipped). The bell
-(NotificationBell.tsx) plays the chosen tone when the unread count goes up
-between polls, not just whenever it's nonzero.
+Broadcast message moved out of Settings > Users (where it was a third tab)
+into its own destination at /settings/broadcast, with its own sidebar
+entry (settings-nav.ts, new app/(tenant)/settings/broadcast/page.tsx).
+BroadcastComposer.tsx no longer depends on a parent-supplied users list -
+it loads its own via GET /api/v1/users, since it's not guaranteed to be
+rendered alongside UsersWorkspace.tsx anymore. The popup banner's
+background is now a solid, saturated blue instead of a near-white pastel
+tint, per "make the banner background more noticable."
 
-Parts list bulk-update toolbar: the Order number/Supplier fields and the
-three action buttons used to be one plain 2-column form grid (each button
-its own row). Restyled as a single flex row - fields capped to roughly a
-quarter of the toolbar's width, the Apply/Mark received/Delete buttons
-grouped together next to them (JobWorkspace.tsx, new .bulk-update-toolbar
-CSS).
+Company / Branding colour field labels renamed: Primary colour -> Sidebar
+Button Colour, Accent colour -> Horizontal Bar Colour, Secondary colour ->
+Sidebar Background Colour (CompanySettingsForm.tsx) - matches what each one
+actually controls (nav highlight, topbar border, sidebar background).
 
-"Create picking slip" now uses the same .section-action-button styling as
-"Request quotes from suppliers," instead of the plainer .quiet-button it
-had before.
+New Main Background Colour field (Company.backgroundColor) controls the
+app's canvas colour behind the sidebar/topbar for a tenant - wired through
+the settings form, company-settings-service.ts's zod schema and write
+path, session.ts's RequestContext read path, and applied as --tenant-canvas
+on the themed app shell (AppShell.tsx / .tenant-themed-shell in
+globals.css). Needs a real schema change (CompanySettings.backgroundColor
+is a typed column, not a JSON field) - see the new migration.
 
-Change password: the popup used to render behind/clipped to the page
-header - .topbar has backdrop-filter, which creates a new containing block
-for position:fixed descendants, and the dialog is a DOM child of the
-header. Fixed by rendering the dialog through a React portal straight onto
-document.body (escaping that ancestor entirely) and switching it to the
-same centered .compact-dialog pattern already used everywhere else in this
-app, matching "window must popup in center."
+Company/Branding sidebar item no longer stays highlighted while viewing
+Templates or Dashboard under Settings - those routes are all prefixes of
+/settings, so each nav item used to check pathname.startsWith(href) on its
+own and multiple could match at once. AppShell.tsx now picks the single
+longest-matching href per nav group instead.
 
-Support: clicking Support in the header used to just link to the /support
-page with no prompt, which read as doing nothing. It's now a quick popup
-(SupportRequestDialog.tsx) to describe the problem, posting to the same
-support-ticket system as before (nothing about ticket storage changed).
-New: creating a ticket now notifies someone. A non-Org-Admin's ticket
-notifies this company's Org Admins (notifyCompanyAdmins, a new
-Notification type). An Org Admin's own ticket has no more-senior tenant
-recipient, so it escalates straight to platform support staff instead - a
-new platform-side notification system (PlatformNotification model,
-lib/platform/notifications.ts, a bell in PlatformShell's topbar, and
-/platform/notifications) addressed to every active platform role holder
-whose permissions include PLATFORM_SUPPORT_READ, the same gate that
-already controls who can see a ticket at all.
+Tax Codes, Commercial Terms and Numbering - previously three separate
+top-level settings pages, each its own sidebar entry - are now one
+"Configuration" destination with an internal tab strip
+(ConfigurationWorkspace.tsx, new app/(tenant)/configuration/page.tsx),
+matching settings-nav.ts's single "configuration" item. The page is
+reachable if the viewer holds any one of the three original permissions
+(new requireAnyTenantPageAccess in page-guard.ts) and only shows the tabs
+they actually have the permission for. The old /tax-codes,
+/commercial-terms and /numbering routes now just redirect to
+/configuration so existing links/bookmarks keep working.
 
-Org Admin broadcast messages: a new "Broadcast message" tab on Settings >
-Users (USERS_MANAGE-gated, same as the rest of that page) lets an Org
-Admin send a message to every user or a chosen few. Delivered as a regular
-notification (bell + History, same as anything else) plus a dismissible
-banner at the top of every page (BroadcastBanner.tsx) until it's read or
-dismissed - the "popup" from the request.
-
-Mark returned unrepaired: now has an Undo button next to it once a job is
-flagged, clearing the same returnedUnrepaired/reason/timestamp fields the
-original action set (undoJobReturnedUnrepaired in jobs/service.ts).
-
-src/components/ChangePasswordButton.tsx, src/components/JobWorkspace.tsx,
-src/components/NotificationBell.tsx, src/components/NotificationsList.tsx,
-src/components/NotificationSoundSettings.tsx,
-src/components/SupportRequestDialog.tsx, src/components/BroadcastBanner.tsx,
-src/components/BroadcastComposer.tsx, src/components/UsersWorkspace.tsx,
-src/components/AppShell.tsx, src/components/PlatformShell.tsx,
-src/components/PlatformNotificationBell.tsx,
-src/components/PlatformNotificationsList.tsx, src/lib/jobs/service.ts,
-src/lib/notifications/service.ts, src/lib/notification-sound.ts,
-src/lib/platform/notifications.ts, src/lib/support/service.ts,
-src/app/(tenant)/notifications/page.tsx,
-src/app/platform/notifications/page.tsx,
-src/app/api/v1/jobs/[id]/returned-unrepaired/undo/route.ts,
-src/app/api/v1/notifications/[id]/dismiss/route.ts,
-src/app/api/v1/notifications/active-broadcast/route.ts,
-src/app/api/v1/notifications/broadcast/route.ts,
-src/app/api/v1/platform/notifications/route.ts,
-src/app/api/v1/platform/notifications/unread-count/route.ts,
-src/app/api/v1/platform/notifications/[id]/read/route.ts,
-src/app/api/v1/platform/notifications/read-all/route.ts,
-src/app/globals.css, prisma/schema.prisma,
-prisma/migrations/20261001170000_notifications_phase2/migration.sql.
+src/components/UsersWorkspace.tsx, src/components/BroadcastComposer.tsx,
+src/app/(tenant)/settings/broadcast/page.tsx, src/lib/settings-nav.ts,
+src/components/SettingsTabNav.tsx, src/components/AppShell.tsx,
+src/app/globals.css, src/components/CompanySettingsForm.tsx,
+src/lib/master-data/company-settings-service.ts, src/lib/auth/session.ts,
+src/lib/auth/context-types.ts, src/lib/auth/page-guard.ts,
+src/components/ConfigurationWorkspace.tsx,
+src/app/(tenant)/configuration/page.tsx,
+src/app/(tenant)/tax-codes/page.tsx,
+src/app/(tenant)/commercial-terms/page.tsx,
+src/app/(tenant)/numbering/page.tsx, prisma/schema.prisma,
+prisma/migrations/20261001180000_company_background_colour/migration.sql.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

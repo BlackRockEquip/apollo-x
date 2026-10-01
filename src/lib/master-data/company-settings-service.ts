@@ -32,7 +32,7 @@ const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable(
 // updateCompanySettings below for how they're pulled out before the
 // ...settings spread (they're CompanyAddress columns, not CompanySettings
 // ones, so they can't ride along in that update call).
-export const settingsInput = z.object({ legalName: z.string().trim().min(2).max(200), tradingName: text, registrationNumber: text, vatNumber: text, mainTelephone: text, mainEmail: z.string().trim().email().optional().nullable().or(z.literal("")), website: text, addressLine1: text, addressLine2: text, addressCity: text, addressProvince: text, addressPostalCode: text, defaultCurrencyCode: z.string().trim().length(3), defaultTaxJurisdiction: z.string().trim().length(2), defaultTaxCodeId: z.string().cuid().optional().nullable(), defaultPaymentTermId: z.string().cuid().optional().nullable(), quoteValidityDays: z.number().int().min(1).max(365), themeColor: color, accentColor: color, secondaryColor: color, documentHeaderText: text, documentFooterText: z.string().trim().max(2000).optional().nullable(), smtpHost: text, smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: text, smtpPassword: z.string().trim().max(500).optional().nullable(), smtpFromAddress: z.string().trim().email().optional().nullable().or(z.literal("")), smtpFromName: text });
+export const settingsInput = z.object({ legalName: z.string().trim().min(2).max(200), tradingName: text, registrationNumber: text, vatNumber: text, mainTelephone: text, mainEmail: z.string().trim().email().optional().nullable().or(z.literal("")), website: text, addressLine1: text, addressLine2: text, addressCity: text, addressProvince: text, addressPostalCode: text, defaultCurrencyCode: z.string().trim().length(3), defaultTaxJurisdiction: z.string().trim().length(2), defaultTaxCodeId: z.string().cuid().optional().nullable(), defaultPaymentTermId: z.string().cuid().optional().nullable(), quoteValidityDays: z.number().int().min(1).max(365), themeColor: color, accentColor: color, secondaryColor: color, backgroundColor: color, documentHeaderText: text, documentFooterText: z.string().trim().max(2000).optional().nullable(), smtpHost: text, smtpPort: z.number().int().min(1).max(65535).optional().nullable(), smtpSecure: z.boolean().optional(), smtpUsername: text, smtpPassword: z.string().trim().max(500).optional().nullable(), smtpFromAddress: z.string().trim().email().optional().nullable().or(z.literal("")), smtpFromName: text });
 // 2026-09-29 — "Test connection" button on the SMTP settings section. Only
 // the fields .verify() actually needs — no fromName/fromAddress, since
 // those don't affect whether the server accepts the connection/login.
@@ -273,6 +273,7 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
         themeColor: normalizeColor(settings.themeColor),
         accentColor: normalizeColor(settings.accentColor),
         secondaryColor: normalizeColor(settings.secondaryColor),
+        backgroundColor: normalizeColor(settings.backgroundColor),
         mainEmail: settings.mainEmail || null,
         smtpFromAddress: settings.smtpFromAddress || null,
         ...(smtpPassword ? { smtpPassword } : {}),
