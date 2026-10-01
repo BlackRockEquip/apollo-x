@@ -16,6 +16,21 @@ type UserOption = { id: string; email: string; displayName: string };
 // that it's not guaranteed to be rendered alongside that workspace. Posts
 // to /api/v1/notifications/broadcast (sendCompanyBroadcast), which
 // re-checks USERS_MANAGE itself regardless of this page's own gating.
+//
+// 2026-10-01 — user report: "broadcasting to specific users does not
+// work, error could not be completed thrown, works when sending to all."
+// Root cause: GET /api/v1/users (listTenantUsers in users/service.ts)
+// returns each row's `id` as the CompanyMembership id, with the real User
+// id in a separate `userId` field (membershipId is what UsersWorkspace.tsx
+// needs for its own edit/delete actions) — this component was reading
+// `u.id` for a recipient's id and posting that. sendCompanyBroadcast
+// (notifications/service.ts) validates "individual" recipients against
+// each active membership's `userId`, so every selected recipient failed
+// that check — targetIds ended up empty, which throws "No valid
+// recipients were selected." "All" mode never hit this: it skips the
+// per-id filter and just sends to every active member's userId directly,
+// which is why only "All" worked. Fixed by keying UserOption off `userId`
+// instead of `id` below.
 export function BroadcastComposer() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
@@ -34,7 +49,7 @@ export function BroadcastComposer() {
         const response = await fetch("/api/v1/users", { cache: "no-store" });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error?.message || "Unable to load users.");
-        if (!cancelled) setUsers((body.users || []).map((u: { id: string; email: string; displayName: string }) => ({ id: u.id, email: u.email, displayName: u.displayName })));
+        if (!cancelled) setUsers((body.users || []).map((u: { userId: string; email: string; displayName: string }) => ({ id: u.userId, email: u.email, displayName: u.displayName })));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Unable to load users.");
       } finally {
