@@ -1016,6 +1016,16 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
 
 /* Header actions + dialogs + job editor drawer */
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/* 2026-10-01 — user request: "Notifications sound section, move to small
+   section at top right inline with header." NotificationSoundSettings.tsx
+   used to render as its own full-width .detail-panel section below the
+   notifications list; now a compact inline control sitting inside the
+   /notifications page's own .page-header (page.tsx), pushed to the right
+   by .page-header's justify-content: space-between like any other header
+   action. */
+.notification-sound-inline { display: flex; align-items: center; gap: 6px; }
+.notification-sound-inline select { padding: 6px 8px; font-size: 11px; min-height: 0; border-radius: 7px; border: 1px solid var(--ink-150); background: white; color: var(--ink-700); }
+.notification-sound-inline svg { color: var(--ink-500); flex: none; }
 /* inset:auto must come BEFORE top/left below — it resets the position/inset
    longhands inherited from the plain .form-drawer rule above (which sets
    inset:0 0 0 auto), and since declarations later in the SAME rule win for
@@ -1057,6 +1067,14 @@ body.col-resizing .jobs-wip-resizable .col-resize-handle { background: var(--gol
 .confirm-dialog { width: min(420px, 92vw); max-height: none; border-left: 4px solid var(--ink-300); }
 .confirm-dialog.tone-danger { border-left-color: var(--danger); }
 .confirm-dialog.tone-warning { border-left-color: #c99a1f; }
+/* 2026-10-01 — user request: "Support ticket to Org Admins... when the org
+   admin clicks on the ticket it opens the ticket in its own window, not
+   below as it does now." SupportWorkspace.tsx's ticket detail (message
+   history + attachments + reply form) needs more room than a typical
+   .compact-dialog popup — same width-only-modifier pattern as
+   .delivery-note-dialog/.quote-compare-dialog above. */
+.support-ticket-dialog { width: min(760px, 94vw); max-height: min(820px, 92vh); }
+.inline-status-select { width: auto; min-height: 30px; border: 1px solid var(--ink-300); border-radius: 999px; background: white; padding: 4px 10px; font-size: 11px; font-weight: 800; color: var(--ink-700); }
 .confirm-dialog.tone-neutral { border-left-color: #3a6fd1; }
 .confirm-dialog-heading { display: flex; align-items: flex-start; gap: 9px; }
 .confirm-dialog-icon { flex: 0 0 auto; margin-top: 1px; color: var(--ink-400); }

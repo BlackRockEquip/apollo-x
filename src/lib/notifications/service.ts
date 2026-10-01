@@ -129,6 +129,23 @@ export async function notifyCompanyAdmins(companyId: string, type: NotificationT
   }
 }
 
+// 2026-10-01 — user request: "allow the reply functionality [on a support
+// ticket] to work back the user who requested support, and user receives
+// notification and can respond accordingly." The two helpers above only
+// ever target a role-based group (every Org Admin, every Admin/Manager) —
+// this is the first case that needs one specific person: whichever single
+// user raised the ticket (or, in the other direction, whoever replies isn't
+// the reporter and so needs telling an Org Admin answered). See
+// replyToSupportTicket in support/service.ts for both directions. Same
+// fire-and-forget/best-effort convention as the two helpers above.
+export async function notifyUser(companyId: string, userId: string, type: NotificationType, title: string, message: string, link?: string | null) {
+  try {
+    await prisma.notification.create({ data: { companyId, userId, type, title, message, link: link ?? null } });
+  } catch {
+    // Best-effort — same as notifyAdminsAndManagers above.
+  }
+}
+
 const broadcastInput = z.object({
   title: z.string().trim().min(1).max(120),
   message: z.string().trim().min(1).max(1000),

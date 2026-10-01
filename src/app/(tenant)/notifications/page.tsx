@@ -1,6 +1,7 @@
 import { requireRequestContext } from "@/lib/auth/session";
 import { listNotifications } from "@/lib/notifications/service";
 import { NotificationsList } from "@/components/NotificationsList";
+import { NotificationSoundSettings } from "@/components/NotificationSoundSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export default async function NotificationsPage() {
     <div>
       <header className="page-header compact">
         <div><p className="eyebrow">Notifications</p><h1>Notifications</h1><p>Everything sent to you — click one to open what it's about.</p></div>
+        <div className="header-actions"><NotificationSoundSettings /></div>
       </header>
       <NotificationsList
         initialItems={items.map(toRow)}

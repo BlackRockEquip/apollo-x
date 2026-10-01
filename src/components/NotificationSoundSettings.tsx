@@ -6,12 +6,19 @@ import { getNotificationSoundPrefs, setNotificationSoundPrefs, playNotificationS
 
 // 2026-10-01 — user request: "Make a sound when a notification is received
 // (Allow to be put on/off via settings, also allow user to change sound via
-// dropdown)." Rendered at the bottom of the /notifications page (see
-// NotificationsList.tsx) — there's no dedicated account/preferences
-// settings screen in this app yet, so "via settings" lands here, next to
-// the notifications it controls, rather than inventing a new settings
-// destination just for this one toggle. See notification-sound.ts for why
-// this is all client-side (localStorage + generated tones, no schema/API).
+// dropdown)." There's no dedicated account/preferences settings screen in
+// this app yet, so "via settings" lands here, next to the notifications it
+// controls, rather than inventing a new settings destination just for this
+// one toggle. See notification-sound.ts for why this is all client-side
+// (localStorage + generated tones, no schema/API).
+//
+// 2026-10-01 — user request: "Notifications sound section, move to small
+// section at top right inline with header." Was its own full-width
+// .detail-panel section below the notifications list (NotificationsList.tsx)
+// — now a compact inline row rendered inside the /notifications page's own
+// header (see app/(tenant)/notifications/page.tsx), which sits top-right
+// automatically via .page-header's justify-content: space-between, same as
+// any other page's header-actions button.
 export function NotificationSoundSettings() {
   // Read from localStorage only after mount — reading it during the
   // server-rendered first pass would mismatch between server and client
@@ -32,24 +39,16 @@ export function NotificationSoundSettings() {
   if (!ready) return null;
 
   return (
-    <section className="detail-panel">
-      <header><div><h2><Volume2 size={15} /> Notification sound</h2><p>Plays when a new notification arrives while this tab is open. Saved on this device/browser.</p></div></header>
-      <div className="drawer-fields compact-form-fields">
-        <label>
-          <span>Sound</span>
-          <select value={prefs.enabled ? "on" : "off"} onChange={(e) => update({ ...prefs, enabled: e.target.value === "on" })}>
-            <option value="on">On</option>
-            <option value="off">Off</option>
-          </select>
-        </label>
-        <label>
-          <span>Tone</span>
-          <select value={prefs.sound} disabled={!prefs.enabled} onChange={(e) => { const next = { ...prefs, sound: e.target.value as NotificationSoundPrefs["sound"] }; update(next); if (next.enabled) playNotificationSound(next.sound); }}>
-            {NOTIFICATION_SOUNDS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </label>
-        <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={!prefs.enabled} onClick={() => playNotificationSound(prefs.sound)}>Test sound</button></label>
-      </div>
-    </section>
+    <div className="notification-sound-inline" title="Notification sound — plays when a new notification arrives while this tab is open. Saved on this device/browser.">
+      <Volume2 size={14} />
+      <select value={prefs.enabled ? "on" : "off"} onChange={(e) => update({ ...prefs, enabled: e.target.value === "on" })} aria-label="Notification sound">
+        <option value="on">Sound on</option>
+        <option value="off">Sound off</option>
+      </select>
+      <select value={prefs.sound} disabled={!prefs.enabled} onChange={(e) => { const next = { ...prefs, sound: e.target.value as NotificationSoundPrefs["sound"] }; update(next); if (next.enabled) playNotificationSound(next.sound); }} aria-label="Notification tone">
+        {NOTIFICATION_SOUNDS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+      </select>
+      <button type="button" className="quiet-button" disabled={!prefs.enabled} onClick={() => playNotificationSound(prefs.sound)}>Test</button>
+    </div>
   );
 }

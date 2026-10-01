@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Bell, History, X } from "lucide-react";
-import { NotificationSoundSettings } from "@/components/NotificationSoundSettings";
 
 // 2026-09-19 — the "own page that a user can view all notifications" from
 // the bell icon request (see NotificationBell.tsx / the notifications
@@ -104,7 +103,6 @@ export function NotificationsList({ initialItems, initialUnreadCount, initialHis
           )}
         </div>
       </section>
-      <NotificationSoundSettings />
     </>
   );
 }

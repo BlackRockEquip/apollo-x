@@ -360,6 +360,14 @@ enum NotificationType {
   // count and History tab as every other notification, plus a dismissible
   // banner (BroadcastBanner.tsx) on top for its "popsup" requirement.
   ORG_BROADCAST
+  // 2026-10-01 — user request: "allow the reply functionality [on a
+  // support ticket] to work back the user who requested support, and user
+  // receives notification and can respond accordingly." Fired from
+  // replyToSupportTicket (support/service.ts) in both directions: to the
+  // reporter when someone else (an Org Admin) replies, and to Org Admins
+  // when the reporter themselves adds more — see notifyUser in
+  // notifications/service.ts.
+  SUPPORT_TICKET_REPLY
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,

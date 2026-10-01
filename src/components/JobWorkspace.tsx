@@ -1391,6 +1391,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // 2026-10-01 — user request: "combine the 'Add / cross-check with stock'
+  // button and 'import' button into one button called 'Add/Import Parts',
+  // move the button below the choose file section." Those two buttons each
+  // drove a separate input (the pasted bulkPartLines textarea vs. the
+  // chosen partsImportFile) and separate handlers above — kept both
+  // handlers as-is (still two different request payloads to the same
+  // endpoint) and just added this single entry point: a file takes
+  // priority when one's been chosen (it's the more deliberate action —
+  // picking a file is a stronger signal than leftover pasted text), and
+  // otherwise it falls back to the pasted lines.
+  async function addOrImportParts() {
+    if (partsImportFile) await importPartsFile(partsImportFile);
+    else await addPartLines();
+  }
+
   // Downloads a blank CSV template for the parts-list import — matches the
   // columns parts-import.ts looks for (Part number / Qty / Description),
   // generated client-side (no network round-trip needed for a static
@@ -3154,11 +3169,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
             {job && mode === "detail" && (
               <>
-                <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>
+                {/* 2026-10-01 — user request: "mechanic user - remove the
+                    print job card, job history, delivery note buttons from
+                    job views." Hidden (not just locked) for
+                    mechanicFieldsLocked, same tenantRole === "USER" flag as
+                    every other Mechanic-only restriction on this page. */}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>}
                 {/* 2026-09-19, user request — see printJobHistory/
                     printJobDeliveryNote's own comments above for scope. */}
-                <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>
-                <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>}
                 {/* 2026-10-01 — every button below changes job.status (the
                     same action the status stepper performs, just via a
                     dedicated dialog/confirm instead of a stepper click), so
@@ -3397,12 +3417,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     <span>Or import a parts list file (.xlsx, .xls or .csv — needs Part number / Qty / Description columns)</span>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setPartsImportFile(e.target.files?.[0] || null)} />
-                      <button type="button" className="quiet-button" disabled={saving || !partsImportFile} onClick={() => partsImportFile && void importPartsFile(partsImportFile)}>Import</button>
                       <button type="button" className="quiet-button" title="Download a blank parts-list template" aria-label="Download parts-list template" onClick={downloadPartsTemplate}><FileText size={15} /></button>
                     </div>
                   </label>
                 </div>
-                <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !bulkPartLines.trim()} onClick={() => void addPartLines()}><Plus size={15} /> Add / cross-check with stock</button></footer>
+                {/* 2026-10-01 — user request: "combine the 'Add / cross-check
+                    with stock' button and 'import' button into one button
+                    called 'Add/Import Parts', move the button below the
+                    choose file section." See addOrImportParts above —
+                    imports the chosen file when one's selected, otherwise
+                    adds/cross-checks the pasted lines. */}
+                <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
               </>
             )}
             {/* 2026-09-15, user request: "Parts list table, make it that
@@ -3953,7 +3978,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
           </section>
 
-          <section className="detail-panel">
+          {/* 2026-10-01 — user request: "mechanic user - remove parts follow
+              up section from view." Whole section hidden for
+              mechanicFieldsLocked, same tenantRole === "USER" flag as every
+              other Mechanic-only restriction on this page. Server-side,
+              POST /api/v1/jobs/[id]/parts-followup already requires
+              whatever permission gates this for role-based API protection
+              — this is just the UI-level hide. */}
+          {!mechanicFieldsLocked && <section className="detail-panel">
             <header><div><h2>Parts follow-up</h2><p>Chase every supplier with outstanding ordered parts on this job — one email per supplier listing everything still outstanding from them.</p></div></header>
             {/* 2026-09-16, user request: "Parts Follow up still does not show
                 suppliers that have outstanding parts, like ModApp." Lists the
@@ -3992,7 +4024,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {partsFollowupResult.sent.length === 0 && partsFollowupResult.skipped.length === 0 && <p className="muted small-line wide">No outstanding ordered parts on this job.</p>}
               </div>
             )}
-          </section>
+          </section>}
 
           <section className="detail-panel">
             <header>
@@ -4250,7 +4282,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               Client Details on the right that it is visible as soon as
               you open a job"). */}
 
-          <section className="detail-panel">
+          {/* 2026-10-01 — user request: "mechanic user - remove active
+              history from view" (Activity history, per showActivityHistory
+              above). Whole section hidden for mechanicFieldsLocked, same
+              tenantRole === "USER" flag as every other Mechanic-only
+              restriction on this page. */}
+          {!mechanicFieldsLocked && <section className="detail-panel">
             <header>
               <div><h2>Activity history</h2><p>Chronological workflow history from the Jobs service.</p></div>
               <button type="button" className="section-action-button" onClick={() => setShowActivityHistory((v) => !v)}>{showActivityHistory ? "Hide" : "View activity history"}</button>
@@ -4259,7 +4296,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <div className="history-list">{job.activities.map((activity) => <article key={activity.id}><strong>{text(activity.description)}</strong><span>{text(activity.type).replaceAll("_", " ")} · {activity.actor?.displayName || "System"}</span><time>{new Date(String(activity.createdAt)).toLocaleString("en-ZA")}</time></article>)}
               {job.activities.length === 0 && <p className="table-state compact-empty-state">No activity recorded yet.</p>}</div>
             )}
-          </section>
+          </section>}
         </>
       )}
       {confirmDialog}

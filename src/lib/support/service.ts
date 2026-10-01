@@ -1,10 +1,10 @@
 import { ModuleKey, Prisma, SupportAccessMode, TicketMessageKind, TicketPriority, TicketStatus } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
-import { requirePlatformPermission, requireTenant } from "@/lib/auth/guards";
+import { requirePlatformPermission, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { requestIp } from "@/lib/security/request";
-import { notifyCompanyAdmins } from "@/lib/notifications/service";
+import { notifyCompanyAdmins, notifyUser } from "@/lib/notifications/service";
 import { notifyPlatformSupportRecipients } from "@/lib/platform/notifications";
 
 const attachmentInput = z.object({ fileName: z.string().trim().min(1).max(160), mimeType: z.string().trim().min(3).max(120), contentBase64: z.string().min(4) });
@@ -21,6 +21,14 @@ const createTicketInput = z.object({
 
 const replyInput = z.object({ body: z.string().trim().min(1).max(5000), kind: z.nativeEnum(TicketMessageKind).default(TicketMessageKind.REPLY), attachments: z.array(attachmentInput).max(3).optional().default([]) });
 const platformUpdateInput = z.object({ status: z.nativeEnum(TicketStatus).optional(), priority: z.nativeEnum(TicketPriority).optional(), assignedSupportId: z.string().cuid().nullable().optional(), note: z.string().trim().max(500).optional().nullable() });
+// 2026-10-01 — user request: "add functionality for org admin to change
+// status of support request (Open, In Process, Closed)." A deliberately
+// narrower enum than platformUpdateInput's full TicketStatus above — an Org
+// Admin manages their own company's ticket lifecycle at that coarse,
+// 3-state level; WAITING_ON_CUSTOMER/RESOLVED stay platform-support-only
+// states (set automatically by replyToSupportTicket/updatePlatformSupportTicket
+// respectively), not something a tenant picks from a dropdown.
+const tenantStatusInput = z.object({ status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED"]) });
 
 function pad(n: bigint) { return n.toString().padStart(6, "0"); }
 
@@ -120,7 +128,7 @@ export async function replyToSupportTicket(ctx: RequestContext, id: string, raw:
   const input = replyInput.parse(raw);
   const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId!, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) } });
   if (!ticket) throw new Error("NOT_FOUND");
-  return prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     const msg = await tx.supportTicketMessage.create({ data: { companyId: ctx.companyId!, ticketId: id, authorId: ctx.userId, kind: input.kind, body: input.body } });
     if (input.attachments.length > 0) {
       await tx.supportTicketAttachment.createMany({ data: input.attachments.map(validateAttachment).map((row) => ({ companyId: ctx.companyId!, ticketId: id, messageId: msg.id, fileName: row.fileName, mimeType: row.mimeType, sizeBytes: row.sizeBytes, data: row.data, uploadedById: ctx.userId })) });
@@ -128,6 +136,63 @@ export async function replyToSupportTicket(ctx: RequestContext, id: string, raw:
     await tx.supportTicket.update({ where: { id }, data: { status: ticket.status === TicketStatus.RESOLVED ? TicketStatus.WAITING_ON_CUSTOMER : ticket.status } });
     await tx.supportTicketEvent.create({ data: { companyId: ctx.companyId!, ticketId: id, actorId: ctx.userId, eventType: input.kind === TicketMessageKind.INTERNAL_NOTE ? "INTERNAL_NOTE_ADDED" : "REPLY_ADDED" } });
     return msg;
+  });
+
+  // 2026-10-01 — user request: "allow the reply functionality to work back
+  // the user who requested support, and user receives notification and can
+  // respond accordingly." Internal notes are staff-only scratch notes (never
+  // a user-facing reply), so they're excluded — only a REPLY should ping
+  // anyone. Direction mirrors createSupportTicket's own routing above: when
+  // the reporter themselves replies (following up on their own ticket), Org
+  // Admins get told someone replied; when anyone else (an Org Admin) replies,
+  // the original reporter gets told — closing the loop the request asked
+  // for. Fire-and-forget — both helpers already swallow their own errors, so
+  // a notification failure never fails the reply itself.
+  if (input.kind === TicketMessageKind.REPLY) {
+    const link = `/support`;
+    if (ctx.userId === ticket.reportedById) {
+      void notifyCompanyAdmins(ctx.companyId!, "SUPPORT_TICKET_REPLY", `New reply on ${ticket.ticketNumber}`, `${ctx.displayName} replied to "${ticket.subject}".`, link);
+    } else {
+      void notifyUser(ctx.companyId!, ticket.reportedById, "SUPPORT_TICKET_REPLY", `New reply on ${ticket.ticketNumber}`, `${ctx.displayName} replied to "${ticket.subject}".`, link);
+    }
+  }
+  return created;
+}
+
+// 2026-10-01 — user request: "add delete button" (for Org Admins, on the
+// redesigned ticket table). Scoped to the signed-in Org Admin's own company
+// and gated the same as every other Org-Admin-only support action
+// (USERS_MANAGE — see canViewTenantTickets above). The SupportTicketMessage/
+// Event/Attachment child rows all cascade-delete with their parent
+// SupportTicket (see schema.prisma), so a plain delete is safe — nothing is
+// left orphaned.
+export async function deleteTenantSupportTicket(ctx: RequestContext, id: string) {
+  requireTenantPermission(ctx, "USERS_MANAGE");
+  const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId! } });
+  if (!ticket) throw new Error("NOT_FOUND");
+  await prisma.$transaction(async (tx) => {
+    await tx.supportTicket.delete({ where: { id } });
+    await tx.auditEvent.create({ data: { companyId: ctx.companyId!, actorId: ctx.userId, source: "UI", module: "SUPPORT", entityType: "SupportTicket", entityId: id, action: "SUPPORT_TICKET_DELETED", correlationId: ctx.correlationId, beforeData: { ticketNumber: ticket.ticketNumber, subject: ticket.subject, status: ticket.status } } });
+  });
+  return { ok: true };
+}
+
+// 2026-10-01 — user request: "add functionality for org admin to change
+// status of support request (Open, In Process, Closed)." See
+// tenantStatusInput's own comment above for why this is a narrower 3-state
+// enum than the platform-support status field.
+export async function updateTenantSupportTicketStatus(ctx: RequestContext, id: string, raw: unknown) {
+  requireTenantPermission(ctx, "USERS_MANAGE");
+  const input = tenantStatusInput.parse(raw);
+  const nextStatus = TicketStatus[input.status];
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.supportTicket.findFirst({ where: { id, companyId: ctx.companyId! } });
+    if (!before) throw new Error("NOT_FOUND");
+    if (before.status === nextStatus) return before;
+    const updated = await tx.supportTicket.update({ where: { id }, data: { status: nextStatus, closedAt: nextStatus === TicketStatus.CLOSED ? new Date() : null } });
+    await tx.supportTicketEvent.create({ data: { companyId: ctx.companyId!, ticketId: id, actorId: ctx.userId, eventType: "STATUS_CHANGED", fromValue: before.status, toValue: nextStatus } });
+    await tx.auditEvent.create({ data: { companyId: ctx.companyId!, actorId: ctx.userId, source: "UI", module: "SUPPORT", entityType: "SupportTicket", entityId: id, action: "SUPPORT_TICKET_STATUS_CHANGED", correlationId: ctx.correlationId, beforeData: { status: before.status }, afterData: { status: nextStatus } } });
+    return updated;
   });
 }
 
