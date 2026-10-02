@@ -722,13 +722,18 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   // 2026-10-02 — a bin location code that matches an inactive (not
   // actually deleted — see the locations query above) location gets
   // reactivated, independent of createMissingLocations, since it's an
-  // edit to an existing record rather than a new one. Checked once up
-  // front for the same "fail cleanly before any row is written" reason
-  // as the checks above.
-  if (input.mapping.binLocationCode) {
-    requireModule(ctx, "STORAGE", "WRITE");
-    requireTenantPermission(ctx, "STORAGE_LOCATIONS_EDIT");
-  }
+  // edit to an existing record rather than a new one. Also covers the
+  // stale-balance write-off below briefly reactivating/re-deactivating a
+  // location that isn't even one of this row's own codes (one sitting at
+  // a part being revived, left over from before it was "deleted") — so
+  // checked whenever a revive is even possible (PARTS_EDIT is required,
+  // same condition), not only when a bin location column is mapped.
+  // Checked once up front, unconditionally — same as PARTS_EDIT/
+  // INVENTORY_ADJUST above — rather than only when a bin location column
+  // is mapped, since the write-off's reactivate/restore can touch a
+  // stale location even on a sheet with no bin location column at all.
+  requireModule(ctx, "STORAGE", "WRITE");
+  requireTenantPermission(ctx, "STORAGE_LOCATIONS_EDIT");
 
   let created = 0;
   let revived = 0;
@@ -963,12 +968,31 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
         // history rather than quantity vanishing unexplained.
         const staleBalances = await prisma.stockBalance.findMany({
           where: { companyId, partId: newPart.id, quantityOnHand: { gt: 0 } },
-          include: { location: { select: { code: true, name: true } } },
+          include: { location: { select: { id: true, code: true, name: true, active: true } } },
         });
         if (staleBalances.length > 0) {
           const clearedAt: string[] = [];
           for (const balance of staleBalances) {
+            // 2026-10-02 — user report: a stale balance at a location
+            // that's NOT one of this row's own bin codes (so never
+            // reactivated by the resolution step above) was never
+            // cleared — adjustStock's own assertOperable refuses to move
+            // stock at an inactive location (LOCATION_INACTIVE), and
+            // that failure was only recorded in staleBalanceNote, not
+            // retried. A location with a quantity on hand to write off
+            // is, almost by definition, one the user "deleted" (same
+            // Restrict-fallback-to-inactive shape as a Part or a
+            // Location itself) rather than one that was never used —
+            // temporarily reactivated just long enough to record this
+            // one correcting movement, then restored to however the
+            // user actually left it (still inactive, if it wasn't one of
+            // this row's own codes) — so a location they deliberately
+            // deactivated doesn't silently come back from this.
+            const locationWasInactive = !balance.location.active;
             try {
+              if (locationWasInactive) {
+                await prisma.storageLocation.update({ where: { id: balance.location.id }, data: { active: true } });
+              }
               await adjustStock(ctx, adjustmentInput.parse({
                 partId: newPart.id,
                 locationId: balance.locationId,
@@ -980,6 +1004,10 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
               clearedAt.push(`${balance.location.name} (${balance.location.code})`);
             } catch (err) {
               staleBalanceNote += ` — old stock at ${balance.location.name} (${balance.location.code}) couldn't be cleared: ${describeRowError(err)}`;
+            } finally {
+              if (locationWasInactive) {
+                await prisma.storageLocation.update({ where: { id: balance.location.id }, data: { active: false } }).catch(() => {});
+              }
             }
           }
           if (clearedAt.length > 0) staleBalanceNote = ` — cleared old stock at ${clearedAt.join(", ")}.${staleBalanceNote}`;
