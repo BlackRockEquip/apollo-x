@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FocusEvent } from "react";
 import Link from "next/link";
-import { Eye, Loader2, Plus, Printer, Search, Trash2, Upload, X } from "lucide-react";
+import { ClipboardCheck, Eye, Loader2, Plus, Printer, Search, Trash2, Upload, X } from "lucide-react";
 import { STOCK_STATE_LABEL, STOCK_STATE_CLASS, type StockState } from "@/lib/inventory/stock-state";
 import { ImportModule } from "@/components/ImportExportWorkspace";
 import { PART_IMPORT_FIELDS } from "@/lib/import-export/fields";
@@ -125,6 +125,15 @@ type JobOption = { id: string; jobNumber: string; customerName: string | null };
 type PickSlipLineData = { partNumber: string; description: string; quantity: string; binLocationLabel: string | null };
 type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; lines: PickSlipLineData[] };
 type BulkSearchRow = { partNumber: string; found: boolean; partId: string | null; description: string | null; binLocationLabel: string | null; quantityAvailable: string };
+// 2026-10-02 — Stock Take tab types. systemQty is a snapshot taken when the
+// location is opened for counting (for the printed sheet and the entry
+// form's reference column) — the real expected quantity used to compute the
+// posted variance is recomputed fresh at submit time by countCreate itself.
+type StockTakeRow = { partId: string; partNumber: string; description: string; systemQty: string; actualQty: string };
+type StockCountStatus = "OPEN" | "COMPLETED" | "APPROVED" | "CANCELLED";
+type StockCountRow = { id: string; referenceNumber: string | null; location: { code: string; name: string } | null; status: StockCountStatus; startedAt: string; completedAt: string | null; approvedAt: string | null; lineCount: number };
+const STOCK_COUNT_STATUS_LABEL: Record<StockCountStatus, string> = { OPEN: "Open", COMPLETED: "Completed", APPROVED: "Approved", CANCELLED: "Cancelled" };
+const STOCK_COUNT_STATUS_TONE: Record<StockCountStatus, string> = { OPEN: "tone-amber", COMPLETED: "tone-blue", APPROVED: "tone-green", CANCELLED: "tone-neutral" };
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
@@ -191,6 +200,47 @@ function printPickSlip(ps: PickSlipData) {
   setTimeout(doPrint, 400);
 }
 
+// 2026-10-02 — Stock Take count sheet. Same window.open/document.write/
+// window.onload-print convention as printPickSlip above — part number,
+// description, system qty (for reference while counting) and a blank
+// "Actual qty" column to fill in by hand, with a single sign-off block at
+// the bottom (per the user's own spec: "list part number, qty, actual qty,
+// and a sign off at the bottom of the page").
+function printStockTakeSheet(locationLabel: string, rows: StockTakeRow[]) {
+  const w = window.open("", "_blank", "width=800,height=900");
+  if (!w) return; // popup blocked — nothing more we can do here
+  const trs = rows
+    .map((r) => `<tr><td>${escapeHtml(r.partNumber)}</td><td>${escapeHtml(r.description || "")}</td><td class="qty">${escapeHtml(r.systemQty)}</td><td class="qty"></td></tr>`)
+    .join("");
+  const html = `<!doctype html><html><head><title>Stock take - ${escapeHtml(locationLabel)}</title><meta charset="utf-8" /><style>
+    body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
+    h1{font-size:20px;margin:0 0 4px;color:#7a5c14;border-bottom:3px solid #7a5c14;padding-bottom:10px}
+    p.meta{color:#6b7280;font-size:12px;margin:2px 0}
+    table{width:100%;border-collapse:collapse;font-size:13px;margin-top:18px}
+    th,td{border:1px solid #d1d5db;padding:8px 10px;text-align:left}
+    th{background:#f9fafb;border-bottom:2px solid #7a5c14}
+    td.qty{text-align:center;font-weight:600}
+    .signoff{display:flex;gap:24px;margin-top:44px}
+    .signoff .field{flex:1}
+    .signoff .line{border-bottom:1px solid #1f2937;height:28px}
+    .signoff .label{margin-top:4px;font-size:11px;color:#6b7280}
+  </style></head><body>
+    <h1>Stock take — ${escapeHtml(locationLabel)}</h1>
+    <p class="meta">Generated ${escapeHtml(new Date().toLocaleString())}</p>
+    <table><thead><tr><th>Part number</th><th>Description</th><th>System qty</th><th>Actual qty</th></tr></thead><tbody>${trs}</tbody></table>
+    <div class="signoff">
+      <div class="field"><div class="line"></div><p class="label">Counted by (print name)</p></div>
+      <div class="field"><div class="line"></div><p class="label">Signature</p></div>
+      <div class="field"><div class="line"></div><p class="label">Date</p></div>
+    </div>
+  </body></html>`;
+  w.document.write(html);
+  w.document.close();
+  const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
+  w.onload = doPrint;
+  setTimeout(doPrint, 400);
+}
+
 export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // 2026-10-01 — user request: "Mechanic user ... make that a mechanic
   // user can not delete / edit / adjust parts, basically only check
@@ -211,16 +261,27 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // server-side PARTS_CREATE/PARTS_EDIT/PARTS_DEACTIVATE, none of which
   // USER holds) so those are gated directly off `mechanicReadOnly`
   // instead, below.
-  const { tenantRole } = useTenantPermissions();
+  const { tenantRole, tenantPermissions } = useTenantPermissions();
   const mechanicReadOnly = tenantRole === "USER";
   const canManage = hasManage && !mechanicReadOnly;
+  // 2026-10-02 — new Stock Take tab (user request: "Create a tab for Stock
+  // take (Admins / Store Controller only)"). INVENTORY_RECONCILE already
+  // existed as a permission (it's what the count backend itself has always
+  // required — see countCreate/countComplete/etc in inventory/service.ts)
+  // and, before this feature, was already granted to exactly COMPANY_ADMIN
+  // (via ALL_TENANT) and STORE_CONTROLLER (the STORES permission set) and
+  // nobody else — see permissions.ts — a permission check here enforces
+  // "Admins / Store Controller only" precisely, and (unlike a hardcoded
+  // tenantRole check) still respects a company extending that permission to
+  // another role later from Settings > Users.
+  const canStockTake = tenantPermissions.has("INVENTORY_RECONCILE");
   // Same system-wide colored confirm dialog as everywhere else (see
   // ConfirmDialog.tsx) — this file's three window-less `confirm(...)`
   // calls (deletePickSlip/deleteRow/deleteAll below) were missed by that
   // earlier sweep because it searched for `window.confirm` specifically;
   // fixed here while already touching this file's delete actions.
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
-  const [tab, setTab] = useState<"stock" | "pickslips">("stock");
+  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">("stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
   const [q, setQ] = useState("");
@@ -228,6 +289,24 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // 2026-10-02 — user request: "make the table filterable by each heading
+  // (dropdown that lets you select etc)." listInventoryPositions
+  // (inventory/service.ts) and its positionQuery validator already accepted
+  // manufacturerId/locationId filters — used by nothing in this file until
+  // now, since no dropdown ever set them. Wired up as a second header row
+  // (the same "filter-row" convention RfqAllWorkspace/OutworkAllWorkspace
+  // already use) under the two columns that actually have a finite,
+  // dropdown-shaped set of values — Manufacturer and Bin locations — using
+  // the same manufacturers/locations option lists the Add/Edit Part drawer
+  // already loads. Part/Description are left to the existing search box
+  // (which already matches both, plus bin code/name and manufacturer name,
+  // in one field — a second, narrower per-column text filter for either
+  // would just be a worse version of what's already there), and Cost
+  // Price/Selling Price/On Hand/Reserved/Available have no natural
+  // dropdown domain to filter by. State already has its own filter (the
+  // radio buttons above the table) and is left as-is.
+  const [manufacturerFilter, setManufacturerFilter] = useState("");
+  const [locationFilter, setLocationFilter] = useState("");
 
   const [manufacturers, setManufacturers] = useState<Option[]>([]);
   const [taxCodes, setTaxCodes] = useState<Option[]>([]);
@@ -312,6 +391,31 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // so its own row can show a spinner without blocking the others.
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
+  // 2026-10-02 — Stock Take tab. Flow confirmed with the user ("Yes —
+  // print, count by hand, re-enter after"): pick a bin location, print a
+  // sheet (part number / description / system qty / blank actual-qty
+  // column / sign-off), count by hand, come back and key in what was
+  // actually counted, submit. Submitting calls the existing countCreate +
+  // countComplete backend (the StockCount/StockCountLine reconciliation
+  // model already in this file's service — see inventory/service.ts's
+  // "RECONCILIATION / STOCK COUNT" section) rather than anything new: the
+  // print sheet's "system qty" is a read-only reference, not persisted
+  // anywhere — the real expected quantity countCreate snapshots is computed
+  // fresh, from the live balance, at the moment the count is submitted.
+  const [stockTakeView, setStockTakeView] = useState<"new" | "history">("new");
+  const [stockTakeStep, setStockTakeStep] = useState<"select" | "entry" | "result">("select");
+  const [stockTakeLocationId, setStockTakeLocationId] = useState("");
+  const [stockTakeReferenceNumber, setStockTakeReferenceNumber] = useState("");
+  const [stockTakeRows, setStockTakeRows] = useState<StockTakeRow[]>([]);
+  const [stockTakeLoading, setStockTakeLoading] = useState(false);
+  const [stockTakeSubmitting, setStockTakeSubmitting] = useState(false);
+  const [stockTakeError, setStockTakeError] = useState("");
+  const [stockTakeResult, setStockTakeResult] = useState<{ countId: string; movementCount: number } | null>(null);
+  const [stockTakeHistory, setStockTakeHistory] = useState<StockCountRow[]>([]);
+  const [stockTakeHistoryLoading, setStockTakeHistoryLoading] = useState(false);
+  const [stockTakeHistoryError, setStockTakeHistoryError] = useState("");
+  const [stockTakeActionBusyId, setStockTakeActionBusyId] = useState<string | null>(null);
+
   // 2026-09-18 — user report: "when saving a part number, it jumps to the
   // top of the table again, does not carry on where we were." Root cause
   // (same pattern already fixed once for JobWorkspace.tsx's scroll-jump
@@ -327,13 +431,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     setError("");
     try {
       const params = new URLSearchParams({ q, stockState, page: String(page), pageSize: "25" });
+      if (manufacturerFilter) params.set("manufacturerId", manufacturerFilter);
+      if (locationFilter) params.set("locationId", locationFilter);
       const response = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load stock levels.");
       setData(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load stock levels."); }
     finally { if (!silent) setLoading(false); }
-  }, [q, stockState, page]);
+  }, [q, stockState, page, manufacturerFilter, locationFilter]);
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
 
   const loadOptions = useCallback(async () => {
@@ -375,6 +481,115 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     finally { setHistoryLoading(false); }
   }, []);
   useEffect(() => { if (tab === "pickslips") void loadHistory(); }, [tab, loadHistory]);
+
+  // 2026-10-02 — Stock Take: open a count for a location by snapshotting
+  // every part that currently has stock there (reuses the same
+  // /api/v1/inventory/positions endpoint and its locationId filter the
+  // Stock tab's own table already relies on — quantityOnHand comes back
+  // scoped to just this location when locationId is passed, not the part's
+  // total across every location — see listInventoryPositions's own
+  // comment). actualQty starts prefilled to the system quantity so an
+  // unchanged row posts zero variance, rather than forcing every row to be
+  // retyped even when the count matched.
+  async function startStockTake() {
+    if (!stockTakeLocationId) return;
+    setStockTakeLoading(true); setStockTakeError("");
+    try {
+      const params = new URLSearchParams({ locationId: stockTakeLocationId, active: "active", pageSize: "500" });
+      const r = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to load parts for this location.");
+      const rows: StockTakeRow[] = (body.items as PositionRow[]).map((p) => ({ partId: p.id, partNumber: p.partNumber, description: p.description, systemQty: p.quantityOnHand, actualQty: p.quantityOnHand }));
+      setStockTakeRows(rows);
+      setStockTakeStep("entry");
+    } catch (e) { setStockTakeError(e instanceof Error ? e.message : "Unable to load parts for this location."); }
+    finally { setStockTakeLoading(false); }
+  }
+
+  function updateStockTakeRow(index: number, actualQty: string) {
+    setStockTakeRows((rows) => rows.map((row, i) => (i === index ? { ...row, actualQty } : row)));
+  }
+
+  function resetStockTake() {
+    setStockTakeStep("select");
+    setStockTakeLocationId("");
+    setStockTakeReferenceNumber("");
+    setStockTakeRows([]);
+    setStockTakeResult(null);
+    setStockTakeError("");
+  }
+
+  // Creates the count (countCreate snapshots the expected quantity fresh,
+  // at this moment, from the live balance — not from the systemQty this
+  // form prefilled when the location was first opened, which may be a
+  // little stale if other stock activity happened in between) then
+  // immediately completes it (countComplete posts a RECONCILIATION
+  // movement per line with a real variance). Left at status COMPLETED, not
+  // auto-APPROVED — approval is a deliberate separate step (see
+  // approveStockCount below), same as the backend already models it.
+  async function submitStockTake() {
+    if (!stockTakeLocationId || stockTakeRows.length === 0) return;
+    setStockTakeSubmitting(true); setStockTakeError("");
+    try {
+      const createRes = await fetch("/api/v1/inventory/counts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          locationId: stockTakeLocationId,
+          referenceNumber: stockTakeReferenceNumber || undefined,
+          lines: stockTakeRows.map((row) => ({ partId: row.partId, countedQuantity: row.actualQty || "0" })),
+        }),
+      });
+      const createBody = await createRes.json();
+      if (!createRes.ok) throw new Error(createBody.error?.message || "Unable to save the stock count.");
+      const countId = createBody.countId as string;
+      const completeRes = await fetch(`/api/v1/inventory/counts/${countId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      const completeBody = await completeRes.json();
+      if (!completeRes.ok) throw new Error(completeBody.error?.message || "Unable to post the stock count adjustments.");
+      setStockTakeResult({ countId, movementCount: (completeBody.movementIds || []).length });
+      setStockTakeStep("result");
+    } catch (e) { setStockTakeError(e instanceof Error ? e.message : "Unable to submit the stock count."); }
+    finally { setStockTakeSubmitting(false); }
+  }
+
+  const loadStockTakeHistory = useCallback(async () => {
+    setStockTakeHistoryLoading(true); setStockTakeHistoryError("");
+    try {
+      const r = await fetch("/api/v1/inventory/counts?pageSize=50", { cache: "no-store" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to load stock take history.");
+      setStockTakeHistory(body.items || []);
+    } catch (e) { setStockTakeHistoryError(e instanceof Error ? e.message : "Unable to load stock take history."); }
+    finally { setStockTakeHistoryLoading(false); }
+  }, []);
+  useEffect(() => { if (tab === "stocktake" && stockTakeView === "history") void loadStockTakeHistory(); }, [tab, stockTakeView, loadStockTakeHistory]);
+  // The result screen (right after submitting) also needs an up to date
+  // History tab the moment the user switches to it, without waiting for a
+  // second tab click — refresh once whenever a submit completes.
+  useEffect(() => { if (stockTakeResult) void loadStockTakeHistory(); }, [stockTakeResult, loadStockTakeHistory]);
+
+  async function approveStockCount(id: string) {
+    setStockTakeActionBusyId(id); setStockTakeHistoryError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/counts/${id}/approve`, { method: "POST" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to approve this stock count.");
+      await loadStockTakeHistory();
+    } catch (e) { setStockTakeHistoryError(e instanceof Error ? e.message : "Unable to approve this stock count."); }
+    finally { setStockTakeActionBusyId(null); }
+  }
+
+  async function cancelStockCount(id: string) {
+    if (!(await confirm({ message: "Cancel this open stock count? Nothing has been posted to stock yet — it'll just be discarded.", tone: "warning", confirmLabel: "Cancel count" }))) return;
+    setStockTakeActionBusyId(id); setStockTakeHistoryError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/counts/${id}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to cancel this stock count.");
+      await loadStockTakeHistory();
+    } catch (e) { setStockTakeHistoryError(e instanceof Error ? e.message : "Unable to cancel this stock count."); }
+    finally { setStockTakeActionBusyId(null); }
+  }
 
   // 2026-09-29 — reverses a picking slip: restores the stock it took (see
   // cancelPickSlip in inventory/service.ts — same action JobWorkspace's own
@@ -680,6 +895,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
         <div className="tab-strip">
           <button type="button" className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>Stock</button>
           <button type="button" className={tab === "pickslips" ? "active" : ""} onClick={() => setTab("pickslips")}>Picking Slip History</button>
+          {/* 2026-10-02 — Stock Take (user request: "Admins / Store
+              Controller only"). Gated by canStockTake (INVENTORY_RECONCILE)
+              on top of the existing !mechanicReadOnly wrapper — a Manager or
+              other non-Mechanic role without that permission still sees
+              Stock and Picking Slip History, just not this tab. */}
+          {canStockTake && <button type="button" className={tab === "stocktake" ? "active" : ""} onClick={() => setTab("stocktake")}><ClipboardCheck size={13} style={{ marginRight: 4, verticalAlign: "text-bottom" }} />Stock Take</button>}
         </div>
       )}
 
@@ -726,6 +947,36 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   <th className="numeric">Available</th>
                   <th>State</th>
                   <th className="actions">Actions</th>
+                </tr>
+                {/* 2026-10-02 — per-column filter row (user request: "make
+                    the table filterable by each heading"). Same filter-row
+                    convention already used on the Suppliers RFQ/Outwork
+                    tables — see this block's own state comment above for
+                    why only Manufacturer and Bin locations get a control
+                    here. */}
+                <tr className="filter-row">
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th>
+                    <select value={manufacturerFilter} onChange={(e) => { setManufacturerFilter(e.target.value); setPage(1); }} aria-label="Filter by manufacturer">
+                      <option value="">All</option>
+                      {manufacturers.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
+                  </th>
+                  <th>
+                    <select value={locationFilter} onChange={(e) => { setLocationFilter(e.target.value); setPage(1); }} aria-label="Filter by bin location">
+                      <option value="">All</option>
+                      {locations.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                    </select>
+                  </th>
+                  {data.canViewCost && <th></th>}
+                  {data.canViewCost && <th></th>}
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th></th>
+                  <th>{(manufacturerFilter || locationFilter) && <button type="button" className="quiet-button" onClick={() => { setManufacturerFilter(""); setLocationFilter(""); setPage(1); }} title="Clear filters"><X size={13} /></button>}</th>
                 </tr>
               </thead>
               <tbody>
@@ -803,6 +1054,106 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             <span>Showing {data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1}-{Math.min(data.page * data.pageSize, data.total)} of {data.total}</span>
             <div><button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</button><button disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</button></div>
           </footer>
+        </section>
+      ) : tab === "stocktake" && canStockTake ? (
+        <section className="master-panel">
+          <div className="tab-strip" style={{ margin: "12px 14px 0" }}>
+            <button type="button" className={stockTakeView === "new" ? "active" : ""} onClick={() => setStockTakeView("new")}>New count</button>
+            <button type="button" className={stockTakeView === "history" ? "active" : ""} onClick={() => setStockTakeView("history")}>History</button>
+          </div>
+
+          {stockTakeView === "new" ? (
+            <div style={{ padding: 14 }}>
+              {stockTakeError ? <div className="inline-error">{stockTakeError}</div> : null}
+
+              {stockTakeStep === "select" && (
+                <div>
+                  <p className="hint-text">Pick a bin location to count. You'll get a printable sheet — part number, description, system quantity, and a blank column to write the actual count — then come back here and key in what was actually counted.</p>
+                  <div className="header-actions">
+                    <select value={stockTakeLocationId} onChange={(e) => setStockTakeLocationId(e.target.value)}>
+                      <option value="">Select a bin location…</option>
+                      {locations.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                    </select>
+                    <input type="text" placeholder="Reference number (optional)" value={stockTakeReferenceNumber} onChange={(e) => setStockTakeReferenceNumber(e.target.value)} />
+                    <button type="button" className="gold-button" disabled={!stockTakeLocationId || stockTakeLoading} onClick={() => void startStockTake()}>{stockTakeLoading ? <Loader2 className="spin" size={14} /> : <ClipboardCheck size={15} />} Start count</button>
+                  </div>
+                </div>
+              )}
+
+              {stockTakeStep === "entry" && (
+                <div>
+                  <div className="header-actions">
+                    <strong>{locations.find((l) => l.id === stockTakeLocationId)?.label || "Selected location"}</strong>
+                    <span>{stockTakeRows.length} part{stockTakeRows.length === 1 ? "" : "s"}</span>
+                    <button type="button" className="table-action" onClick={() => printStockTakeSheet(locations.find((l) => l.id === stockTakeLocationId)?.label || "", stockTakeRows)}><Printer size={14} /> Print count sheet</button>
+                    <button type="button" className="quiet-button" onClick={resetStockTake}>Cancel</button>
+                  </div>
+                  <div className="data-table-wrap">
+                    <table className="data-table">
+                      <thead><tr><th>Part number</th><th>Description</th><th className="numeric">System qty</th><th className="numeric">Actual qty</th><th className="numeric">Variance</th></tr></thead>
+                      <tbody>
+                        {stockTakeRows.length === 0 ? (
+                          <tr><td colSpan={5} className="table-state compact-empty-state">No parts have stock at this location.</td></tr>
+                        ) : stockTakeRows.map((row, i) => {
+                          const variance = (Number(row.actualQty) || 0) - (Number(row.systemQty) || 0);
+                          return (
+                            <tr key={row.partId}>
+                              <td className="mono">{row.partNumber}</td>
+                              <td>{row.description}</td>
+                              <td className="numeric">{row.systemQty}</td>
+                              <td className="numeric"><input type="number" min={0} step="0.0001" value={row.actualQty} onChange={(e) => updateStockTakeRow(i, e.target.value)} style={{ width: 90 }} /></td>
+                              <td className="numeric">{variance === 0 ? "—" : variance > 0 ? `+${variance}` : variance}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="header-actions" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                    <button type="button" className="gold-button" disabled={stockTakeSubmitting || stockTakeRows.length === 0} onClick={() => void submitStockTake()}>{stockTakeSubmitting ? <Loader2 className="spin" size={14} /> : <ClipboardCheck size={15} />} Submit count &amp; post adjustments</button>
+                  </div>
+                </div>
+              )}
+
+              {stockTakeStep === "result" && stockTakeResult && (
+                <div className="detail-panel">
+                  <header><div><h2>Count posted</h2><p>{stockTakeResult.movementCount} adjustment{stockTakeResult.movementCount === 1 ? "" : "s"} posted to stock for the variances found. The count is saved under History as Completed until it's approved.</p></div></header>
+                  <div className="header-actions">
+                    <button type="button" className="gold-button" disabled={stockTakeActionBusyId === stockTakeResult.countId} onClick={() => void approveStockCount(stockTakeResult.countId)}>{stockTakeActionBusyId === stockTakeResult.countId ? <Loader2 className="spin" size={14} /> : null} Approve count</button>
+                    <button type="button" className="quiet-button" onClick={resetStockTake}>Start another count</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: "0 14px 14px" }}>
+              {stockTakeHistoryError ? <div className="inline-error">{stockTakeHistoryError}</div> : null}
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>Location</th><th>Reference</th><th>Status</th><th>Started</th><th>Completed</th><th className="actions">Actions</th></tr></thead>
+                  <tbody>
+                    {stockTakeHistoryLoading ? (
+                      <tr><td colSpan={6} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                    ) : stockTakeHistory.length === 0 ? (
+                      <tr><td colSpan={6} className="table-state compact-empty-state">No stock counts yet.</td></tr>
+                    ) : stockTakeHistory.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.location ? (c.location.name === c.location.code ? c.location.code : `${c.location.name} (${c.location.code})`) : "—"}</td>
+                        <td>{c.referenceNumber || "—"}</td>
+                        <td><span className={`status-pill ${STOCK_COUNT_STATUS_TONE[c.status]}`}>{STOCK_COUNT_STATUS_LABEL[c.status]}</span></td>
+                        <td>{new Date(c.startedAt).toLocaleString()}</td>
+                        <td>{c.completedAt ? new Date(c.completedAt).toLocaleString() : "—"}</td>
+                        <td className="actions">
+                          {c.status === "COMPLETED" && <button type="button" className="table-action" disabled={stockTakeActionBusyId === c.id} onClick={() => void approveStockCount(c.id)}>{stockTakeActionBusyId === c.id ? <Loader2 className="spin" size={14} /> : null} Approve</button>}
+                          {c.status === "OPEN" && <button type="button" className="table-action danger" disabled={stockTakeActionBusyId === c.id} onClick={() => void cancelStockCount(c.id)}>{stockTakeActionBusyId === c.id ? <Loader2 className="spin" size={14} /> : <X size={14} />} Cancel</button>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </section>
       ) : (
         <section className="master-panel">

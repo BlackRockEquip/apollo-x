@@ -1,56 +1,57 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Reports sidebar section: jobs per customer, warranty jobs breakdown,
-monthly trends, and ratios
+Stock Levels: Stock Take tab (Admin / Store Controller only) and
+per-column filters for Manufacturer / Bin location
 
-New "Reports" button in the sidebar, above Settings, for anyone with
-the (already-existing) REPORTS_VIEW permission - COMPANY_ADMIN,
-MANAGER, STORE_CONTROLLER and FINANCE by default, same as every other
-nav item gated by permissions.ts/page-guard.ts. Only visible once
-Platform Admin grants the company the REPORTS module entitlement,
-same as every other module in this app.
+Stock Take: new tab on Stock Levels, visible only to whoever holds
+INVENTORY_RECONCILE (COMPANY_ADMIN and STORE_CONTROLLER by default,
+same as every other role gate in this app, rather than a hardcoded
+role check - a company can extend it to another role later from
+Settings > Users and this tab follows automatically).
 
-Four tabs:
-  - Jobs per customer - a top-10 bar list plus the full table (total/
-    open/closed/warranty per customer).
-  - Warranty jobs - total/granted/declined/pending stat row, then
-    breakdowns by component and by customer, each with a status
-    composition bar.
-  - Monthly - reuses the Dashboard's existing CombinedAnalyticsChart
-    component as-is (jobs created/completed/warranty jobs per month),
-    with an added customer filter and 12/24-month range.
-  - Ratios - stat tiles for warranty-to-total-jobs, job completion
-    rate, on-time delivery rate, repeat-customer rate, average
-    turnaround time, job/general RFQ response rates, and average
-    parts cost per job.
+Flow (confirmed earlier): pick a bin location, get a printable sheet
+(part number, description, system quantity, and a blank column to
+write the actual count, with a sign-off block at the bottom), count
+by hand, then come back and key in what was actually counted. On
+submit it computes the variance per part and posts a real stock
+adjustment for anything that doesn't match, through the
+StockCount/StockCountLine reconciliation backend that already existed
+in inventory/service.ts (countCreate/countComplete) but had no UI
+anywhere - this tab is the first thing that actually uses it. A
+History sub-tab lists every count with its status (Open / Completed /
+Approved / Cancelled); a Completed count can be approved, an Open one
+(nothing posted to stock yet) can be cancelled.
 
-Before building the Ratios tab, investigated the three ratio examples
-I'd originally suggested (warranty-to-total-jobs, quote-to-job
-conversion, parts-to-labour cost). Two don't have real backing data:
-there's no Quotes/Sales-Orders/Invoices module built yet (Job's
-quoteNumber/invoiceNumber are still plain free-text fields, not linked
-records - see that field's own schema comment), and no $ labour rate
-is tracked anywhere (only optional field-service hours on some jobs,
-with no rate attached). Surfaced this directly rather than faking
-numbers; the answer ("skip for now, flag as future") is why the
-Ratios tab shows those two as a dimmed "Coming soon" card naming
-what's missing, instead of a number. Everything else in the Ratios
-tab is backed by real stored data - including parts cost, which
-turned out to need its own fix: the stock movements that actually
-issue parts to a job never carry their own unit cost (only a goods-
-received movement does), so the per-job parts-cost figure uses each
-part's own configured purchase cost instead, not a movement field that
-would have silently summed to zero.
+countApprove and countCancel also already existed as backend
+functions but, unlike countCreate/countComplete, had no API route at
+all - added src/app/api/v1/inventory/counts/[id]/approve/route.ts and
+.../cancel/route.ts (same POST-only shape as the existing complete
+route) so the tab's Approve/Cancel buttons have something to call.
 
-New files: src/lib/reports/service.ts, src/app/api/v1/reports/[type]/
-route.ts (one GET route, dispatched by report type), src/app/(tenant)/
-reports/page.tsx, src/components/ReportsWorkspace.tsx. Changed:
-src/components/AppShell.tsx (new sidebar item), src/app/globals.css
-(bar-list, status composition bar, filter-select, and coming-soon
-card styles for the new tabs - run through the dataviz skill's
-palette validator, reusing the app's existing validated colors
-rather than introducing new ones).
+The request's second bullet ("add/adjust/delete bin location
+quantities, parts in bin, values etc") is covered by Stock Levels'
+existing Adjust-stock action and Storage Locations' existing add/
+edit/delete screens - this tab is specifically the print-count-
+reconcile workflow, not a second way to hand-edit a balance.
+
+Per-column filters: added a filter row under the Stock table's header
+(same convention already used on the Suppliers RFQ/Outwork tables) -
+dropdowns for Manufacturer and Bin locations, the two columns that
+actually have a finite, dropdown-shaped set of values. Turned out the
+backend (listInventoryPositions, positionQuery) already accepted
+manufacturerId/locationId filters - nothing in the UI ever set them,
+so this was purely a frontend wiring gap, no backend changes needed.
+Part/Description are left to the existing search box (which already
+matches both, plus bin code/name and manufacturer name, in one field);
+Cost Price/Selling Price/On Hand/Reserved/Available have no natural
+dropdown domain; State already has its own filter (the radio buttons
+above the table) and was left as-is.
+
+New: src/app/api/v1/inventory/counts/[id]/approve/route.ts,
+src/app/api/v1/inventory/counts/[id]/cancel/route.ts. Changed:
+src/components/StockLevelsWorkspace.tsx (Stock Take tab, print sheet,
+counted-quantity entry form, history list, and the new filter row).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
