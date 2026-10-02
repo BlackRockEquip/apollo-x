@@ -1,67 +1,56 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Four quick fixes: Picking Slip History job link styling, redundant bin
-location labels, part-number rename not propagating to open job
-lines, and a Storage Locations bulk-delete button
+Reports sidebar section: jobs per customer, warranty jobs breakdown,
+monthly trends, and ratios
 
-Picking Slip History (StockLevelsWorkspace.tsx): the job number link
-used .action-link, a fixed 28x28px square icon-button style built for
-an icon-only link (like the "view part" link elsewhere on this same
-page) - wrong shape for a multi-character job number, which read as
-"a button hidden behind the text." Switched to a plain, unstyled Link,
-matching every other job-number-as-link in the app (RfqAllWorkspace,
-OutworkAllWorkspace, DashboardWorkspace, PexTrackingWorkspace).
+New "Reports" button in the sidebar, above Settings, for anyone with
+the (already-existing) REPORTS_VIEW permission - COMPANY_ADMIN,
+MANAGER, STORE_CONTROLLER and FINANCE by default, same as every other
+nav item gated by permissions.ts/page-guard.ts. Only visible once
+Platform Admin grants the company the REPORTS module entitlement,
+same as every other module in this app.
 
-Stock Levels bin location column (inventory/service.ts): every
-binLocationLabel was built as "name (code)" unconditionally, so a
-location whose name is just its own code (the default when
-auto-created by import) showed as "C1 (C1)", "C6 (C6)". New
-formatLocationLabel() helper omits the parenthetical when name and
-code are the same (case/whitespace-insensitive) and now backs every
-binLocationLabel in the file - Stock Levels, Part Detail, pick slip
-lines, delivery notes - not just the one place reported, since they
-all had the identical redundancy.
+Four tabs:
+  - Jobs per customer - a top-10 bar list plus the full table (total/
+    open/closed/warranty per customer).
+  - Warranty jobs - total/granted/declined/pending stat row, then
+    breakdowns by component and by customer, each with a status
+    composition bar.
+  - Monthly - reuses the Dashboard's existing CombinedAnalyticsChart
+    component as-is (jobs created/completed/warranty jobs per month),
+    with an added customer filter and 12/24-month range.
+  - Ratios - stat tiles for warranty-to-total-jobs, job completion
+    rate, on-time delivery rate, repeat-customer rate, average
+    turnaround time, job/general RFQ response rates, and average
+    parts cost per job.
 
-Part number edit (master-data/service.ts, inventory/parts-lookup.ts):
-investigated "should change throughout the system even if used
-elsewhere, not prevent the change." The rename itself was never
-actually blocked by a part's usage - nothing but a genuine
-already-in-use collision check runs, and every other table joins on
-partId, not the number string, so a rename already shows up
-immediately almost everywhere. Two real gaps found and fixed:
-  1. JobPartLine stores its own partNumber as a plain column (a
-     snapshot taken when the line was added, needed so a free-text
-     line with no catalog match still has a number to show) - a line
-     added before a rename kept showing the part's OLD number forever
-     after. updateMaster now also updates every JobPartLine row linked
-     to that part (partId match) when the number actually changes.
-     PickSlipLine has the same kind of snapshot column, deliberately
-     left alone - a picking slip is a frozen point-in-time record of
-     what was issued under what number at the time, same as an
-     already-issued invoice line not retroactively changing.
-  2. numberAlreadyInUse's alternate-number collision check never
-     excluded the part's OWN alternate numbers, so renaming a part's
-     main number to equal one of its own existing alternate numbers
-     collided with itself and threw "already in use" even though
-     nothing else actually held that number. Now excluded, same as the
-     main-number half of the same check already did.
+Before building the Ratios tab, investigated the three ratio examples
+I'd originally suggested (warranty-to-total-jobs, quote-to-job
+conversion, parts-to-labour cost). Two don't have real backing data:
+there's no Quotes/Sales-Orders/Invoices module built yet (Job's
+quoteNumber/invoiceNumber are still plain free-text fields, not linked
+records - see that field's own schema comment), and no $ labour rate
+is tracked anywhere (only optional field-service hours on some jobs,
+with no rate attached). Surfaced this directly rather than faking
+numbers; the answer ("skip for now, flag as future") is why the
+Ratios tab shows those two as a dimmed "Coming soon" card naming
+what's missing, instead of a number. Everything else in the Ratios
+tab is backed by real stored data - including parts cost, which
+turned out to need its own fix: the stock movements that actually
+issue parts to a job never carry their own unit cost (only a goods-
+received movement does), so the per-job parts-cost figure uses each
+part's own configured purchase cost instead, not a movement field that
+would have silently summed to zero.
 
-Storage Locations bulk delete (master-data/service.ts, new
-deleteAllMasterRecords; [kind]/route.ts's DELETE handler extended;
-MasterDataWorkspace.tsx gained a toolbar "Delete all" button next to
-the existing per-row delete, gated by the same config.deletable flag -
-Manufacturers gets the same button for free, same as its existing
-per-row delete already being shared with Storage Locations). Same
-hard-delete-then-fallback-to-inactive behavior as a single row, across
-every active record of the kind, with a "N deleted, M kept inactive"
-summary - same pattern as the existing Parts "Delete all" on Stock
-Levels.
-
-src/components/StockLevelsWorkspace.tsx,
-src/components/MasterDataWorkspace.tsx, src/lib/inventory/service.ts,
-src/lib/inventory/parts-lookup.ts, src/lib/master-data/service.ts,
-src/app/api/v1/master-data/[kind]/route.ts.
+New files: src/lib/reports/service.ts, src/app/api/v1/reports/[type]/
+route.ts (one GET route, dispatched by report type), src/app/(tenant)/
+reports/page.tsx, src/components/ReportsWorkspace.tsx. Changed:
+src/components/AppShell.tsx (new sidebar item), src/app/globals.css
+(bar-list, status composition bar, filter-select, and coming-soon
+card styles for the new tabs - run through the dataviz skill's
+palette validator, reusing the app's existing validated colors
+rather than introducing new ones).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

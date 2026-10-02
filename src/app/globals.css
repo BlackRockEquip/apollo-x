@@ -1185,6 +1185,34 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .tab-strip { display: flex; gap: 4px; border-bottom: 1px solid var(--ink-150); margin-bottom: 14px; }
 .tab-strip button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 9px 4px; margin-right: 18px; color: var(--ink-500); cursor: pointer; font-size: 12.5px; font-weight: 750; }
 .tab-strip button.active { border-color: var(--gold-500); color: #79560e; }
+
+/* 2026-10-02 — new Reports section (ReportsWorkspace.tsx). `.filter-select`
+   is a plain select matching .quiet-button's visual weight (thin
+   ink-150 border, white background) — used for the months/customer filter
+   controls, which sit in a .header-actions row alongside no other buttons,
+   so .inline-status-select's bold 999px-pill treatment (built for a job/
+   ticket status field) would have read as louder than a filter deserves. */
+.filter-select { border: 1px solid var(--ink-150); border-radius: 7px; background: white; padding: 7px 9px; color: var(--ink-700); font-size: 11px; font-weight: 650; min-height: 0; }
+/* Top-customers bar list (jobs-per-customer tab) — a sequential single-hue
+   magnitude chart per the dataviz skill's "pick the form" step (ranking,
+   not identity, so one hue scaled by value, not a categorical palette).
+   Grid columns keep every label/value aligned regardless of name length. */
+.report-bar-list { display: grid; gap: 7px; }
+.report-bar-row { display: grid; grid-template-columns: 160px 1fr 54px; align-items: center; gap: 10px; font-size: 12px; }
+.report-bar-label { color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-bar-track { height: 10px; border-radius: 4px; background: var(--ink-100); overflow: hidden; }
+.report-bar-fill { display: block; height: 100%; min-width: 2px; border-radius: 4px; background: var(--blue-600); }
+.report-bar-value { text-align: right; font-weight: 700; color: var(--ink-900); }
+/* Warranty breakdown's per-row status composition bar — a status-colored
+   stacked bar (good/serious/warning, the app's reserved status palette),
+   never reused as a categorical series color, with a 2px surface gap
+   between segments per the skill's mark spec and a text aria-label instead
+   of a legend (identity is already named in the adjacent numeric columns). */
+.report-composition-bar { display: flex; gap: 2px; width: 100%; min-width: 90px; height: 10px; border-radius: 4px; overflow: hidden; background: var(--ink-100); }
+.report-composition-bar span { display: block; height: 100%; }
+.report-ratio-detail { display: block; margin-top: 4px; color: var(--ink-500); font-size: 10.5px; font-weight: 500; text-transform: none; line-height: 1.4; }
+.metric-card.report-coming-soon { opacity: .65; }
+.metric-card.report-coming-soon strong { color: var(--ink-300); }
 .hint-text { margin: 0 0 10px; color: var(--ink-500); font-size: 11px; line-height: 1.5; }
 .drawer-body { padding: 16px 22px; overflow: auto; display: grid; gap: 14px; }
 .drawer-body label { display: grid; gap: 6px; color: var(--ink-700); font-size: 11px; font-weight: 700; }

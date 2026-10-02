@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -32,6 +32,16 @@ type NavItem = { key: string; label: string; href: string; module: ModuleKey | M
 type NavGroup = { key: string; label: string; icon: typeof LayoutDashboard; items: NavItem[]; footer?: boolean };
 
 const DASHBOARD_ITEM: NavItem = { key: "dashboard", label: "Dashboard", href: "/dashboard", module: "DASHBOARD", permission: "DASHBOARD_VIEW", icon: LayoutDashboard };
+
+// 2026-10-02 — user request: "Create a 'Reports' sidebar button above
+// settings." A standalone item (same shape/placement pattern as
+// DASHBOARD_ITEM above), rendered in the sidebar footer immediately before
+// the Settings group below rather than folded into a NAV_GROUPS group of
+// its own — the request was for one button, not a dropdown of several.
+// Gated by the module+permission that already existed in the codebase
+// before this feature (ModuleKey.REPORTS, TenantPermission REPORTS_VIEW —
+// see permissions.ts), same as every other nav item.
+const REPORTS_ITEM: NavItem = { key: "reports", label: "Reports", href: "/reports", module: "REPORTS", permission: "REPORTS_VIEW", icon: BarChart3 };
 
 // 2026-10-01 — user report: "When clicking templates button or dashboard
 // button, company branding is still highlighted." Every item's active
@@ -152,7 +162,12 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
             permissions.ts). */}
         {settingsNavPermissionAllowed(context.tenantPermissions, DASHBOARD_ITEM.permission) && <Link href={DASHBOARD_ITEM.href} className={pathname === DASHBOARD_ITEM.href ? "nav-item active" : "nav-item"}><DASHBOARD_ITEM.icon size={18} /><span>{DASHBOARD_ITEM.label}</span></Link>}
         <nav>{topGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; const active = item.href === bestHref; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</nav>
-        <div className="sidebar-footer">{footerGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const active = item.href === bestHref; const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</div>
+        <div className="sidebar-footer">
+          {/* 2026-10-02 — Reports, above Settings (see REPORTS_ITEM's own
+              comment above) — same plain nav-item treatment as the
+              Dashboard item at the top of the sidebar, not a nav-group. */}
+          {settingsNavModuleAllowed(context.moduleAccess, REPORTS_ITEM.module) && settingsNavPermissionAllowed(context.tenantPermissions, REPORTS_ITEM.permission) && <Link href={REPORTS_ITEM.href} className={pathname === REPORTS_ITEM.href || pathname.startsWith(`${REPORTS_ITEM.href}/`) ? "nav-item active" : "nav-item"}><REPORTS_ITEM.icon size={18} /><span>{REPORTS_ITEM.label}</span></Link>}
+          {footerGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const active = item.href === bestHref; const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</div>
       </aside>
       <div className="workspace">
         {context.supportAccessId && <div className="support-banner"><strong>Platform support context</strong><span>{companyName} · {context.supportMode === "READ_ONLY" ? "Read-only access" : "Read-write access"}</span><Link href="/platform" className="table-action"><ShieldCheck size={14} /> Platform Admin</Link><SupportExitButton /></div>}
