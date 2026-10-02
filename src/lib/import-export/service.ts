@@ -5,10 +5,10 @@ import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { createMaster, updateMaster } from "@/lib/master-data/service";
-import { receiveStock } from "@/lib/inventory/service";
+import { receiveStock, adjustStock } from "@/lib/inventory/service";
 import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { looseNormalized, normalized } from "@/lib/master-data/validation";
-import { receiptInput } from "@/lib/inventory/validation";
+import { receiptInput, adjustmentInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
 import { notifyAdminsAndManagers } from "@/lib/notifications/service";
@@ -633,6 +633,22 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   // importJobs's own JOBS_EDIT check below — a user who can create but
   // not edit parts fails the whole import cleanly instead of partway in.
   requireTenantPermission(ctx, "PARTS_EDIT");
+  // 2026-10-02 — follow-up user report: after reviving a historical part
+  // (above), Stock Levels still listed its OLD bin location alongside
+  // the new one from this import. Deactivating a part never touches its
+  // StockBalance rows — the part just stops showing up anywhere, but its
+  // old on-hand quantity at its old location is still sitting there —
+  // and buildBinLocationLabel (inventory/service.ts) lists every
+  // location a part has positive stock at, old ones included. A revive
+  // now zeroes out every stock balance the part had BEFORE this import
+  // (see the revive branch below), through a real ADJUSTMENT_OUT
+  // movement per location via adjustStock — not a silent raw delete —
+  // so the old quantity is written off with a clear reason on the
+  // part's own movement history, then the normal opening-stock step
+  // below posts the new quantity at the new location fresh. Needs
+  // INVENTORY_ADJUST, checked once up front for the same "fail cleanly
+  // before any row is written" reason as PARTS_EDIT just above.
+  requireTenantPermission(ctx, "INVENTORY_ADJUST");
   const input = importRowsInput.parse(raw);
   const rows = await readUploadedRows(input);
 
@@ -686,6 +702,18 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   let created = 0;
   let revived = 0;
   let skipped = 0;
+  // 2026-10-02 — user report: a sheet with the same part number on
+  // several rows, each a different bin location (one row per location a
+  // part already sits at — a very normal shape for a catalog export),
+  // had every row after the first skipped as "already exists." Tracks
+  // every part number this SAME import run has already created or
+  // revived (normalized -> id), so a later row for that same number is
+  // recognized as "another location for the part this import just
+  // added," not a duplicate — see the check right after bin-location
+  // resolution below. A number that already existed BEFORE this import
+  // started is untouched by this map and still goes through the normal
+  // active/historical duplicate handling further down.
+  const createdThisRun = new Map<string, string>();
   const rowResults: ImportRowResult[] = [];
 
   for (const row of rows) {
@@ -711,6 +739,70 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       continue;
     }
 
+    // Resolved up front (moved ahead of the duplicate checks below,
+    // 2026-10-02, so the within-this-import duplicate branch can also
+    // use it) so a matched bin location also becomes the part's own
+    // default bin — the same field the Stock Levels drawer's
+    // bin-location picker sets — regardless of whether a quantity was
+    // also given for this row.
+    const binLocationCode = mappedValue(row, input.mapping, "binLocationCode");
+    let binLocationId = binLocationCode ? locationByNormalizedCode.get(binLocationCode.trim().toLowerCase()) : undefined;
+    let binLocationNote = "";
+    if (binLocationCode && !binLocationId) {
+      if (input.createMissingLocations) {
+        try {
+          // Same createMaster call the "New location" form uses. Defaulted
+          // to type "Bin" (name set to the code itself) since a spreadsheet
+          // cell can't tell us which of the other seven location types it
+          // should be — the user can retype/rename it afterward from the
+          // Storage Locations tab like any other location.
+          const newLocation = (await createMaster(ctx, "storage-locations", { code: binLocationCode, name: binLocationCode, type: "BIN" })) as { id: string };
+          binLocationId = newLocation.id;
+          locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), newLocation.id);
+          binLocationNote = ` — "${binLocationCode}" wasn't on file, so it was added as a new bin location (type: Bin).`;
+        } catch (err) {
+          binLocationNote = ` — bin location "${binLocationCode}" couldn't be created — ${describeRowError(err)}`;
+        }
+      } else {
+        binLocationNote = ` — bin location "${binLocationCode}" wasn't found, left unmapped.`;
+      }
+    }
+
+    // 2026-10-02 — user report: a sheet with the same part number on
+    // several rows (one per bin location the part already sits at) had
+    // every row after the first skipped as "already exists." A number
+    // seen earlier in THIS SAME import run is a different part already
+    // created/revived moments ago, not a duplicate — post this row's
+    // quantity as additional opening stock at its own (possibly
+    // different) location instead of touching the part's other catalog
+    // fields again. Checked before the cross-import duplicate checks
+    // below, which still apply unchanged to a number that existed
+    // before this import started.
+    const normalizedPartNumber = normalized(partNumber)!;
+    const partIdFromThisRun = createdThisRun.get(normalizedPartNumber);
+    if (partIdFromThisRun) {
+      const quantity = mappedNumber(row, input.mapping, "quantity");
+      let stockNote = "";
+      if (quantity != null && quantity > 0 && binLocationId) {
+        try {
+          await receiveStock(ctx, receiptInput.parse({ partId: partIdFromThisRun, locationId: binLocationId, quantity, referenceNumber: "Import", notes: "Opening stock from import (additional location)" }));
+          stockNote = ` Additional opening stock of ${quantity} posted to ${binLocationCode}.`;
+        } catch (err) {
+          stockNote = ` This row's opening stock couldn't be posted: ${describeRowError(err)}`;
+        }
+      } else if (quantity != null && quantity > 0 && !binLocationId) {
+        stockNote = " This row's quantity wasn't imported: no bin location was resolved for it.";
+      }
+      rowResults.push({
+        label: partNumber,
+        status: stockNote.startsWith(" Additional") ? "updated" : "skipped",
+        detail: `Same part number as an earlier row in this import — treated as another location for that part, not a duplicate.${binLocationNote}${stockNote}`,
+      });
+      if (stockNote.startsWith(" Additional")) revived++;
+      else skipped++;
+      continue;
+    }
+
     // Create-only against an ACTIVE part, same as Customers/Suppliers —
     // matches ModApp's own Import behaviour for master-data catalogs, and
     // avoids a stale sheet silently overwriting a part's current
@@ -719,7 +811,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     // own number is a different case: see the file-header comment on
     // requireTenantPermission(ctx, "PARTS_EDIT") above — that row revives
     // the existing record below instead of being skipped here.
-    const ownNumberMatch = await prisma.part.findFirst({ where: { companyId, partNumberNormalized: normalized(partNumber)! } });
+    const ownNumberMatch = await prisma.part.findFirst({ where: { companyId, partNumberNormalized: normalizedPartNumber } });
     if (ownNumberMatch && ownNumberMatch.active) {
       skipped++;
       rowResults.push({ label: partNumber, status: "skipped", detail: "A part with this part number already exists." });
@@ -769,32 +861,10 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     const taxCodeId = taxCodeRaw ? taxCodeByNormalizedCode.get(taxCodeRaw.trim().toLowerCase()) : undefined;
     const taxCodeNote = taxCodeRaw && !taxCodeId ? ` — tax code "${taxCodeRaw}" wasn't found, left unmapped.` : "";
 
-    // Resolved up front (not just when posting opening stock below) so a
-    // matched bin location also becomes the part's own default bin — the
-    // same field the Stock Levels drawer's bin-location picker sets —
-    // regardless of whether a quantity was also given for this row.
-    const binLocationCode = mappedValue(row, input.mapping, "binLocationCode");
-    let binLocationId = binLocationCode ? locationByNormalizedCode.get(binLocationCode.trim().toLowerCase()) : undefined;
-    let binLocationNote = "";
-    if (binLocationCode && !binLocationId) {
-      if (input.createMissingLocations) {
-        try {
-          // Same createMaster call the "New location" form uses. Defaulted
-          // to type "Bin" (name set to the code itself) since a spreadsheet
-          // cell can't tell us which of the other seven location types it
-          // should be — the user can retype/rename it afterward from the
-          // Storage Locations tab like any other location.
-          const newLocation = (await createMaster(ctx, "storage-locations", { code: binLocationCode, name: binLocationCode, type: "BIN" })) as { id: string };
-          binLocationId = newLocation.id;
-          locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), newLocation.id);
-          binLocationNote = ` — "${binLocationCode}" wasn't on file, so it was added as a new bin location (type: Bin).`;
-        } catch (err) {
-          binLocationNote = ` — bin location "${binLocationCode}" couldn't be created — ${describeRowError(err)}`;
-        }
-      } else {
-        binLocationNote = ` — bin location "${binLocationCode}" wasn't found, left unmapped.`;
-      }
-    }
+    // Bin location (binLocationCode/binLocationId/binLocationNote) is
+    // resolved up near the top of the loop now (2026-10-02, see the
+    // comment there) so the within-this-import duplicate branch above can
+    // also use it — not re-resolved here.
 
     const payload: Record<string, unknown> = {
       partNumber,
@@ -819,6 +889,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
 
     const isRevive = !!ownNumberMatch;
     let newPart: { id: string };
+    let staleBalanceNote = "";
     try {
       if (isRevive && ownNumberMatch) {
         newPart = (await updateMaster(ctx, "parts", ownNumberMatch.id, { ...payload, active: true })) as { id: string };
@@ -828,6 +899,39 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
         // flipped back to OPERATIONAL directly here, the one field this
         // revive needs that the shared helper doesn't expose.
         await prisma.part.update({ where: { id: newPart.id }, data: { operationalStatus: "OPERATIONAL" } });
+
+        // Write off whatever stock this part still shows on hand from
+        // BEFORE this import — deactivating a part never clears its
+        // StockBalance rows, so without this, the part's old location
+        // keeps showing up (alongside the new one this row posts below)
+        // on Stock Levels, since that list shows every location with
+        // positive on-hand stock (see buildBinLocationLabel). A real
+        // ADJUSTMENT_OUT per stale location/balance, not a silent raw
+        // reset, so it's a traceable entry on the part's own movement
+        // history rather than quantity vanishing unexplained.
+        const staleBalances = await prisma.stockBalance.findMany({
+          where: { companyId, partId: newPart.id, quantityOnHand: { gt: 0 } },
+          include: { location: { select: { code: true, name: true } } },
+        });
+        if (staleBalances.length > 0) {
+          const clearedAt: string[] = [];
+          for (const balance of staleBalances) {
+            try {
+              await adjustStock(ctx, adjustmentInput.parse({
+                partId: newPart.id,
+                locationId: balance.locationId,
+                direction: "OUT",
+                quantity: balance.quantityOnHand.toString(),
+                reason: "Historical part revived by import — previous stock balance cleared",
+                notes: "Automatic write-off: this part was marked historical (its earlier delete was blocked by existing history) and is being re-established by this import under a new location.",
+              }));
+              clearedAt.push(`${balance.location.name} (${balance.location.code})`);
+            } catch (err) {
+              staleBalanceNote += ` — old stock at ${balance.location.name} (${balance.location.code}) couldn't be cleared: ${describeRowError(err)}`;
+            }
+          }
+          if (clearedAt.length > 0) staleBalanceNote = ` — cleared old stock at ${clearedAt.join(", ")}.${staleBalanceNote}`;
+        }
       } else {
         newPart = await createMaster(ctx, "parts", payload);
       }
@@ -838,6 +942,11 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     }
     if (isRevive) revived++;
     else created++;
+    // Recorded so a later row in this same import with the same part
+    // number (a different bin location for the same part) is recognized
+    // as "another location for this part" above instead of falling
+    // through to the active-duplicate check and being skipped.
+    createdThisRun.set(normalizedPartNumber, newPart.id);
 
     // Opening stock is posted as a real RECEIPT movement through the same
     // receiveStock() every manual "Receive stock" action uses — not a raw
@@ -863,7 +972,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     }
 
     rowResults.push(isRevive
-      ? { label: partNumber, status: "updated", detail: `Revived — this number belonged to a part marked historical (its earlier "delete" was blocked by existing stock/job history), now reactivated and updated from this import.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` }
+      ? { label: partNumber, status: "updated", detail: `Revived — this number belonged to a part marked historical (its earlier "delete" was blocked by existing stock/job history), now reactivated and updated from this import.${manufacturerNote}${taxCodeNote}${binLocationNote}${staleBalanceNote}${stockNote}` }
       : { label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` });
   }
 
