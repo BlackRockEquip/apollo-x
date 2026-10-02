@@ -454,9 +454,17 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       // 2026-09-16 — manufacturers switched over for the same reason
       // locations already were: "manufacturer field not populating" was
       // this exact 403-silently-swallowed bug.
+      // 2026-10-02 — found while fixing the Stock Take "pageSize=500"
+      // validation bug below: this tax-codes call asked for pageSize=200,
+      // but master-data's listQuery (same shared pattern as positionQuery)
+      // caps pageSize at 100 too. That request has always failed Zod
+      // validation — silently, since the `if (taxRes.ok)` below just skips
+      // setting taxCodes on a non-OK response rather than throwing — so the
+      // tax-code dropdown (Add/Edit Part's "Tax code" field) has likely
+      // never actually populated. Capped at 100 to match the real limit.
       const [mfrRes, taxRes, locRes] = await Promise.all([
         fetch("/api/v1/inventory/manufacturers", { cache: "no-store" }),
-        fetch("/api/v1/master-data/tax-codes?status=active&pageSize=200", { cache: "no-store" }),
+        fetch("/api/v1/master-data/tax-codes?status=active&pageSize=100", { cache: "no-store" }),
         fetch("/api/v1/inventory/locations", { cache: "no-store" }),
       ]);
       const [mfrBody, taxBody, locBody] = await Promise.all([mfrRes.json(), taxRes.json(), locRes.json()]);
@@ -501,11 +509,25 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     if (!stockTakeLocationId) return;
     setStockTakeLoading(true); setStockTakeError("");
     try {
-      const params = new URLSearchParams({ locationId: stockTakeLocationId, active: "active", pageSize: "500" });
-      const r = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
-      const body = await r.json();
-      if (!r.ok) throw new Error(body.error?.message || "Unable to load parts for this location.");
-      const rows: StockTakeRow[] = (body.items as PositionRow[]).map((p) => ({ partId: p.id, partNumber: p.partNumber, description: p.description, systemQty: p.quantityOnHand, actualQty: p.quantityOnHand }));
+      // 2026-10-02 — bug: selecting a bin and starting a count threw "The
+      // request is invalid." every time. Root cause: this asked for
+      // pageSize=500 in one shot, but positionQuery (inventory/validation.ts)
+      // caps pageSize at 100 — a plain Zod validation failure on every call,
+      // not a backend bug. A stock take needs every part in the bin, not
+      // just the first page, so this now pages through at the real cap (100)
+      // and accumulates, rather than silently truncating a bin with more
+      // than 100 SKUs the way lowering the request to "pageSize: 100" alone
+      // would have.
+      const rows: StockTakeRow[] = [];
+      for (let page = 1; ; page += 1) {
+        const params = new URLSearchParams({ locationId: stockTakeLocationId, active: "active", pageSize: "100", page: String(page) });
+        const r = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error?.message || "Unable to load parts for this location.");
+        const items = body.items as PositionRow[];
+        rows.push(...items.map((p) => ({ partId: p.id, partNumber: p.partNumber, description: p.description, systemQty: p.quantityOnHand, actualQty: p.quantityOnHand })));
+        if (items.length === 0 || rows.length >= (body.total ?? rows.length)) break;
+      }
       setStockTakeRows(rows);
       setStockTakeStep("entry");
     } catch (e) { setStockTakeError(e instanceof Error ? e.message : "Unable to load parts for this location."); }
