@@ -1,59 +1,48 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job Kits: auto-create missing catalog parts on import; strip part-number
-separators at input time everywhere, not just at lookup
+Parts import revives a historical part instead of reporting "already
+exists" when its own number matches
 
-1. Job Kits import "not found in parts catalog and skipped" (user report:
-   "is it not suppose to add parts to the list without checking stock?")
+User report: after using "Delete all" on the parts catalog and
+re-importing a cleaned-up sheet, every row said the part already
+existed. Root cause: deletePart can't actually remove a part that's
+ever had stock/job/kit activity - Postgres blocks the delete (onDelete:
+Restrict on StockBalance/StockMovement/StockReservation/StockCountLine/
+JobKitLine/JobPartLine) and it falls back to marking the part a
+historical reference instead (active: false, operationalStatus:
+HISTORICAL_REFERENCE). That keeps the row - and its unique part number -
+in the database, just hidden from every list in the app (Parts Catalog,
+Stock Levels), so there was no way to see it was still there.
 
-Not a stock check - a catalog-existence check. JobKitLine.partId is a
-required FK, so a number with no catalog match used to be skipped and
-reported rather than added, unlike a Job's own parts list (which allows
-free-text lines). addJobKitLinesBulk (job-kits/service.ts) now
-auto-creates a bare-bones catalog Part for an unmatched number instead
-(number + whatever description the row/file supplied, blank otherwise),
-then adds it as a normal kit line. Still skipped and reported: a number
-already recorded as another part's alternate/superseded/group number -
-that's a real collision, not a missing catalog entry. Import summary
-banner (JobKitsWorkspace.tsx) updated to report created-but-new parts
-separately from genuinely-skipped rows.
+importParts (import-export/service.ts) now tells the two cases apart: a
+row matching an ACTIVE part's own number is still skipped as a genuine
+duplicate, same as before; a row matching an INACTIVE/historical part's
+own number instead REVIVES that same record - reactivates it
+(active: true, operationalStatus: OPERATIONAL) and updates its fields
+from the sheet via the normal updateMaster path, so its real stock/job
+history stays attached to the same row under its new, clean number
+rather than being orphaned behind a part nobody can see or edit. Only
+the part's own number is treated this way; a number that collides with
+some OTHER part's alternate/superseded/group number is still skipped
+and reported (a real data collision, not a missing/hidden catalog
+entry) - unchanged from before. Requires PARTS_EDIT on top of the
+PARTS_CREATE already needed to import, checked once up front so a user
+who can create but not edit parts fails the whole import cleanly instead
+of partway through. Revived rows show as "updated" in the import summary
+and row list, same status Jobs import already uses for its own
+update-on-reimport rows; the admin/manager notification sent after an
+import now mentions revived parts alongside created ones.
 
-2. Part numbers now stripped of separators at input time, not just
-   matched loosely at lookup
+ImportExportWorkspace.tsx's Parts Catalog helper text updated to explain
+both behaviors (separator stripping, revive-on-match) up front.
 
-Follow-up to the above, at the user's request: rather than only
-matching "3J-1907" and "3J1907" as equivalent at lookup time
-(looseNormalized, added previously), every place a part number is
-typed, pasted or imported now strips hyphens/periods/slashes/spaces and
-forces uppercase before it's checked, added or imported - so the
-catalog only ever holds one spelling per part number going forward.
+src/lib/import-export/service.ts, src/components/ImportExportWorkspace.tsx.
 
-- partInput.partNumber and partAlternateNumberInput.number
-  (master-data/validation.ts) transform through looseNormalized before
-  validation completes - covers the manual Add/Edit Part form, Parts
-  Catalog import, and Add alternate number in one place, since
-  createMaster and updateMaster's "parts" case both parse through this
-  same schema.
-- Job parts list paste/import (addPartLinesBulk, jobs/service.ts) -
-  JobPartLine.partNumber is stripped before being stored, whether or
-  not the row matched a catalog part.
-- Job Kits paste/import (addJobKitLinesBulk, job-kits/service.ts) - the
-  new auto-created Part (see #1) gets the stripped number.
-- Parts Catalog spreadsheet import (importParts, import-export/
-  service.ts) - stripped right after the column is read, so the
-  "already exists" duplicate pre-check compares the same clean form
-  createMaster will end up storing, rather than missing a duplicate
-  because the raw sheet spelling still had punctuation.
-
-Existing part numbers already in the catalog are untouched by this
-change - only new/edited/imported numbers get the clean treatment going
-forward. (Per the user: they're separately exporting, cleaning and
-re-importing the existing catalog themselves.)
-
-src/lib/master-data/validation.ts, src/lib/jobs/service.ts,
-src/lib/job-kits/service.ts, src/lib/import-export/service.ts,
-src/components/JobKitsWorkspace.tsx.
+Note: this commit's "git add -A" will also pick up the previous batch
+(Job Kits auto-create-missing-parts + strip-separators-at-input-time)
+if that one hasn't been committed yet - both will land in one commit,
+which is fine.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

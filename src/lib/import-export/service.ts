@@ -4,10 +4,10 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { createMaster } from "@/lib/master-data/service";
+import { createMaster, updateMaster } from "@/lib/master-data/service";
 import { receiveStock } from "@/lib/inventory/service";
 import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
-import { looseNormalized } from "@/lib/master-data/validation";
+import { looseNormalized, normalized } from "@/lib/master-data/validation";
 import { receiptInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
@@ -614,6 +614,25 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   // manufacturers fails the whole import cleanly instead of partway
   // through the file.
   requireTenantPermission(ctx, "MANUFACTURERS_CREATE");
+  // 2026-10-02 — user report: re-importing a part under its cleaned-up
+  // (separator-stripped) number after "deleting" the old one still said
+  // "already exists." Root cause: deletePart (master-data/service.ts)
+  // can't actually remove a part that's ever had stock/job/kit activity
+  // — Postgres blocks it (onDelete: Restrict) and it falls back to
+  // marking the part a historical reference instead, which keeps its row
+  // (and its unique part number) in the database, just hidden from every
+  // list. A re-import under the same (or now-cleaned) number correctly
+  // sees that number as taken. Fix: a row matching an inactive/historical
+  // part's own number REVIVES that record (reactivates it, overwrites
+  // its fields from the sheet) instead of being skipped as a duplicate —
+  // see the revive branch below — so the part's real stock/job history
+  // stays attached to the same row under its new clean number rather
+  // than being orphaned. That revive goes through updateMaster, which
+  // needs PARTS_EDIT on top of the PARTS_CREATE already checked above;
+  // verified once up front, before any row is written, same reasoning as
+  // importJobs's own JOBS_EDIT check below — a user who can create but
+  // not edit parts fails the whole import cleanly instead of partway in.
+  requireTenantPermission(ctx, "PARTS_EDIT");
   const input = importRowsInput.parse(raw);
   const rows = await readUploadedRows(input);
 
@@ -665,6 +684,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   }
 
   let created = 0;
+  let revived = 0;
   let skipped = 0;
   const rowResults: ImportRowResult[] = [];
 
@@ -691,19 +711,32 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       continue;
     }
 
-    // Create-only, same as Customers/Suppliers — matches ModApp's own
-    // Import behaviour for master-data catalogs, and avoids a stale sheet
-    // silently overwriting a part's current pricing/reorder settings on
-    // re-import (see the file header comment). 2026-09-29 — also checks
-    // alternate (superseded/group) numbers, not just a real part's own
-    // number, so an imported row can't quietly create a duplicate part
-    // under a number some other part already answers to (see
-    // numberAlreadyInUse) — same check createMaster's "parts" case
-    // enforces further down, just done here first to skip the row before
-    // the manufacturer/bin-location side effects below run for nothing.
-    if (await numberAlreadyInUse(prisma, companyId, partNumber)) {
+    // Create-only against an ACTIVE part, same as Customers/Suppliers —
+    // matches ModApp's own Import behaviour for master-data catalogs, and
+    // avoids a stale sheet silently overwriting a part's current
+    // pricing/reorder settings on re-import (see the file header
+    // comment). 2026-10-02 — an INACTIVE/historical part with this same
+    // own number is a different case: see the file-header comment on
+    // requireTenantPermission(ctx, "PARTS_EDIT") above — that row revives
+    // the existing record below instead of being skipped here.
+    const ownNumberMatch = await prisma.part.findFirst({ where: { companyId, partNumberNormalized: normalized(partNumber)! } });
+    if (ownNumberMatch && ownNumberMatch.active) {
       skipped++;
       rowResults.push({ label: partNumber, status: "skipped", detail: "A part with this part number already exists." });
+      continue;
+    }
+    // 2026-09-29 — also checks alternate (superseded/group) numbers, not
+    // just a real part's own number, so an imported row can't quietly
+    // create a duplicate part under a number some other part already
+    // answers to (see numberAlreadyInUse) — same check createMaster's
+    // "parts" case enforces further down, just done here first to skip
+    // the row before the manufacturer/bin-location side effects below
+    // run for nothing. Only checked when this row isn't already a
+    // revive of its own matching part (an alternate number can't collide
+    // with the very part it already belongs to).
+    if (!ownNumberMatch && await numberAlreadyInUse(prisma, companyId, partNumber)) {
+      skipped++;
+      rowResults.push({ label: partNumber, status: "skipped", detail: "This number is already recorded as another part's alternate number." });
       continue;
     }
 
@@ -784,15 +817,27 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
       reorderQuantity: mappedNumber(row, input.mapping, "reorderQuantity") ?? undefined,
     };
 
+    const isRevive = !!ownNumberMatch;
     let newPart: { id: string };
     try {
-      newPart = await createMaster(ctx, "parts", payload);
+      if (isRevive && ownNumberMatch) {
+        newPart = (await updateMaster(ctx, "parts", ownNumberMatch.id, { ...payload, active: true })) as { id: string };
+        // operationalStatus isn't part of partInput (it's a system field,
+        // never user-editable through the normal Add/Edit Part form), so
+        // updateMaster's schema strips it out of whatever it's given —
+        // flipped back to OPERATIONAL directly here, the one field this
+        // revive needs that the shared helper doesn't expose.
+        await prisma.part.update({ where: { id: newPart.id }, data: { operationalStatus: "OPERATIONAL" } });
+      } else {
+        newPart = await createMaster(ctx, "parts", payload);
+      }
     } catch (err) {
       skipped++;
       rowResults.push({ label: partNumber, status: "skipped", detail: describeRowError(err) });
       continue;
     }
-    created++;
+    if (isRevive) revived++;
+    else created++;
 
     // Opening stock is posted as a real RECEIPT movement through the same
     // receiveStock() every manual "Receive stock" action uses — not a raw
@@ -812,31 +857,33 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
           await receiveStock(ctx, receiptInput.parse({ partId: newPart.id, locationId: binLocationId, quantity, referenceNumber: "Import", notes: "Opening stock from import" }));
           stockNote = ` — opening stock of ${quantity} posted to ${binLocationCode}.`;
         } catch (err) {
-          stockNote = ` — part created, but opening stock couldn't be posted: ${describeRowError(err)}`;
+          stockNote = isRevive ? ` — part revived, but opening stock couldn't be posted: ${describeRowError(err)}` : ` — part created, but opening stock couldn't be posted: ${describeRowError(err)}`;
         }
       }
     }
 
-    rowResults.push({ label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` });
+    rowResults.push(isRevive
+      ? { label: partNumber, status: "updated", detail: `Revived — this number belonged to a part marked historical (its earlier "delete" was blocked by existing stock/job history), now reactivated and updated from this import.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` }
+      : { label: partNumber, status: "created", detail: `Imported.${manufacturerNote}${taxCodeNote}${binLocationNote}${stockNote}` });
   }
 
   // 2026-09-19 — user request: "when users load part list onto system,
   // notification should be sent to admins/managers." Only fires when the
-  // import actually created something — an all-skipped/all-error import
-  // (e.g. a file with nothing but blank part numbers) has nothing an
+  // import actually created or revived something — an all-skipped/all-error
+  // import (e.g. a file with nothing but blank part numbers) has nothing an
   // admin or manager needs to know about. Fire-and-forget — see
   // notifyAdminsAndManagers's own comment for why this never throws.
-  if (created > 0) {
+  if (created > 0 || revived > 0) {
     void notifyAdminsAndManagers(
       companyId,
       "PARTS_LIST_IMPORTED",
       "Parts list imported",
-      `${ctx.displayName} imported ${created} part${created === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} row${skipped === 1 ? "" : "s"} skipped)` : ""}.`,
+      `${ctx.displayName} imported ${created} part${created === 1 ? "" : "s"}${revived > 0 ? `, revived ${revived} historical part${revived === 1 ? "" : "s"}` : ""}${skipped > 0 ? ` (${skipped} row${skipped === 1 ? "" : "s"} skipped)` : ""}.`,
       "/inventory",
     );
   }
 
-  return { total: rows.length, created, updated: 0, skipped, rows: rowResults };
+  return { total: rows.length, created, updated: revived, skipped, rows: rowResults };
 }
 
 // ---------------------------------------------------------------------------

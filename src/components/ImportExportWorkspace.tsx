@@ -600,6 +600,9 @@ export function ImportExportWorkspace() {
             <p>
               Export the current parts catalog, or bulk-import from a spreadsheet. A manufacturer name that doesn&apos;t match anyone on file gets
               added automatically (name only); a tax code that doesn&apos;t match this company&apos;s own codes is simply left unmapped for that row.
+              Part numbers are stripped of hyphens/periods/slashes/spaces and uppercased automatically. A row whose number matches an active part
+              is skipped as a duplicate; a row whose number matches a part that was &quot;deleted&quot; but kept as a historical reference (blocked
+              by its own stock/job history) reactivates and updates that same part instead, so its history stays attached.
             </p>
           </div>
         </header>
