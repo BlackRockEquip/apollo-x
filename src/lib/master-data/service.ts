@@ -126,6 +126,30 @@ export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: st
     for(const k of ["creditLimit","defaultPurchaseCost","defaultSellingPrice","reorderMinimum","reorderMaximum","reorderQuantity","defaultCost","rate"]) if(data[k]!=null) data[k]=new Prisma.Decimal(data[k] as string);
     delete data.manufacturerIds;
     const updated=await (delegate as never as {update(a:unknown):Promise<Record<string,unknown>&{id:string}>}).update({where:{id},data});
+    // 2026-10-02 — user request: renaming a part's own number should
+    // "change throughout the system even if used elsewhere, not prevent
+    // the change." The rename itself was never actually blocked by a
+    // part's usage (nothing but the numberAlreadyInUse collision check
+    // above runs, and every other table references partId, not the
+    // number string, so a rename already shows up immediately on Job
+    // Kits, Stock Levels, movements, etc. via that live relation). The
+    // one real gap: JobPartLine stores its own partNumber as a plain
+    // column (not just a relation) — a snapshot taken when the line was
+    // added, needed so a FREE-TEXT line (no catalog match, partId null)
+    // still has a number to show — so a line added before this rename
+    // kept displaying the part's old number forever afterward, which is
+    // what read as the change not having "taken" everywhere. Only
+    // touches lines that are actually linked to this part (partId set,
+    // so this can never overwrite a genuine free-text line's own typed
+    // number with something unrelated) and only when the number is
+    // actually changing. PickSlipLine has the same kind of snapshot
+    // column, deliberately left alone — a picking slip is a frozen
+    // point-in-time record of what was issued under what number at the
+    // time, the same reason an already-issued invoice line doesn't
+    // retroactively change either.
+    if (kind === "parts" && data.partNumber !== (before as { partNumber?: unknown }).partNumber) {
+      await tx.jobPartLine.updateMany({ where: { companyId, partId: id }, data: { partNumber: data.partNumber as string } });
+    }
     // 2026-09-14 — bug fix found while wiring up the "Brands supplied" field
     // on the New Supplier form: this used to check `"manufacturerIds" in
     // input` — `input` is the *parsed* zod output, and supplierInput
@@ -314,6 +338,31 @@ export async function deleteMasterRecord(ctx: RequestContext, kind: SoftDeletabl
     });
     return { outcome: "deactivated" as const, id, record: updated };
   }
+}
+
+// 2026-10-02 — user request: "create a bulk delete button" for Storage
+// Locations, the same "Delete all" the Parts tab already has on Stock
+// Levels (see deleteAllParts above). Bulk counterpart of
+// deleteMasterRecord: every still-active record of this kind gets the
+// same hard-delete-then-fallback-to-inactive treatment, one row at a
+// time (each row's own transaction, same as a single call), with totals
+// reported back so the UI can say "8 deleted, 3 kept as inactive"
+// instead of one opaque success message. Generalized over
+// SoftDeletableKind (so Manufacturers gets the same bulk action for
+// free) even though only Storage Locations asked for it — the existing
+// per-row delete already covers both kinds identically.
+export async function deleteAllMasterRecords(ctx: RequestContext, kind: SoftDeletableKind) {
+  const companyId = authorizeDeleteMaster(ctx, kind);
+  const delegate = kind === "manufacturers" ? prisma.manufacturer : prisma.storageLocation;
+  const records = await (delegate as never as { findMany(a: unknown): Promise<{ id: string }[]> }).findMany({ where: { companyId, active: true }, select: { id: true } });
+  let deleted = 0;
+  let deactivated = 0;
+  for (const r of records) {
+    const result = await deleteMasterRecord(ctx, kind, r.id);
+    if (result.outcome === "deleted") deleted++;
+    else deactivated++;
+  }
+  return { total: records.length, deleted, deactivated };
 }
 
 export async function allocateDocumentNumber(ctx: RequestContext, type: string, now=new Date()) {

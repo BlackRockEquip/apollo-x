@@ -1212,10 +1212,21 @@ export async function listInventoryPositions(ctx: RequestContext, input: z.infer
 // full transfer out, isn't a location the part is meaningfully "in"
 // anymore); a part with no stock anywhere yet falls back to its single
 // assigned default bin, same as before this change.
+// 2026-10-02 — user report: Stock Levels' bin location column showed
+// "C1 (C1)", "C6 (C6)" — redundant when a location's name is just its own
+// code (the default a location gets when auto-created by import, or when
+// someone never bothered giving it a separate name). Only appends the
+// "(code)" parenthetical when the name is actually DIFFERENT from the
+// code (case/whitespace-insensitive) — a location someone genuinely named
+// "Main Warehouse" with code "A1" still shows as "Main Warehouse (A1)".
+function formatLocationLabel(name: string, code: string) {
+  return name.trim().toLowerCase() === code.trim().toLowerCase() ? code : `${name} (${code})`;
+}
+
 function buildBinLocationLabel(balances: { quantityOnHand: Prisma.Decimal; location: { code: string; name: string } }[], defaultBin: { code: string; name: string } | null) {
   const withStock = balances.filter((b) => b.quantityOnHand.greaterThan(0));
-  if (withStock.length > 0) return withStock.map((b) => `${b.location.name} (${b.location.code})`).join(", ");
-  return defaultBin ? `${defaultBin.name} (${defaultBin.code})` : null;
+  if (withStock.length > 0) return withStock.map((b) => formatLocationLabel(b.location.name, b.location.code)).join(", ");
+  return defaultBin ? formatLocationLabel(defaultBin.name, defaultBin.code) : null;
 }
 
 function sumBalances(balances: { quantityOnHand: Prisma.Decimal; quantityReserved: Prisma.Decimal }[]) {
@@ -1582,7 +1593,7 @@ export async function searchPartsByNumbers(ctx: RequestContext, input: z.infer<t
         found: true,
         partId: part.id,
         description: part.description,
-        binLocationLabel: part.binLocation ? `${part.binLocation.name} (${part.binLocation.code})` : null,
+        binLocationLabel: part.binLocation ? formatLocationLabel(part.binLocation.name, part.binLocation.code) : null,
         quantityAvailable: totals.onHand.minus(totals.reserved).toString(),
       };
     }),
@@ -1656,7 +1667,7 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
           partNumber: part.partNumber,
           description: part.description,
           binLocationId: location.id,
-          binLocationLabel: `${location.name} (${location.code})`,
+          binLocationLabel: formatLocationLabel(location.name, location.code),
           quantity: pickQty,
         });
         await tx.jobPartLine.create({
@@ -1871,7 +1882,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         if (usage.remaining.eq(pickQty)) {
           await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "CONVERTED" } });
         }
-        pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
+        pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: formatLocationLabel(location.name, location.code), quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
         remaining = remaining.minus(pickQty);
       }
 
@@ -1936,7 +1947,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
             }),
           });
           await saveBalance(tx, balance, { onHand: nextOnHand });
-          pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: `${location.name} (${location.code})`, quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
+          pickedForLine.push({ partId: part.id, partNumber: part.partNumber, description: part.description, binLocationId: location.id, binLocationLabel: formatLocationLabel(location.name, location.code), quantity: pickQty, jobPartLineId: line.id, previousStatus: statusBeforeThisPick, stockMovementId: movement.id });
           remaining = remaining.minus(pickQty);
         }
       }
@@ -2189,7 +2200,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
         partNumber: l.partNumber,
         description: l.description,
         quantity: l.quantity.toString(),
-        binLocationLabel: l.binLocation ? `${l.binLocation.name} (${l.binLocation.code})` : null,
+        binLocationLabel: l.binLocation ? formatLocationLabel(l.binLocation.name, l.binLocation.code) : null,
       })),
     })),
     total,

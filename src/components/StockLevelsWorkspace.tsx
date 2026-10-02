@@ -825,7 +825,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   <tr><td colSpan={5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
                 ) : history.map((ps) => (
                   <tr key={ps.id}>
-                    <td><Link href={`/jobs/${ps.jobId}`} className="action-link">{ps.jobNumber}</Link></td>
+                    {/* 2026-10-02 — user report: this link "looks like a button
+                        hidden behind the text." .action-link (globals.css) is a
+                        fixed 28x28px square icon-button style, built for an
+                        icon-only link like the "view part" link elsewhere on
+                        this same page — wrong shape entirely for a multi-
+                        character job number. Every other job-number-as-link in
+                        the app (RfqAllWorkspace, OutworkAllWorkspace,
+                        DashboardWorkspace) uses a plain, unstyled Link. */}
+                    <td><Link href={`/jobs/${ps.jobId}`}>{ps.jobNumber}</Link></td>
                     <td>{ps.customerName || "—"}</td>
                     <td>{new Date(ps.createdAt).toLocaleString()}</td>
                     <td>{ps.lines.length}</td>

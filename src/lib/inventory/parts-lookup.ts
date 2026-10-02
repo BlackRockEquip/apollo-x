@@ -89,7 +89,16 @@ export async function numberAlreadyInUse(client: Client, companyId: string, rawN
   if (!numberNormalized) return false;
   const [part, alt] = await Promise.all([
     client.part.findFirst({ where: { companyId, partNumberNormalized: numberNormalized, ...(excludePartId ? { id: { not: excludePartId } } : {}) }, select: { id: true } }),
-    client.partAlternateNumber.findFirst({ where: { companyId, numberNormalized }, select: { id: true } }),
+    // 2026-10-02 — user report: a part's own number change was getting
+    // blocked as "already in use." One real cause: this half of the
+    // check never excluded excludePartId's OWN alternate numbers, so
+    // renaming a part's main number to equal one of its OWN existing
+    // alternate numbers (e.g. simplifying away the need for a separate
+    // alternate entry) collided with itself and threw
+    // PART_NUMBER_ALREADY_IN_USE even though nothing else actually
+    // holds that number. Still blocks a genuine collision with some
+    // OTHER part's alternate number exactly as before.
+    client.partAlternateNumber.findFirst({ where: { companyId, numberNormalized, ...(excludePartId ? { partId: { not: excludePartId } } : {}) }, select: { id: true } }),
   ]);
   return !!part || !!alt;
 }
