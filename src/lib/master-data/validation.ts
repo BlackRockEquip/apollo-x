@@ -68,8 +68,20 @@ export const supplierCreateInput = supplierInput.extend({
 });
 
 export const manufacturerInput = z.object({ name: z.string().trim().min(2).max(150), code: optionalCode, description: optionalText, active: z.boolean().default(true) });
+// 2026-10-02 — user request: strip part-number separators (hyphens,
+// periods, slashes, spaces — anything that isn't a letter or digit) and
+// force uppercase AT INPUT TIME, so "3J-1907" is saved as "3J1907" from
+// the moment it's typed, pasted or imported, rather than only matching
+// loosely at lookup time (looseNormalized's original job, still used as
+// a fallback for data stored before this change). Reuses looseNormalized
+// itself — it already does exactly this transform — as the actual STORED
+// value, not just a comparison value. Applied here via .transform() so
+// every caller of partInput.parse() (createMaster AND updateMaster's
+// "parts" case, which share this one schema — see `schemas` in
+// master-data/service.ts) gets it automatically; a part's own number is
+// now kept clean even when only some other field is being edited.
 export const partInput = z.object({
-  partNumber: z.string().trim().min(1).max(150), description: z.string().trim().min(2).max(500), manufacturerId: z.string().cuid().optional().nullable(),
+  partNumber: z.string().trim().min(1).max(150).transform((v) => looseNormalized(v) ?? v), description: z.string().trim().min(2).max(500), manufacturerId: z.string().cuid().optional().nullable(),
   manufacturerPartNumber: optionalText, category: optionalText, unitOfMeasure: z.string().trim().min(1).max(20).default("EA"), notes: z.string().trim().max(5000).optional().nullable(),
   defaultPurchaseCost: money, defaultSellingPrice: money, taxCodeId: z.string().cuid().optional().nullable(),
   // 2026-09-10 — default bin/storage location, added alongside the Parts
@@ -87,7 +99,10 @@ export const partInput = z.object({
 // resolving back to this same part (see PartAlternateNumber in
 // schema.prisma and findPartByNumber in inventory/parts-lookup.ts).
 export const partAlternateNumberInput = z.object({
-  number: z.string().trim().min(1).max(150),
+  // Same stripped-at-input-time treatment as partInput.partNumber above —
+  // an alternate number is compared against the same numberNormalized
+  // column a real part number is, so it gets the same clean form.
+  number: z.string().trim().min(1).max(150).transform((v) => looseNormalized(v) ?? v),
   kind: z.enum(["SUPERSEDED", "GROUP"]),
 });
 export const locationInput = z.object({ code: z.string().trim().min(1).max(50), name: z.string().trim().min(1).max(150), type: z.enum(["STORES","SHELF","BIN","WORKSHOP","PEX_HOLDING","QUARANTINE","RECEIVING","OTHER"]), description: optionalText, parentId: z.string().cuid().optional().nullable(), sortOrder: z.number().int().min(0).max(100000).default(0), active: z.boolean().default(true) });

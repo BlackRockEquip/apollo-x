@@ -7,6 +7,7 @@ import { recordAudit } from "@/lib/audit/service";
 import { notifyAdminsAndManagers } from "@/lib/notifications/service";
 import { isCompanyEmailConfigured } from "@/lib/email";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
+import { looseNormalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import {
   jobsListQuery,
@@ -1074,6 +1075,17 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
 
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
+      // 2026-10-02 — user request: strip part-number separators (hyphens,
+      // periods, slashes, spaces) and force uppercase at the moment a
+      // number is typed, pasted or imported, same treatment now applied
+      // everywhere a part number is captured (see partInput in
+      // master-data/validation.ts) — not just a loose match at lookup
+      // time. Applied here regardless of whether a catalog match is found
+      // below, since JobPartLine.partNumber is stored either way (a
+      // catalog match only supplies the description/stock check — the
+      // line keeps its own typed number, same as before this change).
+      const partNumber = looseNormalized(row.partNumber) ?? row.partNumber;
+
       // 2026-09-29 — resolves a typed/pasted/imported part number to its
       // catalog Part even when it's a SUPERSEDED or GROUP number rather
       // than the part's own current one (see findPartByNumber's comment
@@ -1104,7 +1116,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
         data: {
           companyId,
           jobId,
-          partNumber: row.partNumber,
+          partNumber,
           description: row.description || part?.description || null,
           quantity: new Prisma.Decimal(row.quantity),
           status: inStock ? "IN_STOCK" : "PENDING",
@@ -1115,9 +1127,9 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
       });
 
       if (!inStock) {
-        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}) — not currently in stock.`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
+        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${partNumber} (qty ${row.quantity}) — not currently in stock.`, { lineId: created.id, partNumber, quantity: row.quantity });
       } else {
-        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${row.partNumber} (qty ${row.quantity}).`, { lineId: created.id, partNumber: row.partNumber, quantity: row.quantity });
+        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line added: ${partNumber} (qty ${row.quantity}).`, { lineId: created.id, partNumber, quantity: row.quantity });
 
         // 2026-09-29 — user report: "check the reserve part feature if
         // its working correctly, i dont see that it reserves the part."

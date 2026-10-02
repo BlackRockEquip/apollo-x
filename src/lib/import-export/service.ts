@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { createMaster } from "@/lib/master-data/service";
 import { receiveStock } from "@/lib/inventory/service";
 import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
+import { looseNormalized } from "@/lib/master-data/validation";
 import { receiptInput } from "@/lib/inventory/validation";
 import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
@@ -668,12 +669,20 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   const rowResults: ImportRowResult[] = [];
 
   for (const row of rows) {
-    const partNumber = mappedValue(row, input.mapping, "partNumber");
-    if (!partNumber) {
+    const rawPartNumber = mappedValue(row, input.mapping, "partNumber");
+    if (!rawPartNumber) {
       skipped++;
       rowResults.push({ label: "(blank)", status: "skipped", detail: "Missing part number — row skipped." });
       continue;
     }
+    // 2026-10-02 — user request: strip separators (hyphens, periods,
+    // slashes, spaces) and force uppercase here too, same treatment as
+    // every other place a part number is typed/pasted/imported (see
+    // partInput in master-data/validation.ts) — not just a loose match
+    // at lookup time. Applied before the duplicate pre-check right below
+    // so it's comparing the same clean form createMaster will end up
+    // storing, not the sheet's raw spelling.
+    const partNumber = looseNormalized(rawPartNumber) ?? rawPartNumber;
 
     const description = mappedValue(row, input.mapping, "description");
     if (!description) {
