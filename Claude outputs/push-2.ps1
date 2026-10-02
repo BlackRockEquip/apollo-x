@@ -1,51 +1,51 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Parts import: same part number on multiple rows (different bin
-locations) no longer skips as a duplicate; reviving a historical part
-now writes off its stale stock balance at the old location
+Parts import: a re-used bin location code that had been "deleted" (kept
+inactive, not removed, because it still has stock/movement history)
+was permanently unmapped instead of being reactivated
 
-User report 1: "when importing parts that have duplicate rows but
-different locations, the import skips due to duplicate part." Cause:
-importParts only ever checked a part number against the DATABASE
-before creating it, so a sheet with the same part on several rows (one
-per bin it already sits in) created the part on the first row, then
-found that same just-created part on every later row and skipped it as
-"already exists." Fixed by tracking part numbers created/revived
-earlier in the SAME import run (a plain in-memory map, part number ->
-part id, reset per import); a later row matching one of these posts its
-quantity as additional opening stock at its own (possibly different)
-bin location via the normal receiveStock path instead of touching the
-part's other catalog fields again or being skipped. Cross-import
-duplicates are unaffected - a number that already existed before this
-import started is still checked against the database exactly as
-before.
+User report: "when deleting parts from stock levels, the history is
+not working when importing new parts and locations, bin locations do
+not pickup, parts are skipped." Confirmed with the user: the previous
+batch's fix (duplicate-row-per-location import + stale-balance
+write-off on part revive) was already deployed; separately, Storage
+Locations themselves had also been deleted before this re-import.
 
-User report 2: "when all parts are deleted and reimported, it still
-lists the old bin location, that must change to new location." Cause:
-deleting a part with stock/job history doesn't actually remove it (see
-the previous batch's revive-on-reimport fix) - it's deactivated instead,
-and deactivating never clears its StockBalance rows. Stock Levels shows
-every location with positive on-hand stock, so a revived part's old
-location kept showing up alongside the new one this import posts to.
-Fixed: when importParts revives a historical part, it now looks up
-every stock balance still greater than zero for that part and writes
-each one off with a real audited ADJUSTMENT_OUT movement (reason:
-"Historical part revived by import - previous stock balance cleared"),
-through the same adjustStock() path the Stock Levels adjustment screen
-uses - not a silent raw reset - so the old quantity disappears from
-Stock Levels but stays visible on the part's own movement history.
-Requires INVENTORY_ADJUST on top of the PARTS_CREATE/PARTS_EDIT already
-needed to import, checked once up front with the existing permission
-checks so a user missing it fails the whole import cleanly instead of
-partway through.
+Root cause: deleting a Storage Location that still has stock/movement
+history doesn't actually remove it - deleteMasterRecord falls back to
+marking it inactive instead (same Restrict-fallback shape as
+deletePart for Parts), which leaves its code permanently taken
+(@@unique([companyId, codeNormalized]) isn't filtered by active).
+importParts's own location lookup was filtered to active:true only, so
+it could never see that location again - a sheet re-using the same bin
+code found "no such location," and since "create missing locations"
+then tried to create a fresh one under that same code, it collided
+with the database's own unique constraint and failed. The row's bin
+location note explained the failure, but every subsequent user-visible
+symptom followed from there: with binLocationId left unresolved,
+quantity couldn't be posted at all, and - because Prisma's update()
+leaves a field alone when it's given undefined rather than clearing it
+- a revived part's OLD bin location was never overwritten with the new
+one, so it kept showing the stale location exactly like before last
+session's fix. The same unresolved bin location also made the
+multi-row-per-part fix from last session misreport a legitimate
+"another location for this part" row as "skipped," since posting stock
+was the only way that branch had of recognizing success.
 
-Both fixes land in the same per-row loop in importParts; the bin
-location for a row is now resolved once, near the top of the loop
-(moved up from its old spot just before building the create/update
-payload), so both the new within-import duplicate branch and the
-original create/revive path use the same resolved value instead of two
-separate lookups.
+Fix: importParts (and previewNewBinLocations) now look up Storage
+Locations without the active filter. A bin code matching an inactive
+location reactivates it (through a normal update, not a raw delete) -
+the same "revive rather than recreate" approach the previous batch
+already uses for a historical Part's own number - instead of trying to
+create a colliding duplicate. previewNewBinLocations (the "which codes
+are new" confirmation shown before import) no longer lists an inactive
+existing code as new, since it'll be reactivated, not created. Needs
+STORAGE_LOCATIONS_EDIT (on top of the module/permission checks already
+in place), checked once up front whenever a bin location column is
+mapped at all - independent of "create missing locations," since
+reactivating an existing record is a different action from creating a
+new one.
 
 src/lib/import-export/service.ts.
 

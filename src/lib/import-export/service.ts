@@ -588,7 +588,14 @@ export async function previewNewBinLocations(ctx: RequestContext, raw: unknown):
   const input = importRowsInput.parse(raw);
   if (!input.mapping.binLocationCode) return { newLocationCodes: [] };
   const rows = await readUploadedRows(input);
-  const locations = await prisma.storageLocation.findMany({ where: { companyId, active: true }, select: { code: true } });
+  // Not filtered to active:true (2026-10-02) — an inactive location (one
+  // that was "deleted" but kept because it still has stock/movement
+  // history — see deleteMasterRecord's own fallback) still occupies its
+  // code (@@unique([companyId, codeNormalized]) isn't filtered by active
+  // either), and importParts below now reactivates a match like that
+  // instead of trying to create a colliding duplicate. So it isn't "new"
+  // from this preview's point of view.
+  const locations = await prisma.storageLocation.findMany({ where: { companyId }, select: { code: true } });
   const known = new Set(locations.map((l) => l.code.trim().toLowerCase()));
   const seen = new Set<string>();
   const newLocationCodes: string[] = [];
@@ -678,8 +685,22 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   // a spreadsheet cell can't safely infer). "Quantity" only gets posted as
   // opening stock when a matching location was found for that row; see the
   // per-row handling below for what happens when it isn't.
-  const locations = await prisma.storageLocation.findMany({ where: { companyId, active: true }, select: { id: true, code: true } });
-  const locationByNormalizedCode = new Map(locations.map((l) => [l.code.trim().toLowerCase(), l.id]));
+  // Not filtered to active:true (2026-10-02 — user report: re-importing
+  // after a Storage Location had been "deleted" — deleteMasterRecord
+  // deactivates rather than removes one that still has stock/movement
+  // history, same Restrict-fallback shape as deletePart — left its code
+  // permanently unmapped. The active-only lookup below never saw it, and
+  // "create missing locations" then tried to create a fresh location
+  // under the same code, which the DB's own @@unique([companyId,
+  // codeNormalized]) rejects since that constraint isn't filtered by
+  // active either — so the bin location failed silently for every row
+  // using that code, and (since payload.binLocationId is then undefined,
+  // which Prisma's update() leaves untouched rather than clearing) a
+  // revived part's OLD bin location never got replaced with the new one).
+  // Now carries `active` through so a match can be reactivated instead —
+  // see the per-row resolution below.
+  const locations = await prisma.storageLocation.findMany({ where: { companyId }, select: { id: true, code: true, active: true } });
+  const locationByNormalizedCode = new Map(locations.map((l) => [l.code.trim().toLowerCase(), { id: l.id, active: l.active }]));
   // Only demanded when the sheet actually has a Quantity column mapped — a
   // catalog-only import (no stock column linked) shouldn't need
   // INVENTORY_RECEIVE on top of the PARTS_CREATE already checked above.
@@ -697,6 +718,16 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
   if (input.createMissingLocations && input.mapping.binLocationCode) {
     requireModule(ctx, "STORAGE", "WRITE");
     requireTenantPermission(ctx, "STORAGE_LOCATIONS_CREATE");
+  }
+  // 2026-10-02 — a bin location code that matches an inactive (not
+  // actually deleted — see the locations query above) location gets
+  // reactivated, independent of createMissingLocations, since it's an
+  // edit to an existing record rather than a new one. Checked once up
+  // front for the same "fail cleanly before any row is written" reason
+  // as the checks above.
+  if (input.mapping.binLocationCode) {
+    requireModule(ctx, "STORAGE", "WRITE");
+    requireTenantPermission(ctx, "STORAGE_LOCATIONS_EDIT");
   }
 
   let created = 0;
@@ -746,9 +777,30 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
     // bin-location picker sets — regardless of whether a quantity was
     // also given for this row.
     const binLocationCode = mappedValue(row, input.mapping, "binLocationCode");
-    let binLocationId = binLocationCode ? locationByNormalizedCode.get(binLocationCode.trim().toLowerCase()) : undefined;
+    const matchedLocation = binLocationCode ? locationByNormalizedCode.get(binLocationCode.trim().toLowerCase()) : undefined;
+    let binLocationId: string | undefined = matchedLocation?.id;
     let binLocationNote = "";
-    if (binLocationCode && !binLocationId) {
+    if (binLocationCode && matchedLocation && !matchedLocation.active) {
+      // 2026-10-02 — user report: re-importing after a Storage Location
+      // had been "deleted" left its bin permanently unmapped. It wasn't
+      // really deleted — deleteMasterRecord falls back to deactivating a
+      // location that still has stock/movement history, same Restrict
+      // shape as deletePart — so its code is still taken
+      // (@@unique([companyId, codeNormalized]) isn't filtered by active),
+      // but the active-only lookup this used to be never saw it, and
+      // "create missing locations" then tried to create a fresh one under
+      // the same code and collided with the DB constraint. Reactivated
+      // instead, the same "revive rather than recreate" approach already
+      // used for a historical Part's own number below.
+      try {
+        await prisma.storageLocation.update({ where: { id: matchedLocation.id }, data: { active: true } });
+        locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), { id: matchedLocation.id, active: true });
+        binLocationNote = ` — "${binLocationCode}" had been deleted but was kept (it still has stock/movement history) — reactivated instead of creating a duplicate.`;
+      } catch (err) {
+        binLocationId = undefined;
+        binLocationNote = ` — bin location "${binLocationCode}" couldn't be reactivated — ${describeRowError(err)}`;
+      }
+    } else if (binLocationCode && !matchedLocation) {
       if (input.createMissingLocations) {
         try {
           // Same createMaster call the "New location" form uses. Defaulted
@@ -758,7 +810,7 @@ export async function importParts(ctx: RequestContext, raw: unknown): Promise<Im
           // Storage Locations tab like any other location.
           const newLocation = (await createMaster(ctx, "storage-locations", { code: binLocationCode, name: binLocationCode, type: "BIN" })) as { id: string };
           binLocationId = newLocation.id;
-          locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), newLocation.id);
+          locationByNormalizedCode.set(binLocationCode.trim().toLowerCase(), { id: newLocation.id, active: true });
           binLocationNote = ` — "${binLocationCode}" wasn't on file, so it was added as a new bin location (type: Bin).`;
         } catch (err) {
           binLocationNote = ` — bin location "${binLocationCode}" couldn't be created — ${describeRowError(err)}`;
