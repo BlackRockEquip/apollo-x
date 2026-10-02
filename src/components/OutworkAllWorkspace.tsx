@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { FocusEvent } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
@@ -109,6 +110,13 @@ export function OutworkAllWorkspace() {
     return () => clearTimeout(timer);
   }, [supplierQuery, supplierPickerOpen]);
 
+  function closeDropdownUnlessWithin(close: () => void) {
+    return (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      close();
+    };
+  }
+
   function addLine() { setLines((rows) => [...rows, { id: `row-${rows.length + 1}-${Date.now()}`, description: "", quantity: "1" }]); }
   function removeLine(id: string) { setLines((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows)); }
   function updateLine(id: string, field: "description" | "quantity", value: string) { setLines((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r))); }
@@ -177,12 +185,12 @@ export function OutworkAllWorkspace() {
     {showAdd && <div className="drawer-backdrop"><aside className="form-drawer" role="dialog" aria-modal="true">
       <header><div><p className="eyebrow">Outwork</p><h2>Create outwork</h2></div><button onClick={() => setShowAdd(false)}><X size={18} /></button></header>
       <div className="drawer-fields">
-        <label className="party-selector"><span>Job</span><div><Search size={15} /><input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); }} placeholder="Search job number…" /></div>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setJobOptions([]))}><span>Job</span><div><Search size={15} /><input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); }} placeholder="Search job number…" /></div>
           {jobOptions.length > 0 && <div className="selector-results">{jobOptions.map((o) => (
             <button key={o.id} type="button" onClick={() => { setJobId(o.id); setJobQuery(jobRef({ jobNumber: o.jobNumber ?? null, draftNumber: o.draftNumber ?? null })); setJobOptions([]); }}><strong>{jobRef({ jobNumber: o.jobNumber ?? null, draftNumber: o.draftNumber ?? null })}</strong></button>
           ))}</div>}
         </label>
-        <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); setSupplierPickerOpen(true); }} onFocus={() => setSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setSupplierPickerOpen(false))}><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); setSupplierPickerOpen(true); }} onFocus={() => setSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>
           {supplierPickerOpen && supplierOptions.length > 0 && <div className="selector-results">{supplierOptions.map((o) => (
             <button key={o.id} type="button" onClick={() => { setSupplierId(o.id); setSupplierQuery(o.name || ""); setSupplierOptions([]); setSupplierPickerOpen(false); }}><strong>{o.name}</strong></button>
           ))}</div>}

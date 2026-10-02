@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { FocusEvent } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -171,6 +172,13 @@ export function RfqAllWorkspace() {
     return () => clearTimeout(timer);
   }, [jobQuery]);
 
+  function closeDropdownUnlessWithin(close: () => void) {
+    return (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      close();
+    };
+  }
+
   function resetForm() {
     setSupplierId(""); setSupplierQuery(""); setJobId(""); setJobQuery(""); setSendEmail(true);
     setPartsDescription(""); setQuantityOutstanding(""); setStatus("SENT"); setNotes(""); setAttachmentFile(null);
@@ -266,12 +274,12 @@ export function RfqAllWorkspace() {
     {showAdd && <div className="drawer-backdrop"><aside className="form-drawer" role="dialog" aria-modal="true">
       <header><div><p className="eyebrow">RFQ</p><h2>Add RFQ</h2></div><button onClick={() => setShowAdd(false)}><X size={18} /></button></header>
       <div className="drawer-fields">
-        <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); }} placeholder="Search active supplier" /></div>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setSupplierOptions([]))}><span>Supplier</span><div><Search size={15} /><input value={supplierQuery} onChange={(e) => { setSupplierQuery(e.target.value); setSupplierId(""); }} placeholder="Search active supplier" /></div>
           {supplierOptions.length > 0 && <div className="selector-results">{supplierOptions.map((o) => (
             <button key={o.id} type="button" onClick={() => { setSupplierId(o.id); setSupplierQuery(o.name || ""); setSupplierOptions([]); }}><strong>{o.name}</strong></button>
           ))}</div>}
         </label>
-        <label className="party-selector"><span>Job (optional)</span><div><Search size={15} /><input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); }} placeholder="Leave blank for a general RFQ" /></div>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setJobOptions([]))}><span>Job (optional)</span><div><Search size={15} /><input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); }} placeholder="Leave blank for a general RFQ" /></div>
           {jobOptions.length > 0 && <div className="selector-results">{jobOptions.map((o) => (
             <button key={o.id} type="button" onClick={() => { setJobId(o.id); setJobQuery(jobRef(o)); setJobOptions([]); }}><strong>{jobRef(o)}</strong></button>
           ))}</div>}

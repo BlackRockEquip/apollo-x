@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FocusEvent } from "react";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -672,6 +673,28 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const next = prior.then(run, run);
     partLineSaveQueue.current[lineId] = next;
     return next;
+  }
+
+  // 2026-10-02 — user request: "When clicking in fields that have dropdowns,
+  // and i click onto another field, the dropdown does not go away." Every
+  // typeahead in this file (Machine make, Customer, Apply job kit, bulk
+  // Supplier, the parts-table Supplier column, RFQ supplier, Outwork
+  // supplier x2, link an unlinked PEX return job) opens its own
+  // .selector-results dropdown purely based on "do we currently have
+  // options" — nothing ever closed it again once focus moved on, so
+  // clicking straight from one of these fields into another left the
+  // previous dropdown hanging open on screen. Attached as onBlur on each
+  // dropdown's own wrapping element (the <label>/<td> containing both the
+  // input and its .selector-results), this closes it as soon as focus moves
+  // OUTSIDE that wrapper — but NOT when focus moves to one of the
+  // dropdown's own option buttons (checked via relatedTarget, which the
+  // browser sets to whatever element focus is moving TO), so clicking an
+  // actual option still works exactly as before this fix.
+  function closeDropdownUnlessWithin(close: () => void) {
+    return (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      close();
+    };
   }
 
   const [form, setForm] = useState<Record<string, string>>({
@@ -2891,7 +2914,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           editable for a Mechanic — see the hook comment above. */}
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label className="party-selector">
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setShowMachineMakeOptions(false))}>
           <span>Machine make</span>
           <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
           {showMachineMakeOptions && machineMakeOptions.length > 0 && (
@@ -3014,7 +3037,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <header><div><h2>Customer details</h2></div></header>
           <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields customer-fields">
-            <label className="wide party-selector">
+            <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setShowCustomerOptions(false))}>
               <span>Customer *</span>
               <div><Search size={15} /><input value={customerQuery || (job?.customer?.name ? String(job.customer.name) : "")} onChange={(e) => { setCustomerQuery(e.target.value); setShowCustomerOptions(true); if (!e.target.value) updateField("customerId", ""); }} onFocus={() => setShowCustomerOptions(true)} placeholder="Search customer name, account code or branch" /></div>
               {showCustomerOptions && customerQuery.trim().length >= 2 && (
@@ -3410,7 +3433,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {showAddParts && (
               <>
                 <div className="drawer-fields">
-                  <label className="wide party-selector"><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
+                  <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setJobKitOptions([]))}><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
                   <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
                   <label className="wide"><span>Paste parts list (one per line — part number and quantity are required; description is optional: &quot;PN-1001, 2, Hydraulic seal kit&quot;)</span><textarea rows={4} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044, 4"} /></label>
                   <label className="wide">
@@ -3448,7 +3471,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {bulkEditMode && (
               <div className="bulk-update-toolbar" style={{ padding: "10px 14px", background: "#fbf8f0", borderBottom: "1px solid var(--ink-150)" }}>
                 <label><span>Order number (optional)</span><input value={bulkOrderNumber} onChange={(e) => setBulkOrderNumber(e.target.value)} placeholder="Applies to every selected row" /></label>
-                <label className="party-selector"><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
+                <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setBulkSupplierPickerOpen(false))}><span>Supplier (optional)</span><div><Search size={15} /><input value={bulkSupplierQuery} onChange={(e) => { setBulkSupplierQuery(e.target.value); setBulkSupplierId(""); setBulkSupplierPickerOpen(true); }} onFocus={() => setBulkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{bulkSupplierPickerOpen && bulkSupplierOptions.length > 0 && <div className="selector-results">{bulkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setBulkSupplierId(s.id); setBulkSupplierQuery(s.name); setBulkSupplierOptions([]); setBulkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
                 <div className="bulk-update-actions">
                   <button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button>
                   <button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button>
@@ -3523,7 +3546,30 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       }}
                     />
                   </td>
-                  <td className="party-selector">
+                  <td
+                    className="party-selector"
+                    onBlur={closeDropdownUnlessWithin(() => {
+                      // 2026-10-02 — user request: "when typing supplier
+                      // name, prefill does not pickup supplier until i
+                      // press tab." Previously the ONLY way to actually
+                      // attach a supplier to this line was clicking one of
+                      // the dropdown buttons below — typing the name and
+                      // moving on (by any means other than a lucky Tab that
+                      // happened to land focus on a matching button, which
+                      // read as "it only works if I press tab") saved
+                      // nothing. Now, leaving this field with the typed text
+                      // an exact (case-insensitive) match for one of the
+                      // currently loaded options commits it automatically,
+                      // same as the Order # cell beside it already commits
+                      // on blur — no click required when what was typed
+                      // already names a real supplier.
+                      if (!supplierPickerOpenHere) return;
+                      const typed = orderSupplierQuery.trim().toLowerCase();
+                      const match = typed ? orderSupplierOptions.find((s) => s.name.trim().toLowerCase() === typed) : undefined;
+                      if (match) { void queueRowSave(lineId, () => saveSupplierInline(lineId, match.id)); return; }
+                      setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
+                    })}
+                  >
                     {/* 2026-09-15, user request: "make that the supplier
                         field is also editable without clicking the change
                         supplier button." Always an editable typeahead, no
@@ -3585,7 +3631,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
 
             <div className="drawer-fields">
-              <label className="wide party-selector"><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); setRfqSupplierPickerOpen(true); }} onFocus={() => setRfqSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{rfqSupplierPickerOpen && rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
+              <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setRfqSupplierPickerOpen(false))}><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); setRfqSupplierPickerOpen(true); }} onFocus={() => setRfqSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{rfqSupplierPickerOpen && rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
               <label>
                 <span>&nbsp;</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -4046,7 +4092,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <aside className="form-drawer compact-dialog job-editor-drawer">
                   <header><div><h2>Record outwork</h2><p>Send components out to a supplier for outwork.</p></div><button type="button" onClick={() => setShowOutworkPopup(false)} aria-label="Close dialog"><X size={18} /></button></header>
                   <div className="drawer-fields">
-                    <label className="party-selector"><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); setOutworkSupplierPickerOpen(true); }} onFocus={() => setOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{outworkSupplierPickerOpen && outworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={outworkCreatingSupplier} onClick={() => void createOutworkSupplier()}><Plus size={13} style={{ verticalAlign: "-2px" }} /> {outworkCreatingSupplier ? "Creating…" : `Create supplier "${outworkSupplierQuery.trim()}"`}</button></div>}</label>
+                    <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setOutworkSupplierPickerOpen(false))}><span>Supplier</span><div><Search size={15} /><input value={outworkSupplierQuery} onChange={(e) => { setOutworkSupplierQuery(e.target.value); setOutworkSupplierId(""); setOutworkSupplierPickerOpen(true); }} onFocus={() => setOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{outworkSupplierPickerOpen && outworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{outworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setOutworkSupplierId(s.id); setOutworkSupplierQuery(s.name); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={outworkCreatingSupplier} onClick={() => void createOutworkSupplier()}><Plus size={13} style={{ verticalAlign: "-2px" }} /> {outworkCreatingSupplier ? "Creating…" : `Create supplier "${outworkSupplierQuery.trim()}"`}</button></div>}</label>
                     <label><span>Date sent out</span><input type="date" value={outworkDateSentOut} onChange={(e) => setOutworkDateSentOut(e.target.value)} /></label>
                     <div className="wide">
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -4075,7 +4121,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   return <tr key={item.id}>
                     <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /></td>
                     <td><input type="number" min={1} value={editOutworkQuantity} onChange={(e) => setEditOutworkQuantity(e.target.value)} style={{ width: 70 }} /></td>
-                    <td className="party-selector"><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={editOutworkCreatingSupplier} onClick={() => void createEditOutworkSupplier()}><Plus size={12} style={{ verticalAlign: "-2px" }} /> {editOutworkCreatingSupplier ? "Creating…" : `Create supplier "${editOutworkSupplierQuery.trim()}"`}</button></div>}</td>
+                    <td className="party-selector" onBlur={closeDropdownUnlessWithin(() => setEditOutworkSupplierPickerOpen(false))}><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={editOutworkCreatingSupplier} onClick={() => void createEditOutworkSupplier()}><Plus size={12} style={{ verticalAlign: "-2px" }} /> {editOutworkCreatingSupplier ? "Creating…" : `Create supplier "${editOutworkSupplierQuery.trim()}"`}</button></div>}</td>
                     {/* 2026-10-01, user request ("be able to edit receive
                         date like sent date") — Date received added
                         alongside Date sent out, same cell as the "Sent /
@@ -4244,7 +4290,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </article></div>
             {!job.pexAsSupply.returnJob && <div className="drawer-fields">
               <label><span>Create linked return job now</span><div className="stack-row"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/create-return`, {})}>Create return job</button></div></label>
-              <label className="wide party-selector"><span>Or link an existing unlinked PEX return job</span><div><Search size={14} /><input value={pexReturnJobQuery} onChange={(e) => { setPexReturnJobQuery(e.target.value); setSelectedPexReturnJobId(""); }} placeholder="Search unlinked PEX return jobs…" /></div>{pexReturnJobOptions.length > 0 && <div className="selector-results">{pexReturnJobOptions.map((option) => <button type="button" key={option.id} onClick={() => { setSelectedPexReturnJobId(option.id); setPexReturnJobQuery(text(option.jobNumber || option.draftNumber)); setPexReturnJobOptions([]); }}><strong>{text(option.jobNumber || option.draftNumber)}</strong><span>{text(option.customer?.name || option.customer?.tradingName)}</span></button>)}</div>}</label>
+              <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPexReturnJobOptions([]))}><span>Or link an existing unlinked PEX return job</span><div><Search size={14} /><input value={pexReturnJobQuery} onChange={(e) => { setPexReturnJobQuery(e.target.value); setSelectedPexReturnJobId(""); }} placeholder="Search unlinked PEX return jobs…" /></div>{pexReturnJobOptions.length > 0 && <div className="selector-results">{pexReturnJobOptions.map((option) => <button type="button" key={option.id} onClick={() => { setSelectedPexReturnJobId(option.id); setPexReturnJobQuery(text(option.jobNumber || option.draftNumber)); setPexReturnJobOptions([]); }}><strong>{text(option.jobNumber || option.draftNumber)}</strong><span>{text(option.customer?.name || option.customer?.tradingName)}</span></button>)}</div>}</label>
               <div className="stack-row"><button type="button" className="quiet-button" disabled={saving || !selectedPexReturnJobId} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/link-return`, { returnJobId: selectedPexReturnJobId }).then(() => { setSelectedPexReturnJobId(""); setPexReturnJobQuery(""); })}>Link return job</button></div>
             </div>}
           </section>}

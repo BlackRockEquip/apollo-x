@@ -3,6 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async list/option loading intentionally mirrors existing workspace patterns (MasterDataWorkspace, UsersWorkspace) */
 
 import { useCallback, useEffect, useState } from "react";
+import type { FocusEvent } from "react";
 import Link from "next/link";
 import { Eye, Loader2, Plus, Printer, Search, Trash2, Upload, X } from "lucide-react";
 import { STOCK_STATE_LABEL, STOCK_STATE_CLASS, type StockState } from "@/lib/inventory/stock-state";
@@ -557,6 +558,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       // "options are a convenience" approach as loadOptions above.
     } finally { setJobsLoading(false); }
   }
+  function closeDropdownUnlessWithin(close: () => void) {
+    return (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      close();
+    };
+  }
   function openPickBar() {
     setPickError(""); setJobId(""); setJobQuery("");
     setPickBarOpen(true);
@@ -876,21 +883,23 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   </tbody>
                 </table>
               </div>
-              <label><span>Job *</span>
-                <input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); setJobPickerOpen(true); }} placeholder="Type to search open jobs…" />
-              </label>
-              {jobPickerOpen && (jobsLoading ? <p className="hint-text"><Loader2 className="spin" size={13} /> Searching…</p> : (
-                <ul className="job-picker-results">
-                  {jobs.map((j) => (
-                    <li key={j.id}>
-                      <button type="button" className={jobId === j.id ? "active" : ""} onClick={() => { setJobId(j.id); setJobQuery(`${j.jobNumber}${j.customerName ? ` — ${j.customerName}` : ""}`); setJobPickerOpen(false); }}>
-                        {j.jobNumber}{j.customerName ? ` — ${j.customerName}` : ""}
-                      </button>
-                    </li>
-                  ))}
-                  {!jobsLoading && jobs.length === 0 && <li className="hint-text">No open jobs found.</li>}
-                </ul>
-              ))}
+              <div style={{ display: "grid", gap: 14 }} onBlur={closeDropdownUnlessWithin(() => setJobPickerOpen(false))}>
+                <label><span>Job *</span>
+                  <input value={jobQuery} onChange={(e) => { setJobQuery(e.target.value); setJobId(""); setJobPickerOpen(true); }} placeholder="Type to search open jobs…" />
+                </label>
+                {jobPickerOpen && (jobsLoading ? <p className="hint-text"><Loader2 className="spin" size={13} /> Searching…</p> : (
+                  <ul className="job-picker-results">
+                    {jobs.map((j) => (
+                      <li key={j.id}>
+                        <button type="button" className={jobId === j.id ? "active" : ""} onClick={() => { setJobId(j.id); setJobQuery(`${j.jobNumber}${j.customerName ? ` — ${j.customerName}` : ""}`); setJobPickerOpen(false); }}>
+                          {j.jobNumber}{j.customerName ? ` — ${j.customerName}` : ""}
+                        </button>
+                      </li>
+                    ))}
+                    {!jobsLoading && jobs.length === 0 && <li className="hint-text">No open jobs found.</li>}
+                  </ul>
+                ))}
+              </div>
               {pickError ? <div className="inline-error">{pickError}</div> : null}
             </div>
             <footer>

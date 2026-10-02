@@ -1,32 +1,36 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Loose part-number matching for stock cross-check; Add/Import Parts button styling
+Fix parts-table supplier picker: commit on blur, close dropdowns on blur-away
 
-Adding/importing parts to a job ("Add / cross-check with stock" and the
-Excel/CSV import) resolves the typed/pasted part number through
-findPartByNumber (inventory/parts-lookup.ts). That only ever did an exact
-match (after trim/uppercase) against the part's own number or an alternate
-number, so "3j1907" never matched a stock part filed as "3J-1907" - punctuation
-and spacing had to match exactly. Added a third fallback tier that strips
-every non-alphanumeric character from both sides (new looseNormalized helper,
-master-data/validation.ts) before comparing, via a raw query using Postgres's
-regexp_replace so the stored partNumberNormalized/numberNormalized columns
-and their unique constraints are untouched - this only changes what's willing
-to match, never what's stored. Only reached when the two exact-match tiers
-above have already missed, so the common case (typing the part's real number)
-is unaffected. findPartByNumber is the one shared lookup used everywhere a
-raw part number is resolved (Stock Levels search, job kits, RFQ matching, as
-well as adding/importing parts to a job), so this fix applies everywhere that
-matching happens, not just the job parts flow that surfaced it.
+Root cause of three related reports: the inline Supplier typeahead in the
+job Parts table (and every other typeahead in this file - Machine make,
+Customer, Apply job kit, bulk Supplier, RFQ supplier, Outwork supplier x2,
+link an unlinked PEX return job) only ever saved/selected a value when its
+dropdown button was explicitly clicked. Nothing closed the dropdown or
+committed the typed text when focus moved elsewhere, so clicking straight
+from one of these fields into another left the previous dropdown hanging
+open, and typing a supplier's full name then clicking away (instead of
+clicking the dropdown row) silently saved nothing - explaining both "the
+dropdown does not go away" and "prefill does not pick up the supplier until
+I press tab" (Tab happened to land focus on the matching dropdown button,
+which is the only thing that actually worked).
 
-Also: the "Add/Import Parts" button (job parts panel) moved to the left of
-its row (was right-aligned via the shared .detail-actions footer class - left
-aligned here with an inline override rather than touching that shared class)
-and now uses .section-action-button, the same gold-accent style as the
-"Create picking slip" button, instead of the plain .quiet-button it had.
+Fix: new closeDropdownUnlessWithin() helper, attached as onBlur on each
+dropdown's own wrapping <label>/<td> - closes it as soon as focus leaves
+that wrapper (checked via relatedTarget), but not when focus moves to one of
+the dropdown's own option buttons, so clicking an option still works exactly
+as before. The parts-table Supplier cell additionally auto-commits on blur
+when the typed text is an exact match for one of the currently loaded
+supplier options, mirroring how the Order # cell beside it already commits
+on blur.
 
-src/lib/master-data/validation.ts, src/lib/inventory/parts-lookup.ts,
+This also resolves the "Parts follow-up section doesn't show a supplier
+with no PO number yet" report - the backend (sendPartsFollowup,
+partsFollowupGroups) already included PENDING lines with a supplier and no
+order number; the supplier was just never actually being saved to the line
+in the first place due to the picker bug above.
+
 src/components/JobWorkspace.tsx.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

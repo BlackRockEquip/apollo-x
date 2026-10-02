@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FocusEvent } from "react";
 import { FileText, Loader2, Plus, Search } from "lucide-react";
 import { readListState, writeListState } from "./list-state";
 import { ScrollRestore } from "./ScrollRestore";
@@ -174,6 +175,22 @@ export function JobKitsWorkspace() {
     }
   }
 
+  // 2026-10-02 — user request: "When clicking in fields that have
+  // dropdowns, and i click onto another field, the dropdown does not go
+  // away." Same fix as JobWorkspace.tsx's own closeDropdownUnlessWithin
+  // (see its comment there for the full story) — the Part typeahead below
+  // never closed its .selector-results dropdown on its own; clicking into
+  // another field left it hanging open. Attached as onBlur on the
+  // dropdown's own wrapping <label> (which contains both the input and the
+  // dropdown), this closes it as soon as focus moves OUTSIDE that wrapper,
+  // but not when focus moves to one of the dropdown's own option buttons.
+  function closeDropdownUnlessWithin(close: () => void) {
+    return (e: FocusEvent<HTMLElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      close();
+    };
+  }
+
   async function addLine() {
     if (!selectedKit || !form.partId) return;
     setSaving(true); setError("");
@@ -334,7 +351,7 @@ export function JobKitsWorkspace() {
           {importSummary.skipped.length > 0 && <> {importSummary.skipped.length} part number{importSummary.skipped.length === 1 ? "" : "s"} not found in the parts catalog and skipped: {importSummary.skipped.map((s) => s.partNumber).join(", ")}.</>}
         </div>
       )}
-      <div className="drawer-fields"><label className="wide party-selector"><span>Part</span><div><Search size={15} /><input value={partQuery} onChange={(e) => { setPartQuery(e.target.value); setForm((c) => ({ ...c, partId: "" })); }} placeholder="Search part number or description" /></div>{partOptions.length > 0 && <div className="selector-results">{partOptions.map((part) => <button key={part.id} type="button" onClick={() => { setForm((c) => ({ ...c, partId: part.id })); setPartQuery(`${part.partNumber || ""} · ${part.description || ""}`); setPartOptions([]); }}>{part.partNumber} · {part.description}</button>)}</div>}</label><label><span>Quantity</span><input type="number" min="0.0001" step="0.0001" value={form.quantityDefault} onChange={(e) => setForm((c) => ({ ...c, quantityDefault: e.target.value }))} /></label><label><span>Sort order</span><input type="number" min="0" step="1" value={form.sortOrder} onChange={(e) => setForm((c) => ({ ...c, sortOrder: e.target.value }))} /></label><label className="wide"><span>Notes</span><textarea rows={3} value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !form.partId} onClick={() => void addLine()}>Add kit line</button></footer><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Description</th><th>Qty</th><th>Notes</th><th>Order</th><th></th></tr></thead><tbody>{lines.map((line) => <tr key={line.id}><td className="mono">{line.part.partNumber}</td><td>{line.part.description}</td><td><input type="number" min="0.0001" step="0.0001" defaultValue={line.quantityDefault} onBlur={(e) => { const next = e.target.value; if (next !== line.quantityDefault) void updateLine(line, { quantityDefault: next }); }} /></td><td><input defaultValue={line.notes || ""} onBlur={(e) => { const next = e.target.value; if (next !== (line.notes || "")) void updateLine(line, { notes: next || null }); }} /></td><td><input type="number" min="0" step="1" defaultValue={String(line.sortOrder)} onBlur={(e) => { const next = Number(e.target.value); if (next !== line.sortOrder) void updateLine(line, { sortOrder: next }); }} /></td><td className="actions"><button type="button" className="table-action" onClick={() => void removeLine(line.id)}>Remove</button></td></tr>)}{lines.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">This job kit does not have any lines yet.</td></tr>}</tbody></table></div></> : <div className="table-state compact-empty-state">Save or open a job kit to manage its lines.</div>}</section>}
+      <div className="drawer-fields"><label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPartOptions([]))}><span>Part</span><div><Search size={15} /><input value={partQuery} onChange={(e) => { setPartQuery(e.target.value); setForm((c) => ({ ...c, partId: "" })); }} placeholder="Search part number or description" /></div>{partOptions.length > 0 && <div className="selector-results">{partOptions.map((part) => <button key={part.id} type="button" onClick={() => { setForm((c) => ({ ...c, partId: part.id })); setPartQuery(`${part.partNumber || ""} · ${part.description || ""}`); setPartOptions([]); }}>{part.partNumber} · {part.description}</button>)}</div>}</label><label><span>Quantity</span><input type="number" min="0.0001" step="0.0001" value={form.quantityDefault} onChange={(e) => setForm((c) => ({ ...c, quantityDefault: e.target.value }))} /></label><label><span>Sort order</span><input type="number" min="0" step="1" value={form.sortOrder} onChange={(e) => setForm((c) => ({ ...c, sortOrder: e.target.value }))} /></label><label className="wide"><span>Notes</span><textarea rows={3} value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !form.partId} onClick={() => void addLine()}>Add kit line</button></footer><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Description</th><th>Qty</th><th>Notes</th><th>Order</th><th></th></tr></thead><tbody>{lines.map((line) => <tr key={line.id}><td className="mono">{line.part.partNumber}</td><td>{line.part.description}</td><td><input type="number" min="0.0001" step="0.0001" defaultValue={line.quantityDefault} onBlur={(e) => { const next = e.target.value; if (next !== line.quantityDefault) void updateLine(line, { quantityDefault: next }); }} /></td><td><input defaultValue={line.notes || ""} onBlur={(e) => { const next = e.target.value; if (next !== (line.notes || "")) void updateLine(line, { notes: next || null }); }} /></td><td><input type="number" min="0" step="1" defaultValue={String(line.sortOrder)} onBlur={(e) => { const next = Number(e.target.value); if (next !== line.sortOrder) void updateLine(line, { sortOrder: next }); }} /></td><td className="actions"><button type="button" className="table-action" onClick={() => void removeLine(line.id)}>Remove</button></td></tr>)}{lines.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">This job kit does not have any lines yet.</td></tr>}</tbody></table></div></> : <div className="table-state compact-empty-state">Save or open a job kit to manage its lines.</div>}</section>}
   </div>;
 }
 /* eslint-enable react-hooks/set-state-in-effect */
