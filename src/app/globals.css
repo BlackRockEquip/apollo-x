@@ -1213,6 +1213,37 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .report-ratio-detail { display: block; margin-top: 4px; color: var(--ink-500); font-size: 10.5px; font-weight: 500; text-transform: none; line-height: 1.4; }
 .metric-card.report-coming-soon { opacity: .65; }
 .metric-card.report-coming-soon strong { color: var(--ink-300); }
+/* 2026-10-02 — Reports redesign (user request: "Fix the view of the graphs
+   displayed, too big and cluttered together, arrange for a professional
+   view, basically its own dashboard view of everything"). The Monthly
+   tab's CombinedAnalyticsChart (a fixed 900x280 viewBox SVG) previously
+   rendered with no containing card at all, so it stretched to the full
+   page width with nothing to visually separate it from the page — the
+   actual source of "too big." .report-chart-card gives it the same
+   bordered-card treatment every other Reports section already has, capped
+   at a comfortable reading width instead of edge-to-edge. */
+.report-chart-card { max-width: 920px; }
+/* Customer name used as a click-through link (jobs-per-customer bar list
+   + table, warranty breakdown's by-customer table) into the new Customer
+   drill-down tab — looks like the surrounding text, not a button, until
+   hover, so the existing dense tables don't read as "buttons everywhere." */
+.report-customer-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.report-customer-link:hover { color: var(--gold-600); text-decoration: underline; }
+/* Overview tab — the new "dashboard view of everything" landing page.
+   Top-customers / warranty-mix sit side by side on wide screens, same
+   breakpoint as .metric-grid below, and stack on narrow ones. */
+.report-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .report-overview-grid { grid-template-columns: 1fr; } }
+/* Each Overview card's header gets a small "View details" link into the
+   matching full tab, instead of duplicating that tab's entire content. */
+.report-card-link { border: 0; background: none; padding: 0; color: var(--blue-600); font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.report-card-link:hover { text-decoration: underline; }
+/* Customer drill-down tab's header — name + a "back to all customers"
+   action, same visual weight as .detail-panel header so it reads as part
+   of the same card language rather than a one-off banner. */
+.report-focus-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.report-focus-header h2 { margin: 0; font-size: 15px; }
+.report-focus-header p { margin: 2px 0 0; color: var(--ink-500); font-size: 11px; }
 .hint-text { margin: 0 0 10px; color: var(--ink-500); font-size: 11px; line-height: 1.5; }
 .drawer-body { padding: 16px 22px; overflow: auto; display: grid; gap: 14px; }
 .drawer-body label { display: grid; gap: 6px; color: var(--ink-700); font-size: 11px; font-weight: 700; }

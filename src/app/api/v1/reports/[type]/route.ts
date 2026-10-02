@@ -8,7 +8,9 @@ import { getJobsPerCustomerReport, getMonthlyReport, getRatiosReport, getWarrant
 // every report here is read-only (no create/update/delete), so there's no
 // POST/PUT/DELETE to wire. `months` is the shared time-window query param
 // across every report type (see reports/service.ts's sinceFor); jobs-per-
-// customer and monthly additionally take an optional `customerId`.
+// customer, warranty-breakdown and monthly additionally take an optional
+// `customerId` (customer click-through — see service.ts's header comment).
+// ratios intentionally does not: it isn't forwarded even if present.
 const REPORT_TYPES = new Set(["jobs-per-customer", "warranty-breakdown", "monthly", "ratios"]);
 
 function parseMonths(request: NextRequest): number | undefined {
@@ -28,9 +30,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     switch (type) {
       case "jobs-per-customer":
-        return NextResponse.json({ rows: await getJobsPerCustomerReport(ctx, { months }) });
+        return NextResponse.json({ rows: await getJobsPerCustomerReport(ctx, { months, customerId }) });
       case "warranty-breakdown":
-        return NextResponse.json(await getWarrantyBreakdownReport(ctx, { months }));
+        return NextResponse.json(await getWarrantyBreakdownReport(ctx, { months, customerId }));
       case "monthly":
         return NextResponse.json(await getMonthlyReport(ctx, { months, customerId }));
       case "ratios":

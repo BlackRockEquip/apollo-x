@@ -30,6 +30,17 @@ import { prisma } from "@/lib/prisma";
 // AskUserQuestion; their answer ("Skip for now, flag as future") is why
 // RATIO_DEFS below only computes ratios backed by real stored data and
 // lists the other two as comingSoon stats instead of faking them.
+//
+// 2026-10-02 — customer click-through (user request: "let me be able to
+// click on a customer then it takes me into that customer for reports").
+// getJobsPerCustomerReport, getWarrantyBreakdownReport and getMonthlyReport
+// all now accept an optional customerId and scope their Job query to it —
+// cheap, since it's just one more field on an already-present where
+// clause. getRatiosReport deliberately does NOT take one: several of its
+// stats (RFQ response rates, repeat-customer rate) don't decompose to a
+// single customer in a way that means anything, so the Customer tab in
+// ReportsWorkspace.tsx is assembled client-side from the three report
+// calls above instead of a fourth ratios-per-customer endpoint.
 // ---------------------------------------------------------------------------
 
 function authorize(ctx: RequestContext) {
@@ -77,11 +88,11 @@ function seriesFromDates(buckets: Array<{ key: string; label: string }>, dates: 
 
 export type JobsPerCustomerRow = { customerId: string; customerName: string; total: number; open: number; closed: number; warranty: number };
 
-export async function getJobsPerCustomerReport(ctx: RequestContext, params: { months?: number }): Promise<JobsPerCustomerRow[]> {
+export async function getJobsPerCustomerReport(ctx: RequestContext, params: { months?: number; customerId?: string }): Promise<JobsPerCustomerRow[]> {
   const companyId = authorize(ctx);
   const since = sinceFor(params.months);
   const jobs = await prisma.job.findMany({
-    where: { companyId, ...(since ? { dateReceived: { gte: since } } : {}) },
+    where: { companyId, ...(params.customerId ? { customerId: params.customerId } : {}), ...(since ? { dateReceived: { gte: since } } : {}) },
     select: { customerId: true, closedAt: true, type: true, customer: { select: { name: true } } },
   });
   const byCustomer = new Map<string, JobsPerCustomerRow>();
@@ -97,11 +108,11 @@ export async function getJobsPerCustomerReport(ctx: RequestContext, params: { mo
 
 export type WarrantyBreakdownRow = { key: string; label: string; total: number; granted: number; declined: number; pending: number; noRecord: number };
 
-export async function getWarrantyBreakdownReport(ctx: RequestContext, params: { months?: number }) {
+export async function getWarrantyBreakdownReport(ctx: RequestContext, params: { months?: number; customerId?: string }) {
   const companyId = authorize(ctx);
   const since = sinceFor(params.months);
   const jobs = await prisma.job.findMany({
-    where: { companyId, type: "WARRANTY", ...(since ? { dateReceived: { gte: since } } : {}) },
+    where: { companyId, type: "WARRANTY", ...(params.customerId ? { customerId: params.customerId } : {}), ...(since ? { dateReceived: { gte: since } } : {}) },
     select: { component: true, customerId: true, customer: { select: { name: true } }, warranty: { select: { status: true } } },
   });
 

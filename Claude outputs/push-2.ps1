@@ -1,57 +1,46 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Stock Levels: Stock Take tab (Admin / Store Controller only) and
-per-column filters for Manufacturer / Bin location
+Reports: customer click-through, dashboard Overview tab, CSV export
 
-Stock Take: new tab on Stock Levels, visible only to whoever holds
-INVENTORY_RECONCILE (COMPANY_ADMIN and STORE_CONTROLLER by default,
-same as every other role gate in this app, rather than a hardcoded
-role check - a company can extend it to another role later from
-Settings > Users and this tab follows automatically).
+Three follow-up requests on top of the Reports section shipped
+earlier:
 
-Flow (confirmed earlier): pick a bin location, get a printable sheet
-(part number, description, system quantity, and a blank column to
-write the actual count, with a sign-off block at the bottom), count
-by hand, then come back and key in what was actually counted. On
-submit it computes the variance per part and posts a real stock
-adjustment for anything that doesn't match, through the
-StockCount/StockCountLine reconciliation backend that already existed
-in inventory/service.ts (countCreate/countComplete) but had no UI
-anywhere - this tab is the first thing that actually uses it. A
-History sub-tab lists every count with its status (Open / Completed /
-Approved / Cancelled); a Completed count can be approved, an Open one
-(nothing posted to stock yet) can be cancelled.
+1. Click a customer to drill into their own reports. Every customer
+   name across Jobs per customer (bar list + table) and Warranty jobs
+   (by-customer table) is now clickable. Clicking opens a new
+   "Customer" view - a tab that only appears once a customer is
+   selected - showing that customer's own job totals, warranty
+   breakdown by component, and monthly trend, with a button back to
+   "All customers". getJobsPerCustomerReport and
+   getWarrantyBreakdownReport (getMonthlyReport already did) now take
+   an optional customerId and scope their query to it; the [type]
+   route forwards it through for those two as well. Ratios was left
+   alone on purpose - several of its numbers (RFQ response rates,
+   repeat-customer rate) don't mean anything scoped to one customer.
 
-countApprove and countCancel also already existed as backend
-functions but, unlike countCreate/countComplete, had no API route at
-all - added src/app/api/v1/inventory/counts/[id]/approve/route.ts and
-.../cancel/route.ts (same POST-only shape as the existing complete
-route) so the tab's Approve/Cancel buttons have something to call.
+2. "Too big and cluttered, arrange for a professional view, basically
+   its own dashboard view of everything." Two changes: the Monthly
+   chart previously rendered with no card around it at all and
+   stretched edge-to-edge - now it sits in the same bordered,
+   width-capped card every other section already uses. And a new
+   Overview tab (now the default landing tab) is the actual "dashboard
+   of everything" - key stat tiles, a top-5-customers list, a
+   warranty-mix summary and the monthly trend chart all on one screen,
+   each card linking straight into its full tab instead of repeating
+   it.
 
-The request's second bullet ("add/adjust/delete bin location
-quantities, parts in bin, values etc") is covered by Stock Levels'
-existing Adjust-stock action and Storage Locations' existing add/
-edit/delete screens - this tab is specifically the print-count-
-reconcile workflow, not a second way to hand-edit a balance.
+3. Download/export. A quiet "Export CSV" button now sits on every
+   report tab (Overview doesn't need its own - it just links into the
+   tabs that have one). It's gated behind REPORTS_EXPORT, a tenant
+   permission that already existed in this app for exactly this
+   purpose but had nothing wired to it until now. Export builds the
+   CSV client-side from whatever's already loaded on screen - these
+   reports are small, fully-loaded payloads, not paginated, so there
+   was no reason to add a server export endpoint.
 
-Per-column filters: added a filter row under the Stock table's header
-(same convention already used on the Suppliers RFQ/Outwork tables) -
-dropdowns for Manufacturer and Bin locations, the two columns that
-actually have a finite, dropdown-shaped set of values. Turned out the
-backend (listInventoryPositions, positionQuery) already accepted
-manufacturerId/locationId filters - nothing in the UI ever set them,
-so this was purely a frontend wiring gap, no backend changes needed.
-Part/Description are left to the existing search box (which already
-matches both, plus bin code/name and manufacturer name, in one field);
-Cost Price/Selling Price/On Hand/Reserved/Available have no natural
-dropdown domain; State already has its own filter (the radio buttons
-above the table) and was left as-is.
-
-New: src/app/api/v1/inventory/counts/[id]/approve/route.ts,
-src/app/api/v1/inventory/counts/[id]/cancel/route.ts. Changed:
-src/components/StockLevelsWorkspace.tsx (Stock Take tab, print sheet,
-counted-quantity entry form, history list, and the new filter row).
+Changed: src/lib/reports/service.ts, src/app/api/v1/reports/[type]/
+route.ts, src/components/ReportsWorkspace.tsx, src/app/globals.css.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

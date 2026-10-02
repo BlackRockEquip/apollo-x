@@ -469,6 +469,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       // to "no location assigned" / "create new").
     }
   }, []);
+  // 2026-10-02 — loadOptions was previously only invoked lazily from
+  // openCreate/openEdit/openAdjust, so any UI that needs manufacturers/
+  // locations before one of those dialogs is opened (the Stock Take tab's
+  // location select, and the Stock table's new filter-row selects) saw
+  // empty dropdowns. Load once on mount so they're always populated.
+  useEffect(() => { void loadOptions(); }, [loadOptions]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true); setHistoryError("");
