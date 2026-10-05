@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { MasterDataRoute } from "@/components/MasterDataRoute";
+import { DocumentTitlesSettings } from "@/components/DocumentTitlesSettings";
 
-export type ConfigurationTabKind = "tax-codes" | "commercial-terms" | "numbering";
+export type ConfigurationTabKind = "tax-codes" | "commercial-terms" | "numbering" | "document-titles";
 export type ConfigurationTab = { kind: ConfigurationTabKind; label: string };
 
 // 2026-10-01 — user request: "Move Tax codes, Commercial Terms, Numbering
@@ -27,7 +28,7 @@ export function ConfigurationWorkspace({ tabs }: { tabs: ConfigurationTab[] }) {
           </button>
         ))}
       </div>
-      <MasterDataRoute key={current.kind} kind={current.kind} hideHeader />
+      {current.kind === "document-titles" ? <DocumentTitlesSettings key={current.kind} /> : <MasterDataRoute key={current.kind} kind={current.kind} hideHeader />}
     </div>
   );
 }

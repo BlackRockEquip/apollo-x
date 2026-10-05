@@ -4,6 +4,7 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { deleteAttachment, getAttachmentDownloadUrl, storeAttachment } from "@/lib/attachments/service";
+import { readStoredBlob, storeBlob } from "@/lib/attachments/blob-store";
 import { verifySmtpConnection } from "@/lib/email";
 import { SmtpTestError } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/audit/service";
@@ -351,7 +352,16 @@ export async function updateCompanyLogo(ctx: RequestContext, input: { fileName: 
     return prisma.companySettings.update({ where: { companyId }, data: { logoData: null, logoMimeType: null, logoFileName: null, logoSizeBytes: null, logoUpdatedAt: new Date(), logoObjectKey: null } });
   }
   if (existing) await deleteAttachment(existing);
-  const attachment = await storeAttachment({
+  // The logo is filed under "Company/" in the company's storage location
+  // (see lib/attachments/blob-store.ts for the full folder layout).
+  const logoFolderCopy = await (async () => {
+    if (!/^image\/(png|jpeg|webp)$/.test(input.mimeType)) throw new Error("INVALID_LOGO_TYPE");
+    const bytes = Buffer.from(input.contentBase64, "base64");
+    if (bytes.length === 0) throw new Error("EMPTY_ATTACHMENT");
+    if (bytes.length > 2_500_000) throw new Error("LOGO_TOO_LARGE");
+    return storeBlob({ companyId, ownerType: "COMPANY_LOGO", ownerId: companyId, folder: "Company", fileName: input.fileName, mimeType: input.mimeType, data: bytes, uploadedById: ctx.userId });
+  })();
+  const attachment = logoFolderCopy ?? await storeAttachment({
     companyId,
     ownerType: "COMPANY_LOGO",
     ownerId: companyId,
@@ -370,4 +380,25 @@ export async function updateCompanyLogo(ctx: RequestContext, input: { fileName: 
     where: { companyId },
     data: { logoData: null, logoMimeType: attachment.mimeType, logoFileName: attachment.fileName, logoSizeBytes: attachment.sizeBytes, logoUpdatedAt: new Date(), logoObjectKey: attachment.id },
   });
+}
+
+// 2026-10-05 — letterhead (organisation details + logo bytes) for documents
+// the server renders itself, e.g. the PDFs saved into a job's folder. Same
+// details the print views show; the logo is read from the company's storage
+// (or the legacy inline column). Never throws for a missing/unreadable logo.
+export async function getCompanyLetterhead(ctx: RequestContext) {
+  const details = await getCompanyPrintDetails(ctx);
+  const companyId = ctx.companyId!;
+  let logo: { bytes: Uint8Array; mimeType: string } | null = null;
+  try {
+    const settings = await prisma.companySettings.findUnique({ where: { companyId }, select: { logoMimeType: true, logoData: true } });
+    if (settings?.logoMimeType) {
+      const attachment = await findLogoAttachment(companyId);
+      if (attachment) logo = { bytes: (await readStoredBlob(companyId, attachment.id)).data, mimeType: settings.logoMimeType };
+      else if (settings.logoData) logo = { bytes: Buffer.from(settings.logoData), mimeType: settings.logoMimeType };
+    }
+  } catch {
+    logo = null;
+  }
+  return { ...details, logo };
 }

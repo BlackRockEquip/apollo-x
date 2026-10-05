@@ -41,6 +41,8 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "INVALID_ATTACHMENT_TYPE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "That file type is not allowed." } }, { status: 400 });
   if (error instanceof Error && error.message === "ATTACHMENT_TOO_LARGE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "File is too large." } }, { status: 400 });
   if (error instanceof Error && error.message === "EMPTY_ATTACHMENT") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "File is empty." } }, { status: 400 });
+  if (error instanceof Error && error.message === "STORAGE_FILE_MISSING") return NextResponse.json({ error: { code: "STORAGE_FILE_MISSING", message: "This file is not in the current storage location. An administrator needs to import the exported files (Platform > Companies > Storage location)." } }, { status: 404 });
+  if (error instanceof Error && error.message === "STORAGE_SECRET_UNREADABLE") return NextResponse.json({ error: { code: "STORAGE_SECRET_UNREADABLE", message: "File storage needs its secret key re-entered by a platform administrator." } }, { status: 503 });
   if (error instanceof Error && error.message === "STORAGE_NOT_CONFIGURED") return NextResponse.json({ error: { code: "STORAGE_NOT_CONFIGURED", message: "File storage is not configured for this environment yet." } }, { status: 503 });
   // 2026-09-22 — self-service "change my password" and "forgot password"
   // (src/lib/account/service.ts, src/lib/auth/password-reset-service.ts).

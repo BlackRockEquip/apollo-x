@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requirePlatformPermission } from "@/lib/auth/guards";
 import { BLACK_ROCK_INTERNAL_CODE, MODULE_LABELS } from "@/lib/constants";
+import { encryptSecret } from "@/lib/storage/secret-crypto";
+import { buildStorageProfile, storageProfileChanged, type StorageProfileInput } from "@/lib/storage/profile";
+import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { DEFAULT_PLATFORM_PERMISSIONS, mergePermissionOverrides, type PlatformPermission } from "@/lib/auth/permissions";
 
 type CompanyListQuery = {
@@ -222,6 +225,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           storageRegion: true,
           storageEndpoint: true,
           storageAccessKeyId: true,
+          storageLocalPath: true,
           storageConfiguredAt: true,
         },
       },
@@ -368,54 +372,47 @@ export async function updatePlatformCompany(ctx: RequestContext, companyId: stri
   });
 }
 
-type CompanyStorageProfileInput = {
-  // "" clears the override so this company falls back to the platform
-  // default bucket (see src/lib/storage/index.ts's resolution order).
-  provider: "" | "R2" | "B2" | "S3_COMPATIBLE";
-  bucket?: string;
-  region?: string;
-  endpoint?: string;
-  accessKeyId?: string;
-  // Write-only, same convention as CompanySettings.smtpPassword — blank
-  // means "leave the stored secret unchanged", never returned to any
-  // client.
-  secretAccessKey?: string;
-};
-
 // Super Admin-only setting — see claude/decision-storage-architecture-render-plus-object-storage.md.
 // Deliberately lives in admin-service.ts (platform-permission-gated), not
 // company-settings-service.ts (tenant-permission-gated): a company's own
 // Company Admin can edit their branding/SMTP but must not be able to
 // redirect where their files are stored.
-export async function updatePlatformCompanyStorageProfile(ctx: RequestContext, companyId: string, input: CompanyStorageProfileInput) {
+//
+// 2026-10-05 — storage options rework: four choices (platform default,
+// local folder on the server, Cloudflare R2 via Account ID, other
+// S3-compatible), validated/derived in lib/storage/profile.ts. If the
+// company already has stored files and this save would change where they are
+// kept, the save is refused until the admin acknowledges it
+// (acknowledgeExistingFiles) — the UI offers an "Export current files" zip
+// first. Files are never moved automatically: the old copies stay where they
+// were, and Apollo X reads through the NEW location from then on.
+export async function updatePlatformCompanyStorageProfile(ctx: RequestContext, companyId: string, input: StorageProfileInput & { acknowledgeExistingFiles?: boolean }) {
   requirePlatformPermission(ctx, "PLATFORM_CONFIGURATION_MANAGE");
   if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
   return prisma.$transaction(async (tx) => {
     const before = await tx.company.findUnique({ where: { id: companyId }, include: { settings: true } });
     if (!before) throw new Error("RESOURCE_NOT_FOUND");
-    const clearingOverride = input.provider === "";
-    if (!clearingOverride) {
-      if (!input.bucket?.trim()) throw new Error("STORAGE_BUCKET_REQUIRED");
-      if (!input.accessKeyId?.trim()) throw new Error("STORAGE_ACCESS_KEY_REQUIRED");
-      const willHaveSecret = !!(input.secretAccessKey?.trim() || before.settings?.storageSecretAccessKey);
-      if (!willHaveSecret) throw new Error("STORAGE_SECRET_KEY_REQUIRED");
+    const profile = buildStorageProfile(input, before.settings);
+    if (storageProfileChanged(profile, input, before.settings)) {
+      const { fileCount } = await countCompanyStoredFiles(companyId);
+      if (fileCount > 0 && !input.acknowledgeExistingFiles) throw new Error("STORAGE_EXISTING_FILES_ACK_REQUIRED");
     }
     const settings = await tx.companySettings.update({
       where: { companyId },
-      data: clearingOverride
-        ? { storageProvider: null, storageBucket: null, storageRegion: null, storageEndpoint: null, storageAccessKeyId: null, storageSecretAccessKey: null, storageConfiguredAt: null }
-        : {
-            // Safe: clearingOverride is false here, so input.provider (validated
-            // above alongside bucket/accessKeyId) is never "" in this branch —
-            // TS just can't correlate that across the two separate consts.
-            storageProvider: input.provider as "R2" | "B2" | "S3_COMPATIBLE",
-            storageBucket: input.bucket!.trim(),
-            storageRegion: asNullable(input.region) ?? "auto",
-            storageEndpoint: asNullable(input.endpoint),
-            storageAccessKeyId: input.accessKeyId!.trim(),
-            ...(input.secretAccessKey?.trim() ? { storageSecretAccessKey: input.secretAccessKey.trim() } : {}),
-            storageConfiguredAt: new Date(),
-          },
+      data: !profile
+        ? { storageProvider: null, storageBucket: null, storageRegion: null, storageEndpoint: null, storageAccessKeyId: null, storageSecretAccessKey: null, storageLocalPath: null, storageConfiguredAt: null }
+        : profile.provider === "LOCAL_FOLDER"
+          ? { storageProvider: "LOCAL_FOLDER", storageLocalPath: profile.localPath, storageBucket: null, storageRegion: null, storageEndpoint: null, storageAccessKeyId: null, storageSecretAccessKey: null, storageConfiguredAt: new Date() }
+          : {
+              storageProvider: profile.provider,
+              storageBucket: profile.bucket,
+              storageRegion: profile.region ?? "auto",
+              storageEndpoint: profile.endpoint,
+              storageAccessKeyId: profile.accessKeyId,
+              storageSecretAccessKey: encryptSecret(profile.secretAccessKey ?? ""),
+              storageLocalPath: null,
+              storageConfiguredAt: new Date(),
+            },
     });
     await tx.auditEvent.create({
       data: {
@@ -428,7 +425,7 @@ export async function updatePlatformCompanyStorageProfile(ctx: RequestContext, c
         action: "PLATFORM_COMPANY_STORAGE_PROFILE_UPDATED",
         correlationId: ctx.correlationId,
         beforeData: JSON.parse(JSON.stringify({ ...before.settings, storageSecretAccessKey: undefined })) as Prisma.InputJsonValue,
-        afterData: JSON.parse(JSON.stringify({ ...settings, storageSecretAccessKey: undefined })) as Prisma.InputJsonValue,
+        afterData: JSON.parse(JSON.stringify({ ...settings, storageSecretAccessKey: undefined, acknowledgedExistingFiles: input.acknowledgeExistingFiles ? true : undefined })) as Prisma.InputJsonValue,
       },
     });
     return { ...settings, storageSecretAccessKey: undefined };

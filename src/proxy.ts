@@ -58,6 +58,10 @@ const PUBLIC_PATHS = [
   "/api/v1/integrations/excel-sync",
   "/api/v1/company-settings/favicon",
   "/api/v1/public/companies",
+  // Signed, short-lived file links from the "Local folder" storage option
+  // (the token itself is the credential, like an S3 presigned URL) — an <img>
+  // for a logo on the login page has no session cookie.
+  "/api/v1/storage-files",
 ];
 
 export function proxy(request: NextRequest) {
@@ -72,5 +76,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|webp)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/v1/platform/companies/[^/]+/storage-import|.*\\.(?:png|jpg|jpeg|svg|webp)$).*)"],
 };

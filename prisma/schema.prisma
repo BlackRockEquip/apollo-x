@@ -444,6 +444,10 @@ enum StorageProviderType {
   R2
   B2
   S3_COMPATIBLE
+  // 2026-10-05 — a folder on the server Apollo X itself runs on (a local
+  // disk, a mounted network share, or a Render persistent disk). The folder
+  // path lives in CompanySettings.storageLocalPath; no bucket or keys.
+  LOCAL_FOLDER
 }
 
 // Every attachment/file this platform stores now goes through one generic
@@ -897,6 +901,12 @@ model CompanySettings {
   storageEndpoint        String?
   storageAccessKeyId     String?
   storageSecretAccessKey String?
+  // LOCAL_FOLDER only: absolute folder path on the Apollo X server.
+  storageLocalPath       String?
+  // 2026-10-05 — Org Admin > Configuration > Document titles: per-document
+  // title overrides, { JOB_HISTORY: "Job History", ... }. Null/missing keys
+  // use the built-in title. See src/lib/documents/titles.ts.
+  documentTitles         Json?
   storageConfiguredAt    DateTime?
 
   company            Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -2218,6 +2228,10 @@ model JobRfqRequest {
   attachmentMimeType  String?
   attachmentSizeBytes Int?
   attachmentData      Bytes?
+  // 2026-10-05 — set once the file has been moved into the company's chosen
+  // storage location (Attachment.id); attachmentData is then emptied. See
+  // src/lib/attachments/offload.ts.
+  storedAttachmentId  String?
   requestedAt  DateTime          @default(now())
   createdById  String?
   updatedById  String?
@@ -2253,6 +2267,7 @@ model JobRfqQuote {
   mimeType      String?
   sizeBytes     Int?
   data          Bytes?
+  storedAttachmentId String?
   notes         String?
   receivedAt    DateTime      @default(now())
   createdById   String?
@@ -2326,6 +2341,7 @@ model GeneralRfqRequest {
   attachmentMimeType  String?
   attachmentSizeBytes Int?
   attachmentData      Bytes?
+  storedAttachmentId  String?
   createdById         String?
   updatedById         String?
   createdAt           DateTime          @default(now())
@@ -2359,7 +2375,10 @@ model JobAttachment {
   fileName    String
   mimeType    String
   sizeBytes   Int
-  data        Bytes
+  // Nullable since 2026-10-05: once moved into the company's storage
+  // location (see storedAttachmentId) the bytes no longer live here.
+  data        Bytes?
+  storedAttachmentId String?
   notes       String?
   createdById String?
   createdAt   DateTime      @default(now())
@@ -2643,7 +2662,8 @@ model SupportTicketAttachment {
   fileName     String
   mimeType     String
   sizeBytes    Int
-  data         Bytes
+  data         Bytes?
+  storedAttachmentId String?
   uploadedById String?
   createdAt    DateTime @default(now())
 

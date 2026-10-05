@@ -1276,3 +1276,41 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .pick-notice button { flex: none; border: 0; background: transparent; color: #164c92; cursor: pointer; }
 @media (max-width: 640px) { .pick-bar { left: 12px; right: 12px; transform: none; bottom: 12px; justify-content: space-between; } .pick-notice { left: 12px; right: 12px; max-width: none; } }
 .status-pill.tone-green{background:#e8f7ee;color:#1f6b42}.status-pill.tone-blue{background:#e8f0ff;color:#1f4fa3}.status-pill.tone-purple{background:#f1e8ff;color:#6b34a3}.status-pill.tone-orange{background:#fff1e6;color:#b05a14}.status-pill.tone-amber{background:#fff7d6;color:#8a6700}.status-pill.tone-teal{background:#e7fbf8;color:#0f6a66}.status-pill.tone-neutral{background:#eef2f6;color:#49566a}.status-pill.tone-red{background:#fdebec;color:#a22c35}
+
+/* Platform > Companies > [company] > Storage location (PlatformStorageForm) */
+.storage-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.storage-option { display: grid; gap: 4px; justify-items: start; text-align: left; padding: 12px; border: 1px solid var(--ink-300); border-radius: 10px; background: white; cursor: pointer; color: var(--ink-700); }
+.storage-option strong { color: var(--ink-900); font-size: 13px; }
+.storage-option span { font-size: 12px; color: var(--ink-500); }
+.storage-option:hover { border-color: var(--blue-600); }
+.storage-option.selected { border-color: var(--blue-600); box-shadow: 0 0 0 3px var(--blue-100); }
+.storage-guide { margin-top: 12px; border: 1px solid var(--ink-150); border-radius: 10px; background: #f9fafc; }
+.storage-guide-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; font-size: 13px; }
+.storage-guide-head > span { display: inline-flex; gap: 10px; align-items: center; }
+.storage-guide-body { max-height: 380px; overflow: auto; padding: 4px 16px 12px; border-top: 1px solid var(--ink-150); font-size: 13px; line-height: 1.5; }
+.markdown-lite h3 { margin: 12px 0 6px; font-size: 16px; }
+.markdown-lite h4 { margin: 14px 0 6px; font-size: 14px; }
+.markdown-lite h5 { margin: 10px 0 4px; font-size: 13px; }
+.markdown-lite p { margin: 6px 0; }
+.markdown-lite ul, .markdown-lite ol { margin: 6px 0; padding-left: 22px; }
+.markdown-lite li { margin: 3px 0; }
+.markdown-lite code { padding: 1px 5px; border-radius: 4px; background: #eef1f6; font-size: 12px; word-break: break-all; }
+.storage-warning { display: flex; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 10px; background: #fff8db; color: #6f5702; font-size: 13px; }
+.storage-warning p { margin: 4px 0 10px; }
+.storage-warning .quiet-button { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.storage-ack { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; font-size: 12.5px; }
+.storage-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.storage-result { display: flex; gap: 8px; margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+.storage-result.ok { background: #e8f6ee; color: #0c5a2f; }
+.storage-result.bad { background: #fdecea; color: var(--danger); }
+.storage-result ul { margin: 6px 0 0; padding-left: 4px; list-style: none; }
+.storage-tools { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--ink-150); display: grid; gap: 10px; }
+.storage-tool { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.storage-tool strong { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.storage-tool p { margin: 4px 0 0; max-width: 640px; }
+.storage-file-button { cursor: pointer; display: inline-flex; align-items: center; }
+.storage-note { margin: 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.storage-note.ok { background: #e8f6ee; color: #0c5a2f; }
+.storage-note.bad { background: #fdecea; color: var(--danger); }
+@media (max-width: 900px) { .storage-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .storage-options { grid-template-columns: 1fr; } }

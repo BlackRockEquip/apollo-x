@@ -1,3 +1,11 @@
+import { ensureJobFolder, deleteStoredBlob, readStoredBlob } from "@/lib/attachments/blob-store";
+import { offloadJobAttachment, offloadQuietly } from "@/lib/attachments/offload";
+import { renderDocumentPdf } from "@/lib/documents/pdf";
+import { saveJobDocumentInput } from "@/lib/documents/spec-schema";
+import { DOCUMENT_KINDS, documentBaseName, type DocumentKind } from "@/lib/documents/titles";
+import { getDocumentTitlesForCompany } from "@/lib/documents/titles-service";
+import { getCompanyLetterhead } from "@/lib/master-data/company-settings-service";
+import { sanitizeSegment } from "@/lib/attachments/blob-store";
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -669,6 +677,10 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
     return created;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: job.id, action: "CREATE_DRAFT", afterData: { id: job.id, jobNumber: job.jobNumber } });
+  // The job's folder (named by its job number, e.g. BRE1122) is created in the
+  // company's storage location straight away where that storage has real
+  // folders (a local folder); best effort, never blocks job creation.
+  await ensureJobFolder(companyId, job.jobNumber);
   return job;
 }
 
@@ -1754,6 +1766,10 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: data.length } });
+  // Saved into the company's storage location, in the job's folder, under the
+  // name the user gave the file (see lib/attachments/offload.ts). If no storage
+  // is configured the file simply stays in the database as before.
+  await offloadQuietly(offloadJobAttachment(attachment.id));
   return attachment;
 }
 
@@ -1762,7 +1778,52 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
 export async function getJobAttachmentFile(ctx: RequestContext, jobId: string, attachmentId: string) {
   const companyId = requireJobsRead(ctx);
   const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
-  return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: attachment.data.toString("base64") };
+  if (attachment.storedAttachmentId) {
+    const stored = await readStoredBlob(companyId, attachment.storedAttachmentId);
+    return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: stored.data.toString("base64") };
+  }
+  if (!attachment.data) throw new Error("STORAGE_FILE_MISSING");
+  return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: Buffer.from(attachment.data).toString("base64") };
+}
+
+// Saves a document the user asked for (Job Card, Job History, Delivery Note,
+// Pick Slip, Parts List …) as a PDF in the job's folder, named
+// "<JOB NUMBER> - <Document title>.pdf" using the title configured under
+// Configuration > Document titles. It is stored like any other job file (it
+// shows in the job's Attachments and goes to the company's storage location),
+// and saving the same document again adds "(2)", "(3)" rather than replacing it.
+export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = saveJobDocumentInput.parse(raw);
+  const job = await getJobScoped(companyId, jobId);
+  const jobLabel = job.jobNumber ?? job.draftNumber ?? job.id;
+  const titles = await getDocumentTitlesForCompany(companyId);
+  const kind = input.kind as DocumentKind;
+  if (!DOCUMENT_KINDS.some((k) => k.key === kind)) throw new Error("INVALID_DOCUMENT_KIND");
+
+  const letterhead = await getCompanyLetterhead(ctx);
+  const pdf = await renderDocumentPdf(input.spec, letterhead);
+  if (pdf.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+
+  const baseName = sanitizeSegment(`${documentBaseName(jobLabel, titles[kind])}${input.nameSuffix ? ` - ${input.nameSuffix}` : ""}`);
+  const existing = await prisma.jobAttachment.findMany({ where: { companyId, jobId, fileName: { startsWith: baseName } }, select: { fileName: true } });
+  const taken = new Set(existing.map((row) => row.fileName));
+  let fileName = `${baseName}.pdf`;
+  for (let n = 2; taken.has(fileName); n++) fileName = `${baseName} (${n}).pdf`;
+
+  const attachment = await prisma.$transaction(async (tx) => {
+    const record = await tx.jobAttachment.create({
+      data: { companyId, jobId, fileName, mimeType: "application/pdf", sizeBytes: pdf.length, data: pdf, notes: "Saved from the job page", createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+    });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Document saved: ${fileName}.`, { attachmentId: record.id, fileName, documentKind: kind });
+    return record;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: pdf.length, documentKind: kind } });
+  await offloadQuietly(offloadJobAttachment(attachment.id));
+  // offload may have renamed on a storage-side name clash; report what is really stored.
+  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } } });
+  return stored ?? attachment;
 }
 
 // 2026-09-15 — user request: "once a note is added [to an attachment],
@@ -1798,5 +1859,6 @@ export async function deleteJobAttachment(ctx: RequestContext, jobId: string, at
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "DELETE", afterData: { jobId, attachmentId } });
+  await deleteStoredBlob(companyId, attachment.storedAttachmentId);
   return { ok: true };
 }

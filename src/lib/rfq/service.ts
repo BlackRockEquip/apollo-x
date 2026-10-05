@@ -1,3 +1,5 @@
+import { readStoredBlob } from "@/lib/attachments/blob-store";
+import { offloadGeneralRfqAttachment, offloadQuietly, offloadRfqQuote, offloadRfqRequestAttachment } from "@/lib/attachments/offload";
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
@@ -167,14 +169,14 @@ export async function requestRfqFromSupplier(ctx: RequestContext, jobId: string,
       where: { jobId_supplierId: { jobId, supplierId: input.supplierId } },
       create: {
         companyId, jobId, supplierId: input.supplierId, partsSummary, status: send.status, lastSendError: send.lastSendError, createdById: ctx.userId, updatedById: ctx.userId,
-        ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data } : {}),
+        ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data, storedAttachmentId: null } : {}),
       },
       update: {
         partsSummary, requestedAt: new Date(), status: send.status, lastSendError: send.lastSendError, updatedById: ctx.userId,
         // A re-request with no new file keeps whatever attachment is
         // already on record — same "only touch it when a new one arrives"
         // rule recordRfqQuote uses for the inbound quote file.
-        ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data } : {}),
+        ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data, storedAttachmentId: null } : {}),
       },
       include: { supplier: { select: { id: true, name: true } } },
     });
@@ -184,6 +186,8 @@ export async function requestRfqFromSupplier(ctx: RequestContext, jobId: string,
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobRfqRequest", entityId: rfq.id, action: "CREATE", afterData: { jobId, supplierId: input.supplierId, status: send.status } });
+  // The file sent with the RFQ is kept in the job's folder in the company's storage location.
+  if (attachment) await offloadQuietly(offloadRfqRequestAttachment(rfq.id));
   return rfq;
 }
 
@@ -202,7 +206,15 @@ export async function resendRfqRequest(ctx: RequestContext, jobId: string, rfqRe
   // Resending re-sends whatever attachment is already on the request — it
   // was captured when the RFQ was first created (see requestRfqFromSupplier)
   // and isn't re-uploaded on a retry.
-  const attachment = rfq.attachmentData && rfq.attachmentFileName && rfq.attachmentMimeType ? { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, data: rfq.attachmentData } : null;
+  let attachment: { fileName: string; mimeType: string; data: Buffer } | null = null;
+  if (rfq.attachmentFileName && rfq.attachmentMimeType) {
+    if (rfq.storedAttachmentId) {
+      const stored = await readStoredBlob(companyId, rfq.storedAttachmentId).catch(() => null);
+      if (stored) attachment = { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, data: stored.data };
+    } else if (rfq.attachmentData) {
+      attachment = { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, data: Buffer.from(rfq.attachmentData) };
+    }
+  }
   const send = await attemptRfqSend(companyId, jobId, true, supplier, rfq.partsSummary, attachment);
   if (send.status === "SKIPPED" && !rfqRecipients(supplier)) throw new Error("SUPPLIER_HAS_NO_EMAIL");
   if (send.status === "SKIPPED") throw new Error("EMAIL_NOT_CONFIGURED");
@@ -312,7 +324,7 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
         createdById: ctx.userId,
       },
       update: {
-        ...(file ? { fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.sizeBytes, data: file.data, receivedAt: new Date() } : {}),
+        ...(file ? { fileName: file.fileName, mimeType: file.mimeType, sizeBytes: file.sizeBytes, data: file.data, storedAttachmentId: null, receivedAt: new Date() } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
       },
       include: { lines: true },
@@ -323,6 +335,7 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobRfqQuote", entityId: quote.id, action: "CREATE", afterData: { jobId, rfqRequestId } });
+  if (file) await offloadQuietly(offloadRfqQuote(quote.id));
   return { ...quote, guesses };
 }
 
@@ -606,12 +619,13 @@ export async function createGeneralRfq(ctx: RequestContext, raw: unknown) {
       notes: input.notes ?? null,
       createdById: ctx.userId,
       updatedById: ctx.userId,
-      ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data } : {}),
+      ...(attachment ? { attachmentFileName: attachment.fileName, attachmentMimeType: attachment.mimeType, attachmentSizeBytes: attachment.sizeBytes, attachmentData: attachment.data, storedAttachmentId: null } : {}),
     },
     include: { supplier: { select: { id: true, name: true } } },
   });
 
   await recordAudit(ctx, { source: "UI", module: "SUPPLIERS", entityType: "GeneralRfqRequest", entityId: record.id, action: "CREATE", afterData: { supplierId: input.supplierId, status: input.status } });
+  if (attachment) await offloadQuietly(offloadGeneralRfqAttachment(record.id));
   return record;
 }
 
@@ -657,8 +671,9 @@ export async function getRfqQuoteFile(ctx: RequestContext, jobId: string, rfqReq
   const companyId = requireJobsRead(ctx);
   const rfq = await getRfqRequestScoped(companyId, jobId, rfqRequestId);
   const quote = await prisma.jobRfqQuote.findUnique({ where: { rfqRequestId: rfq.id } });
-  if (!quote || !quote.data || !quote.fileName || !quote.mimeType) throw new Error("NO_QUOTE_FILE");
-  return { fileName: quote.fileName, mimeType: quote.mimeType, contentBase64: quote.data.toString("base64") };
+  if (!quote || (!quote.data && !quote.storedAttachmentId) || !quote.fileName || !quote.mimeType) throw new Error("NO_QUOTE_FILE");
+  if (quote.storedAttachmentId) return { fileName: quote.fileName, mimeType: quote.mimeType, contentBase64: (await readStoredBlob(companyId, quote.storedAttachmentId)).data.toString("base64") };
+  return { fileName: quote.fileName, mimeType: quote.mimeType, contentBase64: Buffer.from(quote.data!).toString("base64") };
 }
 
 // Hands back the OUTBOUND attachment on a job-linked RFQ request — the file
@@ -667,8 +682,9 @@ export async function getRfqQuoteFile(ctx: RequestContext, jobId: string, rfqReq
 export async function getRfqRequestAttachment(ctx: RequestContext, jobId: string, rfqRequestId: string) {
   const companyId = requireJobsRead(ctx);
   const rfq = await getRfqRequestScoped(companyId, jobId, rfqRequestId);
-  if (!rfq.attachmentData || !rfq.attachmentFileName || !rfq.attachmentMimeType) throw new Error("NO_ATTACHMENT");
-  return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: rfq.attachmentData.toString("base64") };
+  if ((!rfq.attachmentData && !rfq.storedAttachmentId) || !rfq.attachmentFileName || !rfq.attachmentMimeType) throw new Error("NO_ATTACHMENT");
+  if (rfq.storedAttachmentId) return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: (await readStoredBlob(companyId, rfq.storedAttachmentId)).data.toString("base64") };
+  return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: Buffer.from(rfq.attachmentData!).toString("base64") };
 }
 
 // Same as getRfqRequestAttachment above, for a job-less GeneralRfqRequest.
@@ -676,6 +692,7 @@ export async function getGeneralRfqAttachment(ctx: RequestContext, id: string) {
   const companyId = requireSuppliersRead(ctx);
   const rfq = await prisma.generalRfqRequest.findFirst({ where: { id, companyId } });
   if (!rfq) notFound();
-  if (!rfq.attachmentData || !rfq.attachmentFileName || !rfq.attachmentMimeType) throw new Error("NO_ATTACHMENT");
-  return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: rfq.attachmentData.toString("base64") };
+  if ((!rfq.attachmentData && !rfq.storedAttachmentId) || !rfq.attachmentFileName || !rfq.attachmentMimeType) throw new Error("NO_ATTACHMENT");
+  if (rfq.storedAttachmentId) return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: (await readStoredBlob(companyId, rfq.storedAttachmentId)).data.toString("base64") };
+  return { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, contentBase64: Buffer.from(rfq.attachmentData!).toString("base64") };
 }

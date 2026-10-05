@@ -47,5 +47,10 @@ export function createS3CompatibleBackend(config: S3CompatibleConfig): StorageBa
     async deleteObject(objectKey) {
       await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: objectKey }));
     },
+    async getObject(objectKey) {
+      const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: objectKey }));
+      if (!result.Body) throw new Error("STORAGE_OBJECT_EMPTY");
+      return Buffer.from(await result.Body.transformToByteArray());
+    },
   };
 }

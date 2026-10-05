@@ -73,7 +73,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   // actually has the permission for. The three old routes (/tax-codes,
   // /commercial-terms, /numbering) are kept as redirects to /configuration
   // so existing bookmarks/links don't break.
-  { key: "configuration", label: "Configuration", href: "/configuration", module: ["CUSTOMERS", "QUOTES"], permission: ["TAX_CODES_VIEW", "COMMERCIAL_TERMS_VIEW", "NUMBERING_VIEW"] },
+  { key: "configuration", label: "Configuration", href: "/configuration", module: ["CUSTOMERS", "QUOTES"], permission: ["TAX_CODES_VIEW", "COMMERCIAL_TERMS_VIEW", "NUMBERING_VIEW", "COMPANY_SETTINGS_VIEW"] },
   { key: "import-export", label: "Import / Export", href: "/settings/import-export", module: "DASHBOARD", permission: "SETTINGS_MANAGE" },
   { key: "support", label: "Support", href: "/support", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];

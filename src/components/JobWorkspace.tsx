@@ -11,6 +11,9 @@ import { PexAllocatedPill, PexStatusPill, StatusPill, WarrantyStatusPill, Return
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
+import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
+import type { DocSpec } from "@/lib/documents/pdf";
+import { buildJobCardSpec, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -392,6 +395,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // once on mount (small, fixed list, not a search-as-you-type field like
   // machine make above).
   const [mechanics, setMechanics] = useState<MechanicOption[]>([]);
+  // 2026-10-05 — Document titles (Org Admin > Configuration > Document
+  // titles) are the headings of the print views and the names of the PDFs
+  // saved into the job's folder ("<JOB NUMBER> - <title>.pdf").
+  const [documentTitles, setDocumentTitles] = useState<DocumentTitles>(DEFAULT_DOCUMENT_TITLES);
+  const [savingDocumentKey, setSavingDocumentKey] = useState<string | null>(null);
+  const [documentNotice, setDocumentNotice] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/v1/company-settings/document-titles", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body) => { if (!cancelled && body && !body.error) setDocumentTitles({ ...DEFAULT_DOCUMENT_TITLES, ...body }); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
   // "Sales representative" — 2026-09-22 user request: "add Sales
   // Representative same as mechanic field." Same admin-managed named-list
   // pattern as mechanics above, loaded once on mount the same way.
@@ -1312,6 +1329,62 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // "Save to folder" — renders the same document the Print button shows as a
+  // PDF on the server (company letterhead + logo), files it in the job's
+  // folder as "<JOB NUMBER> - <document title>.pdf" and lists it under the
+  // job's Attachments. Printing itself never saves anything.
+  async function saveDocumentToFolder(key: string, kind: DocumentKind, spec: DocSpec, nameSuffix?: string) {
+    if (!jobId || savingDocumentKey) return;
+    setSavingDocumentKey(key);
+    setDocumentNotice("");
+    setError("");
+    try {
+      const response = await fetch(`/api/v1/jobs/${jobId}/documents`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind, nameSuffix: nameSuffix || undefined, spec }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to save the document.");
+      setDocumentNotice(`Saved as ${body.fileName} in the job folder.`);
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the document.");
+    } finally {
+      setSavingDocumentKey(null);
+    }
+  }
+
+  function saveDocumentButton(key: string, kind: DocumentKind, buildSpec: () => DocSpec | null, options?: { nameSuffix?: string; className?: string; size?: number }) {
+    const busy = savingDocumentKey === key;
+    return (
+      <button
+        type="button"
+        className={options?.className ?? "table-action"}
+        disabled={!!savingDocumentKey || !jobId}
+        title="Save this document as a PDF in the job's folder"
+        onClick={() => { const spec = buildSpec(); if (spec) void saveDocumentToFolder(key, kind, spec, options?.nameSuffix); }}
+      >
+        {busy ? <Loader2 className="spin" size={options?.size ?? 14} /> : <Save size={options?.size ?? 14} />} {busy ? "Saving…" : "Save to folder"}
+      </button>
+    );
+  }
+
+  const jobDocLabel = job ? job.jobNumber || job.draftNumber || "" : "";
+  const jobDocLabels = () => ({
+    jobType: job ? String(JOB_TYPE_LABELS[job.type] || "") : "",
+    status: job ? String(JOB_STATUS_LABELS[job.status] || "") : "",
+    salesRepresentative: String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—"),
+    stripMechanic: String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—"),
+    buildMechanic: String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—"),
+  });
+  const jobCardSpec = () => (job ? buildJobCardSpec({ title: documentTitles.JOB_CARD, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
+  const jobHistorySpec = () => (job ? buildJobHistorySpec({ title: documentTitles.JOB_HISTORY, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
+  const jobDeliveryNoteSpec = () => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form }) : null);
+  const partsListSpec = () => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob }) : null);
+  const pickSlipSpec = (slip: { lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
+    buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
+
   function printJobPickSlip(result: NonNullable<typeof pickSlipResult>["pickSlip"]) {
     if (!result) return;
     const w = window.open("", "_blank", "width=800,height=900");
@@ -1320,7 +1393,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const rows = result.lines
       .map((l) => `<tr><td>${esc(l.partNumber)}</td><td>${esc(l.description || "")}</td><td class="qty">${esc(l.quantity)}</td><td class="qty"></td><td>${esc(l.binLocationLabel || "—")}</td></tr>`)
       .join("");
-    const html = `<!doctype html><html><head><title>Pick slip - ${esc(result.jobNumber || "")}</title><meta charset="utf-8" /><style>
+    const html = `<!doctype html><html><head><title>${esc(`${result.jobNumber || jobDocLabel} - ${documentTitles.PICK_SLIP}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
       h1{font-size:20px;margin:0 0 4px;color:#7a5c14;border-bottom:3px solid #7a5c14;padding-bottom:10px}
       table{width:100%;border-collapse:collapse;font-size:13px;margin-top:18px}
@@ -1328,7 +1401,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th{background:#f9fafb;border-bottom:2px solid #7a5c14}
       td.qty{text-align:center;font-weight:600}
     </style></head><body>
-      <h1>Pick slip — Job ${esc(result.jobNumber || "")}</h1>
+      <h1>${esc(documentTitles.PICK_SLIP)} — Job ${esc(result.jobNumber || "")}</h1>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(html);
@@ -1366,7 +1439,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </tr>`;
       })
       .join("");
-    const html = `<!doctype html><html><head><title>Parts list - ${esc(jobLabel)}</title><meta charset="utf-8" /><style>
+    const html = `<!doctype html><html><head><title>${esc(`${jobLabel} - ${documentTitles.PARTS_LIST}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
       h1{font-size:20px;margin:0 0 4px;color:#7a5c14;border-bottom:3px solid #7a5c14;padding-bottom:10px}
       table{width:100%;border-collapse:collapse;font-size:12px;margin-top:18px}
@@ -1374,7 +1447,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th{background:#f9fafb;border-bottom:2px solid #7a5c14}
       td.qty{text-align:center;font-weight:600}
     </style></head><body>
-      <h1>Parts list — Job ${esc(jobLabel)}</h1>
+      <h1>${esc(documentTitles.PARTS_LIST)} — Job ${esc(jobLabel)}</h1>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(html);
@@ -2088,7 +2161,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     // title, so this is set here rather than anywhere the file is written
     // (this print view never writes a file itself — see the comment on
     // printDeliveryNote's neighbour, printJobCard, below).
-    const noteTitle = `${deliveryNote.jobNumber} - Outwork - ${deliveryNote.supplierName}`;
+    const noteTitle = `${deliveryNote.jobNumber} - ${documentTitles.OUTWORK_DELIVERY_NOTE} - ${deliveryNote.supplierName}`;
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(noteTitle)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
@@ -2114,7 +2187,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .sign-block .field{font-size:13px;margin-top:22px;border-bottom:1px solid #111;padding-bottom:4px}
     </style></head><body>
       <div class="note-head">
-        <h1>Outwork delivery note</h1>
+        <h1>${escapeHtml(documentTitles.OUTWORK_DELIVERY_NOTE)}</h1>
         <div class="note-right">
           <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
@@ -2177,7 +2250,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!win) { setError("Enable pop-ups to print the job card."); return; }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
-    win.document.write(`<!doctype html><html><head><title>Job card ${escapeHtml(String(job.jobNumber || job.draftNumber || ""))}</title><meta charset="utf-8" /><style>
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${job.jobNumber || job.draftNumber || ""} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
@@ -2192,7 +2265,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .description-block{white-space:pre-wrap;border:1px solid #ccc;padding:8px 9px;font-size:13px}
     </style></head><body>
       <div class="note-head">
-        <h1>Job card — for workshop use</h1>
+        <h1>${escapeHtml(documentTitles.JOB_CARD)} — for workshop use</h1>
         <div class="job-number">Job ${escapeHtml(String(job.jobNumber || job.draftNumber || "—"))}</div>
       </div>
       <h2>Date in</h2>
@@ -2286,7 +2359,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <td>${fmt(String(item.dateReceived || ""))}</td>
         <td>${escapeHtml(String(item.status || "").replaceAll("_", " "))}</td>
       </tr>`).join("");
-    win.document.write(`<!doctype html><html><head><title>Job ${escapeHtml(String(jobLabel))} - Full details</title><meta charset="utf-8" /><style>
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_HISTORY}`)}</title><meta charset="utf-8" /><style>
       /* 2026-09-29 — user request: "fit all sections on one page, dont let
          overflow; move logo above job record heading." Padding, table cell
          padding, heading margins and font sizes are all tightened from the
@@ -2322,7 +2395,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </style></head><body>
       <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
       <div class="note-head">
-        <h1>Job record</h1>
+        <h1>${escapeHtml(documentTitles.JOB_HISTORY)}</h1>
         <div class="note-right">
           ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
@@ -2491,7 +2564,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (form.machineModel) descriptionLines.push(escapeHtml(form.machineModel));
     if (form.component) descriptionLines.push(escapeHtml(form.component));
     if (form.componentSerial) descriptionLines.push(escapeHtml(form.componentSerial));
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(String(jobLabel))} - Delivery Note</title><meta charset="utf-8" /><style>
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_DELIVERY_NOTE}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
@@ -2527,7 +2600,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <button type="button" class="print-btn" onclick="window.print()">Print delivery note</button>
       </div>
       <div class="note-head">
-        <h1>Delivery note</h1>
+        <h1>${escapeHtml(documentTitles.JOB_DELIVERY_NOTE)}</h1>
         <div class="note-right">
           <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
@@ -3306,10 +3379,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     mechanicFieldsLocked, same tenantRole === "USER" flag as
                     every other Mechanic-only restriction on this page. */}
                 {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>}
+                {!mechanicFieldsLocked && saveDocumentButton("JOB_CARD", "JOB_CARD", jobCardSpec)}
                 {/* 2026-09-19, user request — see printJobHistory/
                     printJobDeliveryNote's own comments above for scope. */}
                 {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>}
+                {!mechanicFieldsLocked && saveDocumentButton("JOB_HISTORY", "JOB_HISTORY", jobHistorySpec)}
                 {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>}
+                {!mechanicFieldsLocked && saveDocumentButton("JOB_DELIVERY_NOTE", "JOB_DELIVERY_NOTE", jobDeliveryNoteSpec)}
                 {/* 2026-10-01 — every button below changes job.status (the
                     same action the status stepper performs, just via a
                     dedicated dialog/confirm instead of a stepper click), so
@@ -3340,6 +3416,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </header>
 
         {error && <div className="inline-error">{error}</div>}
+        {documentNotice && <div className="inline-success">{documentNotice}</div>}
 
         {job && job.status !== "DRAFT" && (
           <div className="job-header-stepper">
@@ -3516,6 +3593,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 )}
                 {job.partLines.length > 0 && (
                   <button type="button" className="quiet-button" onClick={printPartsList}><Printer size={14} /> Print Parts List</button>
+                )}
+                {job.partLines.length > 0 && (
+                  saveDocumentButton("PARTS_LIST", "PARTS_LIST", partsListSpec, { className: "quiet-button" })
                 )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
@@ -4166,6 +4246,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {pickSlipResult.pickSlip ? (
                   <span style={{ display: "flex", gap: 8 }}>
                     <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
+                    {saveDocumentButton(`PICK_SLIP:${pickSlipResult.pickSlip.id}`, "PICK_SLIP", () => pickSlipSpec(pickSlipResult.pickSlip!), { className: "quiet-button", size: 13 })}
                     <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Deleting…" : "Delete"}</button>
                   </span>
                 ) : null}
@@ -4202,6 +4283,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           <td>{ps.lines.length}</td>
                           <td className="actions">
                             <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
+                            {saveDocumentButton(`PICK_SLIP:${ps.id}`, "PICK_SLIP", () => pickSlipSpec(ps), { size: 13 })}
                             <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
                               {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Deleting…" : "Delete"}
                             </button>
@@ -4440,6 +4522,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </div>
                 <footer className="detail-actions">
                   <button type="button" className="gold-button" onClick={() => void printDeliveryNote()}>Print</button>
+                  {saveDocumentButton("OUTWORK_DELIVERY_NOTE", "OUTWORK_DELIVERY_NOTE", () => buildOutworkDeliveryNoteSpec({ title: documentTitles.OUTWORK_DELIVERY_NOTE, note: deliveryNote }), { className: "quiet-button", nameSuffix: deliveryNote.supplierName })}
                   <button type="button" className="quiet-button" onClick={() => setDeliveryNote(null)}>Close</button>
                 </footer>
               </aside>

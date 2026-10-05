@@ -5,7 +5,11 @@ import { getRequestContext } from "@/lib/auth/session";
 import { getPlatformCompanyDetail } from "@/lib/platform/admin-service";
 import { MODULE_LABELS } from "@/lib/constants";
 import { SupportContextForm } from "@/components/SupportContextForm";
-import { setCompanyStatusAction, updateCompanyAction, updateCompanyStorageProfileAction, updateEntitlementAction } from "@/app/platform/actions";
+import { setCompanyStatusAction, updateCompanyAction, updateEntitlementAction } from "@/app/platform/actions";
+import { PlatformStorageForm } from "@/components/PlatformStorageForm";
+import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
+import { countInlineFiles } from "@/lib/attachments/offload";
+import { accountIdFromR2Endpoint } from "@/lib/storage/profile";
 import { EntitlementSource, EntitlementStatus, ModuleKey } from "@prisma/client";
 
 type CompanyDetail = Awaited<ReturnType<typeof getPlatformCompanyDetail>>;
@@ -22,6 +26,8 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
   if (context.companyId) redirect("/dashboard");
   const { id } = await params;
   const company = await getPlatformCompanyDetail(context, id);
+  const storageSummary = await countCompanyStoredFiles(company.id);
+  const inlineFiles = await countInlineFiles(company.id);
   const activeUsers = company.memberships.filter((membership: Membership) => membership.status === "ACTIVE" && membership.user.active);
   const admins = activeUsers.filter((membership: Membership) => membership.role === "COMPANY_ADMIN");
 
@@ -93,31 +99,33 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
           )}
         </article>
 
-        <article className="platform-card">
+        <article className="platform-card platform-card-span-2">
           <h3>Storage location</h3>
           <p className="muted small-line">
-            {company.settings?.storageProvider
-              ? `Custom: ${company.settings.storageProvider} · ${company.settings.storageBucket}${company.settings.storageRegion ? ` (${company.settings.storageRegion})` : ""}`
-              : "Using the platform default bucket."}
+            {company.settings?.storageProvider === "LOCAL_FOLDER"
+              ? `Current: local folder on the server · ${company.settings.storageLocalPath}`
+              : company.settings?.storageProvider
+                ? `Current: ${company.settings.storageProvider === "R2" ? "Cloudflare R2" : company.settings.storageProvider} · ${company.settings.storageBucket}${company.settings.storageRegion ? ` (${company.settings.storageRegion})` : ""}`
+                : "Current: the platform default bucket."}
+            {" "}· {storageSummary.fileCount} stored file{storageSummary.fileCount === 1 ? "" : "s"}
           </p>
-          <p className="muted small-line">Controls where this company's files (attachments, logos, future exports) are stored — not where its core records live, which always stays in the shared database.</p>
-          <form action={updateCompanyStorageProfileAction} className="platform-form-grid compact-top-gap">
-            <input type="hidden" name="companyId" value={company.id} />
-            <label><span>Provider</span>
-              <select name="provider" defaultValue={company.settings?.storageProvider ?? ""}>
-                <option value="">Platform default</option>
-                <option value="R2">Cloudflare R2</option>
-                <option value="B2">Backblaze B2</option>
-                <option value="S3_COMPATIBLE">Other S3-compatible</option>
-              </select>
-            </label>
-            <label><span>Bucket</span><input name="bucket" defaultValue={company.settings?.storageBucket ?? ""} /></label>
-            <label><span>Region</span><input name="region" defaultValue={company.settings?.storageRegion ?? ""} placeholder="auto" /></label>
-            <label><span>Endpoint</span><input name="endpoint" defaultValue={company.settings?.storageEndpoint ?? ""} placeholder="Required for R2 / B2 / MinIO" /></label>
-            <label><span>Access key ID</span><input name="accessKeyId" defaultValue={company.settings?.storageAccessKeyId ?? ""} /></label>
-            <label><span>Secret access key</span><input name="secretAccessKey" type="password" placeholder={company.settings?.storageConfiguredAt ? "Unchanged" : ""} /></label>
-            <div className="platform-form-actions"><button type="submit" className="quiet-button">Save storage location</button></div>
-          </form>
+          <p className="muted small-line">Controls where this company&rsquo;s attached and system-created files (logos, attachments, future exports) are kept: not where its core records live, which always stay in the shared database. Pick an option to see its set-up guide.</p>
+          <PlatformStorageForm
+            companyId={company.id}
+            fileCount={storageSummary.fileCount}
+            totalBytes={storageSummary.totalBytes}
+            inlineFiles={inlineFiles}
+            initial={{
+              provider: company.settings?.storageProvider ?? "",
+              accountId: accountIdFromR2Endpoint(company.settings?.storageEndpoint),
+              bucket: company.settings?.storageBucket ?? "",
+              region: company.settings?.storageRegion ?? "",
+              endpoint: company.settings?.storageEndpoint ?? "",
+              accessKeyId: company.settings?.storageAccessKeyId ?? "",
+              localPath: company.settings?.storageLocalPath ?? "",
+              hasSecret: !!company.settings?.storageConfiguredAt && company.settings?.storageProvider !== "LOCAL_FOLDER",
+            }}
+          />
         </article>
 
         <article className="platform-card platform-card-span-2">

@@ -1,41 +1,46 @@
 cd "C:\Projects\Apollo X Working"
-# The Suppliers tab bar is no longer used by any page (Outwork and RFQs moved out)
+# For your LOCAL copy after pulling this change, run once:  npm install   (adds pdf-lib)
+#   then  npx prisma migrate dev  and  npm run prisma:generate   (new migration 20261005150000_storage_move_and_document_titles)
+# The deployed site applies the migration with your usual migrate step. Optional: set STORAGE_ENCRYPTION_KEY on the server.
+# Left over from the earlier Parts/Outwork sidebar change (harmless if already gone)
 if (Test-Path "src\components\SuppliersTabNav.tsx") { Remove-Item "src\components\SuppliersTabNav.tsx" }
 git add -A
 @"
-Sidebar: Outwork and Parts (RFQs + Parts Outstanding) under Jobs; Parts Outstanding lists every unreceived part, plus Add Part to job
+Storage: move all files to the chosen location, import exports, encrypt secret, job folders, saved PDF documents, document titles
 
-User request: move Outwork and RFQs out of the Suppliers tabs; Jobs menu order
-Jobs & WIP, Job Kits, Parts, Outwork, PEX Stock, PEX Tracking; Parts has an RFQs
-tab and a new Parts Outstanding tab (Job #, Supplier, Parts Outstanding,
-Days Outstanding). Follow-ups: "All parts that are not mark received should be
-listed", an "Add Part to job" button above the table, and "parts are only
-outstanding once the job status changes to Await Outwork/Parts or higher".
+User request: move all attachments / RFQs / support attachments to the chosen
+folder; allow import of exported files so they open again on a new location;
+encrypt the secret; create a folder per job (e.g. BRE1122) holding every
+created/uploaded file; saved documents named "<job number> - <document>"
+(e.g. BRE1152 - Job History); Org Admin > Configuration tab to change each
+document title. Answers: saved documents are PDFs, saved with a separate
+"Save to folder" button (printing does nothing extra), everything under the job.
 
-- AppShell: Jobs group now Jobs & WIP, Job Kits, Parts (/parts), Outwork
-  (/outwork), PEX Stock, PEX Tracking. Parts and Outwork are hidden for a
-  Mechanic, same as when they sat under Suppliers.
-- /outwork: the Outwork list (same page, same Jobs-module gating).
-- /parts: RFQs tab (was a redirect to /inventory); /parts/outstanding: new
-  Parts Outstanding tab with Job #/Supplier filters, GET /api/v1/parts-outstanding
-  and lib/jobs/parts-outstanding.ts.
-- Parts Outstanding lists EVERY part line not yet marked received (in stock, on a
-  pick slip, on order, not ordered), one row per job + supplier; quantity is
-  quantity - received. No supplier: "From stock" for in-stock/picked lines,
-  otherwise "RFQ sent to <suppliers>" or "Not ordered yet". Days = since the oldest
-  line in the row was ordered (or added).
-- Parts only count as outstanding once the job's status is Await outwork / parts
-  or later (Waiting for parts, Assembling, Testing, To paint / wrap, To be
-  delivered, Delivered awaiting payment, Completed, Closed); a field service job
-  counts from In progress onward; cancelled jobs and jobs flagged Return
-  unrepaired never count. The RFQs table's own
-  Parts outstanding column is unchanged.
-- "Add Part to job" button above the table: pick a job, part number, quantity and
-  optional description; added through the same endpoint the job's own parts box
-  uses (POST /api/v1/jobs/[id]/parts), then the list refreshes.
-- /suppliers is the Suppliers list only (tab bar removed, SuppliersTabNav
-  deleted); /suppliers/outwork and /suppliers/rfq redirect to the new pages.
-  Dashboard "Procurement / outwork" widget now links to /outwork.
+- Files: job attachments, RFQ request/quote files, general RFQ files and
+  support attachments are written to the company's storage location
+  (job files in <JOB NUMBER>/, job-less RFQs in RFQs/, support in
+  Support/<ticket>/, logo in Company/). New uploads go straight there when a
+  location is set; bytes columns are now nullable, storedAttachmentId links the
+  row to its stored file. Readers use the stored copy, else the old DB bytes.
+- Move files to this storage (Platform > Companies > [company] > Storage
+  location): copies existing DB files into the layout above in batches,
+  verifying each by read-back before clearing the DB copy; safe to re-run.
+- Import exported files: upload the export .zip (mirrors the folder layout) and
+  files are matched by path, then file name + size, written to the new location
+  and verified; idempotent. Export zip now uses the folder layout + richer manifest.
+- Secret encryption: storage secret access keys are AES-256-GCM encrypted
+  (STORAGE_ENCRYPTION_KEY, else derived from DATABASE_URL); legacy plaintext is
+  still read and upgraded on first use; unreadable secrets give a clear message.
+- Job folders: a folder named after the job number is created when the job is
+  created (real folders; bucket providers create it with the first file).
+- Document titles: Org Admin > Configuration > Document titles (Job Card, Job
+  History, Delivery Note, Pick Slip, Parts List, Outwork Delivery Note). The
+  title is the print heading and the saved file name.
+- Save to folder: new button beside each Print renders the document as a PDF on
+  the server (company letterhead + logo, pdf-lib) and saves it as
+  "<JOB NUMBER> - <title>.pdf" in the job folder and the job's Attachments;
+  repeat saves get " (2)". Outwork delivery notes add " - <supplier>".
+- Migrations: 20261005150000_storage_move_and_document_titles.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

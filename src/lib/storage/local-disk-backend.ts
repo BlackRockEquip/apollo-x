@@ -38,6 +38,12 @@ export function createLocalDiskBackend(): StorageBackend {
       const path = resolvePath(objectKey);
       await rm(path, { force: true });
     },
+    async getObject(objectKey) {
+      return readFile(resolvePath(objectKey));
+    },
+    async ensureFolder(folder) {
+      await mkdir(resolvePath(folder), { recursive: true });
+    },
   };
 }
 

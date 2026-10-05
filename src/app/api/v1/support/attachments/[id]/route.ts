@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { prisma } from "@/lib/prisma";
+import { readStoredBlob } from "@/lib/attachments/blob-store";
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -20,7 +21,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       return new NextResponse(null, { status: 403 });
     }
     const safeName = row.fileName.replace(/[^A-Za-z0-9._-]/g, "_");
-    return new NextResponse(Buffer.from(row.data), { headers: { "content-type": row.mimeType, "content-disposition": `inline; filename="${safeName}"`, "cache-control": "private, max-age=60" } });
+    const bytes = row.storedAttachmentId ? (await readStoredBlob(row.companyId, row.storedAttachmentId)).data : row.data ? Buffer.from(row.data) : null;
+    if (!bytes) return new NextResponse(null, { status: 404 });
+    return new NextResponse(new Uint8Array(bytes), { headers: { "content-type": row.mimeType, "content-disposition": `inline; filename="${safeName}"`, "cache-control": "private, max-age=60" } });
   } catch (error) {
     return apiError(error);
   }

@@ -1,3 +1,4 @@
+import { offloadSupportTicketAttachments } from "@/lib/attachments/offload";
 import { ModuleKey, Prisma, SupportAccessMode, TicketMessageKind, TicketPriority, TicketStatus } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
@@ -94,6 +95,8 @@ export async function createSupportTicket(ctx: RequestContext, raw: unknown, met
     } else {
       void notifyCompanyAdmins(ctx.companyId!, "SUPPORT_TICKET_CREATED", `New support ticket: ${ticket.ticketNumber}`, `${ctx.displayName} raised "${ticket.subject}".`, link);
     }
+    // Files go into the company's storage location (Support/<ticket number>/…) when one is configured.
+    if (input.attachments.length > 0) await offloadSupportTicketAttachments(ticket.id);
     return ticket;
   });
 }
@@ -120,6 +123,9 @@ export async function addPlatformSupportMessage(ctx: RequestContext, id: string,
     if (input.attachments.length > 0) await tx.supportTicketAttachment.createMany({ data: input.attachments.map(validateAttachment).map((row) => ({ companyId: ticket.companyId, ticketId: id, messageId: message.id, fileName: row.fileName, mimeType: row.mimeType, sizeBytes: row.sizeBytes, data: row.data, uploadedById: ctx.userId })) });
     await tx.supportTicketEvent.create({ data: { companyId: ticket.companyId, ticketId: id, actorId: ctx.userId, eventType: input.kind === TicketMessageKind.INTERNAL_NOTE ? "INTERNAL_NOTE_ADDED" : "SUPPORT_REPLY_ADDED" } });
     return message;
+  }).then(async (message) => {
+    if (input.attachments.length > 0) await offloadSupportTicketAttachments(id);
+    return message;
   });
 }
 
@@ -137,6 +143,7 @@ export async function replyToSupportTicket(ctx: RequestContext, id: string, raw:
     await tx.supportTicketEvent.create({ data: { companyId: ctx.companyId!, ticketId: id, actorId: ctx.userId, eventType: input.kind === TicketMessageKind.INTERNAL_NOTE ? "INTERNAL_NOTE_ADDED" : "REPLY_ADDED" } });
     return msg;
   });
+  if (input.attachments.length > 0) await offloadSupportTicketAttachments(id);
 
   // 2026-10-01 — user request: "allow the reply functionality to work back
   // the user who requested support, and user receives notification and can

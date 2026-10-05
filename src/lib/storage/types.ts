@@ -7,7 +7,7 @@
 // local-disk-backend.ts is a non-production fallback only, so `next dev`
 // works with zero bucket setup.
 export interface StorageBackend {
-  /** Stored on the Attachment row's `provider` column — "R2" | "B2" | "S3_COMPATIBLE" | "LOCAL_DEV". */
+  /** Stored on the Attachment row's `provider` column — "R2" | "B2" | "S3_COMPATIBLE" | "LOCAL_FOLDER" | "LOCAL_DEV". */
   readonly providerName: string;
   putObject(objectKey: string, body: Buffer, contentType: string): Promise<void>;
   // 2026-09-19 — user report: "local dev is working well with logos but
@@ -27,6 +27,10 @@ export interface StorageBackend {
   // "attachment" behavior unchanged.
   getSignedDownloadUrl(objectKey: string, fileName: string, expiresInSeconds?: number, disposition?: "inline" | "attachment"): Promise<string>;
   deleteObject(objectKey: string): Promise<void>;
+  /** Reads an object back — used by the Storage "Test connection" check and by the "export current files" zip. */
+  getObject(objectKey: string): Promise<Buffer>;
+  /** Creates the folder for a key prefix where the backend has real folders (local disk/folder); a no-op for bucket storage, where folders are just key prefixes. */
+  ensureFolder?(folder: string): Promise<void>;
 }
 
 export type S3CompatibleConfig = {
@@ -37,4 +41,21 @@ export type S3CompatibleConfig = {
   accessKeyId: string;
   secretAccessKey: string;
   forcePathStyle?: boolean;
+};
+
+export type LocalFolderConfig = {
+  companyId: string;
+  /** Absolute folder path on the server Apollo X runs on. */
+  rootPath: string;
+};
+
+/** What a company's storage settings resolve from — see getStorageBackendFromProfile in ./index.ts. */
+export type StorageProfile = {
+  provider: "R2" | "B2" | "S3_COMPATIBLE" | "LOCAL_FOLDER";
+  bucket?: string | null;
+  region?: string | null;
+  endpoint?: string | null;
+  accessKeyId?: string | null;
+  secretAccessKey?: string | null;
+  localPath?: string | null;
 };

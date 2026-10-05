@@ -21,14 +21,16 @@ const CONFIG_TABS: Array<{ kind: ConfigurationTab["kind"]; permission: TenantPer
   { kind: "tax-codes", permission: "TAX_CODES_VIEW" },
   { kind: "commercial-terms", permission: "COMMERCIAL_TERMS_VIEW" },
   { kind: "numbering", permission: "NUMBERING_VIEW" },
+  // 2026-10-05 — Org Admin only: the title of each printed/saved document.
+  { kind: "document-titles", permission: "COMPANY_SETTINGS_VIEW" },
 ];
 
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireAnyTenantPageAccess(ctx, CONFIG_TABS.map((t) => t.permission));
-  const tabs: ConfigurationTab[] = CONFIG_TABS.filter((t) => ctx.tenantPermissions.has(t.permission)).map((t) => ({ kind: t.kind, label: masterConfigs[t.kind].title }));
+  const tabs: ConfigurationTab[] = CONFIG_TABS.filter((t) => ctx.tenantPermissions.has(t.permission)).map((t) => ({ kind: t.kind, label: t.kind === "document-titles" ? "Document titles" : masterConfigs[t.kind].title }));
   return <>
-    <header className="page-header compact"><div><p className="eyebrow">Settings</p><h1>Configuration</h1><p>Tax codes, commercial terms and document numbering.</p></div></header>
+    <header className="page-header compact"><div><p className="eyebrow">Settings</p><h1>Configuration</h1><p>Tax codes, commercial terms, document numbering and document titles.</p></div></header>
     <SettingsTabNav ctx={ctx} current="configuration" />
     <ConfigurationWorkspace tabs={tabs} />
   </>;

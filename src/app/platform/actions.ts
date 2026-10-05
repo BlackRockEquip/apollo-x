@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
+import { STORAGE_ERROR_MESSAGES, type StorageProfileInput } from "@/lib/storage/profile";
+import { testPlatformCompanyStorage, type StorageTestStep } from "@/lib/platform/storage-admin-service";
 import { createPlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile, updatePlatformEntitlement } from "@/lib/platform/admin-service";
 
 // 2026-09-22, user report: "when clicking add a company, it takes me to the
@@ -91,19 +93,37 @@ export async function setCompanyStatusAction(formData: FormData) {
   revalidatePath(`/platform/companies/${companyId}`);
 }
 
-export async function updateCompanyStorageProfileAction(formData: FormData) {
+// 2026-10-05 — storage options rework. These two return a result object
+// instead of throwing so the Storage form (components/PlatformStorageForm.tsx)
+// can show "Test connection" results and readable errors in place.
+export type StorageActionResult = { ok: true; message?: string; steps?: StorageTestStep[] } | { ok: false; error: string; steps?: StorageTestStep[] };
+
+function storageErrorMessage(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  return STORAGE_ERROR_MESSAGES[code] ?? (error instanceof Error && error.name === "AuthorizationError" ? "You do not have permission to change storage settings." : "Something went wrong. Please try again.");
+}
+
+export async function saveCompanyStorageAction(companyId: string, input: StorageProfileInput & { acknowledgeExistingFiles?: boolean }): Promise<StorageActionResult> {
   const context = await getRequestContext();
   if (!context) redirect("/login");
-  const companyId = String(formData.get("companyId") ?? "");
-  await updatePlatformCompanyStorageProfile(context, companyId, {
-    provider: String(formData.get("provider") ?? "") as "" | "R2" | "B2" | "S3_COMPATIBLE",
-    bucket: String(formData.get("bucket") ?? ""),
-    region: String(formData.get("region") ?? ""),
-    endpoint: String(formData.get("endpoint") ?? ""),
-    accessKeyId: String(formData.get("accessKeyId") ?? ""),
-    secretAccessKey: String(formData.get("secretAccessKey") ?? ""),
-  });
+  try {
+    await updatePlatformCompanyStorageProfile(context, companyId, input);
+  } catch (error) {
+    return { ok: false, error: storageErrorMessage(error) };
+  }
   revalidatePath(`/platform/companies/${companyId}`);
+  return { ok: true, message: input.provider === "" ? "This company now uses the platform default storage." : "Storage location saved." };
+}
+
+export async function testCompanyStorageAction(companyId: string, input: StorageProfileInput): Promise<StorageActionResult> {
+  const context = await getRequestContext();
+  if (!context) redirect("/login");
+  try {
+    const result = await testPlatformCompanyStorage(context, companyId, input);
+    return result.ok ? { ok: true, message: result.message, steps: result.steps } : { ok: false, error: result.message, steps: result.steps };
+  } catch (error) {
+    return { ok: false, error: storageErrorMessage(error) };
+  }
 }
 
 export async function updateEntitlementAction(formData: FormData) {
