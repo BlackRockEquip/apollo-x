@@ -43,12 +43,14 @@ function requirePexTrackingRead(ctx: RequestContext) {
 // their original meanings map cleanly onto the new, smaller action surface
 // (PEX_SUPPLY_LINK -> "Link PEX return job", PEX_SUPPLY_CREATE -> "Create
 // linked return job now" / "Send to PEX Inventory", PEX_SUPPLY_EDIT ->
-// unlink / notes, PEX_STOCK_SCRAP -> "Scrap unit"). PEX_STOCK_TRANSFER_IN,
+// unlink / notes, PEX_STOCK_SCRAP -> "Scrap unit"). PEX_STOCK_TRANSFER_IN
+// was revived 2026-10-05 for "Send to PEX Inventory" (see
+// allocateJobToPexInventory) so it can be limited to Admins/Managers.
 // PEX_STOCK_EDIT, PEX_STOCK_QUARANTINE, PEX_RETURN_RECEIVE and
 // PEX_CHAIN_RELINK are now unused dead permission names — the storage-
 // location/quarantine/core-mismatch concepts they gated don't exist in
 // ModApp's PexRecord model this replaces.
-function requirePexWrite(ctx: RequestContext, permission: "PEX_SUPPLY_CREATE" | "PEX_SUPPLY_LINK" | "PEX_SUPPLY_EDIT" | "PEX_STOCK_SCRAP") {
+function requirePexWrite(ctx: RequestContext, permission: "PEX_SUPPLY_CREATE" | "PEX_SUPPLY_LINK" | "PEX_SUPPLY_EDIT" | "PEX_STOCK_SCRAP" | "PEX_STOCK_TRANSFER_IN") {
   requireModule(ctx, "PEX_STOCK", "WRITE");
   requireTenantPermission(ctx, permission);
   return ctx.companyId!;
@@ -501,29 +503,33 @@ export async function scrapPexRecord(ctx: RequestContext, pexId: string, raw: un
   return { ok: true };
 }
 
+export const PEX_ALLOCATE_BLOCKED_STATUSES: string[] = ["DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"];
+
 // "Send job to PEX Inventory" — any completed job of ANY type, not
 // otherwise part of a PEX supply/return cycle, can be allocated straight
 // to PEX Inventory: the job itself becomes the "return" record, no supply
 // leg at all. Mirrors ModApp's allocateJobToPexInventory.
 export async function allocateJobToPexInventory(ctx: RequestContext, jobId: string) {
-  const companyId = requirePexWrite(ctx, "PEX_SUPPLY_CREATE");
+  // 2026-10-05 — user request: "make the convert to Pex stock button
+  // visible no matter what status type, reasoning is even if a job is
+  // being repaired, it can still become pex stock" + "only for admins and
+  // managers". Was PEX_SUPPLY_CREATE (Admin-only by default) and gated on
+  // Delivered - awaiting payment. Now gated on PEX_STOCK_TRANSFER_IN — a
+  // previously unused permission, granted to COMPANY_ADMIN (all) and MANAGER
+  // by default in permissions.ts, adjustable per user like any other.
+  const companyId = requirePexWrite(ctx, "PEX_STOCK_TRANSFER_IN");
   const result = await prisma.$transaction(async (tx) => {
     const job = await requireScopedJob(tx, companyId, jobId);
-    // 2026-09-16 — user request: this used to require COMPLETE, but a
-    // unit is physically done and ready to shelve once the job reaches
-    // Delivered - awaiting payment, well before payment/closing catches
-    // up administratively. Matches the JobWorkspace button's own gate.
-    if (job.status !== "DELIVERED_AWAITING_PAYMENT") throw new StockError("JOB_NOT_DELIVERED", "The job must be Delivered - awaiting payment before it can be allocated to PEX Inventory.");
-    // 2026-09-16 — the "already linked" guard used to match ANY PexRecord
-    // for this job, including one that was later SCRAPPED (excluded from
-    // PEX Stock's own listing — see listPexInventory's `status: { not:
-    // "SCRAPPED" }` filter); nothing is actually holding this job's unit
-    // any more, so a scrapped record should never block re-allocating it.
-    // Left in place, this made "Send to PEX Inventory" throw
-    // PEX_ALREADY_LINKED forever after a single scrap, for a job that
-    // showed no PEX record anywhere in the UI — indistinguishable from the
-    // action silently doing nothing.
-    const existing = await tx.pexRecord.findFirst({ where: { companyId, status: { not: "SCRAPPED" }, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
+    // Any status where the unit is physically in the workshop is allowed,
+    // including mid-repair (PEX Stock already lists those under "To be
+    // repaired"; only COMPLETE units are ever matched for redeployment, see
+    // the "Previous job number" lookup above). Excluded: statuses where the
+    // unit hasn't arrived (DRAFT, TO_BE_COLLECTED, TO_BE_RECEIVED — PEX
+    // Stock's listing hides TO_BE_RECEIVED returns, so allocating then
+    // would recreate the "allocated but not showing" report from
+    // 2026-09-16) and CANCELLED.
+    if (PEX_ALLOCATE_BLOCKED_STATUSES.includes(job.status)) throw new StockError("JOB_NOT_ELIGIBLE", "This job's unit hasn't been received yet (or the job is cancelled), so it can't be sent to PEX Inventory.");
+const existing = await tx.pexRecord.findFirst({ where: { companyId, status: { not: "SCRAPPED" }, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
     if (existing) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a PEX record.");
     const created = await tx.pexRecord.create({
       data: {

@@ -341,6 +341,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // the bottom of this component's JSX.
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [job, setJob] = useState<JobDetail | null>(null);
+  // 2026-10-05 — "Send to PEX Inventory" is available at any status once the
+  // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
+  // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
+  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"].includes(String(job.status));
   const [loading, setLoading] = useState(mode === "detail");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -4317,7 +4321,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               Delivered - awaiting payment (matches allocateJobToPexInventory's
               own gate in pex/service.ts) — the unit's physically done and
               ready to shelve well before payment/closing catches up. */}
-          {job.status === "DELIVERED_AWAITING_PAYMENT" && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Any job Delivered - awaiting payment can have its unit allocated directly into PEX Inventory, without a supply/return chain — matches ModApp's manual stock intake.</p></div></header>
+          {canSendToPex && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Once the unit is in the workshop — even mid-repair — it can be allocated directly into PEX Inventory, without a supply/return chain. Admins and Managers only.</p></div></header>
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {})}>Send to PEX Inventory</button></footer>
             {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
                 not showing" on PEX Stock. The shared `error` state from
