@@ -1355,19 +1355,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  function saveDocumentButton(key: string, kind: DocumentKind, buildSpec: () => DocSpec | null, options?: { nameSuffix?: string; className?: string; size?: number }) {
-    const busy = savingDocumentKey === key;
-    return (
-      <button
-        type="button"
-        className={options?.className ?? "table-action"}
-        disabled={!!savingDocumentKey || !jobId}
-        title="Save this document as a PDF in the job's folder"
-        onClick={() => { const spec = buildSpec(); if (spec) void saveDocumentToFolder(key, kind, spec, options?.nameSuffix); }}
-      >
-        {busy ? <Loader2 className="spin" size={options?.size ?? 14} /> : <Save size={options?.size ?? 14} />} {busy ? "Saving…" : "Save to folder"}
-      </button>
-    );
+  // Printing and saving are asked in that order: clicking a Print button
+  // prints, and only then asks whether to also keep a PDF copy in the job's
+  // folder (named "<JOB NUMBER> - <document title>.pdf"). Nothing is saved
+  // unless the person answers yes, and nothing is asked if the print window
+  // could not open.
+  async function offerToSave(printed: boolean | Promise<boolean>, kind: DocumentKind, buildSpec: () => DocSpec | null, nameSuffix?: string) {
+    if (!(await printed) || !jobId || savingDocumentKey) return;
+    const spec = buildSpec();
+    if (!spec) return;
+    const fileName = `${jobDocLabel} - ${documentTitles[kind]}${nameSuffix ? ` - ${nameSuffix}` : ""}.pdf`;
+    const yes = await confirm({
+      title: "Save to the job folder?",
+      message: `Also save a PDF copy of this document in the job's folder as "${fileName}"?`,
+      tone: "neutral",
+      confirmLabel: "Save to folder",
+      cancelLabel: "No thanks",
+    });
+    if (yes) await saveDocumentToFolder(kind, kind, spec, nameSuffix);
   }
 
   const jobDocLabel = job ? job.jobNumber || job.draftNumber || "" : "";
@@ -1385,10 +1390,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const pickSlipSpec = (slip: { lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
     buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
 
-  function printJobPickSlip(result: NonNullable<typeof pickSlipResult>["pickSlip"]) {
-    if (!result) return;
+  function printJobPickSlip(result: NonNullable<typeof pickSlipResult>["pickSlip"]): boolean {
+    if (!result) return false;
     const w = window.open("", "_blank", "width=800,height=900");
-    if (!w) return; // popup blocked — nothing more we can do here
+    if (!w) return false; // popup blocked — nothing more we can do here
     const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
     const rows = result.lines
       .map((l) => `<tr><td>${esc(l.partNumber)}</td><td>${esc(l.description || "")}</td><td class="qty">${esc(l.quantity)}</td><td class="qty"></td><td>${esc(l.binLocationLabel || "—")}</td></tr>`)
@@ -1409,6 +1414,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
     w.onload = doPrint;
     setTimeout(doPrint, 400);
+    return true;
   }
 
   // 2026-09-16 — user request: "Add a Print Parts List button which
@@ -1417,10 +1423,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // list table as it stands on screen (same columns/headings: Part
   // number, Description, Qty, Received, Order number, Supplier, Status)
   // rather than just what a pick slip picked.
-  function printPartsList() {
-    if (!job) return;
+  function printPartsList(): boolean {
+    if (!job) return false;
     const w = window.open("", "_blank", "width=900,height=900");
-    if (!w) return; // popup blocked — nothing more we can do here
+    if (!w) return false; // popup blocked — nothing more we can do here
     const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
     const jobLabel = job.jobNumber || job.draftNumber || "";
     const rows = job.partLines
@@ -1455,6 +1461,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
     w.onload = doPrint;
     setTimeout(doPrint, 400);
+    return true;
   }
 
   // 2026-09-29 — the persistent "Picking slips for this job" list (see
@@ -2131,10 +2138,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  async function printDeliveryNote() {
-    if (!deliveryNote) return;
+  async function printDeliveryNote(): Promise<boolean> {
+    if (!deliveryNote) return false;
     const win = window.open("", "_blank");
-    if (!win) { setError("Enable pop-ups to print the delivery note."); return; }
+    if (!win) { setError("Enable pop-ups to print the delivery note."); return false; }
     const logoSrc = companyLogoImgSrc();
     const orgDetails = await fetchCompanyOrgDetails();
     const orgDetailsHtml = orgDetails ? `<div class="org-details">
@@ -2220,6 +2227,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </body></html>`);
     win.document.close();
     win.focus();
+    return true;
   }
 
   // Mechanic's job card (2026-09-14, user request: "Create a job card
@@ -2244,10 +2252,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // own line ... below it" literally. Component type dropped from the
   // Machine/component table — see the "Component type" removal comment on
   // the on-screen field above.
-  function printJobCard() {
-    if (!job) return;
+  function printJobCard(): boolean {
+    if (!job) return false;
     const win = window.open("", "_blank");
-    if (!win) { setError("Enable pop-ups to print the job card."); return; }
+    if (!win) { setError("Enable pop-ups to print the job card."); return false; }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${job.jobNumber || job.draftNumber || ""} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
@@ -2289,6 +2297,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     win.document.close();
     win.focus();
     win.print();
+    return true;
   }
 
   // 2026-09-19 — user request: "add a button 'Print Job History' that
@@ -2321,10 +2330,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // them, and uses the same window.onload-triggers-print pattern as those
   // two (see companyLogoImgSrc's comment) since it now has an image that
   // needs to finish loading before the print dialog opens.
-  async function printJobHistory() {
-    if (!job) return;
+  async function printJobHistory(): Promise<boolean> {
+    if (!job) return false;
     const win = window.open("", "_blank");
-    if (!win) { setError("Enable pop-ups to print the job record."); return; }
+    if (!win) { setError("Enable pop-ups to print the job record."); return false; }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const jobLabel = job.jobNumber || job.draftNumber || "";
     const logoSrc = companyLogoImgSrc();
@@ -2491,6 +2500,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </body></html>`);
     win.document.close();
     win.focus();
+    return true;
   }
 
   // 2026-09-19 — user request: "add a button 'Print Delivery Note' that
@@ -2524,10 +2534,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // with an on-screen "Print delivery note" button (.no-print, hidden in
   // the actual printed output) instead, so the person can type a quantity
   // first and print only when ready.
-  async function printJobDeliveryNote() {
-    if (!job) return;
+  async function printJobDeliveryNote(): Promise<boolean> {
+    if (!job) return false;
     const win = window.open("", "_blank");
-    if (!win) { setError("Enable pop-ups to print the delivery note."); return; }
+    if (!win) { setError("Enable pop-ups to print the delivery note."); return false; }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const jobLabel = job.jobNumber || job.draftNumber || "";
     const logoSrc = companyLogoImgSrc();
@@ -2645,6 +2655,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </body></html>`);
     win.document.close();
     win.focus();
+    return true;
   }
 
   // RFQ (request for quote) — see schema.prisma's JobRfqRequest comment for
@@ -3378,14 +3389,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     job views." Hidden (not just locked) for
                     mechanicFieldsLocked, same tenantRole === "USER" flag as
                     every other Mechanic-only restriction on this page. */}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={printJobCard}><Printer size={14} /> Print job card</button>}
-                {!mechanicFieldsLocked && saveDocumentButton("JOB_CARD", "JOB_CARD", jobCardSpec)}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec)}><Printer size={14} /> Print job card</button>}
                 {/* 2026-09-19, user request — see printJobHistory/
                     printJobDeliveryNote's own comments above for scope. */}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobHistory()}><Printer size={14} /> Print Job History</button>}
-                {!mechanicFieldsLocked && saveDocumentButton("JOB_HISTORY", "JOB_HISTORY", jobHistorySpec)}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void printJobDeliveryNote()}><Printer size={14} /> Print Delivery Note</button>}
-                {!mechanicFieldsLocked && saveDocumentButton("JOB_DELIVERY_NOTE", "JOB_DELIVERY_NOTE", jobDeliveryNoteSpec)}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec)}><Printer size={14} /> Print Job History</button>}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobDeliveryNote(), "JOB_DELIVERY_NOTE", jobDeliveryNoteSpec)}><Printer size={14} /> Print Delivery Note</button>}
                 {/* 2026-10-01 — every button below changes job.status (the
                     same action the status stepper performs, just via a
                     dedicated dialog/confirm instead of a stepper click), so
@@ -3592,10 +3600,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <button type="button" className="quiet-button" disabled={job.rfqRequests.length === 0} title={job.rfqRequests.length === 0 ? "Request a quote from at least one supplier first" : undefined} onClick={openQuoteCompare}><Columns3 size={14} /> Compare quotes</button>
                 )}
                 {job.partLines.length > 0 && (
-                  <button type="button" className="quiet-button" onClick={printPartsList}><Printer size={14} /> Print Parts List</button>
-                )}
-                {job.partLines.length > 0 && (
-                  saveDocumentButton("PARTS_LIST", "PARTS_LIST", partsListSpec, { className: "quiet-button" })
+                  <button type="button" className="quiet-button" onClick={() => void offerToSave(printPartsList(), "PARTS_LIST", partsListSpec)}><Printer size={14} /> Print Parts List</button>
                 )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
@@ -4245,8 +4250,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </span>
                 {pickSlipResult.pickSlip ? (
                   <span style={{ display: "flex", gap: 8 }}>
-                    <button type="button" className="quiet-button" onClick={() => printJobPickSlip(pickSlipResult.pickSlip)}><Printer size={13} /> Print</button>
-                    {saveDocumentButton(`PICK_SLIP:${pickSlipResult.pickSlip.id}`, "PICK_SLIP", () => pickSlipSpec(pickSlipResult.pickSlip!), { className: "quiet-button", size: 13 })}
+                    <button type="button" className="quiet-button" onClick={() => { const slip = pickSlipResult.pickSlip!; void offerToSave(printJobPickSlip(slip), "PICK_SLIP", () => pickSlipSpec(slip)); }}><Printer size={13} /> Print</button>
                     <button type="button" className="quiet-button" disabled={cancellingPickSlipId === pickSlipResult.pickSlip.id} onClick={() => void cancelJobPickSlip(pickSlipResult.pickSlip!.id)}>{cancellingPickSlipId === pickSlipResult.pickSlip.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === pickSlipResult.pickSlip.id ? "Deleting…" : "Delete"}</button>
                   </span>
                 ) : null}
@@ -4282,8 +4286,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           <td>Pickslip {jobPickSlips.length - index} — {new Date(ps.createdAt).toLocaleString()}</td>
                           <td>{ps.lines.length}</td>
                           <td className="actions">
-                            <button type="button" className="table-action" onClick={() => printJobPickSlip(ps)}><Printer size={13} /> Print</button>
-                            {saveDocumentButton(`PICK_SLIP:${ps.id}`, "PICK_SLIP", () => pickSlipSpec(ps), { size: 13 })}
+                            <button type="button" className="table-action" onClick={() => void offerToSave(printJobPickSlip(ps), "PICK_SLIP", () => pickSlipSpec(ps))}><Printer size={13} /> Print</button>
                             <button type="button" className="table-action" disabled={cancellingPickSlipId === ps.id} onClick={() => void cancelJobPickSlip(ps.id)}>
                               {cancellingPickSlipId === ps.id ? <Loader2 className="spin" size={13} /> : <X size={13} />} {cancellingPickSlipId === ps.id ? "Deleting…" : "Delete"}
                             </button>
@@ -4521,8 +4524,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       fill in on screen. */}
                 </div>
                 <footer className="detail-actions">
-                  <button type="button" className="gold-button" onClick={() => void printDeliveryNote()}>Print</button>
-                  {saveDocumentButton("OUTWORK_DELIVERY_NOTE", "OUTWORK_DELIVERY_NOTE", () => buildOutworkDeliveryNoteSpec({ title: documentTitles.OUTWORK_DELIVERY_NOTE, note: deliveryNote }), { className: "quiet-button", nameSuffix: deliveryNote.supplierName })}
+                  <button type="button" className="gold-button" onClick={() => { const note = deliveryNote; void offerToSave(printDeliveryNote(), "OUTWORK_DELIVERY_NOTE", () => buildOutworkDeliveryNoteSpec({ title: documentTitles.OUTWORK_DELIVERY_NOTE, note }), note.supplierName); }}>Print</button>
                   <button type="button" className="quiet-button" onClick={() => setDeliveryNote(null)}>Close</button>
                 </footer>
               </aside>
