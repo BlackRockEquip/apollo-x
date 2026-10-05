@@ -411,7 +411,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // new ones the way Stock Levels' own pick flow does.
   const [creatingPickSlip, setCreatingPickSlip] = useState(false);
   const [pickSlipError, setPickSlipError] = useState("");
-  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
+  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; skipped?: { partNumber: string; reason: string }[]; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
   // 2026-09-29 — "Cancel"/"Delete" on a pick slip (user request: "need a
   // way to cancel picking slip if a error was made", later "add a delete
   // slip button and allocate stock back") — see cancelJobPickSlip below
@@ -4161,6 +4161,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     ? `Listed ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} to pick from stock. Stock is taken off the shelf when each part is marked received.`
                     : "No stock was available to list right now (parts ordered from a supplier are skipped)."}
                   {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
+                  {(pickSlipResult.skipped || []).length > 0 ? <span style={{ display: "block", marginTop: 4 }}>{(pickSlipResult.skipped || []).map((k) => `${k.partNumber}: not listed because ${k.reason}.`).join(" ")}</span> : null}
                 </span>
                 {pickSlipResult.pickSlip ? (
                   <span style={{ display: "flex", gap: 8 }}>

@@ -1428,6 +1428,19 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
       });
     }
 
+    // 2026-10-05, user report (BRE1071 / 4D3107): typing a supplier on an
+    // in-stock line moves it to ON_ORDER (and frees its reservation), but
+    // removing the supplier again never moved it back, so the line kept
+    // saying "On order" with nothing ordered. With order details gone and
+    // nothing received, put it back to In stock when the reservation now
+    // covers what's left, otherwise Pending.
+    if (line.status === "ON_ORDER" && !hasOrderInfo && line.partId && !(line.receivedQuantity && line.receivedQuantity.gt(0))) {
+      const held = await tx.stockReservation.findMany({ where: { companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" }, select: { quantity: true } });
+      const heldQty = held.reduce((sum, r) => sum.plus(r.quantity), new Prisma.Decimal(0));
+      const restored = heldQty.gte(line.quantity.minus(alreadyIssued)) && heldQty.gt(0) ? "IN_STOCK" : "PENDING";
+      await tx.jobPartLine.update({ where: { id: line.id }, data: { status: restored as never } });
+    }
+
     await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: order details updated.`, { lineId: line.id, orderNumber, orderedQuantity: nextOrderedQuantity?.toString() ?? null });
     return record;
   }, { maxWait: 10000, timeout: 30000 });

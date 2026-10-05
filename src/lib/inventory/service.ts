@@ -2108,6 +2108,11 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
 
   const result = await prisma.$transaction(async (tx) => {
     const picked: PickedLine[] = [];
+    // 2026-10-05, user report (job BRE1071, part 4D3107): after removing a
+    // typed supplier, Create pick slip said "No stock was available to list
+    // right now (parts ordered from a supplier are skipped)" with no hint
+    // which line or why. Every line that is left off the slip now says so.
+    const skipped: { partNumber: string; reason: string }[] = [];
 
     for (const line of eligibleLines) {
       if (!line.partId) continue;
@@ -2116,7 +2121,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       // assertOperable's throw (one bad line blocking every other line on
       // the job) — skipping instead keeps this function's own "list what
       // is there" promise intact even for this case.
-      if (!part.active) continue;
+      if (!part.active) { skipped.push({ partNumber: line.partNumber, reason: "the part is inactive" }); continue; }
 
       const statusBeforeThisPick = String(line.status);
       const alreadyPicked = line.pickedQuantity ?? new D(0);
@@ -2130,7 +2135,15 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         pickedQuantity: line.pickedQuantity?.toString() ?? null,
       });
       let remaining = new D(qtys.toListOnPickSlip.toString());
-      if (remaining.lte(0)) continue;
+      if (remaining.lte(0)) {
+        if (qtys.stockQty <= 0) {
+          const why = [line.orderNumber ? `Order # ${line.orderNumber}` : null, line.orderedFromSupplierId ? "a supplier" : null].filter(Boolean).join(" and ");
+          skipped.push({ partNumber: line.partNumber, reason: `it is marked as ordered (${why || "ordered quantity"}) — clear the Order # and supplier, or lower Qty ordered, to pick it from stock` });
+        } else {
+          skipped.push({ partNumber: line.partNumber, reason: "it is already listed on a pick slip" });
+        }
+        continue;
+      }
 
       const pickedForLine: PickedLine[] = [];
 
@@ -2180,7 +2193,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         }
       }
 
-      if (pickedForLine.length === 0) continue;
+      if (pickedForLine.length === 0) { skipped.push({ partNumber: line.partNumber, reason: "no stock is on hand in an active bin for it (or it is all reserved for other jobs)" }); continue; }
 
       const totalPicked = pickedForLine.reduce((sum, p) => sum.plus(p.quantity), new D(0));
       const newPickedQuantity = alreadyPicked.plus(totalPicked);
@@ -2199,7 +2212,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       picked.push(...pickedForLine);
     }
 
-    if (picked.length === 0) return { pickSlipId: null as string | null, picked };
+    if (picked.length === 0) return { pickSlipId: null as string | null, picked, skipped };
 
     const pickSlip = await tx.pickSlip.create({ data: { companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
     await tx.pickSlipLine.createMany({
@@ -2215,7 +2228,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
         stockMovementId: l.stockMovementId,
       })),
     });
-    return { pickSlipId: pickSlip.id as string | null, picked };
+    return { pickSlipId: pickSlip.id as string | null, picked, skipped };
   }, { maxWait: 10000, timeout: 30000 });
 
   const outstandingCount = eligibleLines.length - result.picked.length;
@@ -2246,6 +2259,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
           },
     pickedCount: result.picked.length,
     outstandingCount,
+    skipped: result.skipped,
   };
 }
 
