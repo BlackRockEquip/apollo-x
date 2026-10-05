@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -113,7 +113,12 @@ const NAV_GROUPS: NavGroup[] = [
   // "Customers/Suppliers" (clearer than the internal acronym for what's
   // actually just those two pages).
   { key: "crm", label: "Customers/Suppliers", icon: Users, items: [{ key: "customers", label: "Customers", href: "/customers", module: "CUSTOMERS", permission: "CUSTOMERS_VIEW", icon: Users }, { key: "suppliers", label: "Suppliers", href: "/suppliers", module: "SUPPLIERS", permission: "SUPPLIERS_VIEW", icon: Building2, hiddenForMechanic: true }] },
-  { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", permission: "JOB_KITS_VIEW", icon: PackageOpen }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW", icon: Repeat }] },
+  // 2026-10-05, user request: Outwork and RFQs moved out of the Suppliers tabs
+  // into the Jobs group, in this order: Jobs & WIP, Job Kits, Parts (RFQs +
+  // Parts Outstanding), Outwork, PEX Stock, PEX Tracking. Parts and Outwork
+  // keep the old Suppliers-section rule: hidden for a Mechanic (see
+  // hiddenForMechanic and requireNotMechanicPage on those pages).
+  { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", permission: "JOB_KITS_VIEW", icon: PackageOpen }, { key: "parts", label: "Parts", href: "/parts", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: Package, hiddenForMechanic: true }, { key: "outwork", label: "Outwork", href: "/outwork", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: Truck, hiddenForMechanic: true }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW", icon: Repeat }] },
   // 2026-09-10 — Parts Catalog folded into Stock Levels (single merged
   // page at /inventory: catalog fields + stock columns + bin location +
   // create/edit/delete), so its own nav item is gone; /parts now redirects

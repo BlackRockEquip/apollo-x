@@ -53,7 +53,7 @@ const WIDGET_HREF: Record<string, string> = {
   "wip-status-counts": "/jobs?view=wip",
   "recent-jobs": "/jobs",
   "outstanding-parts": "/jobs?view=wip",
-  "procurement-summary": "/suppliers/outwork",
+  "procurement-summary": "/outwork",
   "pex-status": "/pex-tracking",
   "support-tickets": "/support",
 };
