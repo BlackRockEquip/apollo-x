@@ -457,6 +457,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [orderEditLineId, setOrderEditLineId] = useState("");
   const [orderSupplierQuery, setOrderSupplierQuery] = useState("");
   const [orderSupplierOptions, setOrderSupplierOptions] = useState<SupplierOption[]>([]);
+  // 2026-10-05, user report: "typing into a supplier name field that is blank
+  // does not pickup existing suppliers via dropdown ... Is the dropdown not
+  // hidden behind a field?" The parts table sits inside .data-table-wrap
+  // (overflow:auto, max-height), which CLIPS anything absolutely positioned
+  // that pokes out of it, so the suggestions rendered but were cut off (and
+  // only "appeared" when Tab happened to select the first one). The list is
+  // now position:fixed at the input's on-screen rectangle, which no
+  // overflow:auto ancestor can clip. Rect is re-measured on scroll/resize.
+  const supplierBoxRef = useRef<HTMLDivElement | null>(null);
+  const [supplierDropPos, setSupplierDropPos] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null);
   const [orderSupplierId, setOrderSupplierId] = useState("");
   // Bulk update — 2026-09-15, user request: "Parts list table, make it
   // that bulk update can be done on the parts to add supplier and order
@@ -906,6 +916,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }, 200);
     return () => clearTimeout(timer);
   }, [form.machineMake]);
+
+  useEffect(() => {
+    if (!orderEditLineId) { setSupplierDropPos(null); return; }
+    const measure = () => {
+      const el = supplierBoxRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const below = window.innerHeight - r.bottom - 12;
+      const above = r.top - 12;
+      const width = Math.max(r.width, 240);
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+      if (below < 180 && above > below) setSupplierDropPos({ left, width, bottom: window.innerHeight - r.top + 2, maxHeight: Math.min(280, above) });
+      else setSupplierDropPos({ left, width, top: r.bottom + 2, maxHeight: Math.min(280, Math.max(below, 120)) });
+    };
+    measure();
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => { window.removeEventListener("scroll", measure, true); window.removeEventListener("resize", measure); };
+  }, [orderEditLineId, orderSupplierOptions.length]);
 
   useEffect(() => {
     if (!orderEditLineId) { setOrderSupplierOptions([]); return; }
@@ -3732,13 +3761,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         which row's picker is open (see its declaration
                         above for the double-click-glitch fix this also
                         relies on). */}
-                    <div><Search size={13} /><input
+                    <div ref={supplierPickerOpenHere ? supplierBoxRef : undefined}><Search size={13} /><input
                       value={supplierPickerOpenHere ? orderSupplierQuery : (line.orderedFromSupplier?.name || "")}
                       onFocus={() => { setOrderEditLineId(lineId); setOrderSupplierQuery(line.orderedFromSupplier?.name || ""); setOrderSupplierId(""); }}
                       onChange={(e) => { setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }}
                       placeholder="Search active supplier"
                     />{line.orderedFromSupplier?.id && !supplierPickerOpenHere ? <button type="button" className="table-action" title="Remove supplier" aria-label={`Remove supplier from ${line.partNumber}`} disabled={saving} onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, ""))}><X size={12} /></button> : null}</div>
-                    {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
+                    {supplierPickerOpenHere && orderSupplierOptions.length > 0 && supplierDropPos && <div className="selector-results" style={{ position: "fixed", left: supplierDropPos.left, width: supplierDropPos.width, top: supplierDropPos.top ?? "auto", bottom: supplierDropPos.bottom ?? "auto", maxHeight: supplierDropPos.maxHeight, zIndex: 40 }}>{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td>
                     <span className={`status-pill ${statusTone}`}>{text(line.status).replaceAll("_", " ")}</span>

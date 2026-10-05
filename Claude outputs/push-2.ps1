@@ -1,32 +1,24 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job parts: multi-bin add no longer fails silently, longer transaction timeouts, errors visible
+Job parts: supplier dropdown on the parts table was clipped by the table's scroll box
 
-User reports "error still on both" (supplier typeahead, Undo receive then Mark
-received). Reproduced the server flows against a local Postgres with all repo
-migrations; receive / undo / re-receive and supplier set / clear pass there, but
-the reproduction exposed a real silent failure and some fragility.
+User reports Mark received / Undo receive now work, but typing into a blank
+supplier field (or after removing a supplier) shows no supplier suggestions:
+"Is the dropdown not hidden behind a field?"
 
-Fixes
-- addPartLinesBulk reserved stock across several bins, creating more than one
-  ACTIVE reservation for the same part line. The database allows only one
-  (StockReservation_active_reference_key); the violation aborted the Prisma
-  transaction but the call still reported success, so no line was created. It now
-  uses reserveJobPartLineStockTx (one reservation, partial if needed).
-- Heavier part-line transactions (add, receive, undo receive, order update, pick
-  slip create/cancel) now set maxWait/timeout so slow queries don't hit Prisma's
-  5 s default and roll back.
-- Stock Levels pick-slip lines now record stockIssuedQuantity, so Undo receive
-  on those lines does not deduct stock twice.
-- Readable 409 messages for PART_LINE_ALREADY_FULLY_RECEIVED,
-  PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING and PART_LINE_ALREADY_HAS_DESCRIPTION
-  instead of a generic 500.
-- Parts table now shows an error banner directly above the table, so a failed
-  save/receive is visible without scrolling to the top of the page.
+Cause: the parts table sits inside .data-table-wrap (overflow:auto, max-height),
+which clips anything absolutely positioned that extends past it. The suggestion
+list rendered inside the supplier cell but was cut off, so nothing was visible
+(Tab still picked the first match because the buttons existed in the DOM).
 
-Changed: src/components/JobWorkspace.tsx, src/lib/inventory/service.ts,
-src/lib/jobs/service.ts, src/lib/http/errors.ts.
+Fix (JobWorkspace.tsx): the suggestion list is now position:fixed at the supplier
+input's on-screen rectangle, re-measured on scroll/resize, and flips above the
+input when there is little room below. A fixed element cannot be clipped by an
+overflow:auto ancestor, and it is still inside the cell so the existing blur
+handling is unchanged.
+
+Changed: src/components/JobWorkspace.tsx.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
