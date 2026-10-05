@@ -1961,6 +1961,25 @@ model JobPartLine {
   // never double-issues stock the line already picked, since this is
   // what "how much is left to pick" is computed from.
   pickedQuantity        Decimal?        @db.Decimal(19, 4)
+  // 2026-10-05 — user request: "if I pick a part which qty is 2, 1 from
+  // stock and order the outstanding at another supplier, how does one
+  // work?" How many of this line's units are being obtained from an
+  // outside supplier instead of from shelf stock. NULL means "not set":
+  // a line with an order number or supplier then counts as fully ordered
+  // (less anything already taken from stock), a line with neither counts as
+  // fully from stock. Pick slips only ever list quantity - orderedQuantity,
+  // and the supplier follow-up only chases orderedQuantity. See
+  // src/lib/jobs/part-line-quantities.ts for the one place this is worked
+  // out.
+  orderedQuantity       Decimal?        @db.Decimal(19, 4)
+  // 2026-10-05 — user request: "when creating a pick slip it should not
+  // automatically take from stock already, it should only take from stock
+  // when mark received is clicked." A pick slip is now only a list of what
+  // to fetch (pickedQuantity above); this counts the units that have
+  // actually been taken off the shelf, which happens in
+  // markPartLineReceived (and, for slips made before this change, was done
+  // at pick time — backfilled by the migration).
+  stockIssuedQuantity   Decimal?        @db.Decimal(19, 4)
   // Whatever status this line was in right before receiving started —
   // restored exactly by "Undo" if "Mark received" was clicked by mistake.
   previousStatus        PartLineStatus?

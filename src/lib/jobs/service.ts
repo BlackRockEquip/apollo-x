@@ -32,7 +32,9 @@ import {
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
-import { reserveStockTx, releaseReservationTx } from "@/lib/inventory/service";
+import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
+import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
+import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
@@ -1248,6 +1250,17 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
 // status from *before* any receiving started is remembered once (not
 // overwritten by a later partial-receive click) so unmarkPartLineReceived
 // can restore the true original state. Mirrors ModApp's markPartReceived.
+//
+// 2026-10-05, user request: "when creating a pick slip it should not
+// automatically take from stock already, it should only take from stock
+// when mark received is clicked." This is now where stock leaves the shelf.
+// Of the units being received, the ones that were meant to come from stock
+// (quantity - orderedQuantity, less any already taken) are issued here —
+// "AUTO" (the default) takes from stock first and counts the rest as a
+// supplier delivery, "STOCK" / "ORDER" say which it is when a line is part
+// from stock and part ordered elsewhere and the units arrive out of that
+// order. A line with no stock recorded still receives fine: it just issues
+// nothing and says so in the job's activity.
 export async function markPartLineReceived(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobPartLineReceiveInput.parse(raw);
@@ -1260,27 +1273,64 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
   const enteredQty = new Prisma.Decimal(input.receivedQty);
   if (enteredQty.gt(outstanding)) throw new Error("PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING");
 
+  const qtys = partLineQuantities({
+    quantity: line.quantity.toString(),
+    orderedQuantity: line.orderedQuantity?.toString() ?? null,
+    orderNumber: line.orderNumber,
+    hasSupplier: Boolean(line.orderedFromSupplierId),
+    receivedQuantity: line.receivedQuantity?.toString() ?? null,
+    stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+    pickedQuantity: line.pickedQuantity?.toString() ?? null,
+  });
+  const stockRemaining = new Prisma.Decimal(qtys.stockRemaining.toString());
+  const source = input.source ?? "AUTO";
+  let stockPart = new Prisma.Decimal(0);
+  if (line.partId) {
+    if (source === "STOCK") {
+      if (enteredQty.gt(stockRemaining)) {
+        throw new StockError("PART_LINE_RECEIVE_EXCEEDS_STOCK_PORTION", `Only ${stockRemaining.toString()} of this line is meant to come from stock. Receive the rest as supplier delivery.`);
+      }
+      stockPart = enteredQty;
+    } else if (source === "AUTO") {
+      stockPart = Prisma.Decimal.min(enteredQty, stockRemaining);
+    }
+  }
+
   const newReceivedQuantity = alreadyReceived.plus(enteredQty);
   const nowFullyReceived = newReceivedQuantity.gte(line.quantity);
+  const jobRow = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } });
+  const jobNumberLabel = jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId;
 
   const updated = await prisma.$transaction(async (tx) => {
+    let issuedNote = "";
+    let nextIssuedTotal: Prisma.Decimal | null = line.stockIssuedQuantity ?? null;
+    if (stockPart.gt(0) && line.partId) {
+      const { issued } = await issueStockForJobPartLineTx(tx, { ...ctx, companyId }, { jobId, jobNumber: jobNumberLabel, lineId: line.id, partId: line.partId, quantity: stockPart });
+      nextIssuedTotal = (line.stockIssuedQuantity ?? new Prisma.Decimal(0)).plus(stockPart);
+      issuedNote = issued.gte(stockPart)
+        ? ` ${issued.toString()} taken from stock.`
+        : issued.gt(0)
+          ? ` ${issued.toString()} of ${stockPart.toString()} taken from stock (not enough stock recorded for the rest).`
+          : " No stock recorded to take it from, so no stock was deducted.";
+    }
     const record = await tx.jobPartLine.update({
       where: { id: line.id },
       data: {
         status: nowFullyReceived ? "RECEIVED" : "PARTIALLY_RECEIVED",
         receivedQuantity: newReceivedQuantity,
+        stockIssuedQuantity: nextIssuedTotal,
         previousStatus: line.previousStatus ?? line.status,
         updatedById: ctx.userId,
       },
     });
-    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED", nowFullyReceived
+    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED", (nowFullyReceived
       ? `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (complete).`
-      : `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (${line.quantity.minus(newReceivedQuantity)} still outstanding).`,
-      { lineId: line.id, receivedQuantity: newReceivedQuantity.toString() });
+      : `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (${line.quantity.minus(newReceivedQuantity)} still outstanding).`) + issuedNote,
+      { lineId: line.id, receivedQuantity: newReceivedQuantity.toString(), stockIssued: stockPart.toString() });
     return record;
   });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "RECEIVE", afterData: { jobId, lineId, receivedQuantity: updated.receivedQuantity?.toString() } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "RECEIVE", afterData: { jobId, lineId, receivedQuantity: updated.receivedQuantity?.toString(), stockIssued: stockPart.toString() } });
   return updated;
 }
 
@@ -1292,13 +1342,29 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
 export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string, lineId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const line = await getPartLineScoped(companyId, jobId, lineId);
+  const jobRow = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } });
+  const jobNumberLabel = jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId;
 
   const updated = await prisma.$transaction(async (tx) => {
+    // 2026-10-05 — receiving now takes stock off the shelf, so undoing it
+    // puts that stock back (and re-reserves it for the line).
+    let returnedNote = "";
+    let nextIssued: Prisma.Decimal | null = line.stockIssuedQuantity ?? null;
+    if (line.partId) {
+      const { returned } = await returnStockForJobPartLineTx(tx, { ...ctx, companyId }, { jobId, jobNumber: jobNumberLabel, lineId: line.id, partId: line.partId });
+      if (returned.gt(0)) returnedNote = ` ${returned.toString()} returned to stock.`;
+      // What stays counted as issued is only what an older pick slip took at
+      // pick time (its PickSlipLine carries the ISSUE movement's id); every
+      // unit counted at receive time is undone along with the receipt.
+      const legacy = await tx.pickSlipLine.aggregate({ where: { jobPartLineId: line.id, stockMovementId: { not: null } }, _sum: { quantity: true } });
+      const legacyIssued = legacy._sum.quantity ?? new Prisma.Decimal(0);
+      nextIssued = legacyIssued.gt(0) ? legacyIssued : null;
+    }
     const record = await tx.jobPartLine.update({
       where: { id: line.id },
-      data: { status: line.previousStatus ?? "PENDING", receivedQuantity: null, previousStatus: null, updatedById: ctx.userId },
+      data: { status: line.previousStatus ?? "PENDING", receivedQuantity: null, stockIssuedQuantity: nextIssued, previousStatus: null, updatedById: ctx.userId },
     });
-    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED_UNDONE", `${line.partNumber}: receiving undone, line reset.`, { lineId: line.id });
+    await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED_UNDONE", `${line.partNumber}: receiving undone, line reset.${returnedNote}`, { lineId: line.id });
     return record;
   });
 
@@ -1318,17 +1384,83 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
   const orderNumber = input.orderNumber ?? null;
   const orderedFromSupplierId = input.orderedFromSupplierId ?? null;
   const orderedAt = orderNumber ? line.orderedAt ?? new Date() : null;
+  const hasOrderInfo = Boolean(orderNumber) || Boolean(orderedFromSupplierId);
+
+  // 2026-10-05 — ordered quantity: how many of the line's units are being
+  // ordered elsewhere (see JobPartLine.orderedQuantity). Left out of the
+  // request = unchanged; a line with no order number and no supplier any
+  // more has nothing ordered, so it is cleared.
+  let nextOrderedQuantity: Prisma.Decimal | null = line.orderedQuantity ?? null;
+  if (input.orderedQuantity !== undefined) nextOrderedQuantity = input.orderedQuantity === null ? null : new Prisma.Decimal(input.orderedQuantity);
+  if (!hasOrderInfo) nextOrderedQuantity = null;
+  const alreadyIssued = line.stockIssuedQuantity ?? new Prisma.Decimal(0);
+  if (nextOrderedQuantity) {
+    if (nextOrderedQuantity.gt(line.quantity)) {
+      throw new StockError("PART_LINE_ORDERED_QTY_TOO_HIGH", `Ordered quantity can't be more than the line's quantity (${line.quantity.toString()}).`);
+    }
+    if (line.quantity.minus(nextOrderedQuantity).lt(alreadyIssued)) {
+      throw new StockError("PART_LINE_ORDERED_QTY_TOO_HIGH", `${alreadyIssued.toString()} unit${alreadyIssued.eq(1) ? " has" : "s have"} already been taken from stock for this line, so at most ${line.quantity.minus(alreadyIssued).toString()} can be ordered.`);
+    }
+  }
+
+  const before = partLineQuantities({
+    quantity: line.quantity.toString(),
+    orderedQuantity: line.orderedQuantity?.toString() ?? null,
+    orderNumber: line.orderNumber,
+    hasSupplier: Boolean(line.orderedFromSupplierId),
+    receivedQuantity: line.receivedQuantity?.toString() ?? null,
+    stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+    pickedQuantity: line.pickedQuantity?.toString() ?? null,
+  });
+  const after = partLineQuantities({
+    quantity: line.quantity.toString(),
+    orderedQuantity: nextOrderedQuantity?.toString() ?? null,
+    orderNumber,
+    hasSupplier: Boolean(orderedFromSupplierId),
+    receivedQuantity: line.receivedQuantity?.toString() ?? null,
+    stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+    pickedQuantity: line.pickedQuantity?.toString() ?? null,
+  });
+  const stockPortionChanged = before.stockQty !== after.stockQty;
+
+  const jobRow = stockPortionChanged ? await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } }) : null;
+  const jobNumberLabel = jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId;
 
   const updated = await prisma.$transaction(async (tx) => {
+    // Units no longer meant to come from stock can't stay "on a pick slip":
+    // trim the listed quantity down to what stock is now expected to supply
+    // (never below what's already been taken), and if that empties it, move
+    // the line off PICKED.
+    let nextStatus = orderNumber && line.status === "PENDING" ? "ON_ORDER" : line.status;
+    let nextPicked: Prisma.Decimal | null = line.pickedQuantity ?? null;
+    if (nextPicked && nextPicked.gt(0)) {
+      const keep = Prisma.Decimal.max(new Prisma.Decimal(after.stockQty.toString()), alreadyIssued);
+      if (nextPicked.gt(keep)) {
+        nextPicked = keep.gt(0) ? keep : null;
+        if (!nextPicked && line.status === "PICKED") nextStatus = hasOrderInfo ? "ON_ORDER" : "PENDING";
+      }
+    }
+    if (line.status === "IN_STOCK" && hasOrderInfo && after.stockQty <= 0) nextStatus = "ON_ORDER";
+
     const record = await tx.jobPartLine.update({
       where: { id: line.id },
-      data: { orderNumber, orderedFromSupplierId, orderedAt, status: orderNumber && line.status === "PENDING" ? "ON_ORDER" : line.status, updatedById: ctx.userId },
+      data: { orderNumber, orderedFromSupplierId, orderedAt, orderedQuantity: nextOrderedQuantity, pickedQuantity: nextPicked, status: nextStatus as never, updatedById: ctx.userId },
     });
-    await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: order details updated.`, { lineId: line.id, orderNumber });
+
+    if (stockPortionChanged && line.partId && line.status !== "RECEIVED") {
+      await reconcileJobPartLineReservationTx(tx, { ...ctx, companyId }, {
+        jobNumber: jobNumberLabel,
+        lineId: line.id,
+        partId: line.partId,
+        targetQuantity: Prisma.Decimal.max(new Prisma.Decimal(after.stockQty.toString()).minus(alreadyIssued), new Prisma.Decimal(0)),
+      });
+    }
+
+    await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: order details updated.`, { lineId: line.id, orderNumber, orderedQuantity: nextOrderedQuantity?.toString() ?? null });
     return record;
   });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_ORDER", afterData: { jobId, lineId, orderNumber } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_ORDER", afterData: { jobId, lineId, orderNumber, orderedQuantity: nextOrderedQuantity?.toString() ?? null } });
   return updated;
 }
 

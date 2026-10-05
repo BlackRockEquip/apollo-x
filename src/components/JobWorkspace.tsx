@@ -10,6 +10,7 @@ import { StatusStepper } from "@/components/StatusStepper";
 import { PexAllocatedPill, PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -31,6 +32,11 @@ type PartLineRow = Row & {
   // slip so far (see PartLineStatus's PICKED value, schema.prisma), kept
   // separate from receivedQuantity above — see the Status column below.
   pickedQuantity?: unknown;
+  // 2026-10-05 — how many units are being ordered from a supplier (null =
+  // not set) and how many have actually been taken off the shelf so far;
+  // both worked through partLineQuantities (src/lib/jobs/part-line-quantities.ts).
+  orderedQuantity?: unknown;
+  stockIssuedQuantity?: unknown;
   previousStatus?: string | null;
   orderNumber?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
@@ -439,6 +445,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [showRfqPopup, setShowRfqPopup] = useState(false);
   const [receivingLineId, setReceivingLineId] = useState("");
   const [receiveQty, setReceiveQty] = useState("");
+  // 2026-10-05 — for a line that is part from stock, part ordered: where the
+  // units being received came from (see jobPartLineReceiveInput.source).
+  const [receiveSource, setReceiveSource] = useState<"AUTO" | "STOCK" | "ORDER">("AUTO");
   // 2026-09-15 — orderEditLineId now marks which part-line row's supplier
   // typeahead is currently focused/open (see the "Supplier" column below),
   // not "which row is in a Save/Cancel edit form" — the "Change supplier"
@@ -1396,7 +1405,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Levels' own Delete button does — there's no "cancelled" state to fall
   // back into any more if this is clicked by mistake.
   async function cancelJobPickSlip(pickSlipId: string) {
-    if (!(await confirm({ message: "Permanently delete this picking slip? The stock it took will be allocated back onto the shelf, and the slip itself will be removed for good.", tone: "danger", confirmLabel: "Delete" }))) return;
+    if (!(await confirm({ message: "Permanently delete this picking slip? It will be removed for good. (A slip only lists what to fetch — stock is taken when a part is marked received — so nothing moves unless the slip is an older one that already took stock, which is put back on the shelf.)", tone: "danger", confirmLabel: "Delete" }))) return;
     setCancellingPickSlipId(pickSlipId); setPickSlipError(""); setJobPickSlipsError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips/${pickSlipId}/cancel`, {
@@ -1479,10 +1488,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!jobId || !receiveQty) return;
     setSaving(true); setError("");
     try {
-      const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}/receive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receivedQty: Number(receiveQty) }) });
+      const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}/receive`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ receivedQty: Number(receiveQty), source: receiveSource }) });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to record received quantity.");
-      setReceivingLineId(""); setReceiveQty("");
+      setReceivingLineId(""); setReceiveQty(""); setReceiveSource("AUTO");
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to record received quantity.");
@@ -1532,6 +1541,35 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save order number.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // 2026-10-05, user request: "if I pick one part which qty is 2, 1 from
+  // stock and order the outstanding at another supplier, how does one work?"
+  // Saves how many of the line's units are being ordered elsewhere. Like the
+  // other two inline saves it resends the line's current order number and
+  // supplier (the API clears either when left out), read fresh off jobRef.
+  async function saveOrderedQtyInline(lineId: string, value: string) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const currentLine = jobRef.current?.partLines.find((l) => String(l.id) === lineId);
+      const currentOrderNumber = currentLine?.orderNumber ? String(currentLine.orderNumber) : "";
+      const currentSupplierId = currentLine?.orderedFromSupplier?.id ? String(currentLine.orderedFromSupplier.id) : "";
+      const trimmed = value.trim();
+      const r = await fetch(`/api/v1/jobs/${jobId}/parts/${lineId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderNumber: currentOrderNumber || null, orderedFromSupplierId: currentSupplierId || null, orderedQuantity: trimmed ? Number(trimmed) : null }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save ordered quantity.");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save ordered quantity.");
+      await load(true);
     } finally {
       setSaving(false);
     }
@@ -2791,8 +2829,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const groups = new Map<string, { supplierId: string; supplierName: string; count: number; overdueDays: number }>();
     for (const line of job?.partLines ?? []) {
       const status = String(line.status ?? "");
-      if (!["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"].includes(status)) continue;
-      const outstanding = Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0);
+      if (!["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED", "IN_STOCK", "PICKED"].includes(status)) continue;
+      // 2026-10-05 — a line that is partly from stock (IN_STOCK / PICKED) is
+      // only chased when it also has something ordered, and only for the
+      // units meant to come from the supplier (see partLineQuantities).
+      if ((status === "IN_STOCK" || status === "PICKED") && !line.orderNumber && !line.orderedFromSupplier) continue;
+      const outstanding = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity }).supplierOutstanding;
       if (!(outstanding > 0)) continue;
       const supplier = line.orderedFromSupplier as (Row & { name?: string | null }) | undefined;
       const supplierId = supplier?.id ? String(supplier.id) : "unknown";
@@ -3536,6 +3578,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 // shelf" rather than "confirmed on the job."
                 const picked = decimalText(line.pickedQuantity ?? 0);
                 const hasPickedSome = Number(line.pickedQuantity ?? 0) > 0;
+                // 2026-10-05 — how the line splits between shelf stock and an
+                // outside supplier (see partLineQuantities).
+                const qtys = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity, pickedQuantity: line.pickedQuantity });
+                const isSplitLine = qtys.hasOrderInfo && qtys.ordered > 0 && qtys.stockQty > 0;
+                const receiveStockPart = !line.part ? 0 : receiveSource === "STOCK" ? Number(receiveQty || 0) : receiveSource === "AUTO" ? Math.min(Number(receiveQty || 0), qtys.stockRemaining) : 0;
                 const statusTone = fullyReceived ? "" : line.status === "PICKED" ? "tone-blue" : "neutral";
                 const supplierPickerOpenHere = orderEditLineId === lineId;
                 return <tr key={line.id}>
@@ -3546,13 +3593,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   </td>
                   <td>
                     {quantity}
-                    {hasPickedSome ? <div className="muted small-line">Picked {picked} of {quantity}</div> : null}
+                    {isSplitLine ? <div className="muted small-line">From stock {qtys.stockQty} · Ordered {qtys.ordered}</div> : null}
+                    {hasPickedSome ? <div className="muted small-line">On pick slip {picked} of {qtys.hasOrderInfo ? decimalText(Math.max(qtys.stockQty, qtys.picked)) : quantity}</div> : null}
                     {hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
                     {receivingLineId === lineId && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                       <input type="number" min={1} max={outstanding} value={receiveQty} onChange={(e) => setReceiveQty(e.target.value)} style={{ width: 80 }} />
+                      {qtys.stockRemaining > 0 && qtys.supplierOutstanding > 0 && qtys.hasOrderInfo && (
+                        <select value={receiveSource} onChange={(e) => setReceiveSource(e.target.value as "AUTO" | "STOCK" | "ORDER")} aria-label="Where these units came from">
+                          <option value="AUTO">Stock first</option>
+                          <option value="STOCK">From stock</option>
+                          <option value="ORDER">From supplier</option>
+                        </select>
+                      )}
                       <button type="button" className="quiet-button" disabled={saving || !receiveQty} onClick={() => void receivePartLine(lineId)}>Confirm</button>
-                      <button type="button" className="quiet-button" disabled={saving} onClick={() => { setReceivingLineId(""); setReceiveQty(""); }}>Cancel</button>
+                      <button type="button" className="quiet-button" disabled={saving} onClick={() => { setReceivingLineId(""); setReceiveQty(""); setReceiveSource("AUTO"); }}>Cancel</button>
                     </div>}
+                    {receivingLineId === lineId && receiveStockPart > 0 ? <div className="muted small-line">Takes {receiveStockPart} from stock</div> : null}
                   </td>
                   <td>
                     {/* Always an editable input, matching ModApp's
@@ -3591,6 +3647,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         void queueRowSave(lineId, () => saveOrderNumberInline(lineId, next));
                       }}
                     />
+                    {/* 2026-10-05, user request: "if I pick one part which qty
+                        is 2, 1 from stock and order the outstanding at another
+                        supplier, how does one work?" How many of this line's
+                        units are being ordered elsewhere. Defaults to the whole
+                        line (less anything already taken from stock) once it
+                        has an order number or supplier, so a part ordered from
+                        somewhere else is never listed on a pick slip; lower it
+                        to take the rest from stock. */}
+                    {qtys.hasOrderInfo && (
+                      <label className="muted small-line" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        Qty ordered
+                        <input
+                          key={`${lineId}:ordered:${qtys.ordered}`}
+                          type="number"
+                          min={1}
+                          max={Math.max(qtys.quantity - qtys.issued, 1)}
+                          step="any"
+                          defaultValue={qtys.ordered}
+                          disabled={saving}
+                          style={{ width: 64 }}
+                          onBlur={(e) => {
+                            const next = e.target.value.trim();
+                            if (!next || Number(next) === qtys.ordered) return;
+                            void queueRowSave(lineId, () => saveOrderedQtyInline(lineId, next));
+                          }}
+                        />
+                      </label>
+                    )}
                   </td>
                   <td
                     className="party-selector"
@@ -3647,7 +3731,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(lineId)}>Undo receive</button>}
-                      {outstanding > 0 && receivingLineId !== lineId && <button type="button" className="table-action" disabled={saving} onClick={() => { setReceivingLineId(lineId); setReceiveQty(String(outstanding)); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
+                      {outstanding > 0 && receivingLineId !== lineId && <button type="button" className="table-action" disabled={saving} onClick={() => { setReceivingLineId(lineId); setReceiveQty(String(outstanding)); setReceiveSource("AUTO"); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
                       <button type="button" className="table-action danger" onClick={() => void removePartLineRow(lineId)}>Remove</button>
                     </div>
                   </td>
@@ -4022,8 +4106,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <div className="inline-success" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span>
                   {pickSlipResult.pickedCount > 0
-                    ? `Picked ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} from stock.`
-                    : "No stock was available to pick right now."}
+                    ? `Listed ${pickSlipResult.pickedCount} part line${pickSlipResult.pickedCount === 1 ? "" : "s"} to pick from stock. Stock is taken off the shelf when each part is marked received.`
+                    : "No stock was available to list right now (parts ordered from a supplier are skipped)."}
                   {pickSlipResult.outstandingCount > 0 ? ` ${pickSlipResult.outstandingCount} line${pickSlipResult.outstandingCount === 1 ? "" : "s"} still outstanding.` : ""}
                 </span>
                 {pickSlipResult.pickSlip ? (

@@ -188,6 +188,11 @@ export const jobPartLineBulkAddInput = z
 export const jobPartLineOrderUpdateInput = z.object({
   orderNumber: optionalText,
   orderedFromSupplierId: optionalId,
+  // 2026-10-05 — how many of the line's units are being ordered elsewhere
+  // (see JobPartLine.orderedQuantity in schema.prisma). Left out = leave the
+  // stored value as it is (unlike the two fields above, where leaving one
+  // out clears it); null = clear it back to the default.
+  orderedQuantity: z.union([z.coerce.number().positive("Enter a quantity greater than 0."), z.null()]).optional(),
 });
 
 // One-shot, same as ModApp's updatePartLineDescription — the service layer
@@ -200,6 +205,10 @@ export const jobPartLineDescriptionUpdateInput = z.object({
 // see markPartLineReceived's comment in service.ts.
 export const jobPartLineReceiveInput = z.object({
   receivedQty: z.coerce.number().positive("Enter a quantity greater than 0."),
+  // 2026-10-05 — where the units being received came from, for a line that
+  // is part from stock and part ordered elsewhere. AUTO (the default) takes
+  // from stock first, then counts the rest as supplier deliveries.
+  source: z.enum(["AUTO", "STOCK", "ORDER"]).optional(),
 });
 
 // Outwork (new — added 2026-09-09 at the user's request: "The outwork

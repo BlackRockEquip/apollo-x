@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildFollowupEmailMessage, type CompanyEmailTemplates } from "@/lib/email-templates";
+import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 
 // Parts follow-up — new, added 2026-09-09 at the user's request ("ModApp's
 // separate 'Parts follow-up' chase-email feature wasn't built"). Scoped
@@ -82,7 +83,7 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
   if (!job) notFound();
 
   const lines = await prisma.jobPartLine.findMany({
-    where: { companyId, jobId, status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED"] } },
+    where: { companyId, jobId, status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED", "IN_STOCK", "PICKED"] } },
     include: { orderedFromSupplier: { select: { id: true, name: true, mainEmail: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -91,8 +92,23 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
 
   const bySupplier = new Map<string, { supplierId: string; supplierName: string; mainEmail: string | null; lines: { partNumber: string; description: string | null; outstandingQty: string }[] }>();
   for (const line of lines) {
+    // 2026-10-05 — a line that is partly from stock (IN_STOCK / PICKED) is
+    // only chased when it also has something ordered from a supplier.
+    if ((line.status === "IN_STOCK" || line.status === "PICKED") && !line.orderNumber && !line.orderedFromSupplierId) continue;
     const supplier = line.orderedFromSupplier;
-    const outstandingQty = new Prisma.Decimal(line.quantity).minus(line.receivedQuantity ? new Prisma.Decimal(line.receivedQuantity) : 0);
+    // 2026-10-05 — only chase the units meant to come from the supplier (a
+    // line that is part from stock, part ordered, shouldn't ask the supplier
+    // for the stock part too). See part-line-quantities.ts.
+    const outstandingQty = new Prisma.Decimal(
+      partLineQuantities({
+        quantity: line.quantity.toString(),
+        orderedQuantity: line.orderedQuantity?.toString() ?? null,
+        orderNumber: line.orderNumber,
+        hasSupplier: Boolean(line.orderedFromSupplierId),
+        receivedQuantity: line.receivedQuantity?.toString() ?? null,
+        stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+      }).supplierOutstanding.toString(),
+    );
     if (!outstandingQty.greaterThan(0)) continue;
     const supplierId = supplier?.id ?? UNKNOWN_SUPPLIER_ID;
     const supplierName = supplier?.name ?? "Unknown";
