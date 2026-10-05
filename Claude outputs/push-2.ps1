@@ -1,26 +1,25 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Pex pill: also on PEX Return jobs still in repair or not yet reallocated
+Job parts: Order # box now follows the stored value after a bulk update
 
-User request: add the Pex pill to all PEX Return type jobs that are
-still in the repair process or have not been reallocated.
+User report: after a bulk update on a job's parts (adding a supplier),
+the supplier couldn't be edited again.
 
-The pill (job header and Jobs & WIP table) used to show only for jobs
-sent to PEX Inventory with the button. It now shows whenever the job's
-unit is in PEX Stock: a non-scrapped PEX return record that hasn't been
-redeployed to another job (consumedByJobId empty), on a job that has
-arrived (not TO_BE_RECEIVED). That is the same base filter PEX Stock
-itself uses, so it covers a PEX Return job mid-repair and one that is
-finished and waiting to be reallocated, plus direct allocations. Once
-the unit is redeployed, or scrapped, the pill goes away. The "Pex"
-entry in the Jobs & WIP status dropdown uses the same rule.
+The server has no lock on a line's supplier, so this was a page problem.
+The Order # box in the parts table is uncontrolled and was keyed only by
+the line id, so a value changed from outside it (the bulk update's order
+number) never showed up: it kept displaying the old blank text while the
+line really had an order number. The first blur out of it then looked like
+an edit, saved a blank order number over the bulk-applied one, and put the
+table into its saving state, which disables the Supplier inputs right as
+the user clicked across to them.
 
-PEX Return jobs still To be received don't get the pill, since PEX Stock
-doesn't list them yet.
+Fix: key the input on the stored order number so it remounts whenever the
+server value changes, so what it shows and compares against on blur is
+always current.
 
-Changed: src/components/JobWorkspace.tsx, src/app/(tenant)/jobs/page.tsx,
-src/lib/jobs/service.ts, src/lib/jobs/validation.ts.
+Changed: src/components/JobWorkspace.tsx.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

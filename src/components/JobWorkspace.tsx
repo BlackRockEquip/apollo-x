@@ -3560,8 +3560,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         button first. Uncontrolled (defaultValue, not
                         value) since it's one of many rows and doesn't need
                         to re-render on every keystroke; saves on blur. */}
+                    {/* 2026-10-05 — user report: "when adding parts in a job,
+                        doing a bulk update and adding a supplier, it does not
+                        allow me to edit a supplier again." This input is
+                        uncontrolled (defaultValue), and its key used to be
+                        just lineId, so it never picked up a value changed
+                        from OUTSIDE it — i.e. the bulk update's order
+                        number. It kept showing the old (blank) text while
+                        the line really had an order number, so the first
+                        blur out of it looked like an edit ("" vs the stored
+                        number), silently saved a blank order number back
+                        over the bulk-applied one, and put the whole table
+                        into `saving` (which disables the Supplier inputs)
+                        right as the user clicked across to the Supplier
+                        cell. Keying on the stored order number remounts the
+                        input whenever the server value changes, so what it
+                        shows (and compares against on blur) is always
+                        current. */}
                     <input
-                      key={lineId}
+                      key={`${lineId}:${line.orderNumber ? String(line.orderNumber) : ""}`}
                       defaultValue={line.orderNumber ? String(line.orderNumber) : ""}
                       placeholder="PO / order #"
                       disabled={saving}
