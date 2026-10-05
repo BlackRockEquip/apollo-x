@@ -1,20 +1,30 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job parts: clearing the supplier name now removes the supplier
+Job parts: supplier typeahead after clearing, and Undo receive on a part-used reservation
 
-User report: "trying to remove a supplier name on parts list table still not
-working."
+User reports: (1) "removing a supplier and trying to type does not pickup
+dropdown of suppliers, when clicking tab it selects the dropdown" and (2) "when
+clicking undo receive and reclicking mark received it does not work."
 
-The Supplier cell on the parts table is a typeahead. Emptying it and clicking
-away only closed the picker (it saved only when the typed text matched a real
-supplier), so the stored supplier was never cleared and the old name came back.
+Supplier typeahead (JobWorkspace.tsx)
+- Clearing a supplier saved in the background and, when the save finished, reset
+  the picker (closed it and wiped the query). Someone who cleared a supplier and
+  went straight on to type a new one lost their text and the dropdown a moment
+  later. Only picking a supplier now resets the picker; clearing leaves it alone,
+  and the supplier box is no longer disabled while a row save is in flight.
 
-Fix: leaving the box empty on a line that has a supplier now clears it, and a
-small x button next to the name removes it in one click. Clearing the supplier
-and order number on a line also clears its ordered quantity (server side).
+Undo receive (inventory/service.ts)
+- The database allows only ONE active reservation per reference
+  (StockReservation_active_reference_key). Undo receive put the returned stock
+  back and then tried to create a second reservation for the line; when the
+  first one was still active (only partly used), that raised a unique violation,
+  which aborts the whole transaction even though the error was caught, so the
+  undo failed. New reserveJobPartLineStockTx adds to the line's existing
+  reservation at its bin, or makes a single one at one bin, and is used by both
+  Undo receive and the ordered-qty reservation resize.
 
-Changed: src/components/JobWorkspace.tsx.
+Changed: src/components/JobWorkspace.tsx, src/lib/inventory/service.ts.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

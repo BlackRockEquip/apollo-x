@@ -1751,6 +1751,89 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
 
 const JOB_PART_LINE_NOTE_PREFIX = "PARTLINE:";
 
+// Reserves up to `quantity` units for a job part line, best-effort, and
+// returns how many it managed to reserve. The database allows only ONE
+// ACTIVE reservation per reference (StockReservation_active_reference_key, a
+// partial unique index on company + referenceType + referenceId), so a line
+// can't hold a second one: if it already has an active reservation this adds
+// to it (at its own bin), otherwise it makes one at a single bin — the
+// preferred bin, else the default bin, else whichever bin has the most
+// available. Trying to insert a second ACTIVE reservation would raise a
+// unique-violation, and inside a transaction that aborts the whole
+// transaction even when the error is caught — which is what made Undo
+// receive fail on a line whose reservation was only partly used.
+async function reserveJobPartLineStockTx(
+  tx: Tx,
+  ctx: RequestContext & { companyId: string },
+  input: { jobNumber: string; lineId: string; partId: string; quantity: Quantity; preferredLocationId?: string | null },
+): Promise<Quantity> {
+  if (input.quantity.lte(0)) return new D(0);
+  const existing = await tx.stockReservation.findFirst({
+    where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: input.lineId, status: "ACTIVE", partId: input.partId },
+  });
+  if (existing) {
+    const balance = await lockBalance(tx, ctx.companyId, input.partId, existing.locationId);
+    if (!balance) return new D(0);
+    const add = D.min(input.quantity, balance.onHand.minus(balance.reserved));
+    if (add.lte(0)) return new D(0);
+    const nextReserved = balance.reserved.plus(add);
+    await tx.stockReservation.update({ where: { id: existing.id }, data: { quantity: existing.quantity.plus(add) } });
+    await tx.stockMovement.create({
+      data: buildMovement({
+        companyId: ctx.companyId,
+        partId: input.partId,
+        movementType: "RESERVATION",
+        quantity: add,
+        fromLocationId: existing.locationId,
+        referenceType: "RESERVATION",
+        referenceId: existing.id,
+        referenceNumber: input.jobNumber,
+        reason: `Reserved for job ${input.jobNumber}`,
+        actorId: ctx.userId,
+        resultingFromQuantity: balance.onHand.minus(nextReserved),
+        correlationId: ctx.correlationId,
+      }),
+    });
+    await saveBalance(tx, balance, { reserved: nextReserved });
+    return add;
+  }
+
+  const part = await tx.part.findFirst({ where: { id: input.partId, companyId: ctx.companyId }, select: { binLocationId: true } });
+  const candidates = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: input.partId, quantityOnHand: { gt: 0 } }, select: { locationId: true } });
+  const orderedLocationIds = Array.from(new Set([
+    ...(input.preferredLocationId ? [input.preferredLocationId] : []),
+    ...(part?.binLocationId ? [part.binLocationId] : []),
+    ...candidates.map((c) => c.locationId),
+  ]));
+  let best: { locationId: string; available: Quantity } | null = null;
+  for (const locationId of orderedLocationIds) {
+    const balance = await tx.stockBalance.findFirst({ where: { companyId: ctx.companyId, partId: input.partId, locationId } });
+    const available = balance ? balance.quantityOnHand.minus(balance.quantityReserved) : new D(0);
+    if (available.lte(0)) continue;
+    if (available.gte(input.quantity)) { best = { locationId, available }; break; }
+    if (!best || available.gt(best.available)) best = { locationId, available };
+  }
+  if (!best) return new D(0);
+  const qty = D.min(input.quantity, best.available);
+  try {
+    await reserveStockTx(tx, ctx, {
+      partId: input.partId,
+      locationId: best.locationId,
+      quantity: qty.toString(),
+      referenceType: "JOB",
+      referenceId: input.lineId,
+      referenceNumber: input.jobNumber,
+      reason: `Reserved for job ${input.jobNumber}`,
+      notes: null,
+      expiresAt: null,
+      idempotencyKey: undefined,
+    });
+    return qty;
+  } catch {
+    return new D(0);
+  }
+}
+
 // Takes up to `quantity` units of the line's part off the shelf: the line's
 // own reservation(s) first (so a reservation is never mistaken for
 // unavailable stock), then any other bin's available (onHand - reserved)
@@ -1900,24 +1983,12 @@ export async function returnStockForJobPartLineTx(
     byLocation.set(issue.fromLocationId, (byLocation.get(issue.fromLocationId) ?? new D(0)).plus(issue.quantity));
   }
 
-  for (const [locationId, qty] of byLocation) {
-    try {
-      await reserveStockTx(tx, ctx, {
-        partId: input.partId,
-        locationId,
-        quantity: qty.toString(),
-        referenceType: "JOB",
-        referenceId: input.lineId,
-        referenceNumber: input.jobNumber,
-        reason: `Reserved for job ${input.jobNumber}`,
-        notes: null,
-        expiresAt: null,
-        idempotencyKey: undefined,
-      });
-    } catch {
-      // Best-effort, same as every other reservation attempt: the stock is
-      // back on the shelf either way.
-    }
+  // Put the returned stock back under a reservation for the line, so other
+  // jobs can't take it. Best-effort, and always a single reservation (see
+  // reserveJobPartLineStockTx for why).
+  if (returned.gt(0)) {
+    const firstLocationId = byLocation.keys().next().value as string | undefined;
+    await reserveJobPartLineStockTx(tx, ctx, { jobNumber: input.jobNumber, lineId: input.lineId, partId: input.partId, quantity: returned, preferredLocationId: firstLocationId ?? null });
   }
   return { returned };
 }
@@ -1954,36 +2025,7 @@ export async function reconcileJobPartLineReservationTx(
   }
   if (toReserve.lte(0)) return;
 
-  const part = await tx.part.findFirst({ where: { id: input.partId, companyId: ctx.companyId }, select: { binLocationId: true } });
-  const candidates = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: input.partId, quantityOnHand: { gt: 0 } }, select: { locationId: true } });
-  const orderedLocationIds = [
-    ...(part?.binLocationId ? [part.binLocationId] : []),
-    ...candidates.map((c) => c.locationId).filter((id) => id !== part?.binLocationId),
-  ];
-  for (const locationId of orderedLocationIds) {
-    if (toReserve.lte(0)) break;
-    const balance = await tx.stockBalance.findFirst({ where: { companyId: ctx.companyId, partId: input.partId, locationId } });
-    const available = balance ? balance.quantityOnHand.minus(balance.quantityReserved) : new D(0);
-    if (available.lte(0)) continue;
-    const qtyHere = D.min(toReserve, available);
-    try {
-      await reserveStockTx(tx, ctx, {
-        partId: input.partId,
-        locationId,
-        quantity: qtyHere.toString(),
-        referenceType: "JOB",
-        referenceId: input.lineId,
-        referenceNumber: input.jobNumber,
-        reason: `Reserved for job ${input.jobNumber}`,
-        notes: null,
-        expiresAt: null,
-        idempotencyKey: undefined,
-      });
-      toReserve = toReserve.minus(qtyHere);
-    } catch {
-      // Best-effort per location, as when a line is first added.
-    }
-  }
+  await reserveJobPartLineStockTx(tx, ctx, { jobNumber: input.jobNumber, lineId: input.lineId, partId: input.partId, quantity: toReserve });
 }
 
 // ============================================================

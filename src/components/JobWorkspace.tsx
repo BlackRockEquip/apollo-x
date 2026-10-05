@@ -1596,7 +1596,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save supplier.");
-      setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
+      // 2026-10-05, user report: "removing a supplier and trying to type does
+      // not pickup dropdown of suppliers." Closing the picker here ran AFTER
+      // the save finished, so someone who cleared a supplier and went
+      // straight on to type a new one had their typed text wiped and the
+      // dropdown closed a moment later. Only picking a supplier (which
+      // should close the picker) resets it now; clearing one leaves the
+      // picker alone (the caller has already closed it where that is
+      // wanted).
+      if (supplierId) { setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]); }
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save supplier.");
@@ -3703,7 +3711,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       // — nothing cleared the saved supplier, and the old
                       // name came straight back. Leaving it empty on a line
                       // that has a supplier now clears it.
-                      if (!typed && line.orderedFromSupplier?.id) { void queueRowSave(lineId, () => saveSupplierInline(lineId, "")); return; }
+                      if (!typed && line.orderedFromSupplier?.id) {
+                        setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
+                        void queueRowSave(lineId, () => saveSupplierInline(lineId, ""));
+                        return;
+                      }
                       setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
                     })}
                   >
@@ -3720,7 +3732,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       onFocus={() => { setOrderEditLineId(lineId); setOrderSupplierQuery(line.orderedFromSupplier?.name || ""); setOrderSupplierId(""); }}
                       onChange={(e) => { setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }}
                       placeholder="Search active supplier"
-                      disabled={saving}
                     />{line.orderedFromSupplier?.id && !supplierPickerOpenHere ? <button type="button" className="table-action" title="Remove supplier" aria-label={`Remove supplier from ${line.partNumber}`} disabled={saving} onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, ""))}><X size={12} /></button> : null}</div>
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
