@@ -62,6 +62,11 @@ const jobListSelect = {
   // ReturnUnrepairedPill in StatusPill.tsx and this column's own render in
   // app/(tenant)/jobs/page.tsx.
   returnedUnrepaired: true,
+  // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
+  // (user request) for jobs directly allocated to PEX Inventory: a return
+  // record with no supply job, not scrapped. Same test as pexAllocatedDirect
+  // in JobWorkspace.tsx.
+  pexAsReturn: { select: { supplyJobId: true, status: true } },
   type: true,
   customerReference: true,
   customerPo: true,

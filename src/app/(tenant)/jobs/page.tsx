@@ -1,6 +1,6 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
-import { StatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
+import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill } from "@/components/StatusPill";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
@@ -61,6 +61,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
       return <>
         <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
+        {job.pexAsReturn && !job.pexAsReturn.supplyJobId && job.pexAsReturn.status !== "SCRAPPED" && <> <PexAllocatedPill /></>}
       </>;
     case "dateReceived":
       return fmtDate(job.dateReceived);

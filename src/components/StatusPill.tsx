@@ -79,6 +79,12 @@ export function StatusPill({ status, label, returnedUnrepaired }: { status: stri
 // header and the Jobs & WIP table's status column in app/(tenant)/jobs/page.tsx.
 export function ReturnUnrepairedPill() { return <span className="status-pill tone-red">Return Unrepaired</span>; }
 
+// 2026-10-05, user request: "If a job is allocated to pex, add a status
+// pill next to current status the status 'Pex'." Shown in the job header
+// beside the normal status pill while the job is directly allocated to PEX
+// Inventory (see allocateJobToPexInventory in pex/service.ts).
+export function PexAllocatedPill() { return <span className="status-pill tone-teal">Pex</span>; }
+
 // PexRecord's own status lifecycle (TO_BE_DELIVERED -> AWAIT_CORE ->
 // OUTSTANDING -> RECEIVED -> IN_REPAIR -> COMPLETED, with SCRAPPED as a
 // terminal side-state). This is distinct from JOB_STATUS_TONE above:

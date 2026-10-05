@@ -7,7 +7,7 @@ import type { FocusEvent } from "react";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
-import { PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
+import { PexAllocatedPill, PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -345,6 +345,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
   // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
   const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"].includes(String(job.status));
+  // 2026-10-05 — true while this job is sitting in PEX Inventory by way of
+  // "Send to PEX Inventory" (a return record with no supply job, not
+  // scrapped): drives the header "Pex" pill and the undo button.
+  const pexAllocatedDirect = !!job?.pexAsReturn && !job.pexAsReturn.supplyJob && job.pexAsReturn.status !== "SCRAPPED";
   const [loading, setLoading] = useState(mode === "detail");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1151,6 +1155,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     e.preventDefault();
     const message = autosaveState === "saving" ? "Your changes are still saving. Leave this job anyway?" : "Your last change failed to save. Leave anyway and lose it?";
     void confirm({ message, tone: "warning", confirmLabel: "Leave anyway" }).then((ok) => { if (ok) router.push("/jobs"); });
+  }
+
+  // 2026-10-05 — user request: confirm before "Send to PEX Inventory", and
+  // a way to undo it if it was clicked by accident.
+  async function sendToPexInventory() {
+    if (!job) return;
+    if (!(await confirm({ message: "Send this job's unit to PEX Inventory? It will show as Pex and appear on the PEX Stock page. You can undo this afterwards if it was a mistake.", tone: "warning", confirmLabel: "Send to PEX" }))) return;
+    await postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {});
+  }
+  async function undoSendToPexInventory() {
+    if (!job) return;
+    if (!(await confirm({ message: "Take this job's unit back out of PEX Inventory? The Pex pill will be removed and it will disappear from PEX Stock.", tone: "warning", confirmLabel: "Undo" }))) return;
+    await postAction(`/api/v1/jobs/${job.id}/pex/undo-allocate`, {});
   }
 
   async function postAction(path: string, payload: Record<string, unknown>) {
@@ -3165,6 +3182,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   see ReturnUnrepairedPill's own comment there. */}
               {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />}
               {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
+              {pexAllocatedDirect && <PexAllocatedPill />}
             </div>
             {/* 2026-10-01 — gated by canViewCustomer alongside the
                 Customer details section itself (see jobFormSections
@@ -4311,6 +4329,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <div className="stack-row">
                 <button type="button" className="quiet-button" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsReturn?.id))}>View history</button>
                 {job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && <button type="button" className="table-action danger" disabled={saving} onClick={() => setDialog("pex-scrap")}>Scrap unit</button>}
+                {pexAllocatedDirect && canSendToPex && !job.pexAsReturn.consumedByJob && <button type="button" className="quiet-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button>}
               </div>
             </article></div>
             <div className="drawer-fields"><label className="wide"><span>PEX notes</span><textarea rows={3} value={form.pexNotes} onChange={(e) => updateField("pexNotes", e.target.value)} /></label></div>
@@ -4322,7 +4341,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               own gate in pex/service.ts) — the unit's physically done and
               ready to shelve well before payment/closing catches up. */}
           {canSendToPex && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Once the unit is in the workshop — even mid-repair — it can be allocated directly into PEX Inventory, without a supply/return chain. Admins and Managers only.</p></div></header>
-            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/allocate`, {})}>Send to PEX Inventory</button></footer>
+            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void sendToPexInventory()}>Send to PEX Inventory</button></footer>
             {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
                 not showing" on PEX Stock. The shared `error` state from
                 postAction() was only ever rendered once, near the top of
@@ -4333,6 +4352,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 etc.) the section stays visible with no visible reason why,
                 so it looks like nothing happened rather than showing the
                 real error — repeating it locally, right at the button. */}
+            {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
+          </section>}
+
+          {/* 2026-10-05 — undo for "Send to PEX Inventory" (user request).
+              A PEX_RETURN-type job shows its own PEX Return panel above, so
+              the undo button lives there instead of a second section. */}
+          {pexAllocatedDirect && job.type !== "PEX_RETURN" && canSendToPex && !job.pexAsReturn?.consumedByJob && <section className="detail-panel"><header><div><h2>In PEX Inventory</h2><p>This job's unit was sent to PEX Inventory. If that was a mistake you can take it back out.</p></div></header>
+            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button></footer>
             {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
           </section>}
 

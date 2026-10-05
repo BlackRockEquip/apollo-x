@@ -550,6 +550,34 @@ const existing = await tx.pexRecord.findFirst({ where: { companyId, status: { no
   return result;
 }
 
+// 2026-10-05 — user request: "add a way to undo adding to pex if it was
+// clicked by accident". Reverses allocateJobToPexInventory: deletes the
+// directly-allocated PexRecord (returnJobId = this job, no supply job) so
+// the job drops out of PEX Stock and can be sent again later. Deleted
+// rather than marked SCRAPPED because a scrapped record would keep holding
+// the job's unique returnJobId slot (PexRecord.returnJobId is @unique),
+// which would make a later re-send fail. Refused once the unit has been
+// redeployed to another job, and for records that belong to a supply/return
+// chain (those are managed with Unlink, not this). The job's own activity
+// feed keeps a line for it; PEX_RETURN_UNLINKED is reused as the activity
+// type because JobActivityType is a database enum and this isn't worth a
+// migration.
+export async function undoAllocateJobToPexInventory(ctx: RequestContext, jobId: string) {
+  const companyId = requirePexWrite(ctx, "PEX_STOCK_TRANSFER_IN");
+  const result = await prisma.$transaction(async (tx) => {
+    const job = await requireScopedJob(tx, companyId, jobId);
+    const pex = await tx.pexRecord.findFirst({ where: { companyId, returnJobId: job.id, status: { not: "SCRAPPED" } } });
+    if (!pex) throw new StockError("PEX_NOT_ALLOCATED", "This job isn't currently in PEX Inventory.");
+    if (pex.supplyJobId) throw new StockError("PEX_IN_CHAIN", "This job is part of a PEX supply/return chain, not a direct allocation — unlink it from the supply job instead.");
+    if (pex.consumedByJobId) throw new StockError("PEX_ALREADY_CONSUMED", "This unit has already been redeployed to another job, so it can't be taken back out of PEX Inventory.");
+    await tx.pexRecord.delete({ where: { id: pex.id } });
+    await addActivity(tx, ctx, job.id, "PEX_RETURN_UNLINKED", "Removed from PEX Inventory (undid \"Send to PEX Inventory\").", { pexId: pex.id });
+    return pex;
+  });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_ALLOCATE_UNDO", afterData: { jobId } });
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Read/list actions — feed the job page's PEX section and both list pages.
 // ---------------------------------------------------------------------------
