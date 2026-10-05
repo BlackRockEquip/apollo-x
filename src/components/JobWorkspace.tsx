@@ -349,6 +349,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // "Send to PEX Inventory" (a return record with no supply job, not
   // scrapped): drives the header "Pex" pill and the undo button.
   const pexAllocatedDirect = !!job?.pexAsReturn && !job.pexAsReturn.supplyJob && job.pexAsReturn.status !== "SCRAPPED";
+  // 2026-10-05, user request: the "Pex" pill also goes on PEX Return jobs
+  // still in the repair process or not yet reallocated. Shown whenever the
+  // job's unit is in PEX Stock: a non-scrapped return record that hasn't
+  // been redeployed to another job, on a job that has arrived — the same
+  // base filter as listPexInventory. Covers direct allocations too (the pill
+  // now clears once the unit is redeployed).
+  const pexInStock = !!job?.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && job.status !== "TO_BE_RECEIVED";
   const [loading, setLoading] = useState(mode === "detail");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -3182,7 +3189,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   see ReturnUnrepairedPill's own comment there. */}
               {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />}
               {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
-              {pexAllocatedDirect && <PexAllocatedPill />}
+              {pexInStock && <PexAllocatedPill />}
             </div>
             {/* 2026-10-01 — gated by canViewCustomer alongside the
                 Customer details section itself (see jobFormSections

@@ -61,7 +61,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
       return <>
         <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
-        {job.pexAsReturn && !job.pexAsReturn.supplyJobId && job.pexAsReturn.status !== "SCRAPPED" && <> <PexAllocatedPill /></>}
+        {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && job.status !== "TO_BE_RECEIVED" && <> <PexAllocatedPill /></>}
       </>;
     case "dateReceived":
       return fmtDate(job.dateReceived);

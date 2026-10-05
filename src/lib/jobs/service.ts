@@ -64,9 +64,12 @@ const jobListSelect = {
   returnedUnrepaired: true,
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
   // (user request) for jobs directly allocated to PEX Inventory: a return
-  // record with no supply job, not scrapped. Same test as pexAllocatedDirect
-  // in JobWorkspace.tsx.
-  pexAsReturn: { select: { supplyJobId: true, status: true } },
+  // record that's not scrapped and not yet redeployed (consumedByJobId null)
+  // while the job itself has arrived (not TO_BE_RECEIVED) — i.e. the unit is
+  // in PEX Stock, whether directly allocated or a PEX Return job still being
+  // repaired / waiting to be reallocated. Same test as pexInStock in
+  // JobWorkspace.tsx and listPexInventory's own base filter in pex/service.ts.
+  pexAsReturn: { select: { status: true, consumedByJobId: true } },
   type: true,
   customerReference: true,
   customerPo: true,
@@ -381,9 +384,9 @@ function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobW
     // now a flag filter rather than a status filter (see JOB_WIP_FILTERS'
     // own comment in jobs/ui.ts).
     ...(query.returnedUnrepaired ? { returnedUnrepaired: true } : {}),
-    // 2026-10-05 — "Pex" status filter: directly allocated to PEX Inventory
-    // (return record with no supply job, not scrapped).
-    ...(query.pexAllocated ? { pexAsReturn: { is: { supplyJobId: null, status: { not: "SCRAPPED" as const } } } } : {}),
+    // 2026-10-05 — "Pex" status filter: the unit is in PEX Stock (see
+    // jobListSelect's pexAsReturn comment) — mirrors listPexInventory.
+    ...(query.pexAllocated ? { pexAsReturn: { is: { status: { not: "SCRAPPED" as const }, consumedByJobId: null, returnJob: { is: { status: { not: "TO_BE_RECEIVED" as const } } } } } } : {}),
   };
 }
 
