@@ -8,7 +8,7 @@ import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
-import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, JOB_WIP_FILTERS } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
 import { JOBS_WIP_COLUMNS, filterColumnsByPermission, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
@@ -149,17 +149,24 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   // straight through to listJobs's enum validation and threw. See the
   // matching comment on jobsListQuery in src/lib/jobs/validation.ts.
   const type = typeof sp.type === "string" && sp.type ? sp.type : undefined;
-  const status = typeof sp.status === "string" && sp.status ? sp.status : undefined;
+  const rawStatus = typeof sp.status === "string" && sp.status ? sp.status : undefined;
+  // 2026-10-05 — "PEX" and "RETURNED_UNREPAIRED" in the status dropdown are
+  // flag filters, not real JobStatus values: PEX = directly allocated to PEX
+  // Inventory, RETURNED_UNREPAIRED = the returnedUnrepaired flag (the
+  // chip that used to do this was removed with the filter strip). Everything
+  // else passes through as a status as before.
+  const pexAllocated = rawStatus === "PEX";
+  const status = rawStatus === "PEX" || rawStatus === "RETURNED_UNREPAIRED" ? undefined : rawStatus;
   // 2026-10-01 — backs the "Returned unrepaired" filter chip below, now a
   // flag rather than a status (see JOB_WIP_FILTERS' own comment in
   // jobs/ui.ts).
-  const returnedUnrepaired = sp.returnedUnrepaired === "true";
+  const returnedUnrepaired = sp.returnedUnrepaired === "true" || rawStatus === "RETURNED_UNREPAIRED";
   // pageSize is deliberately high, not the usual ~50 — there's no page-number
   // UI on this list, so it scrolls internally within a fixed-height panel
   // instead (see .jobs-panel .data-table-wrap in globals.css). 5000 is the
   // validated ceiling in jobsListQuery; see the comment there.
   const [data, columns] = await Promise.all([
-    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, returnedUnrepaired: returnedUnrepaired || undefined, sort: "newest", page: 1, pageSize: 5000 }),
+    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, returnedUnrepaired: returnedUnrepaired || undefined, pexAllocated: pexAllocated || undefined, sort: "newest", page: 1, pageSize: 5000 }),
     getJobsWipColumns(ctx),
   ]);
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
@@ -199,9 +206,10 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             <option value="">All job types</option>
             {Object.entries(JOB_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-          <select name="status" defaultValue={status || ""} form="jobs-filter-form">
+          <select name="status" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
             <option value="">All statuses</option>
             {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            <option value="PEX">Pex</option>
           </select>
           {/* 2026-09-14 — "Move the custom column button selctor and apply
               button to the far right" (explicit request). The item-count
@@ -222,26 +230,11 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           <JobsWipColumnPicker selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
         </div>
 
-        <div className="jobs-filter-strip">
-          {JOB_WIP_FILTERS.map((filter) => {
-            const active = filter.key === "all" ? view === "all" : filter.key === "completed" ? view === "completed" : filter.key === "drafts" ? status === "DRAFT" : filter.key === "returned-unrepaired" ? returnedUnrepaired : false;
-            const href = filter.key === "all"
-              ? `/jobs?view=all${q ? `&q=${encodeURIComponent(q)}` : ""}`
-              : filter.key === "completed"
-                ? `/jobs?view=completed${q ? `&q=${encodeURIComponent(q)}` : ""}`
-                : filter.key === "drafts"
-                  ? `/jobs?view=all&status=DRAFT${q ? `&q=${encodeURIComponent(q)}` : ""}`
-                  // 2026-10-01 — "Returned unrepaired" now filters by the
-                  // returnedUnrepaired flag, not a status (see JOB_WIP_FILTERS'
-                  // own comment in jobs/ui.ts).
-                  : filter.key === "returned-unrepaired"
-                    ? `/jobs?view=all&returnedUnrepaired=true${q ? `&q=${encodeURIComponent(q)}` : ""}`
-                    : `/jobs?view=all&status=${encodeURIComponent(filter.statuses?.[0] ?? "")}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-            return <Link key={filter.key} href={href} className={active ? "status-chip active" : "status-chip"}>{filter.label}</Link>;
-          })}
-          <Link href="/jobs?view=wip" className={view === "wip" ? "status-chip active" : "status-chip"}>All WIP</Link>
-        </div>
-
+        {/* 2026-10-05 — user request: "remove the search pills under search
+            bar in jobs/wip". The chip strip (All jobs / Drafts / Collection /
+            ... / Completed / All WIP) is gone; the status dropdown above
+            covers single statuses, plus the "Pex" and "Returned unrepaired"
+            entries, which are flags rather than statuses. */}
         <div className="data-table-wrap">
           {/* Drag-to-resize (2026-09-14, user request: "Make the job wip
               view table columns custom sizable") — table-layout: fixed

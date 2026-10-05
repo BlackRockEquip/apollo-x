@@ -286,6 +286,10 @@ export const jobsListQuery = z.object({
   // JOB_WIP_FILTERS in jobs/ui.ts and this filter's own href-building case
   // in app/(tenant)/jobs/page.tsx.
   returnedUnrepaired: z.coerce.boolean().optional(),
+  // 2026-10-05 — backs the "Pex" entry in the Jobs & WIP status dropdown:
+  // jobs directly allocated to PEX Inventory (see pexAllocatedDirect in
+  // JobWorkspace.tsx). Like returnedUnrepaired, a flag, not a JobStatus.
+  pexAllocated: z.coerce.boolean().optional(),
   sort: z.enum(["newest", "oldest"]).default("newest"),
   page: z.coerce.number().int().min(1).default(1),
   // Higher ceiling than the usual 100 (see e.g. master-data/validation.ts's

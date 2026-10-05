@@ -1,16 +1,26 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Jobs & WIP: show the "Pex" pill next to status for PEX-allocated jobs
+Jobs & WIP: remove the filter pills under the search bar, add "Pex" to
+the status dropdown
 
-Follow-up to the job-header Pex pill: the Jobs & WIP table's Status
-column now shows the same teal "Pex" pill beside the status (and beside
-the Return Unrepaired pill if both apply) for jobs directly allocated to
-PEX Inventory - a return record with no supply job, not scrapped. The
-list query now selects the PEX return record's supplyJobId and status to
-drive it; same test as the job header.
+User request: remove the search pills under the search bar in Jobs & WIP,
+and add status Pex to the search dropdown.
 
-Changed: src/lib/jobs/service.ts, src/app/(tenant)/jobs/page.tsx.
+The pill strip (All jobs / Drafts / Collection / Workshop / ... /
+Completed / All WIP) is removed. "Pex" is added to the status dropdown;
+it filters to jobs directly allocated to PEX Inventory (return record
+with no supply job, not scrapped) via a new pexAllocated query flag
+(jobsListQuery + mapListScopeWhere), the same test as the Pex pill.
+
+The pills were the only way to reach the "Returned unrepaired" filter (a
+flag, not a status), so the existing "Returned unrepaired" entry in the
+status dropdown - which used to filter the retired RETURNED_UNREPAIRED
+status and match nothing - now maps to that flag instead. Older
+/jobs?returnedUnrepaired=true links still work.
+
+Changed: src/app/(tenant)/jobs/page.tsx, src/lib/jobs/service.ts,
+src/lib/jobs/validation.ts.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

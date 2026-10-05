@@ -381,6 +381,9 @@ function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobW
     // now a flag filter rather than a status filter (see JOB_WIP_FILTERS'
     // own comment in jobs/ui.ts).
     ...(query.returnedUnrepaired ? { returnedUnrepaired: true } : {}),
+    // 2026-10-05 — "Pex" status filter: directly allocated to PEX Inventory
+    // (return record with no supply job, not scrapped).
+    ...(query.pexAllocated ? { pexAsReturn: { is: { supplyJobId: null, status: { not: "SCRAPPED" as const } } } } : {}),
   };
 }
 
