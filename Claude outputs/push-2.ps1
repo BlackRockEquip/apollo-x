@@ -1,30 +1,32 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job parts: supplier typeahead after clearing, and Undo receive on a part-used reservation
+Job parts: multi-bin add no longer fails silently, longer transaction timeouts, errors visible
 
-User reports: (1) "removing a supplier and trying to type does not pickup
-dropdown of suppliers, when clicking tab it selects the dropdown" and (2) "when
-clicking undo receive and reclicking mark received it does not work."
+User reports "error still on both" (supplier typeahead, Undo receive then Mark
+received). Reproduced the server flows against a local Postgres with all repo
+migrations; receive / undo / re-receive and supplier set / clear pass there, but
+the reproduction exposed a real silent failure and some fragility.
 
-Supplier typeahead (JobWorkspace.tsx)
-- Clearing a supplier saved in the background and, when the save finished, reset
-  the picker (closed it and wiped the query). Someone who cleared a supplier and
-  went straight on to type a new one lost their text and the dropdown a moment
-  later. Only picking a supplier now resets the picker; clearing leaves it alone,
-  and the supplier box is no longer disabled while a row save is in flight.
+Fixes
+- addPartLinesBulk reserved stock across several bins, creating more than one
+  ACTIVE reservation for the same part line. The database allows only one
+  (StockReservation_active_reference_key); the violation aborted the Prisma
+  transaction but the call still reported success, so no line was created. It now
+  uses reserveJobPartLineStockTx (one reservation, partial if needed).
+- Heavier part-line transactions (add, receive, undo receive, order update, pick
+  slip create/cancel) now set maxWait/timeout so slow queries don't hit Prisma's
+  5 s default and roll back.
+- Stock Levels pick-slip lines now record stockIssuedQuantity, so Undo receive
+  on those lines does not deduct stock twice.
+- Readable 409 messages for PART_LINE_ALREADY_FULLY_RECEIVED,
+  PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING and PART_LINE_ALREADY_HAS_DESCRIPTION
+  instead of a generic 500.
+- Parts table now shows an error banner directly above the table, so a failed
+  save/receive is visible without scrolling to the top of the page.
 
-Undo receive (inventory/service.ts)
-- The database allows only ONE active reservation per reference
-  (StockReservation_active_reference_key). Undo receive put the returned stock
-  back and then tried to create a second reservation for the line; when the
-  first one was still active (only partly used), that raised a unique violation,
-  which aborts the whole transaction even though the error was caught, so the
-  undo failed. New reserveJobPartLineStockTx adds to the line's existing
-  reservation at its bin, or makes a single one at one bin, and is used by both
-  Undo receive and the ordered-qty reservation resize.
-
-Changed: src/components/JobWorkspace.tsx, src/lib/inventory/service.ts.
+Changed: src/components/JobWorkspace.tsx, src/lib/inventory/service.ts,
+src/lib/jobs/service.ts, src/lib/http/errors.ts.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

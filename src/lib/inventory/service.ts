@@ -1681,6 +1681,10 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
             quantity: pickQty,
             status: "RECEIVED",
             receivedQuantity: pickQty,
+            // Taken off the shelf right here (this flow has always issued
+            // immediately), so Mark received / Undo receive must not take
+            // it a second time.
+            stockIssuedQuantity: pickQty,
             createdById: ctx.userId,
           },
         });
@@ -1762,7 +1766,7 @@ const JOB_PART_LINE_NOTE_PREFIX = "PARTLINE:";
 // unique-violation, and inside a transaction that aborts the whole
 // transaction even when the error is caught — which is what made Undo
 // receive fail on a line whose reservation was only partly used.
-async function reserveJobPartLineStockTx(
+export async function reserveJobPartLineStockTx(
   tx: Tx,
   ctx: RequestContext & { companyId: string },
   input: { jobNumber: string; lineId: string; partId: string; quantity: Quantity; preferredLocationId?: string | null },
@@ -2212,7 +2216,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       })),
     });
     return { pickSlipId: pickSlip.id as string | null, picked };
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   const outstandingCount = eligibleLines.length - result.picked.length;
 
@@ -2389,7 +2393,7 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
     await tx.pickSlip.delete({ where: { id: pickSlip.id } });
 
     return { revertedLines, skippedLines };
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   await recordAudit(ctx, {
     source: "UI",

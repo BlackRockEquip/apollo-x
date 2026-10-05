@@ -3558,6 +3558,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </div>
               </div>
             )}
+            {/* 2026-10-05 — the page-level error banner sits at the very top
+                of this (very long) page, so a failed Mark received / Undo
+                receive / supplier save down here looked like "nothing
+                happened". Shown here too, right above the table. */}
+            {error ? <div className="inline-error" style={{ margin: "8px 14px" }}>{error}</div> : null}
             {(() => {
               const q = partSearchQuery.trim().toLowerCase();
               const visiblePartLines = q

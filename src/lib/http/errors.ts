@@ -70,6 +70,12 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "SUPPLIER_HAS_NO_EMAIL") return NextResponse.json({ error: { code: "SUPPLIER_HAS_NO_EMAIL", message: "This supplier has no email address on file — add one on the Suppliers screen first." } }, { status: 409 });
   if (error instanceof Error && error.message === "EMAIL_NOT_CONFIGURED") return NextResponse.json({ error: { code: "EMAIL_NOT_CONFIGURED", message: "Email isn't set up for this company yet — add SMTP details under Settings > Company / Branding first." } }, { status: 409 });
   if (error instanceof Error && error.message === "SMTP_PASSWORD_REQUIRED") return NextResponse.json({ error: { code: "SMTP_PASSWORD_REQUIRED", message: "Enter the SMTP password (or save it first) before testing the connection." } }, { status: 400 });
+  // 2026-10-05 — job part line actions (jobs/service.ts) used to throw bare
+  // codes that fell through to the generic 500 below, so a failed Mark
+  // received / Undo receive just said "The request could not be completed."
+  if (error instanceof Error && error.message === "PART_LINE_ALREADY_FULLY_RECEIVED") return NextResponse.json({ error: { code: "PART_LINE_ALREADY_FULLY_RECEIVED", message: "This part line is already fully received." } }, { status: 409 });
+  if (error instanceof Error && error.message === "PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING") return NextResponse.json({ error: { code: "PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING", message: "That is more than is still outstanding on this part line." } }, { status: 409 });
+  if (error instanceof Error && error.message === "PART_LINE_ALREADY_HAS_DESCRIPTION") return NextResponse.json({ error: { code: "PART_LINE_ALREADY_HAS_DESCRIPTION", message: "This part line already has a description." } }, { status: 409 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }

@@ -32,7 +32,7 @@ import {
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
-import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
+import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
@@ -1169,53 +1169,25 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
         // line's reservations by referenceId alone (not also
         // locationId), so a reservation made here at a non-default bin
         // is still found and consumed there.
-        let remainingToReserve = new Prisma.Decimal(row.quantity);
-        const reserveCandidates = part
-          ? await tx.stockBalance.findMany({ where: { companyId, partId: part.id, quantityOnHand: { gt: 0 } }, select: { locationId: true } })
-          : [];
-        const orderedReserveLocationIds = part
-          ? [
-              ...(part.binLocationId ? [part.binLocationId] : []),
-              ...reserveCandidates.map((c) => c.locationId).filter((id) => id !== part.binLocationId),
-            ]
-          : [];
-        for (const locationId of orderedReserveLocationIds) {
-          if (remainingToReserve.lte(0)) break;
-          const balance = await tx.stockBalance.findFirst({ where: { companyId, partId: part!.id, locationId } });
-          const available = balance ? balance.quantityOnHand.minus(balance.quantityReserved) : new Prisma.Decimal(0);
-          if (available.lte(0)) continue;
-          const qtyHere = Prisma.Decimal.min(remainingToReserve, available);
-          try {
-            await reserveStockTx(tx, { ...ctx, companyId }, {
-              partId: part!.id,
-              locationId,
-              quantity: qtyHere.toString(),
-              referenceType: "JOB",
-              referenceId: created.id,
-              // 2026-09-16 — user request: the reservation's reason (shown
-              // on the Part detail page's Recent Movements) should include
-              // the job number so it's traceable at a glance, not just
-              // "Reserved for job part line" with no way to tell which job.
-              referenceNumber: jobNumberLabel,
-              reason: `Reserved for job ${jobNumberLabel}`,
-              notes: null,
-              expiresAt: null,
-              idempotencyKey: undefined,
-            });
-            remainingToReserve = remainingToReserve.minus(qtyHere);
-          } catch {
-            // Best-effort per location — a race against another
-            // reservation between the read above and reserveStockTx's
-            // own row lock can still leave less available than
-            // expected; move on to the next candidate location instead
-            // of aborting the whole line. If every candidate is
-            // exhausted this way, the line just stays unreserved, same
-            // as the old single-location best-effort behavior.
-          }
-        }
+        // 2026-10-05 — found while chasing the Undo receive failure: the
+        // database allows only ONE active reservation per reference
+        // (StockReservation_active_reference_key), so the loop that used to be
+        // here — one reservation per bin until the quantity was covered —
+        // raised a unique violation as soon as the first bin couldn't cover
+        // it by itself. That error was swallowed, but it aborts the whole
+        // transaction, which then quietly rolled back: the part line was
+        // never added at all while the screen said it was. One reservation at
+        // one bin (best-effort, partial if need be) is all a line can hold.
+        await reserveJobPartLineStockTx(tx, { ...ctx, companyId }, {
+          jobNumber: jobNumberLabel,
+          lineId: created.id,
+          partId: part!.id,
+          quantity: new Prisma.Decimal(row.quantity),
+          preferredLocationId: part?.binLocationId ?? null,
+        });
       }
     }
-  });
+  }, { maxWait: 10000, timeout: 60000 });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: jobId, action: "BULK_ADD", afterData: { jobId, count: rows.length } });
 
@@ -1328,7 +1300,7 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
       : `${line.partNumber}: ${newReceivedQuantity} of ${line.quantity} received (${line.quantity.minus(newReceivedQuantity)} still outstanding).`) + issuedNote,
       { lineId: line.id, receivedQuantity: newReceivedQuantity.toString(), stockIssued: stockPart.toString() });
     return record;
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "RECEIVE", afterData: { jobId, lineId, receivedQuantity: updated.receivedQuantity?.toString(), stockIssued: stockPart.toString() } });
   return updated;
@@ -1366,7 +1338,7 @@ export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string,
     });
     await addActivity(tx, ctx, jobId, "PART_LINE_RECEIVED_UNDONE", `${line.partNumber}: receiving undone, line reset.${returnedNote}`, { lineId: line.id });
     return record;
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UNRECEIVE", afterData: { jobId, lineId } });
   return updated;
@@ -1458,7 +1430,7 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
 
     await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: order details updated.`, { lineId: line.id, orderNumber, orderedQuantity: nextOrderedQuantity?.toString() ?? null });
     return record;
-  });
+  }, { maxWait: 10000, timeout: 30000 });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_ORDER", afterData: { jobId, lineId, orderNumber, orderedQuantity: nextOrderedQuantity?.toString() ?? null } });
   return updated;
