@@ -25,7 +25,8 @@ import { prisma } from "@/lib/prisma";
 // (see OUTSTANDING_JOB_STATUSES). Before that (quoting, stripping, etc.) the job
 // is still working out what it needs and nothing is "outstanding" yet. A field
 // service job has no such stage; it counts from In progress onward. Cancelled
-// jobs (and the retired Returned unrepaired status) never count. This applies to
+// jobs and jobs flagged Return unrepaired (Job.returnedUnrepaired — a flag on
+// top of the job's normal status, added on the user's instruction) never count. This applies to
 // this list only — the RFQs table's own Parts outstanding column is unchanged.
 export type PartsOutstandingRow = {
   key: string;
@@ -54,7 +55,7 @@ export async function listPartsOutstanding(ctx: RequestContext): Promise<PartsOu
   const companyId = ctx.companyId!;
 
   const lines = await prisma.jobPartLine.findMany({
-    where: { companyId, status: { not: "RECEIVED" }, job: { status: { in: [...OUTSTANDING_JOB_STATUSES] } } },
+    where: { companyId, status: { not: "RECEIVED" }, job: { status: { in: [...OUTSTANDING_JOB_STATUSES] }, returnedUnrepaired: false } },
     select: {
       jobId: true, status: true, quantity: true, receivedQuantity: true, orderedAt: true, createdAt: true,
       orderedFromSupplier: { select: { id: true, name: true } },

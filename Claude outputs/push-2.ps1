@@ -27,7 +27,8 @@ outstanding once the job status changes to Await Outwork/Parts or higher".
 - Parts only count as outstanding once the job's status is Await outwork / parts
   or later (Waiting for parts, Assembling, Testing, To paint / wrap, To be
   delivered, Delivered awaiting payment, Completed, Closed); a field service job
-  counts from In progress onward; cancelled jobs never count. The RFQs table's own
+  counts from In progress onward; cancelled jobs and jobs flagged Return
+  unrepaired never count. The RFQs table's own
   Parts outstanding column is unchanged.
 - "Add Part to job" button above the table: pick a job, part number, quantity and
   optional description; added through the same endpoint the job's own parts box
