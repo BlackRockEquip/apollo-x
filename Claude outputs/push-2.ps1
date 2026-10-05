@@ -1,30 +1,31 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job parts: Create pick slip says why a line was skipped; clearing order details restores the line status
+Job parts: line linked to an inactive part record is moved to the live part
 
-User report (BRE1071, part 4D3107): after removing a typed supplier, Create pick
-slip said "No stock was available to list right now (parts ordered from a
-supplier are skipped). 1 line still outstanding." with no hint which line or why.
+User report (BRE1071 / 4D3107): Create pick slip said "4D3107: not listed because
+the part is inactive", but Stock Levels shows 4D3107 as active.
 
-Reproduced against a local database: a supplier typed on an in-stock line moves
-it to ON_ORDER and frees its reservation. Removing the supplier re-reserved the
-stock but left the status on ON_ORDER, and if the line still has an Order # it
-still counts as fully ordered, so the pick slip skipped it.
+Cause: deleting a part that has history only deactivates it (HISTORICAL_REFERENCE),
+and a job part line can stay linked to that dead record while the live part with
+the same number is what Stock Levels shows. findPartByNumber could also resolve a
+typed number to the dead record (alternate-number / hyphen-insensitive tiers).
+Stock cannot be listed or issued against an inactive part, so the pick slip
+skipped the line, and Mark received would have silently deducted nothing.
 
 Changes
-- createPickSlipForJob now returns skipped[] with a reason per line left off the
-  slip (marked as ordered - with the Order # / supplier named, already on a pick
-  slip, no stock in an active bin, inactive part). The job page shows these under
-  the result banner.
-- updatePartLineOrder: when order number and supplier are both cleared on an
-  ON_ORDER line with nothing received, the status goes back to IN_STOCK when its
-  reservation covers what is left, otherwise PENDING.
-- Also includes the supplier dropdown fix (position:fixed list so the parts-table
-  scroll box cannot clip it) if not already pushed.
+- parts-lookup.ts findPartByNumber: looks for an ACTIVE, operational part through
+  all tiers first, and only falls back to an inactive match if there is none.
+- inventory/service.ts relinkJobPartLineToActivePartTx: if a line's part is
+  inactive, finds the live part for the line's own part number, releases the old
+  reservation, links the line to the live part and re-reserves there.
+- createPickSlipForJob and markPartLineReceived call it before listing/issuing, so
+  an affected line fixes itself on the next pick slip / receive.
+- The skipped reason for an inactive part now names the record the line is linked
+  to when no live part matches.
 
-Changed: src/lib/inventory/service.ts, src/lib/jobs/service.ts,
-src/components/JobWorkspace.tsx.
+Changed: src/lib/inventory/parts-lookup.ts, src/lib/inventory/service.ts,
+src/lib/jobs/service.ts.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

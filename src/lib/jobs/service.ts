@@ -32,7 +32,7 @@ import {
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
-import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
+import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relinkJobPartLineToActivePartTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
@@ -1277,7 +1277,13 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
     let issuedNote = "";
     let nextIssuedTotal: Prisma.Decimal | null = line.stockIssuedQuantity ?? null;
     if (stockPart.gt(0) && line.partId) {
-      const { issued } = await issueStockForJobPartLineTx(tx, { ...ctx, companyId }, { jobId, jobNumber: jobNumberLabel, lineId: line.id, partId: line.partId, quantity: stockPart });
+      // Line linked to an inactive part record → move it to the live one first
+      // (otherwise nothing would be deducted); see relinkJobPartLineToActivePartTx.
+      const moved = await relinkJobPartLineToActivePartTx(tx, { ...ctx, companyId }, {
+        jobNumber: jobNumberLabel,
+        line: { id: line.id, partId: line.partId, partNumber: line.partNumber, quantity: line.quantity, orderedQuantity: line.orderedQuantity ?? null, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplierId), receivedQuantity: line.receivedQuantity ?? null, stockIssuedQuantity: line.stockIssuedQuantity ?? null, pickedQuantity: line.pickedQuantity ?? null },
+      });
+      const { issued } = await issueStockForJobPartLineTx(tx, { ...ctx, companyId }, { jobId, jobNumber: jobNumberLabel, lineId: line.id, partId: moved.partId, quantity: stockPart });
       nextIssuedTotal = (line.stockIssuedQuantity ?? new Prisma.Decimal(0)).plus(stockPart);
       issuedNote = issued.gte(stockPart)
         ? ` ${issued.toString()} taken from stock.`

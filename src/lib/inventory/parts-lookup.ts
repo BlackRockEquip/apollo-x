@@ -29,12 +29,36 @@ export async function findPartByNumber<T extends Prisma.PartSelect>(
   rawNumber: string,
   select: T
 ): Promise<Prisma.PartGetPayload<{ select: T }> | null> {
+  // 2026-10-05, user report (BRE1071 / 4D3107): a job line was linked to an
+  // inactive/historical part record (a "deleted" part keeps its row, see
+  // deletePart), so a pick slip skipped it as "inactive" while Stock Levels
+  // showed the live 4D3107. Every tier below could land on that hidden record
+  // before ever considering the live one. Look for an ACTIVE, operational part
+  // through all tiers first; only if there is none, fall back to the old
+  // behaviour of returning whatever matches (so an inactive-only match still
+  // resolves exactly as before).
+  const activeHit = await lookup(client, companyId, rawNumber, select, true);
+  if (activeHit) return activeHit;
+  return lookup(client, companyId, rawNumber, select, false);
+}
+
+async function lookup<T extends Prisma.PartSelect>(
+  client: Client,
+  companyId: string,
+  rawNumber: string,
+  select: T,
+  activeOnly: boolean
+): Promise<Prisma.PartGetPayload<{ select: T }> | null> {
+  const activeWhere = activeOnly ? { active: true, operationalStatus: "OPERATIONAL" as const } : {};
   const numberNormalized = normalized(rawNumber);
   if (!numberNormalized) return null;
-  const direct = await client.part.findFirst({ where: { companyId, partNumberNormalized: numberNormalized }, select });
+  const direct = await client.part.findFirst({ where: { companyId, partNumberNormalized: numberNormalized, ...activeWhere }, select });
   if (direct) return direct;
   const alt = await client.partAlternateNumber.findFirst({ where: { companyId, numberNormalized }, select: { partId: true } });
-  if (alt) return client.part.findFirst({ where: { id: alt.partId }, select });
+  if (alt) {
+    const viaAlt = await client.part.findFirst({ where: { id: alt.partId, ...activeWhere }, select });
+    if (viaAlt) return viaAlt;
+  }
 
   // 2026-10-01 — user request: "the cross check with stock does not pickup
   // 3j1907 but does pickup 3J-1907... it should check all numbers
@@ -53,10 +77,15 @@ export async function findPartByNumber<T extends Prisma.PartSelect>(
   // (typing the part's real number) pays no extra cost.
   const loose = looseNormalized(rawNumber);
   if (!loose) return null;
-  const loosePart = await client.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Part" WHERE "companyId" = ${companyId} AND regexp_replace("partNumberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`;
+  const loosePart = activeOnly
+    ? await client.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Part" WHERE "companyId" = ${companyId} AND "active" = true AND "operationalStatus"::text = 'OPERATIONAL' AND regexp_replace("partNumberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`
+    : await client.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Part" WHERE "companyId" = ${companyId} AND regexp_replace("partNumberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`;
   if (loosePart[0]) return client.part.findFirst({ where: { id: loosePart[0].id }, select });
-  const looseAlt = await client.$queryRaw<{ partId: string }[]>`SELECT "partId" FROM "PartAlternateNumber" WHERE "companyId" = ${companyId} AND regexp_replace("numberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 1`;
-  if (looseAlt[0]) return client.part.findFirst({ where: { id: looseAlt[0].partId }, select });
+  const looseAlts = await client.$queryRaw<{ partId: string }[]>`SELECT "partId" FROM "PartAlternateNumber" WHERE "companyId" = ${companyId} AND regexp_replace("numberNormalized", '[^A-Z0-9]', '', 'g') = ${loose} LIMIT 5`;
+  for (const looseAlt of looseAlts) {
+    const viaLooseAlt = await client.part.findFirst({ where: { id: looseAlt.partId, ...activeWhere }, select });
+    if (viaLooseAlt) return viaLooseAlt;
+  }
   return null;
 }
 

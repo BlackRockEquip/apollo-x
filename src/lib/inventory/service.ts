@@ -27,6 +27,7 @@ import type {
 import { deriveStockState } from "@/lib/inventory/stock-state";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { normalized } from "@/lib/master-data/validation";
+import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 
 type Tx = Prisma.TransactionClient;
 type Quantity = Prisma.Decimal;
@@ -1997,6 +1998,47 @@ export async function returnStockForJobPartLineTx(
   return { returned };
 }
 
+// 2026-10-05, user report (BRE1071 / 4D3107): a job part line can end up linked
+// to an inactive/"historical" Part record (deleting a part that has history
+// only deactivates it) while the live part with the same number is the one
+// Stock Levels shows. Stock can't be listed or issued against the dead record,
+// so Create pick slip skipped the line as "inactive" and Mark received would
+// silently take nothing. If the line's part is inactive, find the live part
+// for the line's own part number and move the line (and its reservation) to
+// it. Returns the part id to use from here on; relinked says whether it moved.
+export async function relinkJobPartLineToActivePartTx(
+  tx: Tx,
+  ctx: RequestContext & { companyId: string },
+  input: { jobNumber: string; line: { id: string; partId: string; partNumber: string; quantity: Quantity; orderedQuantity: Quantity | null; orderNumber: string | null; hasSupplier: boolean; receivedQuantity: Quantity | null; stockIssuedQuantity: Quantity | null; pickedQuantity: Quantity | null } },
+): Promise<{ partId: string; relinked: boolean }> {
+  const { line } = input;
+  const current = await tx.part.findFirst({ where: { id: line.partId, companyId: ctx.companyId }, select: { id: true, active: true, operationalStatus: true } });
+  if (!current || (current.active && current.operationalStatus === "OPERATIONAL")) return { partId: line.partId, relinked: false };
+  const replacement = await findPartByNumber(tx, ctx.companyId, line.partNumber, { id: true, active: true, operationalStatus: true, binLocationId: true });
+  if (!replacement || replacement.id === line.partId || !replacement.active || replacement.operationalStatus !== "OPERATIONAL") return { partId: line.partId, relinked: false };
+
+  const old = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" } });
+  for (const reservation of old) {
+    try { await releaseReservationTx(tx, ctx, reservation.id, { reason: "Part line moved to the active part record" }); } catch { /* best-effort */ }
+  }
+  await tx.jobPartLine.update({ where: { id: line.id }, data: { partId: replacement.id, updatedById: ctx.userId } });
+
+  const qtys = partLineQuantities({
+    quantity: line.quantity.toString(),
+    orderedQuantity: line.orderedQuantity?.toString() ?? null,
+    orderNumber: line.orderNumber,
+    hasSupplier: line.hasSupplier,
+    receivedQuantity: line.receivedQuantity?.toString() ?? null,
+    stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+    pickedQuantity: line.pickedQuantity?.toString() ?? null,
+  });
+  const target = D.max(new D(qtys.stockQty.toString()).minus(line.stockIssuedQuantity ?? new D(0)), new D(0));
+  if (target.gt(0) && !line.receivedQuantity) {
+    await reserveJobPartLineStockTx(tx, ctx, { jobNumber: input.jobNumber, lineId: line.id, partId: replacement.id, quantity: target, preferredLocationId: replacement.binLocationId ?? null });
+  }
+  return { partId: replacement.id, relinked: true };
+}
+
 // Brings a line's active reservation(s) in line with how many units are now
 // meant to come from stock (targetQuantity) — used when its ordered quantity
 // changes, so units ordered elsewhere stop being held back from other jobs
@@ -2116,12 +2158,19 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
 
     for (const line of eligibleLines) {
       if (!line.partId) continue;
-      const part = await requirePart(tx, ctx, line.partId);
+      let part = await requirePart(tx, ctx, line.partId);
+      if (!part.active || part.operationalStatus !== "OPERATIONAL") {
+        const moved = await relinkJobPartLineToActivePartTx(tx, ctx, {
+          jobNumber: job.jobNumber ?? job.draftNumber ?? job.id,
+          line: { id: line.id, partId: line.partId, partNumber: line.partNumber, quantity: line.quantity, orderedQuantity: line.orderedQuantity ?? null, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplierId), receivedQuantity: line.receivedQuantity ?? null, stockIssuedQuantity: line.stockIssuedQuantity ?? null, pickedQuantity: line.pickedQuantity ?? null },
+        });
+        if (moved.relinked) part = await requirePart(tx, ctx, moved.partId);
+      }
       // Inactive parts used to abort the WHOLE pick slip via
       // assertOperable's throw (one bad line blocking every other line on
       // the job) — skipping instead keeps this function's own "list what
       // is there" promise intact even for this case.
-      if (!part.active) { skipped.push({ partNumber: line.partNumber, reason: "the part is inactive" }); continue; }
+      if (!part.active) { skipped.push({ partNumber: line.partNumber, reason: `the part record this line is linked to (${part.partNumber}) is inactive and no active part matches this number` }); continue; }
 
       const statusBeforeThisPick = String(line.status);
       const alreadyPicked = line.pickedQuantity ?? new D(0);
