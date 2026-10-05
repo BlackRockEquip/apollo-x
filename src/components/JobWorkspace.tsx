@@ -3697,6 +3697,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       const typed = orderSupplierQuery.trim().toLowerCase();
                       const match = typed ? orderSupplierOptions.find((s) => s.name.trim().toLowerCase() === typed) : undefined;
                       if (match) { void queueRowSave(lineId, () => saveSupplierInline(lineId, match.id)); return; }
+                      // 2026-10-05, user report: "trying to remove a supplier
+                      // name on parts list table still not working." Emptying
+                      // the box and clicking away only ever closed the picker
+                      // — nothing cleared the saved supplier, and the old
+                      // name came straight back. Leaving it empty on a line
+                      // that has a supplier now clears it.
+                      if (!typed && line.orderedFromSupplier?.id) { void queueRowSave(lineId, () => saveSupplierInline(lineId, "")); return; }
                       setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]);
                     })}
                   >
@@ -3714,7 +3721,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       onChange={(e) => { setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }}
                       placeholder="Search active supplier"
                       disabled={saving}
-                    /></div>
+                    />{line.orderedFromSupplier?.id && !supplierPickerOpenHere ? <button type="button" className="table-action" title="Remove supplier" aria-label={`Remove supplier from ${line.partNumber}`} disabled={saving} onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, ""))}><X size={12} /></button> : null}</div>
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && <div className="selector-results">{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td>
