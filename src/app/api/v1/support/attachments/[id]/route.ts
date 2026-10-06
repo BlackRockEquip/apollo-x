@@ -11,7 +11,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     const row = await prisma.supportTicketAttachment.findUnique({ where: { id }, include: { ticket: true } });
     if (!row) return new NextResponse(null, { status: 404 });
     if (ctx.companyId) {
-      if (row.ticket.companyId !== ctx.companyId) return new NextResponse(null, { status: 404 });
+      if (row.ticket.companyId !== ctx.companyId || row.ticket.tenantDeletedAt) return new NextResponse(null, { status: 404 });
       const canViewAll = ctx.tenantPermissions.has("USERS_MANAGE");
       if (!canViewAll) {
         const own = await prisma.supportTicket.findFirst({ where: { id: row.ticketId, companyId: ctx.companyId, reportedById: ctx.userId }, select: { id: true } });

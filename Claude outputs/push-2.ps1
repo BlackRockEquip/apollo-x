@@ -1,15 +1,20 @@
 cd "C:\Projects\Apollo X Working"
+# New migration 20261006100000_support_ticket_tenant_soft_delete is applied by the deploy's "prisma migrate deploy".
+# For your local copy afterwards:  npx prisma migrate dev ; npm run prisma:generate
 git add -A
 @"
-Support forms: show a readable error when the server returns a non-JSON page
+Support: an Org Admin deleting a ticket no longer deletes it for Platform support
 
-User report: submitting a support ticket as Org Admin showed
-Unexpected token '<', "<!DOCTYPE "... is not valid JSON. That means the request
-got an HTML page back (expired sign-in redirected to /login, or the server was
-restarting / returned its own error page), not a reply from the Support API.
-SupportRequestDialog and SupportWorkspace now read the response as text first and,
-if it is not JSON, say "Your sign-in has expired" (redirected to login) or
-"unexpected response (HTTP <status>)" instead of the parse error.
+User request: when an Org Admin deletes a support ticket it must not be deleted
+from the platform admin account, so history is kept.
+- SupportTicket gains tenantDeletedAt / tenantDeletedById (migration
+  20261006100000_support_ticket_tenant_soft_delete). deleteTenantSupportTicket now
+  sets them (soft delete) and records a DELETED_BY_ORGANISATION event + audit entry
+  instead of removing the row.
+- Hidden for the organisation: ticket list, ticket detail, reply, status change,
+  ticket file downloads and the company dashboard's support widgets.
+- Platform support still sees the ticket with all messages, files and events, marked
+  "Deleted by organisation" in the list and detail header.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

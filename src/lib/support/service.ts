@@ -103,12 +103,12 @@ export async function createSupportTicket(ctx: RequestContext, raw: unknown, met
 
 export async function listTenantSupportTickets(ctx: RequestContext) {
   if (!canViewTenantTickets(ctx)) throw new Error("FORBIDDEN");
-  return prisma.supportTicket.findMany({ where: { companyId: ctx.companyId!, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) }, orderBy: [{ updatedAt: "desc" }], select: { id: true, ticketNumber: true, subject: true, category: true, priority: true, status: true, moduleKey: true, pageRoute: true, createdAt: true, updatedAt: true, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { displayName: true, email: true } } } });
+  return prisma.supportTicket.findMany({ where: { companyId: ctx.companyId!, tenantDeletedAt: null, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) }, orderBy: [{ updatedAt: "desc" }], select: { id: true, ticketNumber: true, subject: true, category: true, priority: true, status: true, moduleKey: true, pageRoute: true, createdAt: true, updatedAt: true, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { displayName: true, email: true } } } });
 }
 
 export async function getTenantSupportTicket(ctx: RequestContext, id: string) {
   if (!canViewTenantTickets(ctx)) throw new Error("FORBIDDEN");
-  const ticket = await prisma.supportTicket.findFirstOrThrow({ where: { id, companyId: ctx.companyId!, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) }, include: { messages: { include: { author: { select: { displayName: true, email: true } }, attachments: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true } } }, orderBy: { createdAt: "asc" } }, events: { include: { actor: { select: { displayName: true, email: true } } }, orderBy: { createdAt: "asc" } }, attachments: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true } }, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { displayName: true, email: true } } } });
+  const ticket = await prisma.supportTicket.findFirstOrThrow({ where: { id, companyId: ctx.companyId!, tenantDeletedAt: null, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) }, include: { messages: { include: { author: { select: { displayName: true, email: true } }, attachments: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true } } }, orderBy: { createdAt: "asc" } }, events: { include: { actor: { select: { displayName: true, email: true } } }, orderBy: { createdAt: "asc" } }, attachments: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true } }, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { displayName: true, email: true } } } });
   return { ...ticket, messages: ticket.messages.filter((message) => message.kind !== TicketMessageKind.INTERNAL_NOTE) };
 }
 
@@ -132,7 +132,7 @@ export async function addPlatformSupportMessage(ctx: RequestContext, id: string,
 export async function replyToSupportTicket(ctx: RequestContext, id: string, raw: unknown) {
   requireTenant(ctx);
   const input = replyInput.parse(raw);
-  const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId!, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) } });
+  const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId!, tenantDeletedAt: null, ...(ctx.tenantPermissions.has("USERS_MANAGE") ? {} : { reportedById: ctx.userId }) } });
   if (!ticket) throw new Error("NOT_FOUND");
   const created = await prisma.$transaction(async (tx) => {
     const msg = await tx.supportTicketMessage.create({ data: { companyId: ctx.companyId!, ticketId: id, authorId: ctx.userId, kind: input.kind, body: input.body } });
@@ -171,14 +171,20 @@ export async function replyToSupportTicket(ctx: RequestContext, id: string, raw:
 // and gated the same as every other Org-Admin-only support action
 // (USERS_MANAGE — see canViewTenantTickets above). The SupportTicketMessage/
 // Event/Attachment child rows all cascade-delete with their parent
-// SupportTicket (see schema.prisma), so a plain delete is safe — nothing is
-// left orphaned.
+// SupportTicket (see schema.prisma). 2026-10-06 — user request: "when org
+// admin deletes support ticket, it should not be deleted from platform admin
+// account, so history is kept." The delete is therefore a soft delete
+// (tenantDeletedAt): the ticket vanishes for the organisation and stays,
+// flagged, in the Platform support queue.
 export async function deleteTenantSupportTicket(ctx: RequestContext, id: string) {
   requireTenantPermission(ctx, "USERS_MANAGE");
-  const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId! } });
+  const ticket = await prisma.supportTicket.findFirst({ where: { id, companyId: ctx.companyId!, tenantDeletedAt: null } });
   if (!ticket) throw new Error("NOT_FOUND");
+  // The organisation's "delete" only hides the ticket from the organisation. Platform
+  // support keeps the ticket, its messages, files and events as history.
   await prisma.$transaction(async (tx) => {
-    await tx.supportTicket.delete({ where: { id } });
+    await tx.supportTicket.update({ where: { id }, data: { tenantDeletedAt: new Date(), tenantDeletedById: ctx.userId } });
+    await tx.supportTicketEvent.create({ data: { companyId: ctx.companyId!, ticketId: id, actorId: ctx.userId, eventType: "DELETED_BY_ORGANISATION" } });
     await tx.auditEvent.create({ data: { companyId: ctx.companyId!, actorId: ctx.userId, source: "UI", module: "SUPPORT", entityType: "SupportTicket", entityId: id, action: "SUPPORT_TICKET_DELETED", correlationId: ctx.correlationId, beforeData: { ticketNumber: ticket.ticketNumber, subject: ticket.subject, status: ticket.status } } });
   });
   return { ok: true };
@@ -193,7 +199,7 @@ export async function updateTenantSupportTicketStatus(ctx: RequestContext, id: s
   const input = tenantStatusInput.parse(raw);
   const nextStatus = TicketStatus[input.status];
   return prisma.$transaction(async (tx) => {
-    const before = await tx.supportTicket.findFirst({ where: { id, companyId: ctx.companyId! } });
+    const before = await tx.supportTicket.findFirst({ where: { id, companyId: ctx.companyId!, tenantDeletedAt: null } });
     if (!before) throw new Error("NOT_FOUND");
     if (before.status === nextStatus) return before;
     const updated = await tx.supportTicket.update({ where: { id }, data: { status: nextStatus, closedAt: nextStatus === TicketStatus.CLOSED ? new Date() : null } });
@@ -215,7 +221,7 @@ export async function listPlatformSupportTickets(ctx: RequestContext, query: Rec
     ...(query.assignedSupportId ? { assignedSupportId: String(query.assignedSupportId) } : {}),
     ...(q ? { OR: [{ ticketNumber: { contains: q, mode: "insensitive" } }, { subject: { contains: q, mode: "insensitive" } }, { company: { legalName: { contains: q, mode: "insensitive" } } }] } : {}),
   };
-  return prisma.supportTicket.findMany({ where, orderBy: [{ updatedAt: "desc" }], select: { id: true, ticketNumber: true, subject: true, priority: true, status: true, category: true, moduleKey: true, pageRoute: true, createdAt: true, updatedAt: true, company: { select: { id: true, internalCode: true, legalName: true, tradingName: true } }, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { id: true, displayName: true, email: true } } } });
+  return prisma.supportTicket.findMany({ where, orderBy: [{ updatedAt: "desc" }], select: { id: true, ticketNumber: true, subject: true, priority: true, status: true, category: true, moduleKey: true, pageRoute: true, createdAt: true, updatedAt: true, tenantDeletedAt: true, company: { select: { id: true, internalCode: true, legalName: true, tradingName: true } }, reportedBy: { select: { displayName: true, email: true } }, assignedSupport: { select: { id: true, displayName: true, email: true } } } });
 }
 
 export async function getPlatformSupportTicket(ctx: RequestContext, id: string) {

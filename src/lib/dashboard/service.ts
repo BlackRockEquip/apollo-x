@@ -149,7 +149,7 @@ const ANALYTICS_METRIC_FETCHERS: Record<DashboardAnalyticsMetricKey, (companyId:
   "warranty-jobs": async (companyId, since) =>
     (await prisma.job.findMany({ where: { companyId, type: "WARRANTY", dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
   "support-tickets-opened": async (companyId, since) =>
-    (await prisma.supportTicket.findMany({ where: { companyId, createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
+    (await prisma.supportTicket.findMany({ where: { companyId, tenantDeletedAt: null, createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
 };
 
 async function buildMetricSeries(companyId: string, key: DashboardAnalyticsMetricKey) {
@@ -263,7 +263,7 @@ export async function getDashboardData(ctx: RequestContext) {
       ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null } }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("support-tickets")
-      ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
+      ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId, tenantDeletedAt: null }, _count: { _all: true } })
       : Promise.resolve([]),
     // "Procurement / outwork" — see the widget def's comment above for why
     // this needed fixing. "Open" = still needs following up: an outwork

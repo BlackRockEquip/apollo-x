@@ -2604,6 +2604,11 @@ model SupportTicket {
   assignedSupportId String?
   resolvedAt        DateTime?
   closedAt          DateTime?
+  // Set when the organisation's own admin "deletes" the ticket. The ticket then
+  // disappears for the organisation but stays, with its full history, for
+  // Platform support (nothing is removed from the database).
+  tenantDeletedAt   DateTime?
+  tenantDeletedById String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
