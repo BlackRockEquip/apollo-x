@@ -1616,6 +1616,20 @@ export async function searchPartsByNumbers(ctx: RequestContext, input: z.infer<t
 // out-of-stock backorders" behavior ModApp's own picking flow has.
 // ============================================================
 
+// 2026-10-06 — user request: "when creating picking slip, add supersede number
+// in a column next to part number." The superseded (old) numbers recorded
+// against each part (PartAlternateNumber kind SUPERSEDED), comma-joined, keyed by
+// partId — looked up when a slip is created or listed rather than copied onto
+// PickSlipLine, so a number added later also shows on older slips.
+async function supersededNumbersByPart(companyId: string, partIds: string[]) {
+  const map = new Map<string, string>();
+  const ids = [...new Set(partIds)];
+  if (ids.length === 0) return map;
+  const rows = await prisma.partAlternateNumber.findMany({ where: { companyId, partId: { in: ids }, kind: "SUPERSEDED" }, select: { partId: true, number: true }, orderBy: { createdAt: "asc" } });
+  for (const row of rows) map.set(row.partId, map.has(row.partId) ? `${map.get(row.partId)}, ${row.number}` : row.number);
+  return map;
+}
+
 export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof pickSlipCreateInput>) {
   requireInventory(ctx, "INVENTORY_ISSUE");
 
@@ -1727,6 +1741,7 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
   });
 
   const customerName = job.customer?.tradingName || job.customer?.name || null;
+  const supersededByPart = await supersededNumbersByPart(ctx.companyId!, result.picked.map((l) => l.partId));
   return {
     pickSlip:
       result.pickSlipId == null
@@ -1737,7 +1752,7 @@ export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof 
             jobNumber: job.jobNumber ?? job.draftNumber,
             customerName,
             createdAt: new Date().toISOString(),
-            lines: result.picked.map((l) => ({ partNumber: l.partNumber, description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
+            lines: result.picked.map((l) => ({ partNumber: l.partNumber, supersededNumbers: supersededByPart.get(l.partId) ?? "", description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
           },
     pickedCount: result.picked.length,
     backorderCount: result.backorderCount,
@@ -2294,6 +2309,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
   }
 
   const customerName = job.customer?.tradingName || job.customer?.name || null;
+  const supersededByPart = await supersededNumbersByPart(ctx.companyId!, result.picked.map((l) => l.partId));
   return {
     pickSlip:
       result.pickSlipId == null
@@ -2304,7 +2320,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
             jobNumber: job.jobNumber ?? job.draftNumber,
             customerName,
             createdAt: new Date().toISOString(),
-            lines: result.picked.map((l) => ({ partNumber: l.partNumber, description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
+            lines: result.picked.map((l) => ({ partNumber: l.partNumber, supersededNumbers: supersededByPart.get(l.partId) ?? "", description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
           },
     pickedCount: result.picked.length,
     outstandingCount,
@@ -2489,6 +2505,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
     }),
     prisma.pickSlip.count({ where }),
   ]);
+  const supersededByPart = await supersededNumbersByPart(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.partId)));
   return {
     items: slips.map((ps) => ({
       id: ps.id,
@@ -2501,6 +2518,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
       cancelReason: ps.cancelReason,
       lines: ps.lines.map((l) => ({
         partNumber: l.partNumber,
+        supersededNumbers: supersededByPart.get(l.partId) ?? "",
         description: l.description,
         quantity: l.quantity.toString(),
         binLocationLabel: l.binLocation ? formatLocationLabel(l.binLocation.name, l.binLocation.code) : null,

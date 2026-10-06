@@ -181,7 +181,8 @@ export function RfqAllWorkspace() {
 
   function resetForm() {
     setSupplierId(""); setSupplierQuery(""); setJobId(""); setJobQuery(""); setSendEmail(true);
-    setPartsDescription(""); setQuantityOutstanding(""); setStatus("SENT"); setNotes(""); setAttachmentFile(null);
+    setPartsDescription(""); setQuantityOutstanding(""); setStatus("SENT"); setNotes("");
+    // The attachment is kept between requests (remove it with the Remove button).
   }
 
   async function submit() {
@@ -294,10 +295,16 @@ export function RfqAllWorkspace() {
         </>}
         <label className="wide"><span>Attachment (optional)</span>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} />
-            {attachmentFile && <button type="button" className="quiet-button" onClick={() => setAttachmentFile(null)}><X size={13} /> {attachmentFile.name}</button>}
+            {attachmentFile ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid var(--ink-300)", borderRadius: 7, padding: "4px 8px", background: "white" }}>
+                <strong>{attachmentFile.name}</strong> <span className="muted small-line">({Math.max(1, Math.round(attachmentFile.size / 1024))} KB)</span>
+                <button type="button" className="quiet-button" onClick={() => setAttachmentFile(null)}><X size={13} /> Remove</button>
+              </span>
+            ) : (
+              <input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} />
+            )}
           </div>
-          <p className="muted small-line">Sent with the RFQ (a drawing, spec sheet or photo).</p>
+          <p className="muted small-line">Sent with the RFQ (a drawing, spec sheet or photo). It stays here for the next supplier until you remove it.</p>
         </label>
       </div>
       <footer><button type="button" className="quiet-button" onClick={() => setShowAdd(false)}>Cancel</button><button className="gold-button" disabled={saving} onClick={() => void submit()}>{saving && <Loader2 className="spin" size={14} />} Save</button></footer>

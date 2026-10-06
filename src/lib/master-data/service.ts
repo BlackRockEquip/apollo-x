@@ -263,12 +263,25 @@ export async function deleteAllParts(ctx: RequestContext) {
 export async function addPartAlternateNumber(ctx: RequestContext, partId: string, raw: unknown) {
   const companyId = authorize(ctx, "parts", "WRITE", "edit");
   const input = partAlternateNumberInput.parse(raw);
-  const part = await prisma.part.findFirst({ where: { id: partId, companyId }, select: { id: true } });
+  const part = await prisma.part.findFirst({ where: { id: partId, companyId }, select: { id: true, partNumberNormalized: true } });
   if (!part) throw new Error("NOT_FOUND");
-  // Can't rely on a DB unique constraint for this half of the check — see
-  // numberAlreadyInUse's own comment on why a real part's own number
-  // needs an application-level check here.
-  if (await numberAlreadyInUse(prisma, companyId, input.number)) throw new Error("PART_NUMBER_ALREADY_IN_USE");
+  // 2026-10-06 — user report: (1) after deleting a part in Stock Levels, its
+  // number could not be added as a superseded number on another part
+  // ("number already in use"), and (2) when both the current and the old
+  // number exist as parts in stock, the old one could not be recorded as
+  // superseded. Both were this check treating ANY existing part with that
+  // number — including a deleted (inactive/historical) one, or a separate
+  // part still in stock — as a collision. A superseded/group number is only
+  // a pointer on THIS part, so what must stay unique is just the alternate
+  // numbers themselves (the DB's unique(companyId, numberNormalized) on
+  // PartAlternateNumber) and the part's own number (pointless as its own
+  // alternate). A number that is also another part's own number is allowed:
+  // typing that number still finds that part directly (findPartByNumber tries
+  // a part's own number first), and the superseded link just shows against
+  // this part, e.g. on pick slips.
+  const numberKey = normalized(input.number);
+  if (!numberKey || numberKey === part.partNumberNormalized) throw new Error("PART_NUMBER_ALREADY_IN_USE");
+  if (await prisma.partAlternateNumber.findFirst({ where: { companyId, numberNormalized: numberKey }, select: { id: true } })) throw new Error("PART_NUMBER_ALREADY_IN_USE");
   const created = await prisma.partAlternateNumber.create({
     data: { companyId, partId, number: input.number.trim(), numberNormalized: normalized(input.number)!, kind: input.kind },
   });

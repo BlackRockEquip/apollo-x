@@ -122,7 +122,7 @@ const BLANK_FORM: PartForm = {
 
 type PickEntry = { partId: string; partNumber: string; description: string; binLocationLabel: string | null; quantityAvailable: number; quantity: number };
 type JobOption = { id: string; jobNumber: string; customerName: string | null };
-type PickSlipLineData = { partNumber: string; description: string; quantity: string; binLocationLabel: string | null };
+type PickSlipLineData = { partNumber: string; supersededNumbers?: string; description: string; quantity: string; binLocationLabel: string | null };
 type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; lines: PickSlipLineData[] };
 type BulkSearchRow = { partNumber: string; found: boolean; partId: string | null; description: string | null; binLocationLabel: string | null; quantityAvailable: string };
 // 2026-10-02 — Stock Take tab types. systemQty is a snapshot taken when the
@@ -168,7 +168,7 @@ function printPickSlip(ps: PickSlipData) {
   const w = window.open("", "_blank", "width=800,height=900");
   if (!w) return; // popup blocked — nothing more we can do here
   const rows = ps.lines
-    .map((l) => `<tr><td>${escapeHtml(l.partNumber)}</td><td>${escapeHtml(l.description || "")}</td><td class="qty">${escapeHtml(l.quantity)}</td><td class="qty"></td><td>${escapeHtml(l.binLocationLabel || "—")}</td></tr>`)
+    .map((l) => `<tr><td>${escapeHtml(l.partNumber)}</td><td>${escapeHtml(l.supersededNumbers || "—")}</td><td>${escapeHtml(l.description || "")}</td><td class="qty">${escapeHtml(l.quantity)}</td><td class="qty"></td><td>${escapeHtml(l.binLocationLabel || "—")}</td></tr>`)
     .join("");
   const html = `<!doctype html><html><head><title>Pick slip - ${escapeHtml(ps.jobNumber)}</title><meta charset="utf-8" /><style>
     body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
@@ -186,7 +186,7 @@ function printPickSlip(ps: PickSlipData) {
     <h1>Pick slip — Job ${escapeHtml(ps.jobNumber)}</h1>
     <p class="meta">${ps.customerName ? `Client: ${escapeHtml(ps.customerName)}` : ""}</p>
     <p class="meta">Generated ${escapeHtml(new Date(ps.createdAt).toLocaleString())} · Pick slip ${escapeHtml(ps.id.slice(-8))}</p>
-    <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th>Part number</th><th>Superseded no.</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="signoff">
       <div class="field"><div class="line"></div><p class="label">Who picked (print name)</p></div>
       <div class="field"><div class="line"></div><p class="label">Signature</p></div>
@@ -1305,11 +1305,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             <div className="drawer-body">
               <p className="hint-text">{pickResult.customerName ? `${pickResult.customerName} · ` : ""}Generated {new Date(pickResult.createdAt).toLocaleString()}</p>
               <table className="data-table">
-                <thead><tr><th>Part number</th><th>Description</th><th className="numeric">Qty</th><th>Bin location</th></tr></thead>
+                <thead><tr><th>Part number</th><th>Superseded no.</th><th>Description</th><th className="numeric">Qty</th><th>Bin location</th></tr></thead>
                 <tbody>
                   {pickResult.lines.map((l, i) => (
                     <tr key={`${l.partNumber}-${i}`}>
                       <td className="mono">{l.partNumber}</td>
+                      <td className="mono">{l.supersededNumbers || "—"}</td>
                       <td>{l.description}</td>
                       <td className="numeric">{l.quantity}</td>
                       <td>{l.binLocationLabel || "—"}</td>

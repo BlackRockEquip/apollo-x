@@ -200,7 +200,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
   return { title, rightLines: [`Job ${jobLabel}`], blocks };
 }
 
-function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm }): DocSpec {
+function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; items?: Array<{ description: string; quantity: string }>; notes?: string }): DocSpec {
   const { title, jobLabel, job, form } = input;
   const address = (job.customer?.addresses || [])[0] as Rec | undefined;
   const addressLines = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v) => v && String(v).trim()).map(String) : [];
@@ -221,9 +221,9 @@ function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; j
         left: [{ type: "heading", text: "Customer details" }, { type: "lines", lines: [str(job.customer?.name) || "—", str(job.customer?.tradingName), ...addressLines, contact].filter(Boolean) }],
         right: [{ type: "heading", text: "Commercial & logistics" }, { type: "lines", lines: commercial.length ? commercial : ["—"] }],
       },
-      { type: "table", headers: ["Description", "Qty"], widths: [6, 1], center: [1], rows: [[description, "1"]] },
+      { type: "table", headers: ["Description", "Qty"], widths: [6, 1], center: [1], rows: input.items ? input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]) : [[description, "1"]] },
       { type: "heading", text: "Notes" },
-      { type: "paragraph", text: " \n \n " },
+      { type: "paragraph", text: input.notes && input.notes.trim() ? input.notes : " \n \n " },
       { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
     ],
   };
@@ -241,17 +241,17 @@ function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: Jo
   };
 }
 
-function buildPickSlipSpecRaw(input: { title: string; jobLabel: string; lines: Array<{ partNumber: string; description?: string | null; quantity: unknown; binLocationLabel?: string | null }> }): DocSpec {
+function buildPickSlipSpecRaw(input: { title: string; jobLabel: string; lines: Array<{ partNumber: string; supersededNumbers?: string | null; description?: string | null; quantity: unknown; binLocationLabel?: string | null }> }): DocSpec {
   const { title, jobLabel, lines } = input;
   return {
     title: `${title} — Job ${jobLabel}`,
     blocks: [
       {
         type: "table",
-        headers: ["Part number", "Description", "Qty", "Qty picked", "Bin location"],
-        widths: [1.3, 3, 0.6, 0.9, 1.5],
-        center: [2, 3],
-        rows: lines.map((line) => [line.partNumber, line.description || "", str(line.quantity), "", line.binLocationLabel || "—"]),
+        headers: ["Part number", "Superseded no.", "Description", "Qty", "Qty picked", "Bin location"],
+        widths: [1.3, 1.3, 2.7, 0.6, 0.9, 1.5],
+        center: [3, 4],
+        rows: lines.map((line) => [line.partNumber, line.supersededNumbers || "—", line.description || "", str(line.quantity), "", line.binLocationLabel || "—"]),
       },
     ],
   };
@@ -259,7 +259,7 @@ function buildPickSlipSpecRaw(input: { title: string; jobLabel: string; lines: A
 
 function buildOutworkDeliveryNoteSpecRaw(input: {
   title: string;
-  note: { jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; items: Array<{ description: string; quantity: number }> };
+  note: { jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; make?: string; model?: string; serial?: string; items: Array<{ description: string; quantity: number }> };
 }): DocSpec {
   const { title, note } = input;
   return {
@@ -267,6 +267,7 @@ function buildOutworkDeliveryNoteSpecRaw(input: {
     rightLines: [`Job ${note.jobNumber}`, `Date captured: ${dateText(note.dateCaptured)}`],
     blocks: [
       { type: "lines", lines: [note.supplierName, ...note.supplierAddressLines, note.supplierVat ? `VAT: ${note.supplierVat}` : ""].filter(Boolean) },
+      { type: "table", headers: ["Make", "Model", "Serial"], widths: [1, 1, 1], rows: [[note.make || "", note.model || "", note.serial || ""]] },
       { type: "table", headers: ["Description", "Quantity", "Checked"], widths: [5, 1, 1], center: [1, 2], rows: note.items.map((item) => [item.description, String(item.quantity), ""]) },
       { type: "paragraph", text: "Vehicle reg: ______________________________" },
       { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },

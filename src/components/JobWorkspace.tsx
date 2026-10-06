@@ -428,7 +428,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // new ones the way Stock Levels' own pick flow does.
   const [creatingPickSlip, setCreatingPickSlip] = useState(false);
   const [pickSlipError, setPickSlipError] = useState("");
-  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; skipped?: { partNumber: string; reason: string }[]; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
+  const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; skipped?: { partNumber: string; reason: string }[]; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
   // 2026-09-29 — "Cancel"/"Delete" on a pick slip (user request: "need a
   // way to cancel picking slip if a error was made", later "add a delete
   // slip button and allocate stock back") — see cancelJobPickSlip below
@@ -450,7 +450,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     cancelledAt: string | null;
     cancelReason: string | null;
     jobNumber: string | null;
-    lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[];
+    lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[];
   };
   const [jobPickSlips, setJobPickSlips] = useState<JobPickSlipData[]>([]);
   const [jobPickSlipsLoading, setJobPickSlipsLoading] = useState(false);
@@ -572,7 +572,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // number) instead of a bare "Supplier: {name}" line. dateSentOut renamed
   // dateCaptured to match the same request's relabeled/repositioned date
   // field on the printed note (same underlying date, just relabeled).
-  const [deliveryNote, setDeliveryNote] = useState<{ jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; items: Array<{ description: string; quantity: number }> } | null>(null);
+  const [deliveryNote, setDeliveryNote] = useState<{ jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; make: string; model: string; serial: string; items: Array<{ description: string; quantity: number }> } | null>(null);
+  // Print Delivery Note (the job's own delivery note): the line items and notes are edited here first, so what is printed and what is saved as a PDF are the same.
+  const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string }>; notes: string } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
   // once its normal-flow position reaches the pinned offset) still visibly
@@ -1309,8 +1311,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // Parts list — paste box, one row per line ("partNumber, quantity[,
   // description]"), same shape as ModApp's AddPartLinesForm.
-  async function addPartLines() {
-    if (!jobId || !bulkPartLines.trim()) return;
+  async function addPartLines(): Promise<boolean> {
+    if (!jobId || !bulkPartLines.trim()) return false;
     setSaving(true); setError("");
     try {
       const r = await fetch(`/api/v1/jobs/${jobId}/parts`, {
@@ -1322,8 +1324,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to add part lines.");
       setBulkPartLines("");
       await load(true);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to add part lines.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1385,9 +1389,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   });
   const jobCardSpec = () => (job ? buildJobCardSpec({ title: documentTitles.JOB_CARD, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const jobHistorySpec = () => (job ? buildJobHistorySpec({ title: documentTitles.JOB_HISTORY, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
-  const jobDeliveryNoteSpec = () => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form }) : null);
+  const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string }) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes }) : null);
   const partsListSpec = () => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob }) : null);
-  const pickSlipSpec = (slip: { lines: { partNumber: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
+  const pickSlipSpec = (slip: { lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
     buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
 
   function printJobPickSlip(result: NonNullable<typeof pickSlipResult>["pickSlip"]): boolean {
@@ -1396,7 +1400,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!w) return false; // popup blocked — nothing more we can do here
     const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
     const rows = result.lines
-      .map((l) => `<tr><td>${esc(l.partNumber)}</td><td>${esc(l.description || "")}</td><td class="qty">${esc(l.quantity)}</td><td class="qty"></td><td>${esc(l.binLocationLabel || "—")}</td></tr>`)
+      .map((l) => `<tr><td>${esc(l.partNumber)}</td><td>${esc(l.supersededNumbers || "—")}</td><td>${esc(l.description || "")}</td><td class="qty">${esc(l.quantity)}</td><td class="qty"></td><td>${esc(l.binLocationLabel || "—")}</td></tr>`)
       .join("");
     const html = `<!doctype html><html><head><title>${esc(`${result.jobNumber || jobDocLabel} - ${documentTitles.PICK_SLIP}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#111827}
@@ -1407,7 +1411,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       td.qty{text-align:center;font-weight:600}
     </style></head><body>
       <h1>${esc(documentTitles.PICK_SLIP)} — Job ${esc(result.jobNumber || "")}</h1>
-      <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Part number</th><th>Superseded no.</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(html);
     w.document.close();
@@ -1539,8 +1543,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Import a parts-list spreadsheet (.xlsx/.xls/.csv) — parsed server-side
   // by src/lib/jobs/parts-import.ts, same upload shape as the RFQ quote
   // file upload below (fileName/mimeType/contentBase64).
-  async function importPartsFile(file: File) {
-    if (!jobId) return;
+  async function importPartsFile(file: File): Promise<boolean> {
+    if (!jobId) return false;
     setSaving(true); setError("");
     try {
       const contentBase64 = await fileToBase64(file);
@@ -1553,8 +1557,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to import parts file.");
       setPartsImportFile(null);
       await load(true);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to import parts file.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1570,9 +1576,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // priority when one's been chosen (it's the more deliberate action —
   // picking a file is a stronger signal than leftover pasted text), and
   // otherwise it falls back to the pasted lines.
+  // 2026-10-06 — user request: "once the button add import parts is clicked,
+  // close the add parts section automatically." Closes once the parts were
+  // added/imported; if the server rejected them the section stays open so
+  // what was typed or chosen isn't lost.
   async function addOrImportParts() {
-    if (partsImportFile) await importPartsFile(partsImportFile);
-    else await addPartLines();
+    const ok = partsImportFile ? await importPartsFile(partsImportFile) : await addPartLines();
+    if (ok) setShowAddParts(false);
   }
 
   // Downloads a blank CSV template for the parts-list import — matches the
@@ -2063,6 +2073,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       supplierAddressLines: addressLines,
       supplierVat: item.supplier?.vatNumber ? String(item.supplier.vatNumber) : null,
       dateCaptured: item.dateSentOut ? String(item.dateSentOut) : null,
+      make: form.machineMake || "",
+      model: form.machineModel || "",
+      serial: form.machineSerial || "",
       items: batchItems.map((i) => ({ description: i.description || "—", quantity: Number(i.quantity ?? 0) })),
     });
   }
@@ -2207,6 +2220,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ${addressRows}
         ${vatRow}
       </div>
+      <table class="machine-table"><thead><tr><th>Make</th><th>Model</th><th>Serial</th></tr></thead><tbody><tr><td>${escapeHtml(deliveryNote.make)}</td><td>${escapeHtml(deliveryNote.model)}</td><td>${escapeHtml(deliveryNote.serial)}</td></tr></tbody></table>
       <table><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="vehicle-reg">Vehicle reg:<span class="line">&nbsp;</span></p>
       <div class="sign-blocks">
@@ -2534,7 +2548,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // with an on-screen "Print delivery note" button (.no-print, hidden in
   // the actual printed output) instead, so the person can type a quantity
   // first and print only when ready.
-  async function printJobDeliveryNote(): Promise<boolean> {
+  // 2026-10-06 — user request: "on print delivery note, allow to add
+  // additional line items." Print Delivery Note now opens this small editor
+  // first: the first line is the machine/component description (as before),
+  // more lines can be added, and notes can be typed. The same lines and notes
+  // go to the print window and to the saved PDF.
+  function openJobDeliveryNoteDialog() {
+    if (!job) return;
+    const description = [form.machineMake, form.machineModel, form.component, form.componentSerial].filter(Boolean).join(" · ");
+    setJobDnDraft({ items: [{ description, quantity: "1" }], notes: "" });
+  }
+
+  async function printJobDeliveryNote(draft: { items: Array<{ description: string; quantity: string }>; notes: string }): Promise<boolean> {
     if (!job) return false;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the delivery note."); return false; }
@@ -2569,11 +2594,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     // convention as contactLine above and the Job Kit applicability line
     // elsewhere in this file (kit.machineMake/kit.machineModel/
     // kit.componentType joined the same way).
-    const descriptionLines: string[] = [];
-    if (form.machineMake) descriptionLines.push(escapeHtml(form.machineMake));
-    if (form.machineModel) descriptionLines.push(escapeHtml(form.machineModel));
-    if (form.component) descriptionLines.push(escapeHtml(form.component));
-    if (form.componentSerial) descriptionLines.push(escapeHtml(form.componentSerial));
+    const itemRows = draft.items
+      .filter((item) => item.description.trim() || item.quantity.trim())
+      .map((item) => `<tr><td>${escapeHtml(item.description)}</td><td class="qty-col">${escapeHtml(item.quantity)}</td></tr>`)
+      .join("");
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_DELIVERY_NOTE}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
@@ -2596,7 +2620,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .qty-input{width:64px;font-size:13px;border:1px solid #999;padding:3px;text-align:center}
       .description-input{width:100%;font-size:13px;border:1px solid #999;padding:3px;box-sizing:border-box;font-family:inherit}
       .notes-block{margin-top:18px}
-      .notes-textarea{width:100%;min-height:70px;font-size:13px;border:1px solid #999;padding:6px;box-sizing:border-box;font-family:inherit;resize:vertical}
+      .notes-static{width:100%;min-height:70px;font-size:13px;border:1px solid #999;padding:6px;box-sizing:border-box;white-space:pre-wrap}
       .sign-blocks{display:flex;gap:40px;margin-top:36px}
       .sign-block{flex:1}
       .sign-block h2{font-size:13px;margin:0 0 18px}
@@ -2606,7 +2630,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       @media print{.no-print{display:none}}
     </style></head><body>
       <div class="no-print-bar no-print">
-        <span>Edit the description, quantity or notes if needed, then print.</span>
+        <span>Check the delivery note, then print.</span>
         <button type="button" class="print-btn" onclick="window.print()">Print delivery note</button>
       </div>
       <div class="note-head">
@@ -2632,11 +2656,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </div>
       </div>
       <table><thead><tr><th>Description</th><th class="qty-col">Qty</th></tr></thead><tbody>
-        <tr><td><input type="text" class="description-input" value="${escapeHtml(descriptionLines.length > 0 ? descriptionLines.join(" · ") : "")}" /></td><td class="qty-col"><input type="number" min="0" step="1" class="qty-input" value="1" /></td></tr>
+        ${itemRows}
       </tbody></table>
       <div class="notes-block">
         <h2>Notes</h2>
-        <textarea class="notes-textarea"></textarea>
+        <div class="notes-static">${escapeHtml(draft.notes)}</div>
       </div>
       <div class="sign-blocks">
         <div class="sign-block">
@@ -2680,7 +2704,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       ? { attachmentFileName: rfqAttachmentFile.name, attachmentMimeType: rfqAttachmentFile.type || "application/octet-stream", attachmentContentBase64: await fileToBase64(rfqAttachmentFile) }
       : {};
     await postAction(`/api/v1/jobs/${jobId}/rfq`, { supplierId: rfqSupplierId, sendEmail: rfqSendEmail, ...attachment });
-    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); setRfqSendEmail(true); setRfqAttachmentFile(null);
+    setRfqSupplierId(""); setRfqSupplierQuery(""); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); setRfqSendEmail(true);
+    // The attachment is deliberately kept: the same file usually goes to every supplier. Remove it with the Remove button.
   }
 
   // Inline "create a new supplier" from the RFQ panel — added 2026-09-09
@@ -2691,7 +2716,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       ? { attachmentFileName: rfqAttachmentFile.name, attachmentMimeType: rfqAttachmentFile.type || "application/octet-stream", attachmentContentBase64: await fileToBase64(rfqAttachmentFile) }
       : {};
     await postAction(`/api/v1/jobs/${jobId}/rfq/new-supplier`, { supplierName: rfqNewSupplierName.trim(), supplierEmail: rfqNewSupplierEmail.trim() || null, sendEmail: rfqNewSupplierSendEmail, ...attachment });
-    setRfqNewSupplierName(""); setRfqNewSupplierEmail(""); setRfqNewSupplierSendEmail(true); setShowRfqNewSupplierForm(false); setRfqAttachmentFile(null);
+    setRfqNewSupplierName(""); setRfqNewSupplierEmail(""); setRfqNewSupplierSendEmail(true); setShowRfqNewSupplierForm(false);
   }
 
   // Retries (or sends for the first time) the RFQ email for a request that
@@ -3393,7 +3418,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {/* 2026-09-19, user request — see printJobHistory/
                     printJobDeliveryNote's own comments above for scope. */}
                 {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec)}><Printer size={14} /> Print Job History</button>}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobDeliveryNote(), "JOB_DELIVERY_NOTE", jobDeliveryNoteSpec)}><Printer size={14} /> Print Delivery Note</button>}
+                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={openJobDeliveryNoteDialog}><Printer size={14} /> Print Delivery Note</button>}
                 {/* 2026-10-01 — every button below changes job.status (the
                     same action the status stepper performs, just via a
                     dedicated dialog/confirm instead of a stepper click), so
@@ -3909,10 +3934,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <label><span>&nbsp;</span><button type="button" className="quiet-button" onClick={() => setShowRfqNewSupplierForm((v) => !v)}><Plus size={15} /> {showRfqNewSupplierForm ? "Cancel new supplier" : "New supplier"}</button></label>
               <label className="wide"><span>Attachment (optional)</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <input type="file" onChange={(e) => setRfqAttachmentFile(e.target.files?.[0] || null)} />
-                  {rfqAttachmentFile && <button type="button" className="quiet-button" onClick={() => setRfqAttachmentFile(null)}><X size={13} /> {rfqAttachmentFile.name}</button>}
+                  {rfqAttachmentFile ? (
+                    <span className="attachment-chip" style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "1px solid var(--ink-300)", borderRadius: 7, padding: "4px 8px", background: "white" }}>
+                      <FileText size={14} /> <strong>{rfqAttachmentFile.name}</strong> <span className="muted small-line">({Math.max(1, Math.round(rfqAttachmentFile.size / 1024))} KB)</span>
+                      <button type="button" className="quiet-button" onClick={() => setRfqAttachmentFile(null)}><X size={13} /> Remove</button>
+                    </span>
+                  ) : (
+                    <input type="file" onChange={(e) => setRfqAttachmentFile(e.target.files?.[0] || null)} />
+                  )}
                 </div>
-                <p className="muted small-line">Sent with the RFQ email (a drawing, spec sheet or photo) — applies to whichever supplier you request a quote from below.</p>
+                <p className="muted small-line">Sent with the RFQ email (a drawing, spec sheet or photo). It stays here for every supplier you request a quote from, until you remove it.</p>
               </label>
             </div>
 
@@ -4477,6 +4508,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
           </section>
 
+          {jobDnDraft && (
+            <div className="drawer-backdrop" role="dialog" aria-modal="true">
+              <aside className="form-drawer compact-dialog delivery-note-dialog">
+                <header><div><p className="eyebrow">Job {jobDocLabel}</p><h2>{documentTitles.JOB_DELIVERY_NOTE}</h2><p className="muted small-line">Add or change line items, then print.</p></div><button type="button" onClick={() => setJobDnDraft(null)} aria-label="Close dialog"><X size={18} /></button></header>
+                <div className="drawer-fields">
+                  <div className="data-table-wrap wide"><table className="data-table"><thead><tr><th>Description</th><th style={{ width: 90 }}>Qty</th><th style={{ width: 40 }} /></tr></thead><tbody>
+                    {jobDnDraft.items.map((item, idx) => (
+                      <tr key={idx}>
+                        <td><input style={{ width: "100%" }} value={item.description} placeholder="Description" onChange={(e) => setJobDnDraft((d) => (d ? { ...d, items: d.items.map((row, i) => (i === idx ? { ...row, description: e.target.value } : row)) } : d))} /></td>
+                        <td><input style={{ width: 70 }} type="number" min="0" step="1" value={item.quantity} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, items: d.items.map((row, i) => (i === idx ? { ...row, quantity: e.target.value } : row)) } : d))} /></td>
+                        <td><button type="button" className="table-action" aria-label="Remove line" disabled={jobDnDraft.items.length === 1} onClick={() => setJobDnDraft((d) => (d ? { ...d, items: d.items.filter((_, i) => i !== idx) } : d))}><X size={13} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody></table></div>
+                  <div className="wide"><button type="button" className="quiet-button" onClick={() => setJobDnDraft((d) => (d ? { ...d, items: [...d.items, { description: "", quantity: "1" }] } : d))}><Plus size={14} /> Add line item</button></div>
+                  <label className="wide"><span>Notes</span><textarea rows={3} value={jobDnDraft.notes} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, notes: e.target.value } : d))} /></label>
+                </div>
+                <footer className="detail-actions">
+                  <button type="button" className="gold-button" onClick={() => { const draft = jobDnDraft; setJobDnDraft(null); void offerToSave(printJobDeliveryNote(draft), "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft)); }}>Print</button>
+                  <button type="button" className="quiet-button" onClick={() => setJobDnDraft(null)}>Close</button>
+                </footer>
+              </aside>
+            </div>
+          )}
+
           {deliveryNote && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
               <aside className="form-drawer compact-dialog delivery-note-dialog">
@@ -4515,6 +4571,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       was made — the table's own width:100% just filled
                       that half-width box, and .data-table-wrap's
                       overflow-x:auto kicked in and clipped it. */}
+                  {/* 2026-10-06 — user request: "On outwork delivery notes, add
+                      fields Make, Model and Serial above the description
+                      column." Filled from the job's machine details; editable
+                      here and printed/saved above the description table. */}
+                  <label><span>Make</span><input value={deliveryNote.make} onChange={(e) => setDeliveryNote((n) => (n ? { ...n, make: e.target.value } : n))} /></label>
+                  <label><span>Model</span><input value={deliveryNote.model} onChange={(e) => setDeliveryNote((n) => (n ? { ...n, model: e.target.value } : n))} /></label>
+                  <label className="wide"><span>Serial</span><input value={deliveryNote.serial} onChange={(e) => setDeliveryNote((n) => (n ? { ...n, serial: e.target.value } : n))} /></label>
                   <div className="data-table-wrap wide"><table className="data-table"><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>
                     {deliveryNote.items.map((i, idx) => <tr key={idx}><td>{i.description}</td><td>{i.quantity}</td><td></td></tr>)}
                   </tbody></table></div>
