@@ -1512,29 +1512,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
     const block = (label: string, value: string) => `<h2>${escapeHtml(label)}</h2><div class="box">${escapeHtml(value || "—")}</div>`;
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.FIELD_REPORT}`)}</title><meta charset="utf-8" /><style>
-      body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#111;font-size:12px}
-      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
-      h1{font-size:17px;margin:0 0 8px}
-      h2{font-size:12px;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.04em;color:#555;page-break-after:avoid}
-      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
-      .logo{max-height:70px;max-width:220px;object-fit:contain;margin-bottom:8px;display:block}
-      .org-details{text-align:left;margin-bottom:4px}
-      .org-details .org-name{font-weight:bold;font-size:12px;color:#111;margin:0 0 2px}
-      .org-details p{font-size:10px;color:#444;margin:0}
-      .job-number{font-size:15px;font-weight:bold;text-align:right}
+      @page{size:A4;margin:12mm}
+      body{font-family:Arial,Helvetica,sans-serif;padding:0;margin:0 auto;max-width:780px;color:#111;font-size:11px}
+      .note-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:10px}
+      h1{font-size:17px;margin:0 0 4px}
+      h2{font-size:10.5px;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.04em;color:#555;page-break-after:avoid}
+      .note-left{display:flex;flex-direction:column;align-items:flex-start}
+      .note-right{text-align:right}
+      .logo{max-height:50px;max-width:170px;object-fit:contain;margin-bottom:5px;display:block}
+      .org-details{text-align:left}
+      .org-details .org-name{font-weight:bold;font-size:11px;color:#111;margin:0 0 2px}
+      .org-details p{font-size:9.5px;color:#444;margin:0;line-height:1.4}
+      .job-number{font-size:15px;font-weight:bold}
       table{width:100%;border-collapse:collapse;page-break-inside:avoid}
-      th,td{border:1px solid #ccc;padding:4px 7px;text-align:left;font-size:12px;vertical-align:top}
+      th,td{border:1px solid #ccc;padding:4px 7px;text-align:left;font-size:11px;vertical-align:top}
       th{width:36%;background:#f6f6f6;font-weight:600}
-      .box{border:1px solid #ccc;padding:6px 8px;min-height:30px;white-space:pre-wrap;font-size:12px;page-break-inside:avoid}
-      .two-col{display:flex;gap:18px;align-items:flex-start;page-break-inside:avoid}
-      .two-col > div{flex:1;min-width:0}
-      .scheduled{font-size:11px;color:#444}
+      .box{border:1px solid #ccc;padding:5px 7px;min-height:26px;white-space:pre-wrap;font-size:10.5px;page-break-inside:avoid}
+      .two-col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;page-break-inside:avoid}
+      .scheduled{font-size:10.5px;color:#444;margin-top:2px}
     </style></head><body>
-      <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
       <div class="note-head">
-        <h1>${escapeHtml(documentTitles.FIELD_REPORT)}</h1>
-        <div class="note-right">
+        <div class="note-left">
+          <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
+        </div>
+        <div class="note-right">
+          <h1>${escapeHtml(documentTitles.FIELD_REPORT)}</h1>
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
           ${form.fieldScheduledDate ? `<div class="scheduled">Scheduled: ${fmt(form.fieldScheduledDate)}</div>` : ""}
         </div>
