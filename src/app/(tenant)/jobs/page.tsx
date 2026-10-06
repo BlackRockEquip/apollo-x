@@ -7,6 +7,8 @@ import { FitToViewportBottom } from "@/components/FitToViewportBottom";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
+import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
+import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
@@ -173,6 +175,26 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   ]);
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
   const canSearchCustomerName = ctx.tenantPermissions.has("CUSTOMERS_VIEW");
+  // 2026-10-06 — bulk update (see JobsWipBulkBar.tsx). Mirrors the server-side
+  // gates in lib/jobs/bulk.ts: status/close/cancel need JOBS_EDIT with a fully
+  // licensed Jobs module and are not offered to the restricted USER (mechanic)
+  // role; Send to PEX needs PEX_STOCK_TRANSFER_IN with PEX Stock licensed.
+  const canBulkEdit = ctx.tenantPermissions.has("JOBS_EDIT") && ctx.moduleAccess.get("JOBS_WIP") === "FULL" && ctx.tenantRole !== "USER";
+  const canBulkPex = ctx.tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && ctx.moduleAccess.get("PEX_STOCK") === "FULL" && ctx.tenantRole !== "USER";
+  const showSelect = canBulkEdit || canBulkPex;
+  // Plain-words description of what's filtered, printed on the Print view.
+  const VIEW_LABELS: Record<string, string> = { wip: "Work in progress", completed: "Completed" };
+  const filterParts = [
+    view !== "all" && VIEW_LABELS[view] ? `View: ${VIEW_LABELS[view]}` : "",
+    type ? `Type: ${JOB_TYPE_LABELS[type as keyof typeof JOB_TYPE_LABELS] ?? type}` : "",
+    pexAllocated ? "Status: Pex" : returnedUnrepaired ? "Status: Returned unrepaired" : status ? `Status: ${JOB_STATUS_LABELS[status as keyof typeof JOB_STATUS_LABELS] ?? status}` : "",
+    q ? `Search: "${q}"` : "",
+  ].filter(Boolean);
+  const clearViewParams = new URLSearchParams();
+  if (q) clearViewParams.set("q", q);
+  if (type) clearViewParams.set("type", type);
+  const clearViewHref = clearViewParams.toString() ? `/jobs?${clearViewParams.toString()}` : "/jobs";
+  const filterSummary = filterParts.length > 0 ? filterParts.join("  ·  ") : "No filters (all jobs)";
 
   return (
     <div>
@@ -202,13 +224,16 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
             <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, draft, linked job #, customer, machine, component or reference" : "Search BRE, draft, linked job #, machine, component or reference"} defaultValue={q} />
-            <input type="hidden" name="view" value={view} />
+            {/* The view (WIP / completed) only rides along while no status is
+                chosen — a status is the more specific filter, and keeping both
+                made a later status pick combine with the old view. */}
+            {view !== "all" && !rawStatus && <input type="hidden" name="view" value={view} />}
           </form>
           <AutoSubmitSelect name="type" defaultValue={type || ""} form="jobs-filter-form">
             <option value="">All job types</option>
             {Object.entries(JOB_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </AutoSubmitSelect>
-          <AutoSubmitSelect name="status" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
+          <AutoSubmitSelect name="status" dropWhenChanged="view" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
             <option value="">All statuses</option>
             {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             <option value="PEX">Pex</option>
@@ -220,6 +245,10 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               everything placed after it — to the toolbar's right edge. So
               Apply/Columns moved to after the count span rather than before
               it (their previous position, immediately after the filters). */}
+          {/* Shows (and lets you clear) the WIP / Completed view a dashboard
+              link or the old chips can set — otherwise the list is narrower
+              than the dropdowns say. */}
+          {view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
           <button type="submit" form="jobs-filter-form" className="quiet-button">Apply</button>
           {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
@@ -230,6 +259,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               enforcement: that column is never in `columns` to begin
               with). */}
           <JobsWipColumnPicker selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
+          {/* 2026-10-06, user request: "Create a Print view of the table
+              however the user filtered or saved the columns". */}
+          <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
         </div>
 
         {/* 2026-10-05 — user request: "remove the search pills under search
@@ -246,20 +278,23 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               restores any previously dragged widths from localStorage. */}
           <table id="jobs-wip-table" className="data-table jobs-wip-resizable">
             <colgroup>
+              {showSelect && <col data-col-id="__select" style={{ width: "34px" }} />}
               {columns.map((id) => <col key={id} data-col-id={id} style={{ width: `${COLUMN_DEFAULT_WIDTHS[id] ?? 140}px` }} />)}
               <col data-col-id="__actions" style={{ width: "70px" }} />
             </colgroup>
-            <thead><tr>{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}<th></th></tr></thead>
+            <thead><tr>{showSelect && <th className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select-all" aria-label="Select all jobs shown" /></th>}{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}<th className="jobs-no-print"></th></tr></thead>
             <tbody>
               {data.items.map((job) => (
                 <tr key={job.id} className="clickable-row">
+                  {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
                   {columns.map((id) => <td key={id}>{renderCell(id, job)}</td>)}
-                  <td className="actions"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
+                  <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
                 </tr>
               ))}
-              {data.items.length === 0 && <tr><td colSpan={columns.length + 1} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
+              {data.items.length === 0 && <tr><td colSpan={columns.length + 1 + (showSelect ? 1 : 0)} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
             </tbody>
           </table>
+          {showSelect && <JobsWipBulkBar tableId="jobs-wip-table" canEdit={canBulkEdit} canPex={canBulkPex} />}
           <JobsWipColumnResize tableId="jobs-wip-table" storageKey={JOBS_WIP_COLUMN_WIDTHS_STORAGE_KEY} columns={columns} />
           {/* 2026-09-15, user request: "Back button to take you back to
               where you last were." Search/view/type/status are already in

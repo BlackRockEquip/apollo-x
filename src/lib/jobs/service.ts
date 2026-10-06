@@ -379,6 +379,17 @@ async function getOutworkItemScoped(companyId: string, jobId: string, itemId: st
   return item;
 }
 
+const COMPLETED_VIEW_STATUSES: JobStatus[] = ["COMPLETE", "CLOSED", "CANCELLED"];
+
+function jobStatusScope(query: JobsListQuery): Prisma.JobWhereInput {
+  const viewStatuses = query.view === "wip" ? WIP_STATUSES : query.view === "completed" ? COMPLETED_VIEW_STATUSES : null;
+  if (query.status) {
+    if (viewStatuses && !viewStatuses.includes(query.status as JobStatus)) return { status: { in: [] } };
+    return { status: query.status };
+  }
+  return viewStatuses ? { status: { in: viewStatuses } } : {};
+}
+
 // Company/status/type/view filters only — no text search. Shared by
 // mapListWhere below (which adds the text OR on top) and expandLinkedJobIds
 // (which needs the same scoping for a linked job it pulls in by chain
@@ -386,10 +397,14 @@ async function getOutworkItemScoped(companyId: string, jobId: string, itemId: st
 function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobWhereInput {
   return {
     companyId,
-    ...(query.status ? { status: query.status } : {}),
     ...(query.type ? { type: query.type } : {}),
-    ...(query.view === "wip" ? { status: { in: WIP_STATUSES } } : {}),
-    ...(query.view === "completed" ? { status: { in: ["COMPLETE", "CLOSED", "CANCELLED"] } } : {}),
+    // 2026-10-06, user report: "clicking on dashboard await go ahead jobs,
+    // takes me to job wip page but filter doesnt work correctly". A status
+    // and a view (wip / completed) used to be two spreads writing the same
+    // `status` key, so view=wip silently overwrote status=AWAITING_GO_AHEAD
+    // and the list showed every WIP job. They are now combined: the status
+    // must be one of the view's statuses (otherwise nothing matches).
+    ...jobStatusScope(query),
     // 2026-10-01 — backs the Jobs & WIP "Returned unrepaired" filter chip,
     // now a flag filter rather than a status filter (see JOB_WIP_FILTERS'
     // own comment in jobs/ui.ts).

@@ -67,7 +67,7 @@ type DashboardData = {
 // 2026-10-01 — split out of dashboard/page.tsx, which is now a thin server
 // wrapper doing requireTenantPageAccess(ctx, "DASHBOARD_VIEW").
 const WIDGET_HREF: Record<string, string> = {
-  "jobs-summary": "/jobs",
+  "jobs-summary": "/jobs?view=completed",
   "wip-status-counts": "/jobs?view=wip",
   "outstanding-parts": "/parts",
   "procurement-summary": "/outwork",
