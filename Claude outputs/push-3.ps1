@@ -1,13 +1,12 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Quote import matches part numbers ignoring hyphens; job view layout tweaks
+Re-apply Add Part revive fix and job view layout/spacing changes
 
-- Compare-quotes import: 3J-1907 in a quote now matches 3J1907 (text and
-  spreadsheet quotes).
-- Job view: Attachments and Send to PEX Inventory side by side; PEX buttons
-  use the standard section button style.
-- Footer buttons get top padding so they no longer sit on the divider line.
+The previous commits for these files contained the old file contents.
+- Add Part reuses a previously deleted part's number (revives the record).
+- Job view: Attachments beside Send to PEX Inventory, PEX buttons in the
+  standard section-button style, footer buttons no longer sit on the divider.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

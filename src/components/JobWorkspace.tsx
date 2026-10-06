@@ -4469,44 +4469,76 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </tbody></table></div>
           </section>
 
-          <section className="detail-panel">
-            <header>
-              <div><h2>Attachments</h2><p>Photos, documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
-            </header>
-            <div className="drawer-fields">
-              <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
-              <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
-              <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment()}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
-            </div>
-            <div className="record-list">
-              {job.attachments.length === 0 && <div className="table-state compact-empty-state">No attachments uploaded yet.</div>}
-              {job.attachments.map((file) => {
-                const fileId = String(file.id);
-                const isEditingNote = editingAttachmentId === fileId;
-                return (
-                <article key={fileId}>
-                  <div className="record-icon"><FileText size={14} /></div>
-                  <div>
-                    <strong><button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}>{text(file.fileName)}</button></strong>
-                    <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}</span>
-                    {isEditingNote ? (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-                        <input value={editingAttachmentNotes} onChange={(e) => setEditingAttachmentNotes(e.target.value)} placeholder="What is this file?" style={{ flex: 1 }} />
-                        <button type="button" className="quiet-button" disabled={savingAttachmentNotes} onClick={() => { setEditingAttachmentId(""); setEditingAttachmentNotes(""); }}>Cancel</button>
-                        <button type="button" className="gold-button" disabled={savingAttachmentNotes} onClick={() => void saveAttachmentNotes(fileId)}>{savingAttachmentNotes ? "Saving…" : "Save"}</button>
-                      </div>
-                    ) : (
-                      <span>{file.notes ? text(file.notes) : <em className="muted">No note</em>} <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingAttachmentId(fileId); setEditingAttachmentNotes(file.notes ? String(file.notes) : ""); }}><Pencil size={12} /></button></span>
-                    )}
-                  </div>
-                  <span>{file.createdAt ? new Date(String(file.createdAt)).toLocaleDateString("en-ZA") : "—"}</span>
-                  <button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}><Download size={14} /> Download</button>
-                  <button type="button" className="table-action danger" onClick={() => void deleteAttachment(fileId)}>Delete</button>
-                </article>
-                );
-              })}
-            </div>
-          </section>
+          {/* 2026-10-06 — user request: Attachments and Send to PEX side by
+              side. The PEX panels (mutually exclusive: Send job to PEX / In PEX
+              Inventory) moved up to sit directly beside Attachments; when
+              neither applies Attachments simply fills the row. */}
+          <div className="job-pair-row">
+            <section className="detail-panel">
+              <header>
+                <div><h2>Attachments</h2><p>Photos, documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
+              </header>
+              <div className="drawer-fields">
+                <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
+                <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
+                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment()}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
+              </div>
+              <div className="record-list">
+                {job.attachments.length === 0 && <div className="table-state compact-empty-state">No attachments uploaded yet.</div>}
+                {job.attachments.map((file) => {
+                  const fileId = String(file.id);
+                  const isEditingNote = editingAttachmentId === fileId;
+                  return (
+                  <article key={fileId}>
+                    <div className="record-icon"><FileText size={14} /></div>
+                    <div>
+                      <strong><button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}>{text(file.fileName)}</button></strong>
+                      <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}</span>
+                      {isEditingNote ? (
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                          <input value={editingAttachmentNotes} onChange={(e) => setEditingAttachmentNotes(e.target.value)} placeholder="What is this file?" style={{ flex: 1 }} />
+                          <button type="button" className="quiet-button" disabled={savingAttachmentNotes} onClick={() => { setEditingAttachmentId(""); setEditingAttachmentNotes(""); }}>Cancel</button>
+                          <button type="button" className="gold-button" disabled={savingAttachmentNotes} onClick={() => void saveAttachmentNotes(fileId)}>{savingAttachmentNotes ? "Saving…" : "Save"}</button>
+                        </div>
+                      ) : (
+                        <span>{file.notes ? text(file.notes) : <em className="muted">No note</em>} <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingAttachmentId(fileId); setEditingAttachmentNotes(file.notes ? String(file.notes) : ""); }}><Pencil size={12} /></button></span>
+                      )}
+                    </div>
+                    <span>{file.createdAt ? new Date(String(file.createdAt)).toLocaleDateString("en-ZA") : "—"}</span>
+                    <button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}><Download size={14} /> Download</button>
+                    <button type="button" className="table-action danger" onClick={() => void deleteAttachment(fileId)}>Delete</button>
+                  </article>
+                  );
+                })}
+              </div>
+            </section>
+            {/* 2026-09-16 — user request: was gated on COMPLETE, moved to
+                Delivered - awaiting payment (matches allocateJobToPexInventory's
+                own gate in pex/service.ts) — the unit's physically done and
+                ready to shelve well before payment/closing catches up. */}
+            {canSendToPex && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Once the unit is in the workshop — even mid-repair — it can be allocated directly into PEX Inventory, without a supply/return chain. Admins and Managers only.</p></div></header>
+              <footer className="detail-actions"><button type="button" className="section-action-button" disabled={saving} onClick={() => void sendToPexInventory()}>Send to PEX Inventory</button></footer>
+              {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
+                  not showing" on PEX Stock. The shared `error` state from
+                  postAction() was only ever rendered once, near the top of
+                  this (very long) job page — easy to miss after clicking a
+                  button this far down, same class of bug already fixed for
+                  Parts follow-up. If allocation actually fails here (job
+                  already linked to a PEX record, a stale/duplicate record,
+                  etc.) the section stays visible with no visible reason why,
+                  so it looks like nothing happened rather than showing the
+                  real error — repeating it locally, right at the button. */}
+              {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
+            </section>}
+
+            {/* 2026-10-05 — undo for "Send to PEX Inventory" (user request).
+                A PEX_RETURN-type job shows its own PEX Return panel above, so
+                the undo button lives there instead of a second section. */}
+            {pexAllocatedDirect && job.type !== "PEX_RETURN" && canSendToPex && !job.pexAsReturn?.consumedByJob && <section className="detail-panel"><header><div><h2>In PEX Inventory</h2><p>This job's unit was sent to PEX Inventory. If that was a mistake you can take it back out.</p></div></header>
+              <footer className="detail-actions"><button type="button" className="section-action-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button></footer>
+              {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
+            </section>}
+          </div>
 
           {jobDnDraft && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
@@ -4645,32 +4677,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void patchAction(`/api/v1/pex/${job.pexAsReturn?.id}/notes`, { notes: form.pexNotes || null })}>Save PEX notes</button></footer>
           </section>}
 
-          {/* 2026-09-16 — user request: was gated on COMPLETE, moved to
-              Delivered - awaiting payment (matches allocateJobToPexInventory's
-              own gate in pex/service.ts) — the unit's physically done and
-              ready to shelve well before payment/closing catches up. */}
-          {canSendToPex && !job.pexAsSupply && !job.pexAsReturn && <section className="detail-panel"><header><div><h2>Send job to PEX Inventory</h2><p>Once the unit is in the workshop — even mid-repair — it can be allocated directly into PEX Inventory, without a supply/return chain. Admins and Managers only.</p></div></header>
-            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void sendToPexInventory()}>Send to PEX Inventory</button></footer>
-            {/* 2026-09-16 — user report: "BRE1014 was allocated to pex but is
-                not showing" on PEX Stock. The shared `error` state from
-                postAction() was only ever rendered once, near the top of
-                this (very long) job page — easy to miss after clicking a
-                button this far down, same class of bug already fixed for
-                Parts follow-up. If allocation actually fails here (job
-                already linked to a PEX record, a stale/duplicate record,
-                etc.) the section stays visible with no visible reason why,
-                so it looks like nothing happened rather than showing the
-                real error — repeating it locally, right at the button. */}
-            {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
-          </section>}
-
-          {/* 2026-10-05 — undo for "Send to PEX Inventory" (user request).
-              A PEX_RETURN-type job shows its own PEX Return panel above, so
-              the undo button lives there instead of a second section. */}
-          {pexAllocatedDirect && job.type !== "PEX_RETURN" && canSendToPex && !job.pexAsReturn?.consumedByJob && <section className="detail-panel"><header><div><h2>In PEX Inventory</h2><p>This job's unit was sent to PEX Inventory. If that was a mistake you can take it back out.</p></div></header>
-            <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button></footer>
-            {error ? <div className="inline-error" style={{ marginTop: 10 }}>{error}</div> : null}
-          </section>}
 
           {/* Notes now render beside Customer details, at the top of
               jobFormSections above — see the job-notes-panel section

@@ -697,7 +697,7 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .outwork-edit-dates { display: flex; flex-direction: column; gap: 6px; }
 .outwork-edit-date-row { display: flex; align-items: center; gap: 6px; }
 .outwork-edit-date-row span { width: 46px; flex-shrink: 0; color: var(--ink-500); font-size: 10px; }
-.job-layout{display:grid;gap:16px}.job-workspace .back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ink-700);font-size:12px;font-weight:700}.job-workspace .small-line{font-size:10px}.jobs-filter-strip{display:flex;gap:8px;flex-wrap:wrap;padding:0 18px 14px}.status-chip{display:inline-flex;align-items:center;border:1px solid var(--ink-150);border-radius:999px;padding:7px 10px;background:#fff;font-size:11px;font-weight:700;color:var(--ink-700)}.status-chip.active{background:#eef5ff;border-color:#bfd6fb;color:#0b4da2}.detail-actions{display:flex;justify-content:flex-end;padding:0 16px 16px}.job-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;padding:0 14px 14px}.stack-row{display:flex;gap:8px;align-items:center}.stack-grid{display:grid;gap:8px}.jobs-panel .data-table td strong{font-size:12px}
+.job-layout{display:grid;gap:16px}.job-workspace .back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ink-700);font-size:12px;font-weight:700}.job-workspace .small-line{font-size:10px}.jobs-filter-strip{display:flex;gap:8px;flex-wrap:wrap;padding:0 18px 14px}.status-chip{display:inline-flex;align-items:center;border:1px solid var(--ink-150);border-radius:999px;padding:7px 10px;background:#fff;font-size:11px;font-weight:700;color:var(--ink-700)}.status-chip.active{background:#eef5ff;border-color:#bfd6fb;color:#0b4da2}.detail-actions{display:flex;justify-content:flex-end;padding:14px 16px 16px}.job-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;padding:0 14px 14px}.stack-row{display:flex;gap:8px;align-items:center}.stack-grid{display:grid;gap:8px}.jobs-panel .data-table td strong{font-size:12px}
 .pex-record-list article{grid-template-columns:auto minmax(180px,1fr) auto minmax(200px,1fr) auto}.pex-link-stack,.pex-action-stack{display:grid;gap:6px}.pex-action-stack label{display:grid;gap:4px;font-size:11px;font-weight:700}.pex-action-stack input,.pex-action-stack textarea{min-height:36px;border:1px solid var(--ink-300);border-radius:6px;padding:8px 9px;outline:none}.pex-action-stack input:focus,.pex-action-stack textarea:focus{border-color:var(--gold-500);box-shadow:0 0 0 3px #fbf2d7}
 
 /* Clickable job-status stepper (StatusStepper.tsx) — ported from ModApp's
@@ -1314,3 +1314,8 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .storage-note.bad { background: #fdecea; color: var(--danger); }
 @media (max-width: 900px) { .storage-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .storage-options { grid-template-columns: 1fr; } }
+
+/* 2026-10-06 — Attachments and Send-to-PEX side by side on a job; a lone
+   panel (nothing to send to PEX) still fills the whole row. */
+.job-pair-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+.job-pair-row > .detail-panel { min-width: 0; }

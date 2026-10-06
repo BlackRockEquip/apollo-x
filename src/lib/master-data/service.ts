@@ -95,7 +95,30 @@ export async function createMaster(ctx: RequestContext, kind: MasterKind, raw: u
       // have been caught colliding with some OTHER part's ALTERNATE
       // number — a different table the DB constraint can't see. Checked
       // here in application code instead (see numberAlreadyInUse).
-      case "parts": { const v=partInput.parse(input); if(await numberAlreadyInUse(tx,companyId,v.partNumber)) throw new Error("PART_NUMBER_ALREADY_IN_USE"); created=await tx.part.create({data:{...v,companyId,partNumberNormalized:normalized(v.partNumber)!,defaultPurchaseCost:v.defaultPurchaseCost==null?null:new Prisma.Decimal(v.defaultPurchaseCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice),reorderMinimum:v.reorderMinimum==null?null:new Prisma.Decimal(v.reorderMinimum),reorderMaximum:v.reorderMaximum==null?null:new Prisma.Decimal(v.reorderMaximum),reorderQuantity:v.reorderQuantity==null?null:new Prisma.Decimal(v.reorderQuantity)}}); break; }
+      // 2026-10-06 — user report: adding a part whose number was deleted
+      // earlier says "number already in use." Deleting a part that has
+      // stock/job history only marks it HISTORICAL_REFERENCE (see deletePart),
+      // so its row — and its unique number — is still in the database even
+      // though no list shows it. Adding that number again now revives that
+      // same record (reactivated, fields replaced by the form's values) —
+      // same behaviour the Parts import already has — instead of rejecting.
+      // A number held by an ACTIVE part, or by another part's alternate
+      // number, is still rejected.
+      case "parts": {
+        const v=partInput.parse(input);
+        const partFields={...v,partNumberNormalized:normalized(v.partNumber)!,defaultPurchaseCost:v.defaultPurchaseCost==null?null:new Prisma.Decimal(v.defaultPurchaseCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice),reorderMinimum:v.reorderMinimum==null?null:new Prisma.Decimal(v.reorderMinimum),reorderMaximum:v.reorderMaximum==null?null:new Prisma.Decimal(v.reorderMaximum),reorderQuantity:v.reorderQuantity==null?null:new Prisma.Decimal(v.reorderQuantity)};
+        const historical=await tx.part.findFirst({where:{companyId,partNumberNormalized:partFields.partNumberNormalized,operationalStatus:"HISTORICAL_REFERENCE"},select:{id:true}});
+        if(historical){
+          if(await numberAlreadyInUse(tx,companyId,v.partNumber,historical.id)) throw new Error("PART_NUMBER_ALREADY_IN_USE");
+          const before=await tx.part.findFirst({where:{id:historical.id}});
+          created=await tx.part.update({where:{id:historical.id},data:{...partFields,active:true,operationalStatus:"OPERATIONAL"}});
+          await tx.auditEvent.create({data:audit(ctx,kind,created.id,"UPDATE",JSON.parse(JSON.stringify(before,(_,x)=>typeof x==="bigint"?x.toString():x)),JSON.parse(JSON.stringify(created,(_,x)=>typeof x==="bigint"?x.toString():x)))});
+          return created;
+        }
+        if(await numberAlreadyInUse(tx,companyId,v.partNumber)) throw new Error("PART_NUMBER_ALREADY_IN_USE");
+        created=await tx.part.create({data:{...partFields,companyId}});
+        break;
+      }
       case "storage-locations": { const v=locationInput.parse(input); if(v.parentId&&!await tx.storageLocation.findFirst({where:{id:v.parentId,companyId}})) throw new Error("PARENT_NOT_FOUND"); created=await tx.storageLocation.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
       case "services": { const v=serviceInput.parse(input); created=await tx.serviceItem.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,defaultCost:v.defaultCost==null?null:new Prisma.Decimal(v.defaultCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice)}}); break; }
       case "tax-codes": { const v=taxInput.parse(input); created=await tx.taxCode.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,rate:new Prisma.Decimal(v.rate)}}); break; }
