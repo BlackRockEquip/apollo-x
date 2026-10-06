@@ -4,6 +4,7 @@ import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill } from "@/components
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { FitToViewportBottom } from "@/components/FitToViewportBottom";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { requireRequestContext } from "@/lib/auth/session";
@@ -203,15 +204,15 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, draft, linked job #, customer, machine, component or reference" : "Search BRE, draft, linked job #, machine, component or reference"} defaultValue={q} />
             <input type="hidden" name="view" value={view} />
           </form>
-          <select name="type" defaultValue={type || ""} form="jobs-filter-form">
+          <AutoSubmitSelect name="type" defaultValue={type || ""} form="jobs-filter-form">
             <option value="">All job types</option>
             {Object.entries(JOB_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          <select name="status" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
+          </AutoSubmitSelect>
+          <AutoSubmitSelect name="status" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
             <option value="">All statuses</option>
             {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             <option value="PEX">Pex</option>
-          </select>
+          </AutoSubmitSelect>
           {/* 2026-09-14 — "Move the custom column button selctor and apply
               button to the far right" (explicit request). The item-count
               span already carries the shared .master-toolbar > span rule's

@@ -1,11 +1,13 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Jobs: tabbed Parts card (Parts list / Pick slips / Follow-up) on every job type
+Jobs filters apply on change; Parts tabs swapped
 
-- The Parts list, Generated pick slips and Parts follow-up sections are now tabs of
-  one Parts card on all job types, as on Field service jobs. Pick slips shows once
-  the job has parts; Follow-up shows while ordered parts are outstanding.
+- Jobs & WIP: picking a job type or status filters the list immediately (no Apply
+  click needed).
+- Parts: Parts Outstanding is now the first tab and the default page (/parts); RFQs
+  is the second tab (/parts/rfq). Old /parts/outstanding and /suppliers/rfq links
+  redirect.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useState } from "react";
+import { useState } from "react";
+import { X } from "lucide-react";
 import { PexStatusPill } from "@/components/StatusPill";
 import { PexPreviousJobsTable, type PexPreviousJob } from "@/components/PexPreviousJobs";
 
@@ -39,8 +40,10 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
   const [historyById, setHistoryById] = useState<Record<string, HistoryPayload>>({});
   const [historyLoadingId, setHistoryLoadingId] = useState("");
 
+  // 2026-10-06 — user request: the History button opens its own window (the same
+  // "Previous jobs" dialog as the PEX panels on a job page) instead of expanding a
+  // row inside the table.
   async function toggleHistory(id: string) {
-    if (historyOpenId === id) { setHistoryOpenId(""); return; }
     setHistoryOpenId(id);
     if (historyById[id]) return;
     setHistoryLoadingId(id); setError("");
@@ -63,9 +66,7 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
       <thead><tr><th>Client</th><th>Unit</th><th>Supply job</th><th>Return job</th><th>Status</th><th>Supply date</th><th>Return date</th><th>PO number</th><th></th></tr></thead>
       <tbody>
         {initial.items.map((item) => {
-          const history = historyById[item.id];
-          return <Fragment key={item.id}>
-            <tr>
+          return <tr key={item.id}>
               <td>{text(item.customer?.tradingName || item.customer?.name)}</td>
               <td>{text(item.unitDescription)}</td>
               <td className="mono">{item.supplyJob?.id ? <Link href={`/jobs/${item.supplyJob.id}`} className="table-action">{text(item.supplyJob.jobNumber || item.supplyJob.draftNumber)}</Link> : "—"}</td>
@@ -74,16 +75,18 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
               <td>{dateText(item.supplyDate)}</td>
               <td>{dateText(item.returnDate)}</td>
               <td>{text(item.supplyJob?.purchaseOrderNumber)}</td>
-              <td className="actions"><button type="button" className="quiet-button" disabled={historyLoadingId === item.id} onClick={() => void toggleHistory(item.id)}>{historyOpenId === item.id ? "Hide history" : "History"}</button></td>
-            </tr>
-            {historyOpenId === item.id && <tr><td colSpan={9}>
-              {historyLoadingId === item.id && <span className="muted small-line">Loading history…</span>}
-              {history && <PexPreviousJobsTable jobs={history.previousJobs} />}
-            </td></tr>}
-          </Fragment>;
+              <td className="actions"><button type="button" className="quiet-button" disabled={historyLoadingId === item.id} onClick={() => void toggleHistory(item.id)}>History</button></td>
+            </tr>;
         })}
         {initial.items.length === 0 && <tr><td colSpan={9} className="table-state compact-empty-state">No PEX supply chains match the current filters.</td></tr>}
       </tbody>
     </table></div>
+    {historyOpenId && <div className="drawer-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) setHistoryOpenId(""); }}>
+      <aside className="form-drawer compact-dialog pex-previous-jobs-dialog">
+        <header><div><p className="eyebrow">PEX</p><h2>Previous jobs</h2></div><button type="button" onClick={() => setHistoryOpenId("")} aria-label="Close dialog"><X size={18} /></button></header>
+        {historyLoadingId === historyOpenId && <span className="muted small-line">Loading history…</span>}
+        {historyById[historyOpenId] && <PexPreviousJobsTable jobs={historyById[historyOpenId].previousJobs} />}
+      </aside>
+    </div>}
   </>;
 }
