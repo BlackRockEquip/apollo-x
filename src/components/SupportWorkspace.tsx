@@ -80,6 +80,21 @@ function priorityTone(priority: string) {
   }
 }
 
+
+// A response that is not JSON means the request never reached the Support
+// code: the sign-in expired (the proxy redirects to the login page), or the
+// server was restarting / returned its own error page. Say that instead of
+// "Unexpected token '<'".
+async function readJson(response: Response): Promise<any> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (response.redirected && /\/login/.test(response.url)) throw new Error("Your sign-in has expired. Please sign in again, then resubmit.");
+    throw new Error(`The server returned an unexpected response (HTTP ${response.status}). If the app was just updated it may still be restarting - wait a minute and try again.`);
+  }
+}
+
 export function SupportWorkspace() {
   const { tenantPermissions } = useTenantPermissions();
   const isAdmin = tenantPermissions.has("USERS_MANAGE");
@@ -104,7 +119,7 @@ export function SupportWorkspace() {
     setLoading(true);
     try {
       const response = await fetch("/api/v1/support", { cache: "no-store" });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to load support tickets.");
       setTickets(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load support tickets."); }
@@ -116,7 +131,7 @@ export function SupportWorkspace() {
     setDetailLoading(true);
     try {
       const response = await fetch(`/api/v1/support/${id}`, { cache: "no-store" });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to load support ticket.");
       setDetail(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load support ticket."); }
@@ -153,7 +168,7 @@ export function SupportWorkspace() {
     try {
       const attachments = await Promise.all(files.map(fileToPayload));
       const response = await fetch("/api/v1/support", { method: "POST", headers: { "content-type": "application/json", "x-apollo-route": window.location.pathname }, body: JSON.stringify({ ...form, moduleKey: form.moduleKey || null, pageRoute: form.pageRoute || window.location.pathname || null, attachments }) });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to create support ticket.");
       setForm({ subject: "", description: "", category: "", priority: "NORMAL", moduleKey: "", pageRoute: "" });
       setFiles([]);
@@ -168,7 +183,7 @@ export function SupportWorkspace() {
     try {
       const attachments = await Promise.all(replyFiles.map(fileToPayload));
       const response = await fetch(`/api/v1/support/${modalTicketId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: reply, attachments }) });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to reply.");
       setReply(""); setReplyFiles([]);
       await openTicket(modalTicketId);
@@ -182,7 +197,7 @@ export function SupportWorkspace() {
     setStatusSaving(true); setError("");
     try {
       const response = await fetch(`/api/v1/support/${modalTicketId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to update status.");
       await openTicket(modalTicketId);
       await load();
@@ -195,7 +210,7 @@ export function SupportWorkspace() {
     setDeletingId(ticket.id); setError("");
     try {
       const response = await fetch(`/api/v1/support/${ticket.id}`, { method: "DELETE" });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to delete ticket.");
       if (modalTicketId === ticket.id) closeModal();
       await load();

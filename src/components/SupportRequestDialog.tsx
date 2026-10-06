@@ -26,6 +26,21 @@ import { Headset, Send, X } from "lucide-react";
 // Rendered from AppShell.tsx's topbar, same backdrop-filter containing-
 // block issue ChangePasswordButton.tsx hit (see its own comment) — ported
 // through a portal here too, for the same reason.
+
+// A response that is not JSON means the request never reached the Support
+// code: the sign-in expired (the proxy redirects to the login page), or the
+// server was restarting / returned its own error page. Say that instead of
+// "Unexpected token '<'".
+async function readJson(response: Response): Promise<any> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (response.redirected && /\/login/.test(response.url)) throw new Error("Your sign-in has expired. Please sign in again, then resubmit.");
+    throw new Error(`The server returned an unexpected response (HTTP ${response.status}). If the app was just updated it may still be restarting - wait a minute and try again.`);
+  }
+}
+
 export function SupportRequestDialog() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ subject: "", description: "", category: "", priority: "NORMAL" });
@@ -48,7 +63,7 @@ export function SupportRequestDialog() {
         headers: { "content-type": "application/json", "x-apollo-route": window.location.pathname },
         body: JSON.stringify({ ...form, moduleKey: null, pageRoute: window.location.pathname, attachments: [] }),
       });
-      const body = await response.json();
+      const body = await readJson(response);
       if (!response.ok) throw new Error(body.error?.message || "Unable to submit your request.");
       setSent(true);
     } catch (e) {

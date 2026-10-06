@@ -1,17 +1,15 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @"
-Job documents: ask to save only after Print is clicked (no separate Save buttons)
+Support forms: show a readable error when the server returns a non-JSON page
 
-User feedback: the Save to folder buttons were not right - the question should
-only appear once the respective Print button is clicked.
-- Removed the standalone "Save to folder" buttons/menu.
-- Print job card / Job History / Delivery Note / Parts List / Pick slip /
-  Outwork delivery note now print as before and then ask "Save to the job
-  folder?" with the file name ("<JOB NUMBER> - <title>.pdf"). Yes saves the PDF
-  into the job folder and Attachments; No thanks does nothing. Nothing is
-  asked if the print window was blocked.
-- The print functions now report whether the print window opened.
+User report: submitting a support ticket as Org Admin showed
+Unexpected token '<', "<!DOCTYPE "... is not valid JSON. That means the request
+got an HTML page back (expired sign-in redirected to /login, or the server was
+restarting / returned its own error page), not a reply from the Support API.
+SupportRequestDialog and SupportWorkspace now read the response as text first and,
+if it is not JSON, say "Your sign-in has expired" (redirected to login) or
+"unexpected response (HTTP <status>)" instead of the parse error.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
