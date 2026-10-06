@@ -331,6 +331,7 @@ function buildFieldReportSpecRaw(input: { title: string; jobLabel: string; job: 
             ["Scheduled date", dateText(form.fieldScheduledDate)],
             ["Purchase order", form.purchaseOrderNumber],
             ["Quote / Sales order", [form.quoteNumber, form.salesOrderNumber].filter(Boolean).join(" / ")],
+            ["Invoice number", form.invoiceNumber],
           ],
         },
         { type: "heading", text: "Job description" },

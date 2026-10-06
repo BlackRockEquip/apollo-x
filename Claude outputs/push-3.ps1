@@ -1,12 +1,11 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Field jobs: Report and Findings merged into one Report box
+Jobs: tabbed Parts card (Parts list / Pick slips / Follow-up) on every job type
 
-- The field service section shows a single Report box (Findings was the same
-  thing). Text previously saved under Findings is appended to the Report when the
-  job opens and is saved into Report on the next edit.
-- Print Field Report and the saved PDF show one Report block.
+- The Parts list, Generated pick slips and Parts follow-up sections are now tabs of
+  one Parts card on all job types, as on Field service jobs. Pick slips shows once
+  the job has parts; Follow-up shows while ordered parts are outstanding.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

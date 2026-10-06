@@ -1588,6 +1588,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             ["Scheduled date", fmt(form.fieldScheduledDate)],
             ["Purchase order", form.purchaseOrderNumber],
             ["Quote / Sales order", [form.quoteNumber, form.salesOrderNumber].filter(Boolean).join(" / ")],
+            ["Invoice number", form.invoiceNumber],
           ])}</table>
         </div>
       </div>
@@ -4278,12 +4279,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </section>
   ) : null;
 
-  // Pick slips only once parts are added; Follow-up only while ordered parts
-  // are outstanding (same groups the Follow-up section itself lists).
+  // 2026-10-06 — user request: use the Field job's tabbed Parts card on every
+  // job type. Parts list / Pick slips / Follow-up are tabs of one card; Pick
+  // slips only once parts are added; Follow-up only while ordered parts are
+  // outstanding (same groups the Follow-up section itself lists).
   const showPickSlipsTab = !!job && (job.partLines.length > 0 || jobPickSlips.length > 0);
   const showFollowupTab = !!job && !mechanicFieldsLocked && partsFollowupGroups.length > 0;
   const activePartsTab = fieldPartsTab === "pickslips" && showPickSlipsTab ? "pickslips" : fieldPartsTab === "followup" && showFollowupTab ? "followup" : "parts";
-  const fieldPartsBlock = job && fieldLayout ? (
+  const fieldPartsBlock = job ? (
     <div className="field-parts-block">
       <div className="field-tabs" role="tablist" aria-label="Parts">
         <button type="button" role="tab" aria-selected={activePartsTab === "parts"} className={activePartsTab === "parts" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("parts")}>Parts list <span className="field-tab-count">{job.partLines.length}</span></button>
@@ -4570,7 +4573,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
           )}
 
-          {!fieldLayout && partsListSection}
+          {!fieldLayout && fieldPartsBlock}
 
           {showRfqPopup && (
           <div className="drawer-backdrop" role="dialog" aria-modal="true">
@@ -4916,7 +4919,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               position counting from the end of the array) so a job with
               several slips can be talked about by number ("Pickslip 2")
               instead of only by timestamp. */}
-          {!fieldLayout && pickSlipsSection}
 
           {/* 2026-10-01 — user request: "mechanic user - remove parts follow
               up section from view." Whole section hidden for
@@ -4925,7 +4927,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               POST /api/v1/jobs/[id]/parts-followup already requires
               whatever permission gates this for role-based API protection
               — this is just the UI-level hide. */}
-          {!fieldLayout && followUpSection}
 
           {!fieldLayout && outworkSection}
 
