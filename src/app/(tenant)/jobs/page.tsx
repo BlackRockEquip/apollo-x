@@ -3,6 +3,7 @@ import Link from "next/link";
 import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill } from "@/components/StatusPill";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
+import { FitToViewportBottom } from "@/components/FitToViewportBottom";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { requireRequestContext } from "@/lib/auth/session";
@@ -265,6 +266,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               browser Back already restores those correctly — only the
               table's own internal scroll position needed fixing. */}
           <ScrollRestore selector=".jobs-panel .data-table-wrap" storageKey="jobs-wip" />
+          <FitToViewportBottom selector=".jobs-panel .data-table-wrap" />
         </div>
       </section>
     </div>

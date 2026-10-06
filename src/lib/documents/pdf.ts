@@ -10,7 +10,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 export type DocBlock =
   | { type: "heading"; text: string }
   | { type: "paragraph"; text: string }
-  | { type: "lines"; lines: string[] }
+  | { type: "lines"; lines: string[]; /** Small bold text (8.5pt) instead of the normal 9pt regular. */ bold?: boolean }
   | { type: "kv"; rows: [string, string][] }
   | { type: "table"; headers: string[]; rows: string[][]; widths?: number[]; center?: number[] }
   | { type: "twoCol"; left: DocBlock[]; right: DocBlock[] }
@@ -188,11 +188,13 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
         return;
       }
       case "lines": {
+        const lineFont = block.bold ? bold : regular;
+        const lineSize = block.bold ? 8.5 : 9;
         for (const raw of block.lines.length ? block.lines : ["—"]) {
-          for (const line of wrap(raw, regular, 9, c.w)) {
+          for (const line of wrap(raw, lineFont, lineSize, c.w)) {
             if (c.draw) ensure(12);
             y -= 11;
-            if (c.draw) text(line, c.x, 9, regular);
+            if (c.draw) text(line, c.x, lineSize, lineFont);
           }
         }
         y -= 4;

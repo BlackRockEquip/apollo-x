@@ -2206,6 +2206,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       table{width:100%;border-collapse:collapse;margin-top:16px}
       th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
       .checked-box{width:60px;text-align:center}
+      .machine-line{margin:14px 0 0;font-size:11px;font-weight:bold;color:#111}
+      .machine-line span{margin-right:28px}
       .vehicle-reg{margin-top:28px;font-size:13px}
       .vehicle-reg .line{display:inline-block;min-width:220px;border-bottom:1px solid #111;margin-left:8px}
       .sign-blocks{display:flex;gap:40px;margin-top:36px}
@@ -2227,7 +2229,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ${addressRows}
         ${vatRow}
       </div>
-      <table class="machine-table"><thead><tr><th>Make</th><th>Model</th><th>Serial</th></tr></thead><tbody><tr><td>${escapeHtml(deliveryNote.make)}</td><td>${escapeHtml(deliveryNote.model)}</td><td>${escapeHtml(deliveryNote.serial)}</td></tr></tbody></table>
+      <p class="machine-line"><span>Make: ${escapeHtml(deliveryNote.make) || "—"}</span><span>Model: ${escapeHtml(deliveryNote.model) || "—"}</span><span>Serial: ${escapeHtml(deliveryNote.serial) || "—"}</span></p>
       <table><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="vehicle-reg">Vehicle reg:<span class="line">&nbsp;</span></p>
       <div class="sign-blocks">

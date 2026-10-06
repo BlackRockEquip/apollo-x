@@ -267,7 +267,8 @@ function buildOutworkDeliveryNoteSpecRaw(input: {
     rightLines: [`Job ${note.jobNumber}`, `Date captured: ${dateText(note.dateCaptured)}`],
     blocks: [
       { type: "lines", lines: [note.supplierName, ...note.supplierAddressLines, note.supplierVat ? `VAT: ${note.supplierVat}` : ""].filter(Boolean) },
-      { type: "table", headers: ["Make", "Model", "Serial"], widths: [1, 1, 1], rows: [[note.make || "", note.model || "", note.serial || ""]] },
+      // 2026-10-06 — Make / Model / Serial as one line of small bold text, not a table.
+      { type: "lines", bold: true, lines: [`Make: ${note.make || "—"}  ·  Model: ${note.model || "—"}  ·  Serial: ${note.serial || "—"}`] },
       { type: "table", headers: ["Description", "Quantity", "Checked"], widths: [5, 1, 1], center: [1, 2], rows: note.items.map((item) => [item.description, String(item.quantity), ""]) },
       { type: "paragraph", text: "Vehicle reg: ______________________________" },
       { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
