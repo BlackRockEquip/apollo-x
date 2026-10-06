@@ -702,7 +702,14 @@ export async function getJobById(ctx: RequestContext, id: string) {
   // Same real-redaction approach as the Jobs/WIP list's column data (see
   // wip-columns-service.ts).
   const customer = ctx.tenantPermissions.has("CUSTOMERS_VIEW") ? job.customer : null;
-  return { ...job, customer, emailConfigured };
+  // 2026-10-06 — PEX Supply panel shows the PREVIOUS PEX return job's number
+  // as a link. A supply job only carries that as a plain "Previous job
+  // number" string (see getPreviousPexCycle in pex/service.ts), so resolve it
+  // to a real job id here for the link.
+  const previousPexJob = job.type === "PEX_SUPPLY" && job.previousJobNumber
+    ? await prisma.job.findFirst({ where: { companyId, jobNumber: job.previousJobNumber }, select: { id: true, jobNumber: true } })
+    : null;
+  return { ...job, customer, emailConfigured, previousPexJob };
 }
 
 export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {

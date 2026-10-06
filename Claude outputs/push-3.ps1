@@ -1,12 +1,11 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Re-apply Add Part revive fix and job view layout/spacing changes
+PEX history everywhere now shows previous jobs only
 
-The previous commits for these files contained the old file contents.
-- Add Part reuses a previously deleted part's number (revives the record).
-- Job view: Attachments beside Send to PEX Inventory, PEX buttons in the
-  standard section-button style, footer buttons no longer sit on the divider.
+PEX Supply and PEX Return panels (job page), PEX Tracking and PEX Stock all
+show a Previous jobs table: job number, supply/return, date delivered,
+status, PO number. Shared PexPreviousJobsTable component.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

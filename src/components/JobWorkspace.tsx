@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent } from "react";
-import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Unlink, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
+import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
 import { PexAllocatedPill, PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
@@ -114,6 +115,7 @@ type PexRecordSummary = Row & {
 };
 // getPexRecordHistory's actual (flat) return shape — see pex/service.ts.
 type PexHistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
+type PexHistoryJob = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null };
 type PexHistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
 type PexHistoryResponse = {
   id: string;
@@ -131,6 +133,7 @@ type PexHistoryResponse = {
   consumedAt: string | null;
   entries: PexHistoryEntry[];
   previousCycles: PexHistoryCycle[];
+  previousJobs: PexHistoryJob[];
 };
 type JobComponentRow = Row & { component?: string | null; componentType?: string | null; componentPartNumber?: string | null; componentSerial?: string | null };
 // Attachments — new (see schema.prisma's JobAttachment comment). Metadata
@@ -146,6 +149,7 @@ type JobAttachmentRow = Row & {
 };
 type JobDetail = Row & {
   jobNumber?: string | null;
+  previousJobNumber?: string | null;
   draftNumber: string;
   status: keyof typeof JOB_STATUS_LABELS;
   // 2026-10-01 — see Job.returnedUnrepaired's own comment in
@@ -166,6 +170,8 @@ type JobDetail = Row & {
   pexAsSupply?: PexRecordSummary | null;
   pexAsReturn?: PexRecordSummary | null;
   pexConsumedBy?: PexRecordSummary | null;
+  // Resolved server-side from this (supply) job's "Previous job number" — see getJobById.
+  previousPexJob?: { id: string; jobNumber?: string | null } | null;
   partLines: PartLineRow[];
   outworkItems: OutworkItemRow[];
   rfqRequests: RfqRequestRow[];
@@ -677,6 +683,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [pexReturnJobQuery, setPexReturnJobQuery] = useState("");
   const [pexReturnJobOptions, setPexReturnJobOptions] = useState<PexJobRef[]>([]);
   const [selectedPexReturnJobId, setSelectedPexReturnJobId] = useState("");
+  const [pexLinkOpen, setPexLinkOpen] = useState(false);
   // Shape matches getPexRecordHistory's actual (flat, not nested) return
   // value in pex/service.ts — see PexHistoryEntry/PexHistoryCycle above.
   const [pexHistory, setPexHistory] = useState<PexHistoryResponse | null>(null);
@@ -3593,14 +3600,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           {pexHistory && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
-              <aside className="form-drawer compact-dialog">
-                <header><div><p className="eyebrow">PEX</p><h2>PEX unit history</h2></div><button type="button" onClick={() => setPexHistory(null)} aria-label="Close dialog"><X size={18} /></button></header>
-                <div className="drawer-fields">
-                  <dl className="info-card-inline"><div><dt>Status</dt><dd><PexStatusPill status={pexHistory.status} /></dd></div><div><dt>Supply date</dt><dd>{pexHistory.supplyDate ? new Date(pexHistory.supplyDate).toLocaleDateString("en-ZA") : "—"}</dd></div><div><dt>Return date</dt><dd>{pexHistory.returnDate ? new Date(pexHistory.returnDate).toLocaleDateString("en-ZA") : "—"}</dd></div>{pexHistory.consumedByJobNumber && <div><dt>Redeployed on</dt><dd>{text(pexHistory.consumedByJobNumber)}</dd></div>}</dl>
-                  {pexHistory.previousCycles.length > 0 && <div><p className="muted small-line">Previous cycles</p><div className="record-list">{pexHistory.previousCycles.map((cycle, idx) => <article key={idx}><div className="record-icon">PX</div><div><strong>{text(cycle.supplyJobNumber)}</strong><span>Return {text(cycle.returnJobNumber)}</span></div><span className="muted small-line">{cycle.returnDate ? new Date(cycle.returnDate).toLocaleDateString("en-ZA") : "—"}</span></article>)}</div></div>}
-                  <div className="history-list">{pexHistory.entries.map((entry) => <article key={entry.id}><strong>{text(entry.description)}</strong><span>{text(entry.type).replaceAll("_", " ")} · {entry.userName || "System"}</span><time>{new Date(entry.createdAt).toLocaleString("en-ZA")}</time></article>)}
-                  {pexHistory.entries.length === 0 && <p className="table-state compact-empty-state">No history recorded yet.</p>}</div>
-                </div>
+              <aside className="form-drawer compact-dialog pex-previous-jobs-dialog">
+                <header><div><p className="eyebrow">PEX</p><h2>Previous jobs</h2></div><button type="button" onClick={() => setPexHistory(null)} aria-label="Close dialog"><X size={18} /></button></header>
+                <PexPreviousJobsTable jobs={pexHistory.previousJobs} />
               </aside>
             </div>
           )}
@@ -4512,6 +4514,48 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 })}
               </div>
             </section>
+            {/* 2026-10-06 — user request: simplified PEX Supply panel, beside
+                Attachments. Chain of Previous PEX return -> Current supply job
+                -> New PEX return; buttons under the New PEX return card (Unlink
+                only while a return job is linked; Create / Link to existing
+                only while none is). View history opens the previous-jobs list. */}
+            {job.type === "PEX_SUPPLY" && job.pexAsSupply && <section className="detail-panel">
+              <header><div><h2>PEX Supply</h2></div><PexStatusPill status={job.pexAsSupply.status} /></header>
+              <div className="pex-chain">
+                <div className="pex-chain-tile"><span>Previous PEX return</span>
+                  {job.previousPexJob?.id
+                    ? <Link href={`/jobs/${job.previousPexJob.id}`} className="pex-chain-number">{text(job.previousPexJob.jobNumber)}</Link>
+                    : job.previousJobNumber ? <strong className="pex-chain-number">{text(job.previousJobNumber)}</strong> : <strong className="pex-chain-number muted">—</strong>}
+                </div>
+                <div className="pex-chain-arrow" aria-hidden="true">→</div>
+                <div className="pex-chain-tile current"><span>Current supply job</span><strong className="pex-chain-number">{text(job.jobNumber || job.draftNumber)}</strong></div>
+                <div className="pex-chain-arrow" aria-hidden="true">→</div>
+                <div className={`pex-chain-tile${job.pexAsSupply.returnJob ? "" : " empty"}`}><span>New PEX return</span>
+                  {job.pexAsSupply.returnJob?.id
+                    ? <Link href={`/jobs/${job.pexAsSupply.returnJob.id}`} className="pex-chain-number">{text(job.pexAsSupply.returnJob.jobNumber || job.pexAsSupply.returnJob.draftNumber)}</Link>
+                    : <span className="muted small-line pex-chain-none">Not linked</span>}
+                </div>
+              </div>
+              <div className="pex-chain-actions">
+                {job.pexAsSupply.returnJob ? (
+                  <button type="button" className="section-action-button" disabled={saving} onClick={() => { void confirm({ message: "Unlink the return job? It will not be deleted — you can relink or create a new one afterwards.", tone: "warning", confirmLabel: "Unlink" }).then((ok) => { if (ok) void deleteAction(`/api/v1/jobs/${job.id}/pex/link-return`, {}); }); }}><Unlink size={15} /> Unlink return job</button>
+                ) : (
+                  <>
+                    <button type="button" className="section-action-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/create-return`, {})}><Plus size={15} /> Create return job</button>
+                    <button type="button" className="section-action-button" disabled={saving} onClick={() => setPexLinkOpen((v) => !v)}><Search size={15} /> Link to existing PEX return</button>
+                  </>
+                )}
+              </div>
+              {!job.pexAsSupply.returnJob && pexLinkOpen && <div className="drawer-fields pex-link-search">
+                <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPexReturnJobOptions([]))}><span>Link an existing unlinked PEX return job</span><div><Search size={14} /><input value={pexReturnJobQuery} onChange={(e) => { setPexReturnJobQuery(e.target.value); setSelectedPexReturnJobId(""); }} placeholder="Search unlinked PEX return jobs…" /></div>{pexReturnJobOptions.length > 0 && <div className="selector-results">{pexReturnJobOptions.map((option) => <button type="button" key={option.id} onClick={() => { setSelectedPexReturnJobId(option.id); setPexReturnJobQuery(text(option.jobNumber || option.draftNumber)); setPexReturnJobOptions([]); }}><strong>{text(option.jobNumber || option.draftNumber)}</strong><span>{text(option.customer?.name || option.customer?.tradingName)}</span></button>)}</div>}</label>
+                <div className="stack-row"><button type="button" className="section-action-button" disabled={saving || !selectedPexReturnJobId} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/link-return`, { returnJobId: selectedPexReturnJobId }).then(() => { setSelectedPexReturnJobId(""); setPexReturnJobQuery(""); setPexLinkOpen(false); })}>Link return job</button><button type="button" className="quiet-button" onClick={() => { setPexLinkOpen(false); setSelectedPexReturnJobId(""); setPexReturnJobQuery(""); }}>Cancel</button></div>
+              </div>}
+              <div className="pex-chain-footer">
+                <p>{job.pexAsSupply.returnJob ? "Remove link if incorrectly linked." : "No return job linked yet — it is created automatically once this job is completed, or link/create one using the buttons above."}</p>
+                <div><button type="button" className="table-action" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsSupply?.id))}>View history</button></div>
+              </div>
+            </section>}
+
             {/* 2026-09-16 — user request: was gated on COMPLETE, moved to
                 Delivered - awaiting payment (matches allocateJobToPexInventory's
                 own gate in pex/service.ts) — the unit's physically done and
@@ -4637,26 +4681,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {job.type === "FIELD_SERVICE" && <section className="detail-panel"><header><div><h2>Field service</h2><p>Capture site, technician and report details for field-service work.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Site</span><input value={form.fieldSite} onChange={(e) => updateField("fieldSite", e.target.value)} /></label><label><span>Technician</span><input value={form.fieldTechnician} onChange={(e) => updateField("fieldTechnician", e.target.value)} /></label><label><span>Vehicle</span><input value={form.fieldVehicle} onChange={(e) => updateField("fieldVehicle", e.target.value)} /></label><label><span>Hours</span><input type="number" min="0" step="0.25" value={form.fieldHours} onChange={(e) => updateField("fieldHours", e.target.value)} /></label>{/* Kms travelled only applies to field-service visits, so it lives here rather than in Commercial & logistics — matches ModApp's placement. It's a Job column, so it's saved via this same field-service action. */}<label><span>Kms travelled</span><input type="number" min="0" value={form.kmsTravelled} onChange={(e) => updateField("kmsTravelled", e.target.value)} /></label><label className="wide"><span>Report</span><textarea rows={4} value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/field-service`, { site: form.fieldSite || null, technician: form.fieldTechnician || null, vehicle: form.fieldVehicle || null, hours: form.fieldHours ? Number(form.fieldHours) : null, report: form.fieldReport || null, kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null })}>Save field-service info</button></footer></fieldset></section>}
 
           {job.type === "WARRANTY" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
-
-          {job.type === "PEX_SUPPLY" && job.pexAsSupply && <section className="detail-panel"><header><div><h2>PEX Supply</h2><p>Track the linked return job and its redeployment cycle. Mirrors ModApp's PEX supply/return chain.</p></div></header>
-            <div className="record-list pex-record-list"><article>
-              <div className="record-icon">PX</div>
-              <div><strong>{text(job.pexAsSupply.unitDescription || job.component)}</strong><span>Supplied {job.pexAsSupply.supplyDate ? new Date(String(job.pexAsSupply.supplyDate)).toLocaleDateString("en-ZA") : "—"}</span></div>
-              <PexStatusPill status={job.pexAsSupply.status} />
-              <div className="stack-grid pex-link-stack">
-                {job.pexAsSupply.returnJob ? <><span className="muted small-line">Return job: {text(job.pexAsSupply.returnJob.jobNumber || job.pexAsSupply.returnJob.draftNumber)} ({text(job.pexAsSupply.returnJob.status)})</span><Link href={`/jobs/${job.pexAsSupply.returnJob.id}`} className="table-action">Open return</Link></> : <span className="muted small-line">No return job linked yet — it is created automatically once this job is completed, or link/create one below.</span>}
-              </div>
-              <div className="stack-row">
-                <button type="button" className="quiet-button" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsSupply?.id))}>View history</button>
-                {job.pexAsSupply.returnJob && <button type="button" className="table-action" disabled={saving} onClick={() => { void confirm({ message: "Unlink the return job? It will not be deleted — you can relink or create a new one afterwards.", tone: "warning", confirmLabel: "Unlink" }).then((ok) => { if (ok) void deleteAction(`/api/v1/jobs/${job.id}/pex/link-return`, {}); }); }}>Unlink return job</button>}
-              </div>
-            </article></div>
-            {!job.pexAsSupply.returnJob && <div className="drawer-fields">
-              <label><span>Create linked return job now</span><div className="stack-row"><button type="button" className="quiet-button" disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/create-return`, {})}>Create return job</button></div></label>
-              <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPexReturnJobOptions([]))}><span>Or link an existing unlinked PEX return job</span><div><Search size={14} /><input value={pexReturnJobQuery} onChange={(e) => { setPexReturnJobQuery(e.target.value); setSelectedPexReturnJobId(""); }} placeholder="Search unlinked PEX return jobs…" /></div>{pexReturnJobOptions.length > 0 && <div className="selector-results">{pexReturnJobOptions.map((option) => <button type="button" key={option.id} onClick={() => { setSelectedPexReturnJobId(option.id); setPexReturnJobQuery(text(option.jobNumber || option.draftNumber)); setPexReturnJobOptions([]); }}><strong>{text(option.jobNumber || option.draftNumber)}</strong><span>{text(option.customer?.name || option.customer?.tradingName)}</span></button>)}</div>}</label>
-              <div className="stack-row"><button type="button" className="quiet-button" disabled={saving || !selectedPexReturnJobId} onClick={() => void postAction(`/api/v1/jobs/${job.id}/pex/link-return`, { returnJobId: selectedPexReturnJobId }).then(() => { setSelectedPexReturnJobId(""); setPexReturnJobQuery(""); })}>Link return job</button></div>
-            </div>}
-          </section>}
 
           {job.type === "PEX_RETURN" && job.pexAsReturn && <section className="detail-panel"><header><div><h2>PEX Return</h2><p>This job is the return leg of a PEX cycle. Status follows the job's own workflow status automatically.</p></div></header>
             <div className="record-list pex-record-list"><article>

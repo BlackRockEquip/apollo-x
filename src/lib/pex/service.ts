@@ -788,10 +788,21 @@ export async function getPexRecordHistory(ctx: RequestContext, id: string) {
   // length as a defensive backstop against a data cycle looping forever,
   // same as ModApp's own 50-iteration cap.
   const previousCycles: Array<{ supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null }> = [];
+  // 2026-10-06 — the job page's "View history" now lists just the PREVIOUS
+  // JOBS in this unit's chain (job number, supply/return, date delivered,
+  // status, PO number), newest first — each earlier cycle contributes its
+  // return job and its supply job. Built in the same walk as previousCycles.
+  const previousJobs: Array<{ jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null }> = [];
   let cursorPreviousJobNumber = pex.supplyJob?.previousJobNumber ?? null;
   for (let i = 0; i < 50; i++) {
     const prior = await getPreviousPexCycle(companyId, cursorPreviousJobNumber);
     if (!prior) break;
+    if (prior.returnJob) {
+      previousJobs.push({ jobId: prior.returnJob.id, jobNumber: prior.returnJob.jobNumber ?? prior.returnJob.draftNumber ?? null, kind: "RETURN", deliveredAt: (prior.returnJob.deliveryDate ?? prior.returnDate)?.toISOString() ?? null, status: prior.returnJob.status, purchaseOrderNumber: prior.returnJob.purchaseOrderNumber ?? null });
+    }
+    if (prior.supplyJob) {
+      previousJobs.push({ jobId: prior.supplyJob.id, jobNumber: prior.supplyJob.jobNumber ?? prior.supplyJob.draftNumber ?? null, kind: "SUPPLY", deliveredAt: (prior.supplyJob.deliveryDate ?? prior.supplyDate)?.toISOString() ?? null, status: prior.supplyJob.status, purchaseOrderNumber: prior.supplyJob.purchaseOrderNumber ?? null });
+    }
     previousCycles.push({
       supplyJobNumber: prior.supplyJob?.jobNumber ?? null,
       supplyJobId: prior.supplyJobId,
@@ -825,5 +836,6 @@ export async function getPexRecordHistory(ctx: RequestContext, id: string) {
       createdAt: a.createdAt.toISOString(),
     })),
     previousCycles,
+    previousJobs,
   };
 }

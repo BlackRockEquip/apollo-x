@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useState } from "react";
 import { PexStatusPill } from "@/components/StatusPill";
+import { PexPreviousJobsTable, type PexPreviousJob } from "@/components/PexPreviousJobs";
 
 type Row = Record<string, unknown> & { id: string };
 type PexJobRef = Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; status?: string | null; purchaseOrderNumber?: string | null };
@@ -23,7 +24,7 @@ type TrackingRow = Row & {
 };
 type HistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
 type HistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
-type HistoryPayload = { id: string; status: string; entries: HistoryEntry[]; previousCycles: HistoryCycle[] };
+type HistoryPayload = { id: string; status: string; entries: HistoryEntry[]; previousCycles: HistoryCycle[]; previousJobs: PexPreviousJob[] };
 
 function text(value: unknown) { return value == null || value === "" ? "—" : String(value); }
 function dateText(value: unknown) { return value ? new Date(String(value)).toLocaleDateString("en-ZA") : "—"; }
@@ -77,11 +78,7 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
             </tr>
             {historyOpenId === item.id && <tr><td colSpan={9}>
               {historyLoadingId === item.id && <span className="muted small-line">Loading history…</span>}
-              {history && <div className="stack-grid" style={{ gap: 8 }}>
-                {history.previousCycles.length > 0 && <div className="muted small-line">Previous cycles: {history.previousCycles.map((c) => `${text(c.supplyJobNumber)} → ${text(c.returnJobNumber)}`).join(", ")}</div>}
-                {history.entries.map((entry) => <div key={entry.id} className="muted small-line">{new Date(entry.createdAt).toLocaleString("en-ZA")} · {entry.description}{entry.userName ? ` · ${entry.userName}` : ""}</div>)}
-                {history.entries.length === 0 && <span className="muted small-line">No history recorded yet.</span>}
-              </div>}
+              {history && <PexPreviousJobsTable jobs={history.previousJobs} />}
             </td></tr>}
           </Fragment>;
         })}
