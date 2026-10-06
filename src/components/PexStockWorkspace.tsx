@@ -1,8 +1,8 @@
-
-import { PexPreviousJobsTable, type PexPreviousJob } from "@/components/PexPreviousJobs";"use client";
+"use client";
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
+import { PexPreviousJobsTable, type PexPreviousJob } from "@/components/PexPreviousJobs";
 
 type Row = Record<string, unknown> & { id: string };
 type PexJobRef = Row & { id: string; jobNumber?: string | null; draftNumber?: string | null; status?: string | null; machineMake?: string | null; machineModel?: string | null };
