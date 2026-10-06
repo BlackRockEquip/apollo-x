@@ -1,10 +1,11 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-PEX Tracking: sort by supply job number, highest to lowest
+Add Part: reuse a previously deleted part's number
 
-Numeric-aware sort on the supply job number (BRE1132 at the top, BRE001 at
-the bottom) applied across the full result set before paging.
+Deleting a part with stock/job history only marks it historical, so its number
+stayed taken and Add Part said "number already in use". Adding that number
+again now revives the historical record (same as the Parts import).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
