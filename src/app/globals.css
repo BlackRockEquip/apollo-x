@@ -703,7 +703,13 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 /* Clickable job-status stepper (StatusStepper.tsx) — ported from ModApp's
    equivalent, restyled to this app's plain-CSS design tokens instead of
    Tailwind. Click any stage to jump the job's status straight there. */
-.status-stepper { overflow-x: auto; padding: 14px 15px 15px; }
+/* 2026-10-06 — user report: a small scrollbar (first horizontal, then a
+   vertical one beside the last step) showing on the job status stepper. The
+   vertical one is the box being a fraction of a pixel shorter than its
+   3-line labels, so overflow-y is now hidden; the horizontal scroll stays
+   available (touch / shift+wheel) with its scrollbar hidden. */
+.status-stepper { overflow-x: auto; overflow-y: hidden; padding: 14px 15px 15px; scrollbar-width: none; -ms-overflow-style: none; }
+.status-stepper::-webkit-scrollbar { display: none; }
 .status-stepper-track { display: flex; align-items: flex-start; min-width: 560px; }
 .status-stepper-item { display: flex; flex: 1 1 0; align-items: flex-start; }
 .status-stepper-item:last-child { flex: 0 0 auto; }
@@ -727,7 +733,7 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    the header. */
 .header-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .header-title-row h1 { margin: 0; }
-.job-header-stepper .status-stepper { padding: 0; }
+.job-header-stepper .status-stepper { padding: 4px 4px 6px; margin: -4px -4px -6px; }
 .job-header-stepper .status-stepper-note { padding: 0; }
 .job-header-stepper-hint { margin: 0 0 6px; color: var(--ink-500); font-size: 11.5px; }
 

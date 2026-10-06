@@ -1,10 +1,7 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Fix PexStockWorkspace: "use client" must be the first line
-
-The previous commit put an import ahead of the "use client" directive, which
-broke the Render build.
+Job status stepper: remove the vertical scrollbar beside the last step
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
