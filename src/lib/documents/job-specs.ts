@@ -276,6 +276,92 @@ function buildOutworkDeliveryNoteSpecRaw(input: {
   };
 }
 
+// Field Report (field-service jobs only) — what was saved on the job: customer
+// and site, machine, who attended and when, hours and kms, and the work
+// performed. Empty values print as a dash. See printFieldReport in
+// components/JobWorkspace.tsx for the print-window version.
+function fieldHoursTotal(form: JobDocForm) {
+  const parts = [form.fieldHoursNormal, form.fieldHoursOvertime, form.fieldHoursTravelled];
+  if (parts.every((value) => !value)) return "";
+  const total = parts.reduce((sum, value) => sum + (Number(value) || 0), 0);
+  return String(Math.round(total * 100) / 100);
+}
+
+function buildFieldReportSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; labels: JobDocLabels }): DocSpec {
+  const { title, jobLabel, job, form, labels } = input;
+  const blocks: DocBlock[] = [
+    {
+      type: "twoCol",
+      left: [
+        { type: "heading", text: "Customer" },
+        {
+          type: "kv",
+          rows: [
+            ["Customer", str(job.customer?.name)],
+            ["Date in", dateText(form.dateReceived)],
+            ["Customer reference", form.customerReference],
+            ["Report number", form.reportNumber],
+            ["Sales representative", labels.salesRepresentative],
+          ],
+        },
+      ],
+      right: [
+        { type: "heading", text: "Site" },
+        {
+          type: "kv",
+          rows: [
+            ["Site contact", [form.siteContactName, form.siteContactPhone].filter(Boolean).join(" · ")],
+            ["Site address", form.siteAddress],
+            ["Access / induction", form.accessNotes],
+          ],
+        },
+      ],
+    },
+    {
+      type: "twoCol",
+      left: [{ type: "heading", text: "Machine / component details" }, { type: "kv", rows: machineRows(form).filter(([label]) => label !== "Part number") }],
+      right: [
+        { type: "heading", text: "Job details" },
+        {
+          type: "kv",
+          rows: [
+            ["Job type", labels.jobType],
+            ["Technician", form.fieldTechnician],
+            ["Vehicle", form.fieldVehicle],
+            ["Scheduled date", dateText(form.fieldScheduledDate)],
+            ["Purchase order", form.purchaseOrderNumber],
+            ["Quote / Sales order", [form.quoteNumber, form.salesOrderNumber].filter(Boolean).join(" / ")],
+          ],
+        },
+        { type: "heading", text: "Job description" },
+        { type: "paragraph", text: form.description || "—" },
+      ],
+    },
+    { type: "heading", text: "Time & travel" },
+    {
+      type: "kv",
+      rows: [
+        ["Normal time (h)", form.fieldHoursNormal],
+        ["Overtime (h)", form.fieldHoursOvertime],
+        ["Travel (h)", form.fieldHoursTravelled],
+        ["Total hours", fieldHoursTotal(form)],
+        ["Kms travelled", form.kmsTravelled],
+      ],
+    },
+    { type: "heading", text: "Work performed" },
+    { type: "kv", rows: [["Report", form.fieldReport]] },
+    { type: "heading", text: "Findings / cause of failure" },
+    { type: "paragraph", text: form.fieldFindings || "—" },
+    { type: "heading", text: "Work done" },
+    { type: "paragraph", text: form.fieldWorkDone || "—" },
+    { type: "heading", text: "Recommendations" },
+    { type: "paragraph", text: form.fieldRecommendations || "—" },
+    { type: "heading", text: "Follow-up visit" },
+    { type: "kv", rows: [["Follow-up needed", form.fieldFollowUp === "true" ? "Yes" : "No"], ["Follow-up date", form.fieldFollowUp === "true" ? dateText(form.fieldFollowUpDate) : ""]] },
+  ];
+  return { title, rightLines: [`Job ${jobLabel}`, ...(form.fieldScheduledDate ? [`Scheduled ${dateText(form.fieldScheduledDate)}`] : [])], blocks };
+}
+
 export const buildJobCardSpec: typeof buildJobCardSpecRaw = (input) => clean(buildJobCardSpecRaw(input));
 
 export const buildJobHistorySpec: typeof buildJobHistorySpecRaw = (input) => clean(buildJobHistorySpecRaw(input));
@@ -287,3 +373,5 @@ export const buildPartsListSpec: typeof buildPartsListSpecRaw = (input) => clean
 export const buildPickSlipSpec: typeof buildPickSlipSpecRaw = (input) => clean(buildPickSlipSpecRaw(input));
 
 export const buildOutworkDeliveryNoteSpec: typeof buildOutworkDeliveryNoteSpecRaw = (input) => clean(buildOutworkDeliveryNoteSpecRaw(input));
+
+export const buildFieldReportSpec: typeof buildFieldReportSpecRaw = (input) => clean(buildFieldReportSpecRaw(input));

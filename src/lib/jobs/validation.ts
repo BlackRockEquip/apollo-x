@@ -81,6 +81,12 @@ export const jobCreateDraftInput = z.object({
   deliveryType: deliveryTypeEnum.optional().nullable(),
   receivingTransport: deliveryTypeEnum.optional().nullable(),
   kmsTravelled: z.coerce.number().int().min(0).max(100000).optional().nullable(),
+  // Field-service-only site details (2026-10-06) — entered on the create
+  // form too, so they live on the job itself, not on the field report.
+  siteContactName: optionalText,
+  siteContactPhone: optionalText,
+  siteAddress: longText,
+  accessNotes: longText,
   paymentDateReceived: optionalDate,
   paymentNotApplicable: z.boolean().optional(),
   machineHours: optionalDecimal,
@@ -148,6 +154,18 @@ export const jobFieldServiceInput = z.object({
   // — it's still edited here, alongside the rest of the field-service
   // details, matching ModApp's placement, but saved back onto the Job.
   kmsTravelled: z.coerce.number().int().min(0).max(100000).optional().nullable(),
+  // 2026-10-06 — field job card: schedule, split hours, work performed.
+  // `hours` above stays accepted (older callers); when any of the three split
+  // hours is sent the service stores their sum as the total.
+  scheduledDate: optionalDate,
+  hoursNormal: z.coerce.number().min(0).max(100000).optional().nullable(),
+  hoursOvertime: z.coerce.number().min(0).max(100000).optional().nullable(),
+  hoursTravelled: z.coerce.number().min(0).max(100000).optional().nullable(),
+  findings: longText,
+  workDone: longText,
+  recommendations: longText,
+  followUpRequired: z.boolean().optional(),
+  followUpDate: optionalDate,
 });
 
 export const jobWarrantyInput = z.object({
@@ -259,6 +277,8 @@ export const attachmentUploadInput = z.object({
   mimeType: z.string().trim().min(3).max(120),
   contentBase64: z.string().min(4),
   notes: optionalText,
+  // 2026-10-06 — field jobs: what the photo shows (see JobAttachment.tag).
+  tag: z.enum(["BEFORE", "AFTER", "FAULT", "SERIAL_PLATE", "OTHER"]).optional().nullable(),
 });
 
 // 2026-09-15 — user request: "once a note is added [to an attachment],

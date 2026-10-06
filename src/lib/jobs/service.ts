@@ -357,7 +357,7 @@ async function getJobScoped(companyId: string, id: string) {
       // bytes down on every job load — the bytes themselves are only
       // fetched by the dedicated download route.
       attachments: {
-        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -638,6 +638,10 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
         deliveryType: input.deliveryType,
         receivingTransport: input.receivingTransport,
         kmsTravelled: input.kmsTravelled,
+        siteContactName: input.siteContactName,
+        siteContactPhone: input.siteContactPhone,
+        siteAddress: input.siteAddress,
+        accessNotes: input.accessNotes,
         paymentDateReceived: input.paymentDateReceived,
         ...(input.paymentNotApplicable !== undefined ? { paymentNotApplicable: input.paymentNotApplicable } : {}),
         machineHours: decimalOrNull(input.machineHours === undefined || input.machineHours === null ? null : Number(input.machineHours)),
@@ -766,6 +770,10 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.deliveryType !== undefined ? { deliveryType: input.deliveryType } : {}),
         ...(input.receivingTransport !== undefined ? { receivingTransport: input.receivingTransport } : {}),
         ...(input.kmsTravelled !== undefined ? { kmsTravelled: input.kmsTravelled } : {}),
+        ...(input.siteContactName !== undefined ? { siteContactName: input.siteContactName } : {}),
+        ...(input.siteContactPhone !== undefined ? { siteContactPhone: input.siteContactPhone } : {}),
+        ...(input.siteAddress !== undefined ? { siteAddress: input.siteAddress } : {}),
+        ...(input.accessNotes !== undefined ? { accessNotes: input.accessNotes } : {}),
         ...(input.paymentDateReceived !== undefined ? { paymentDateReceived: input.paymentDateReceived } : {}),
         ...(input.paymentNotApplicable !== undefined ? { paymentNotApplicable: input.paymentNotApplicable } : {}),
         ...(input.machineHours !== undefined ? { machineHours: decimalOrNull(input.machineHours === null ? null : Number(input.machineHours)) } : {}),
@@ -994,10 +1002,33 @@ export async function upsertJobFieldService(ctx: RequestContext, jobId: string, 
   const job = await getJobScoped(companyId, jobId);
   if (job.type !== "FIELD_SERVICE") throw new Error("Field-service information is only available for field service jobs.");
   const updated = await prisma.$transaction(async (tx) => {
+    // `hours` is the total. When any of the split hours (normal / overtime /
+    // travel) is sent, the total is their sum so reports that read `hours`
+    // keep working; otherwise whatever total the caller sent is stored.
+    const splitHours = [input.hoursNormal, input.hoursOvertime, input.hoursTravelled];
+    const anySplit = splitHours.some((value) => value !== undefined && value !== null);
+    const totalHours = anySplit ? splitHours.reduce<number>((sum, value) => sum + (Number(value) || 0), 0) : input.hours;
+    const fields = {
+      site: input.site,
+      technician: input.technician,
+      vehicle: input.vehicle,
+      hours: decimalOrNull(totalHours),
+      report: input.report,
+      scheduledDate: input.scheduledDate ?? null,
+      hoursNormal: decimalOrNull(input.hoursNormal),
+      hoursOvertime: decimalOrNull(input.hoursOvertime),
+      hoursTravelled: decimalOrNull(input.hoursTravelled),
+      findings: input.findings,
+      workDone: input.workDone,
+      recommendations: input.recommendations,
+      followUpRequired: input.followUpRequired ?? false,
+      followUpDate: input.followUpRequired ? input.followUpDate ?? null : null,
+      updatedById: ctx.userId,
+    };
     const record = await tx.jobFieldServiceReport.upsert({
       where: { jobId },
-      create: { companyId, jobId, site: input.site, technician: input.technician, vehicle: input.vehicle, hours: decimalOrNull(input.hours), report: input.report, updatedById: ctx.userId },
-      update: { site: input.site, technician: input.technician, vehicle: input.vehicle, hours: decimalOrNull(input.hours), report: input.report, updatedById: ctx.userId },
+      create: { companyId, jobId, ...fields },
+      update: fields,
     });
     // Kms travelled is a Job column, not a JobFieldServiceReport column —
     // it's edited alongside the field-service fields (matching ModApp's
@@ -1765,8 +1796,8 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
 
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
-      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, tag: input.tag || null, createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment uploaded: ${fileName}.`, { attachmentId: record.id, fileName });
     return record;
@@ -1821,7 +1852,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
       data: { companyId, jobId, fileName, mimeType: "application/pdf", sizeBytes: pdf.length, data: pdf, notes: "Saved from the job page", createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Document saved: ${fileName}.`, { attachmentId: record.id, fileName, documentKind: kind });
     return record;
@@ -1829,7 +1860,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: pdf.length, documentKind: kind } });
   await offloadQuietly(offloadJobAttachment(attachment.id));
   // offload may have renamed on a storage-side name clash; report what is really stored.
-  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } } });
+  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } } });
   return stored ?? attachment;
 }
 
@@ -1847,7 +1878,7 @@ export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: strin
     const record = await tx.jobAttachment.update({
       where: { id: attachment.id },
       data: { notes: input.notes || null },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment note updated: ${attachment.fileName}.`, { attachmentId: attachment.id, edited: true });
     return record;

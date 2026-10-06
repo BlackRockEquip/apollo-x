@@ -6,6 +6,7 @@
 
 export const DOCUMENT_KINDS = [
   { key: "JOB_CARD", label: "Print Job Card", defaultTitle: "Job Card" },
+  { key: "FIELD_REPORT", label: "Print Field Report", defaultTitle: "Field Report" },
   { key: "JOB_HISTORY", label: "Print Job History", defaultTitle: "Job History" },
   { key: "JOB_DELIVERY_NOTE", label: "Print Delivery Note", defaultTitle: "Delivery Note" },
   { key: "PICK_SLIP", label: "Print Pick Slip", defaultTitle: "Pick Slip" },

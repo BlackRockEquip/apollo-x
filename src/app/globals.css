@@ -1342,3 +1342,29 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .pex-chain-footer { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ink-100); padding: 12px 15px 14px; }
 .pex-chain-footer p { margin: 0; color: var(--ink-500); font-size: 10.5px; line-height: 1.45; }
 .pex-previous-jobs-dialog { width: min(760px, 96vw); }
+
+/* 2026-10-06 — Field service job layout (see fieldJobLayout in
+   JobWorkspace.tsx). Main column + sidebar; only used for jobs whose type is
+   FIELD_SERVICE. .field-stack reuses the compact .job-edit-grid field styling
+   but stacks its sections in one column. */
+.field-job-layout { display: flex; flex-direction: column; gap: 16px; }
+.field-job-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.field-job-main, .field-job-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.job-edit-grid.field-stack { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.job-edit-grid.field-stack .wide-panel, .job-edit-grid.field-stack .full-row { grid-column: auto; }
+.field-job-side .commercial-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.field-job-side .commercial-fields .row-break { display: none; }
+@media (max-width: 1100px) { .field-job-grid { grid-template-columns: minmax(0, 1fr); } }
+.field-summary-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; padding: 12px 16px; }
+.field-summary-strip div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.field-summary-strip b { color: var(--ink-500); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.field-summary-strip span { overflow: hidden; color: var(--ink-900); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) { .field-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.drawer-fields .field-subhead { grid-column: 1 / -1; margin: 4px 0 0; padding-bottom: 5px; border-bottom: 1px solid var(--ink-150); color: var(--ink-900); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.field-readonly { background: #f7f8fa; font-weight: 800; }
+.field-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--ink-150); }
+.field-tab { display: inline-flex; align-items: center; gap: 7px; border: 0; border-bottom: 3px solid transparent; background: transparent; padding: 9px 14px; margin-bottom: -1px; color: var(--ink-500); cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
+.field-tab.active { border-bottom-color: var(--gold-600); color: var(--ink-900); }
+.field-tab-count { display: inline-flex; min-width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 999px; background: var(--ink-100); color: var(--ink-700); font-size: 10px; font-weight: 800; padding: 0 5px; }
+.field-tab.active .field-tab-count { background: #fbf2d7; color: #5c4109; }
+.field-tag-chip { display: inline-flex; align-items: center; align-self: flex-start; margin: 2px 0; border: 1px solid var(--gold-600); border-radius: 999px; background: #fbf2d7; color: #5c4109; font-size: 9.5px; font-weight: 800; padding: 1px 7px; }

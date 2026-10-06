@@ -1664,6 +1664,13 @@ model Job {
   receivingTransport   DeliveryType?
   // Field-service-only: how far the technician travelled to/from site.
   kmsTravelled         Int?
+  // Field-service-only (2026-10-06): where the work is and how to get in.
+  // These live on the Job itself (not JobFieldServiceReport) so they can be
+  // entered on the create-job form before any field report exists.
+  siteContactName      String?
+  siteContactPhone     String?
+  siteAddress          String?
+  accessNotes          String?
   paymentDateReceived  DateTime?
   // Ticked when no payment is required at all for this job (e.g. a
   // no-charge warranty repair) — lets a "payment received" guard be
@@ -2380,6 +2387,9 @@ model JobAttachment {
   data        Bytes?
   storedAttachmentId String?
   notes       String?
+  // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / FAULT /
+  // SERIAL_PLATE / OTHER). Free text so other kinds of job can use it later.
+  tag         String?
   createdById String?
   createdAt   DateTime      @default(now())
 
@@ -2500,8 +2510,20 @@ model JobFieldServiceReport {
   site        String?
   technician  String?
   vehicle     String?
+  // `hours` is the TOTAL (normal + overtime + travel) — kept in step by
+  // upsertJobFieldService so reports reading it keep working.
   hours       Decimal? @db.Decimal(19, 4)
   report      String?
+  // 2026-10-06 — field job card: schedule, split hours, work performed.
+  scheduledDate    DateTime? @db.Date
+  hoursNormal      Decimal?  @db.Decimal(19, 4)
+  hoursOvertime    Decimal?  @db.Decimal(19, 4)
+  hoursTravelled   Decimal?  @db.Decimal(19, 4)
+  findings         String?
+  workDone         String?
+  recommendations  String?
+  followUpRequired Boolean   @default(false)
+  followUpDate     DateTime? @db.Date
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
