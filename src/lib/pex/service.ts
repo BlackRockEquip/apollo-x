@@ -685,20 +685,35 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
         }
       : {}),
   };
-  const [items, total] = await prisma.$transaction([
-    prisma.pexRecord.findMany({
-      where,
-      include: {
-        customer: { select: { id: true, name: true, tradingName: true } },
-        supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, purchaseOrderNumber: true } },
-        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
-      },
-      orderBy: [{ updatedAt: "desc" }],
-      skip: (query.page - 1) * query.pageSize,
-      take: query.pageSize,
-    }),
-    prisma.pexRecord.count({ where }),
-  ]);
+  // Sorted highest → lowest by supply job number (BRE1132 at the top,
+  // BRE001 at the bottom). jobNumber is a plain String, so a DB-level
+  // orderBy would sort lexicographically ("BRE999" ahead of "BRE1000") —
+  // same issue listJobs documents. So: pull just (id, supply job number)
+  // for every matching record (tiny rows), sort numerically on the trailing
+  // digits in application code, page over that order, then load the full
+  // rows for just the requested page and put them back in that order.
+  const sortRows = await prisma.pexRecord.findMany({
+    where,
+    select: { id: true, updatedAt: true, supplyJob: { select: { jobNumber: true, draftNumber: true } } },
+  });
+  const sortValue = (r: (typeof sortRows)[number]) => {
+    const n = r.supplyJob?.jobNumber ?? r.supplyJob?.draftNumber ?? null;
+    const m = n?.match(/(\d+)(?!.*\d)/);
+    return m ? parseInt(m[1], 10) : -1;
+  };
+  sortRows.sort((a, b) => sortValue(b) - sortValue(a) || b.updatedAt.getTime() - a.updatedAt.getTime());
+  const total = sortRows.length;
+  const pageIds = sortRows.slice((query.page - 1) * query.pageSize, query.page * query.pageSize).map((r) => r.id);
+  const pageRows = await prisma.pexRecord.findMany({
+    where: { id: { in: pageIds } },
+    include: {
+      customer: { select: { id: true, name: true, tradingName: true } },
+      supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, purchaseOrderNumber: true } },
+      returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
+    },
+  });
+  const byId = new Map(pageRows.map((r) => [r.id, r]));
+  const items = pageIds.map((id) => byId.get(id)!).filter(Boolean);
   const countsBase: Prisma.PexRecordWhereInput = { companyId, supplyJobId: { not: null } };
   // 2026-09-23, user report: "Pex tracking if status is awaiting core or
   // outstanding, it is the same thing, so the stats cards can be combined
