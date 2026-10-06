@@ -77,15 +77,15 @@ function guessFromText(text: string, partNumbers: string[]): Record<string, numb
   const lines = text.split(/\r?\n/);
 
   for (const partNumber of partNumbers) {
-    const needle = partNumber.trim().toLowerCase();
-    if (!needle) continue;
+    const pattern = loosePartNumberPattern(partNumber);
+    if (!pattern) continue;
 
-    const line = lines.find((l) => l.toLowerCase().includes(needle));
+    const line = lines.find((l) => pattern.test(l));
     if (!line) continue;
 
     // Strip the part number itself out first so a part number that happens
     // to contain digits (e.g. "PN-4021") is never mistaken for the price.
-    const withoutPartNumber = line.split(new RegExp(escapeRegExp(needle), "i")).join(" ");
+    const withoutPartNumber = line.replace(pattern, " ");
     const matches = [...withoutPartNumber.matchAll(MONEY_PATTERN)]
       .map((m) => parseMoney(m[1]))
       .filter((n): n is number => n !== null);
@@ -103,6 +103,29 @@ function guessFromText(text: string, partNumbers: string[]): Record<string, numb
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 2026-10-06 — user report: quote files listing a part as "3J-1907" got no
+// price imported, but changing the file to "3J1907" worked. Part numbers are
+// stored with hyphens/spaces/dots stripped (see looseNormalized in
+// master-data/validation.ts), while a supplier's own quote usually prints
+// them with separators — and both the text and spreadsheet matching below
+// compared them character for character. Now compared with every
+// non-alphanumeric character ignored, so "3J1907", "3J-1907", "3J 1907" and
+// "3J.1907" all match each other, in either direction.
+function looseKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Regex matching a part number in free text with optional separators allowed
+// between any two characters, and not embedded inside a longer alphanumeric
+// token (so "3J1907" doesn't match inside "3J19075"). Global-free on purpose:
+// safe to reuse with .test() and .replace() (replace swaps only the first hit).
+function loosePartNumberPattern(partNumber: string): RegExp | null {
+  const chars = looseKey(partNumber).split("");
+  if (chars.length === 0) return null;
+  const body = chars.map((c) => escapeRegExp(c)).join("[\\s\\-./_\\\\]*");
+  return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, "i");
 }
 
 // Ordered most-specific-first: the first label that matches a header cell
@@ -224,11 +247,11 @@ async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promi
   if (priceCol === -1) return {};
 
   const guesses: Record<string, number> = {};
-  const normalizedPartNumbers = new Map(partNumbers.map((p) => [p.trim().toLowerCase(), p]));
+  const normalizedPartNumbers = new Map(partNumbers.map((p) => [looseKey(p), p]));
 
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
-    const cellPart = String(row[partCol] ?? "").trim().toLowerCase();
+    const cellPart = looseKey(String(row[partCol] ?? ""));
     if (!cellPart) continue;
     const original = normalizedPartNumbers.get(cellPart);
     if (!original) continue;
