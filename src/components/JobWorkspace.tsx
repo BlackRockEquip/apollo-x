@@ -909,7 +909,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         fieldTechnician: body.fieldServiceReport?.technician ? String(body.fieldServiceReport.technician) : "",
         fieldVehicle: body.fieldServiceReport?.vehicle ? String(body.fieldServiceReport.vehicle) : "",
         fieldHours: body.fieldServiceReport?.hours ? String(body.fieldServiceReport.hours) : "",
-        fieldReport: body.fieldServiceReport?.report ? String(body.fieldServiceReport.report) : "",
+        // 2026-10-06 — user request: Report and Findings are the same thing, so field jobs
+        // show ONE "Report" box. Anything previously typed in Findings is appended to the
+        // Report text here (display only; it is written back, and Findings cleared, the next
+        // time the report is edited and autosaved).
+        fieldReport: [body.fieldServiceReport?.report, body.fieldServiceReport?.findings].filter(Boolean).map(String).join("\n\n"),
         siteContactName: body.siteContactName || "",
         siteContactPhone: body.siteContactPhone || "",
         siteAddress: body.siteAddress || "",
@@ -918,7 +922,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         fieldHoursNormal: body.fieldServiceReport?.hoursNormal != null ? String(body.fieldServiceReport.hoursNormal) : "",
         fieldHoursOvertime: body.fieldServiceReport?.hoursOvertime != null ? String(body.fieldServiceReport.hoursOvertime) : "",
         fieldHoursTravelled: body.fieldServiceReport?.hoursTravelled != null ? String(body.fieldServiceReport.hoursTravelled) : "",
-        fieldFindings: body.fieldServiceReport?.findings ? String(body.fieldServiceReport.findings) : "",
+        fieldFindings: "",
         fieldWorkDone: body.fieldServiceReport?.workDone ? String(body.fieldServiceReport.workDone) : "",
         fieldRecommendations: body.fieldServiceReport?.recommendations ? String(body.fieldServiceReport.recommendations) : "",
         fieldFollowUp: body.fieldServiceReport?.followUpRequired ? "true" : "",
@@ -1597,7 +1601,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ["Kms travelled", form.kmsTravelled],
       ])}</table>
       ${block("Report", form.fieldReport)}
-      ${block("Findings / cause of failure", form.fieldFindings)}
       ${block("Work done", form.fieldWorkDone)}
       ${block("Recommendations", form.fieldRecommendations)}
       <h2>Follow-up visit</h2>
@@ -4265,8 +4268,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label><span>Hours travelled</span><input type="number" min="0" step="0.25" value={form.fieldHoursTravelled} onChange={(e) => updateField("fieldHoursTravelled", e.target.value)} /></label>
         <label><span>Total hours</span><input readOnly value={fieldHoursTotal} className="field-readonly" aria-label="Total hours (calculated)" /></label>
         <p className="field-subhead wide">Work performed</p>
-        <label className="wide"><span>Report</span><textarea rows={3} value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label>
-        <label className="wide"><span>Findings / cause of failure</span><textarea rows={3} value={form.fieldFindings} onChange={(e) => updateField("fieldFindings", e.target.value)} /></label>
+        <label className="wide"><span>Report</span><textarea rows={5} placeholder="Findings / cause of failure" value={form.fieldReport} onChange={(e) => updateField("fieldReport", e.target.value)} /></label>
         <label className="wide"><span>Work done</span><textarea rows={3} value={form.fieldWorkDone} onChange={(e) => updateField("fieldWorkDone", e.target.value)} /></label>
         <label className="wide"><span>Recommendations</span><textarea rows={3} value={form.fieldRecommendations} onChange={(e) => updateField("fieldRecommendations", e.target.value)} /></label>
         <label className="inline-check"><input type="checkbox" checked={form.fieldFollowUp === "true"} onChange={(e) => updateField("fieldFollowUp", e.target.checked ? "true" : "")} /><span>Follow-up visit needed</span></label>

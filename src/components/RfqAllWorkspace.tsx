@@ -117,12 +117,22 @@ export function RfqAllWorkspace() {
   // filterable" — same treatment on this RFQ tab. All client-side against
   // the already-loaded `rows`.
   const [filters, setFilters] = useState({ job: "", supplier: "", status: "ALL" });
+  // 2026-10-06, user request: "once all parts pricing captured the RFQ goes
+  // away from table basically similar to parts outstanding". A job RFQ whose
+  // every part line has a price (or is marked unavailable) is receivingStatus
+  // RECEIVED (see jobRfqReceivingStatus in rfq/service.ts); a general RFQ the
+  // user has set to Received is the same thing. Those rows drop out of the
+  // table by default. They are not deleted: picking Status = "Received" in
+  // the filter row brings them back, for looking something up later.
+  const isCompleted = (row: RfqRow) => (row.kind === "general" ? row.status === "RECEIVED" : row.receivingStatus === "RECEIVED");
+  const completedCount = (rows ?? []).filter(isCompleted).length;
   const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
+    if (filters.status !== "Received" && isCompleted(row)) return false;
     if (filters.job && !(row.jobId ? text(row.jobNumber) : "General").toLowerCase().includes(filters.job.toLowerCase())) return false;
     if (filters.supplier && !(row.supplierName || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
     if (filters.status !== "ALL" && rowStatusLabel(row) !== filters.status) return false;
     return true;
-  }), [rows, filters]);
+  }), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps -- isCompleted is a pure helper
   const filtersActive = filters.job || filters.supplier || filters.status !== "ALL";
 
   function fileToBase64(file: File): Promise<string> {
@@ -232,7 +242,7 @@ export function RfqAllWorkspace() {
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{filtersActive ? `${filteredRows.length} of ${rows.length} RFQ${rows.length === 1 ? "" : "s"}` : `${rows.length} RFQ${rows.length === 1 ? "" : "s"}`}</span>
+      <span>{filteredRows.length} RFQ{filteredRows.length === 1 ? "" : "s"}{completedCount > 0 && filters.status !== "Received" ? ` · ${completedCount} fully priced hidden (set Status to Received to see them)` : ""}</span>
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Add RFQ</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
@@ -251,7 +261,7 @@ export function RfqAllWorkspace() {
         <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
       </tr>
     </thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={7} className="table-state compact-empty-state">No RFQs match these filters.</td></tr> : filteredRows.map((row) => {
+      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : filteredRows.length === 0 && !filtersActive ? <tr><td colSpan={7} className="table-state compact-empty-state">No outstanding RFQs — every RFQ is fully priced.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={7} className="table-state compact-empty-state">No RFQs match these filters.</td></tr> : filteredRows.map((row) => {
         const info = receivingStatusInfo(row.receivingStatus);
         return <tr key={`${row.kind}-${row.id}`}>
           <td>{row.jobId ? <Link href={`/jobs/${row.jobId}`}>{text(row.jobNumber)}</Link> : <span className="muted">General</span>}</td>
