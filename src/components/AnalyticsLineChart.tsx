@@ -61,9 +61,20 @@ function niceCeiling(max: number): number {
   return 10 * magnitude;
 }
 
-export function CombinedAnalyticsChart({ series }: { series: AnalyticsSeries[] }) {
+// 2026-10-06, user request: "Build all currently mocked up now" (refined
+// dashboard v2) — a 3 / 6 / 12 month range switch on the chart. The backend
+// always sends the trailing 12 months; the switch just shows the last N of
+// them, client-side, so changing the range never needs a round trip (and the
+// 20-second poll doesn't reset it).
+const RANGE_OPTIONS = [3, 6, 12] as const;
+
+// The range switch and the title/subtitle are opt-in so Reports (which reuses
+// this chart for other series) is unchanged.
+export function CombinedAnalyticsChart({ series: fullSeries, title = "Analytics", subtitle, rangeSwitch = false }: { series: AnalyticsSeries[]; title?: string; subtitle?: string; rangeSwitch?: boolean }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
+  const [range, setRange] = useState<number>(12);
+  const series = useMemo(() => (rangeSwitch ? fullSeries.map((s) => ({ ...s, points: s.points.slice(-range) })) : fullSeries), [fullSeries, range, rangeSwitch]);
 
   // All series share the same trailing-12-month bucket list (see
   // monthBuckets in dashboard/service.ts), so the longest one's months are
@@ -107,10 +118,19 @@ export function CombinedAnalyticsChart({ series }: { series: AnalyticsSeries[] }
   return (
     <article className="analytics-chart-card">
       <header className="analytics-chart-header">
-        <h3>Analytics</h3>
-        <button type="button" className="quiet-button" aria-pressed={showTable} onClick={() => setShowTable((v) => !v)}>
-          <Table2 size={13} /> {showTable ? "View chart" : "View as table"}
-        </button>
+        <div><h3>{title}</h3>{subtitle ? <p>{subtitle}</p> : null}</div>
+        <div className="analytics-chart-controls">
+          {rangeSwitch && (
+            <div className="analytics-range-switch" role="group" aria-label="Chart range">
+              {RANGE_OPTIONS.map((n) => (
+                <button key={n} type="button" aria-pressed={range === n} onClick={() => { setRange(n); setHoverIndex(null); }}>{n} months</button>
+              ))}
+            </div>
+          )}
+          <button type="button" className="quiet-button" aria-pressed={showTable} onClick={() => setShowTable((v) => !v)}>
+            <Table2 size={13} /> {showTable ? "View chart" : "View as table"}
+          </button>
+        </div>
       </header>
 
       {/* Legend — required whenever there are >= 2 series (the dataviz

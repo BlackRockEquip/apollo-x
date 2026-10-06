@@ -2,7 +2,8 @@ import { ModuleKey, Prisma, TicketStatus } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { JOB_STATUS_LABELS } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS } from "@/lib/jobs/ui";
+import { listPartsOutstanding } from "@/lib/jobs/parts-outstanding";
 
 export type DashboardWidgetKey =
   | "jobs-summary"
@@ -164,6 +165,67 @@ async function buildMetricSeries(companyId: string, key: DashboardAnalyticsMetri
   return buckets.map((b) => ({ month: b.label, value: counts.get(b.key) ?? 0 }));
 }
 
+// 2026-10-06, user request: "Build all currently mocked up now" (the refined
+// dashboard v2 mockup). The dashboard now answers "what needs attention?"
+// instead of only counting — see getDashboardData's attention / stuckJobs /
+// statusBreakdown / partsOutstandingJobs / completedThisMonth below.
+//
+// Thresholds (per the mockup): a job is "stuck" once it has sat in the same
+// status for 14+ days; parts are "overdue" once a job has had outstanding
+// parts for 7+ days.
+const STUCK_THRESHOLD_DAYS = 14;
+const PARTS_OVERDUE_THRESHOLD_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Open (non-terminal) statuses in pipeline order — same union the Jobs & WIP
+// list's own view=wip filter uses (WIP_STATUSES in lib/jobs/service.ts), kept
+// in pipeline order here so the status bars read top-to-bottom like the flow.
+const WIP_STATUS_ORDER = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
+
+// Statuses where a job is legitimately waiting on the customer to pay, not on
+// the workshop — never flagged as "stuck" (they still show on the bars). Jobs
+// flagged Return Unrepaired are likewise counted but never flagged stuck.
+const STUCK_EXEMPT_STATUSES = new Set<string>(["DELIVERED_AWAITING_PAYMENT", "AWAIT_PAYMENT"]);
+
+// There is no "status changed at" column on Job, so time-in-current-status is
+// derived from JobActivity: the latest STATUS_CHANGED / JOB_REOPENED row whose
+// metadata.to equals the job's current status, or the JOB_REGISTERED row when
+// the job was created straight into it (metadata.status). Falls back to the
+// job's createdAt when no such row exists (e.g. older jobs). One query for the
+// whole company's open jobs — no migration.
+async function loadStatusSince(companyId: string): Promise<Map<string, { status: string; since: Date; flagged: boolean }>> {
+  const rows = await prisma.$queryRaw<Array<{ id: string; status: string; flagged: boolean; since: Date }>>(Prisma.sql`
+    SELECT j."id" AS "id", j."status"::text AS "status", j."returnedUnrepaired" AS "flagged",
+      COALESCE(
+        MAX(a."createdAt") FILTER (WHERE
+          (a."type"::text IN ('STATUS_CHANGED', 'JOB_REOPENED') AND a."metadata"->>'to' = j."status"::text)
+          OR (a."type"::text = 'JOB_REGISTERED' AND a."metadata"->>'status' = j."status"::text)),
+        j."createdAt"
+      ) AS "since"
+    FROM "Job" j
+    LEFT JOIN "JobActivity" a ON a."jobId" = j."id"
+    WHERE j."companyId" = ${companyId}
+      AND j."status"::text IN (${Prisma.join(WIP_STATUS_ORDER)})
+    GROUP BY j."id"
+  `);
+  return new Map(rows.map((row) => [row.id, { status: row.status, since: new Date(row.since), flagged: row.flagged }]));
+}
+
+function daysSince(date: Date, now: number) {
+  return Math.max(0, Math.floor((now - date.getTime()) / DAY_MS));
+}
+
+function monthRange(offset: number) {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset + 1, 1));
+  return { start, end, label: start.toLocaleDateString("en-ZA", { month: "short", timeZone: "UTC" }) };
+}
+
+function canUseJobs(ctx: RequestContext) {
+  return canSeeWidget(ctx, "jobs-summary");
+}
+
 function defaultWidgets(ctx: RequestContext): DashboardWidget[] {
   return DASHBOARD_WIDGET_DEFS
     .filter((row, index) => canSeeWidget(ctx, row.key) || index < 3)
@@ -240,19 +302,12 @@ export async function getDashboardData(ctx: RequestContext) {
   const { widgets, analyticsCharts } = await getDashboardConfig(ctx);
   const enabled = widgets.filter((row) => row.enabled).map((row) => row.key);
 
-  const [jobsByStatus, recentJobs, outstandingPartLines, pexOpen, tickets, procurementOpen] = await Promise.all([
+  const [jobsByStatus, recentJobs, pexOpen, tickets, procurementOpen] = await Promise.all([
     enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts")
       ? prisma.job.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("recent-jobs")
       ? prisma.job.findMany({ where: { companyId }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, jobNumber: true, status: true, customerReference: true, customerPo: true, component: true, machineModel: true, customer: { select: { name: true } } } })
-      : Promise.resolve([]),
-    // "Outstanding" now means a JobPartLine that hasn't been fully received
-    // yet (see PartLineStatus) — replaces the old reserve/issue/return
-    // JobPartRequirement model, which was dropped when the Parts list was
-    // swapped in to match ModApp (see workshop-track-progress.md).
-    enabled.includes("outstanding-parts")
-      ? prisma.jobPartLine.findMany({ where: { companyId, status: { not: "RECEIVED" } }, take: 8, orderBy: { updatedAt: "desc" }, select: { id: true, partNumber: true, description: true, quantity: true, receivedQuantity: true, status: true, job: { select: { id: true, jobNumber: true, customer: { select: { name: true } } } } } })
       : Promise.resolve([]),
     // Repointed (2026-09-09) from the old PexSupplyLink.returnStatus to
     // PexRecord.status as part of the full PEX -> PexRecord replacement
@@ -293,12 +348,113 @@ export async function getDashboardData(ctx: RequestContext) {
     })),
   );
 
+  const nowMs = Date.now();
+  const jobsAccess = canUseJobs(ctx);
+  const wantsStatusPanel = enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts");
+
+  // Time-in-status for every open job (see loadStatusSince). Feeds the
+  // Needs-attention strip, the stuck flags on the status bars and the
+  // "Stuck in a status" list.
+  const statusSince = jobsAccess ? await loadStatusSince(companyId) : new Map<string, { status: string; since: Date; flagged: boolean }>();
+  const statusCounts = new Map<string, { count: number; stuck: number }>();
+  const stuckAll: Array<{ id: string; status: string; days: number }> = [];
+  let awaitingGoAheadCount = 0;
+  let awaitingGoAheadOldest = 0;
+  let readyToDeliverCount = 0;
+  for (const [id, entry] of statusSince) {
+    const days = daysSince(entry.since, nowMs);
+    const slot = statusCounts.get(entry.status) ?? { count: 0, stuck: 0 };
+    slot.count += 1;
+    if (days >= STUCK_THRESHOLD_DAYS && !entry.flagged && !STUCK_EXEMPT_STATUSES.has(entry.status)) {
+      slot.stuck += 1;
+      stuckAll.push({ id, status: entry.status, days });
+    }
+    statusCounts.set(entry.status, slot);
+    if (entry.status === "AWAITING_GO_AHEAD") { awaitingGoAheadCount += 1; awaitingGoAheadOldest = Math.max(awaitingGoAheadOldest, days); }
+    if (entry.status === "TO_BE_DELIVERED") readyToDeliverCount += 1;
+  }
+  stuckAll.sort((a, b) => b.days - a.days);
+  const statusBreakdown = wantsStatusPanel
+    ? WIP_STATUS_ORDER.filter((status) => (statusCounts.get(status)?.count ?? 0) > 0).map((status) => ({
+        status,
+        label: JOB_STATUS_LABELS[status],
+        count: statusCounts.get(status)!.count,
+        stuck: statusCounts.get(status)!.stuck,
+      }))
+    : [];
+
+  // Parts outstanding, rolled up per job (listPartsOutstanding returns one
+  // row per job + supplier). Needs Jobs & WIP access on top of the widget's
+  // own Inventory gate, because the underlying list does.
+  let partsOutstandingJobs: Array<{ jobId: string; jobNumber: string; customerName: string | null; lines: number; days: number }> = [];
+  let partsOutstandingLineCount = 0;
+  let partsOverdue = { jobs: 0, oldestDays: 0 };
+  if (jobsAccess) {
+    const rows = await listPartsOutstanding(ctx);
+    const byJob = new Map<string, { jobId: string; jobNumber: string; lines: number; since: string | null }>();
+    for (const row of rows) {
+      const slot = byJob.get(row.jobId) ?? { jobId: row.jobId, jobNumber: row.jobNumber, lines: 0, since: null };
+      slot.lines += row.partLines;
+      if (row.outstandingSince && (!slot.since || row.outstandingSince < slot.since)) slot.since = row.outstandingSince;
+      byJob.set(row.jobId, slot);
+    }
+    const jobsRolled = Array.from(byJob.values())
+      .map((slot) => ({ ...slot, days: slot.since ? daysSince(new Date(slot.since), nowMs) : 0 }))
+      .sort((a, b) => b.days - a.days);
+    partsOutstandingLineCount = jobsRolled.reduce((sum, slot) => sum + slot.lines, 0);
+    const overdue = jobsRolled.filter((slot) => slot.days >= PARTS_OVERDUE_THRESHOLD_DAYS);
+    partsOverdue = { jobs: overdue.length, oldestDays: overdue.reduce((max, slot) => Math.max(max, slot.days), 0) };
+    partsOutstandingJobs = jobsRolled.slice(0, 5).map((slot) => ({ jobId: slot.jobId, jobNumber: slot.jobNumber, customerName: null, lines: slot.lines, days: slot.days }));
+  }
+
+  // Customer names + job numbers for the few jobs the lists actually show.
+  const stuckJobs = stuckAll.slice(0, 5);
+  const nameIds = Array.from(new Set([...stuckJobs.map((row) => row.id), ...partsOutstandingJobs.map((row) => row.jobId)]));
+  const jobInfo = nameIds.length > 0
+    ? new Map((await prisma.job.findMany({ where: { companyId, id: { in: nameIds } }, select: { id: true, jobNumber: true, draftNumber: true, customer: { select: { name: true } } } })).map((row) => [row.id, row]))
+    : new Map<string, { id: string; jobNumber: string | null; draftNumber: string; customer: { name: string } | null }>();
+  for (const row of partsOutstandingJobs) row.customerName = jobInfo.get(row.jobId)?.customer?.name ?? null;
+
+  // "Completed this month" — same definition as the chart's
+  // jobs-completed series (closed, bucketed by delivery date).
+  let completedThisMonth: { count: number; previous: number; previousLabel: string } | null = null;
+  if (jobsAccess) {
+    const current = monthRange(0);
+    const previous = monthRange(-1);
+    const [count, prev] = await Promise.all([
+      prisma.job.count({ where: { companyId, closedAt: { not: null }, deliveryDate: { gte: current.start, lt: current.end } } }),
+      prisma.job.count({ where: { companyId, closedAt: { not: null }, deliveryDate: { gte: previous.start, lt: previous.end } } }),
+    ]);
+    completedThisMonth = { count, previous: prev, previousLabel: previous.label };
+  }
+
   return {
     widgets,
     data: {
+      attention: jobsAccess
+        ? {
+            partsOverdue,
+            awaitingGoAhead: { count: awaitingGoAheadCount, oldestDays: awaitingGoAheadOldest },
+            stuck: { count: stuckAll.length },
+            readyToDeliver: { count: readyToDeliverCount },
+            stuckThresholdDays: STUCK_THRESHOLD_DAYS,
+            overdueThresholdDays: PARTS_OVERDUE_THRESHOLD_DAYS,
+          }
+        : null,
+      stuckJobs: stuckJobs.map((row) => ({
+        id: row.id,
+        jobNumber: jobInfo.get(row.id)?.jobNumber ?? jobInfo.get(row.id)?.draftNumber ?? "—",
+        customerName: jobInfo.get(row.id)?.customer?.name ?? null,
+        status: row.status,
+        label: JOB_STATUS_LABELS[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
+        days: row.days,
+      })),
+      statusBreakdown,
+      partsOutstandingJobs,
+      partsOutstandingLineCount,
+      completedThisMonth,
       jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[JOB_STATUS_LABELS[row.status]] = row._count._all; return acc; }, {}),
       recentJobs,
-      outstandingParts: outstandingPartLines,
       procurementOpen,
       pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),
       supportTickets: tickets.reduce<Record<TicketStatus | string, number>>((acc, row) => { acc[String(row.status)] = row._count._all; return acc; }, {}),
