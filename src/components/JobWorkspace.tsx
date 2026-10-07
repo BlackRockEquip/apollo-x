@@ -2535,7 +2535,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       @page{size:A4;margin:0}
       *{box-sizing:border-box}
       body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
-      .sheet{width:210mm;min-height:297mm;padding:11mm 13mm 10mm;display:flex;flex-direction:column;gap:14px}
+      html,body{margin:0;padding:0}
+      .sheet{width:210mm;height:296mm;padding:10mm 13mm 8mm;display:flex;flex-direction:column;gap:11px}
       .head{display:flex;justify-content:space-between;align-items:stretch;gap:16px;padding-bottom:12px;border-bottom:3px solid #111}
       .brand{width:170px;flex:none;display:flex;flex-direction:column;justify-content:space-between}
       .brand img{max-height:46px;max-width:170px;object-fit:contain;object-position:left}
@@ -2548,8 +2549,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .tag{background:#111;color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 9px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .tag2{border:1.4px solid #111;font-size:11px;font-weight:700;padding:2px 8px}
       .strip{display:flex;border:1px solid #9a9a9a}
-      .strip div{flex:1;padding:6px 10px;border-right:1px solid #c8c8c8}
-      .strip div:last-child{border-right:0}
+      .strip > div{flex:1;padding:6px 10px;border-right:1px solid #c8c8c8}
+      .strip > div:last-child{border-right:0}
       .lab{font-size:10.5px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em}
       .val{font-size:15px;font-weight:700;margin-top:1px}
       .sec{display:flex;align-items:center;gap:10px;margin-bottom:5px}
@@ -2561,10 +2562,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .kv{display:flex;border-bottom:1px solid #c8c8c8;min-height:26px;align-items:stretch}
       .kv span{width:44%;flex:none;background:#f1f1f1;padding:4px 8px;font-size:11px;font-weight:600;color:#444;border-right:1px solid #c8c8c8;display:flex;align-items:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .kv em{flex:1;padding:4px 8px;font-style:normal;font-size:13px;font-weight:500;display:flex;align-items:center}
-      .block.grow{flex:1;display:flex;flex-direction:column;min-height:60mm}
+      .block{flex:none}
+      .block.grow{flex:1.6 1 0;display:flex;flex-direction:column;min-height:28mm}
+      .block.descblock{flex:1 1 0;display:flex;flex-direction:column;min-height:0}
       .text{border:1px solid #9a9a9a;padding:10px 12px;font-size:14px;line-height:1.55;white-space:pre-wrap}
-      .text.desc{min-height:70mm}
-      .text.notes{min-height:24mm;font-size:13.5px;line-height:1.5}
+      .text.desc{flex:1;min-height:26mm}
+      .text.notes{min-height:16mm;font-size:13.5px;line-height:1.5}
       .lined{flex:1;border:1px solid #9a9a9a;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 27px,#cfcfcf 27px,#cfcfcf 28px);background-position:0 6px}
       .foot{display:flex;align-items:flex-end;gap:18px;border-top:1px solid #111;padding-top:8px;font-size:11px;color:#333}
       .line{display:flex;gap:6px;align-items:flex-end}
@@ -2595,7 +2598,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </div>
       </div>
       ${extraHtml}
-      <div class="block"><div class="sec"><b>${escapeHtml(layout.descriptionHeading)}</b><i></i></div><div class="text desc">${escapeHtml(form.description || "—")}</div></div>
+      <div class="block descblock"><div class="sec"><b>${escapeHtml(layout.descriptionHeading)}</b><i></i></div><div class="text desc">${escapeHtml(form.description || "—")}</div></div>
       <div class="block"><div class="sec"><b>Notes</b><i></i></div><div class="text notes">${escapeHtml(form.notes || "—")}</div></div>
       ${findingsHtml}
       <div class="foot">
@@ -2694,8 +2697,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       @page{size:A4;margin:0}
       *{box-sizing:border-box}
       body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .sheet{width:210mm;min-height:296mm;padding:10mm 13mm 8mm;display:flex;flex-direction:column;gap:12px}
-      .sheet.p2{page-break-before:always;gap:16px}
+      html,body{margin:0;padding:0}
+      .sheet{width:210mm;height:296mm;padding:10mm 13mm 8mm;display:flex;flex-direction:column;gap:11px}
+      .sheet.p2{page-break-before:always;gap:16px;height:auto;min-height:296mm}
       .head{display:flex;justify-content:space-between;align-items:stretch;gap:16px;padding-bottom:12px;border-bottom:3px solid #111}
       .brand{width:250px;flex:none;display:flex;flex-direction:column;gap:6px}
       .brand img{max-height:44px;max-width:170px;object-fit:contain;object-position:left;align-self:flex-start}
@@ -2709,8 +2713,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .tag{background:#111;color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 9px}
       .tag2{border:1.4px solid #111;font-size:11px;font-weight:700;padding:2px 8px}
       .strip{display:flex;border:1px solid #9a9a9a}
-      .strip div{flex:1;padding:5px 10px;border-right:1px solid #c8c8c8}
-      .strip div:last-child{border-right:0}
+      .strip > div{flex:1;padding:5px 10px;border-right:1px solid #c8c8c8}
+      .strip > div:last-child{border-right:0}
       .lab{font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em}
       .val{font-size:14px;font-weight:700;margin-top:1px}
       .sec{display:flex;align-items:center;gap:10px;margin-bottom:5px}
