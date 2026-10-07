@@ -1,13 +1,16 @@
 cd "C:\Projects\Apollo X Working"
 git add -A
 @'
-Fix Jobs & WIP status filter from dashboard links
+Redesign Print Job Card as a mechanic-instructions sheet
 
-- A status and the WIP/Completed view were overwriting each other in the list query, so
-  /jobs?view=wip&status=AWAITING_GO_AHEAD showed every WIP job. They now combine.
-- Picking a status in the dropdown drops any WIP/Completed view; the view is shown as a
-  clearable chip when active so the list never looks wider than its filters.
-- Dashboard "Completed this month" opens the Completed view.
+- A4 card: company logo/name, large job number and job-type tag, Date in / Previous job /
+  Customer ref-PO strip, machine and component in two columns, job description, notes and a
+  lined space for the mechanic's findings, with Mechanic / Date lines in the footer.
+- Per job type: Partial repair ("Agreed scope of repair"), Warranty (status tag, warranty
+  block, "Cause of failure / findings"), PEX supply/return (PEX status tag and PEX block),
+  jobs sent to PEX Inventory get a Pex tag, Outright sale has no findings space.
+- No parts, outwork, barcode, ETAs, mechanics, customer name or prices.
+- New "lined" PDF block so the saved PDF copy matches the printed card.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

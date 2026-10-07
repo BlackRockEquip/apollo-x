@@ -15,6 +15,8 @@ export type DocBlock =
   | { type: "table"; headers: string[]; rows: string[][]; widths?: number[]; center?: number[] }
   | { type: "twoCol"; left: DocBlock[]; right: DocBlock[] }
   | { type: "signatures"; labels: string[]; fields: string[] }
+  /** Empty ruled lines to write on (e.g. the mechanic's notes on the Job Card). */
+  | { type: "lined"; count: number }
   | { type: "pageBreak" };
 
 export type DocSpec = {
@@ -294,6 +296,15 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
           lowest = Math.min(lowest, y - 12);
         });
         y = lowest - 4;
+        return;
+      }
+      case "lined": {
+        for (let i = 0; i < block.count; i++) {
+          if (c.draw) ensure(20);
+          y -= 20;
+          if (c.draw) page.drawLine({ start: { x: c.x, y }, end: { x: c.x + c.w, y }, thickness: 0.6, color: RULE });
+        }
+        y -= 6;
         return;
       }
       case "pageBreak":

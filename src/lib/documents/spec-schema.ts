@@ -21,6 +21,7 @@ const flatBlock = z.discriminatedUnion("type", [
     center: z.array(z.number().int().min(0).max(9)).max(10).optional(),
   }),
   z.object({ type: z.literal("signatures"), labels: z.array(shortText).min(1).max(3), fields: z.array(shortText).max(6) }),
+  z.object({ type: z.literal("lined"), count: z.number().int().min(1).max(40) }),
   z.object({ type: z.literal("pageBreak") }),
 ]);
 

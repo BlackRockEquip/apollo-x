@@ -8,13 +8,13 @@ import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Mini
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
-import { PexAllocatedPill, PexStatusPill, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
+import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
-import { buildFieldReportSpec, buildJobCardSpec, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
+import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -1623,6 +1623,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     salesRepresentative: String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—"),
     stripMechanic: String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—"),
     buildMechanic: String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—"),
+    pexStatus: (() => {
+      const rec = job as unknown as { pexAsSupply?: { status?: string } | null; pexAsReturn?: { status?: string } | null } | null;
+      const status = rec ? (job?.type === "PEX_SUPPLY" ? rec.pexAsSupply?.status : rec.pexAsReturn?.status) : undefined;
+      return status ? pexStatusLabel(String(status)) : "";
+    })(),
   });
   const jobCardSpec = () => (job ? buildJobCardSpec({ title: documentTitles.JOB_CARD, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const fieldReportSpec = () => (job ? buildFieldReportSpec({ title: documentTitles.FIELD_REPORT, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
@@ -2506,51 +2511,101 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // own line ... below it" literally. Component type dropped from the
   // Machine/component table — see the "Component type" removal comment on
   // the on-screen field above.
-  function printJobCard(): boolean {
+  // 2026-10-07 — user request: simplified mechanic-instructions job card.
+  // Header (logo/name left, big job number + type tag right), one info
+  // strip (Date in / Previous job / Customer ref-PO), machine + component
+  // in two columns, job description, notes, and a lined findings space for
+  // the mechanic. No parts, outwork, barcode, ETAs, mechanics, customer
+  // name or prices. Per-job-type wording/blocks come from jobCardLayout()
+  // so the printed card and the PDF copy always agree.
+  async function printJobCard(): Promise<boolean> {
     if (!job) return false;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the job card."); return false; }
+    const layout = jobCardLayout(job as unknown as JobDocJob, form, jobDocLabels());
+    const orgDetails = await fetchCompanyOrgDetails();
+    const logoSrc = companyLogoImgSrc();
+    const jobLabel = String(job.jobNumber || job.draftNumber || "—");
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
-    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${job.jobNumber || job.draftNumber || ""} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
-      body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
-      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
-      h1{font-size:18px;margin:0 0 12px}
-      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
-      h3{font-size:13px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em;color:#555}
-      .job-number{font-size:16px;font-weight:bold;text-align:right}
-      table{width:100%;border-collapse:collapse}
-      th,td{border:1px solid #ccc;padding:7px 9px;text-align:left;font-size:13px}
-      th{width:38%;background:#f6f6f6;font-weight:600}
-      .description{white-space:pre-wrap}
-      .half-width{width:50%}
-      .description-block{white-space:pre-wrap;border:1px solid #ccc;padding:8px 9px;font-size:13px}
-    </style></head><body>
-      <div class="note-head">
-        <h1>${escapeHtml(documentTitles.JOB_CARD)} — for workshop use</h1>
-        <div class="job-number">Job ${escapeHtml(String(job.jobNumber || job.draftNumber || "—"))}</div>
+    const kv = (pairs: Array<[string, string]>, mono: string[] = []) => pairs.map(([label, value]) => `<div class="kv"><span>${escapeHtml(label)}</span><em${mono.includes(label) ? ' class="mono"' : ""}>${escapeHtml(value || "—")}</em></div>`).join("");
+    const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
+    const extraHtml = layout.extra ? `<div class="block"><div class="sec"><b>${escapeHtml(layout.extra.title)}</b><i></i></div><div class="cols"><div class="col">${kv(layout.extra.rows)}</div><div class="col"></div></div></div>` : "";
+    const findingsHtml = layout.findingsHeading ? `<div class="block grow"><div class="sec"><b>${escapeHtml(layout.findingsHeading)}</b><i></i><span class="hint">${escapeHtml(layout.findingsHint)}</span></div><div class="lined"></div></div>` : "";
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
+      @page{size:A4;margin:0}
+      *{box-sizing:border-box}
+      body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
+      .sheet{width:210mm;min-height:297mm;padding:11mm 13mm 10mm;display:flex;flex-direction:column;gap:14px}
+      .head{display:flex;justify-content:space-between;align-items:stretch;gap:16px;padding-bottom:12px;border-bottom:3px solid #111}
+      .brand{width:170px;flex:none;display:flex;flex-direction:column;justify-content:space-between}
+      .brand img{max-height:46px;max-width:170px;object-fit:contain;object-position:left}
+      .org{font-size:11px;font-weight:600;color:#444;margin-top:6px}
+      .titleblock{flex:1;display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;text-align:right;gap:6px}
+      .kicker{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#444}
+      .mono{font-family:"Courier New",Consolas,monospace}
+      .jobno{font-family:"Courier New",Consolas,monospace;font-size:46px;font-weight:700;line-height:1;letter-spacing:-.02em}
+      .tags{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+      .tag{background:#111;color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 9px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .tag2{border:1.4px solid #111;font-size:11px;font-weight:700;padding:2px 8px}
+      .strip{display:flex;border:1px solid #9a9a9a}
+      .strip div{flex:1;padding:6px 10px;border-right:1px solid #c8c8c8}
+      .strip div:last-child{border-right:0}
+      .lab{font-size:10.5px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em}
+      .val{font-size:15px;font-weight:700;margin-top:1px}
+      .sec{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+      .sec b{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
+      .sec i{flex:1;height:1px;background:#111;display:block}
+      .hint{font-size:11px;color:#555;white-space:nowrap}
+      .cols{display:flex;gap:16px}
+      .col{flex:1;min-width:0;border-top:1px solid #c8c8c8;border-left:1px solid #c8c8c8;border-right:1px solid #c8c8c8}
+      .kv{display:flex;border-bottom:1px solid #c8c8c8;min-height:26px;align-items:stretch}
+      .kv span{width:44%;flex:none;background:#f1f1f1;padding:4px 8px;font-size:11px;font-weight:600;color:#444;border-right:1px solid #c8c8c8;display:flex;align-items:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .kv em{flex:1;padding:4px 8px;font-style:normal;font-size:13px;font-weight:500;display:flex;align-items:center}
+      .block.grow{flex:1;display:flex;flex-direction:column;min-height:60mm}
+      .text{border:1px solid #9a9a9a;padding:10px 12px;font-size:14px;line-height:1.55;white-space:pre-wrap}
+      .text.desc{min-height:70mm}
+      .text.notes{min-height:24mm;font-size:13.5px;line-height:1.5}
+      .lined{flex:1;border:1px solid #9a9a9a;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 27px,#cfcfcf 27px,#cfcfcf 28px);background-position:0 6px}
+      .foot{display:flex;align-items:flex-end;gap:18px;border-top:1px solid #111;padding-top:8px;font-size:11px;color:#333}
+      .line{display:flex;gap:6px;align-items:flex-end}
+      .line span{flex:1;border-bottom:1px solid #555;height:12px;display:block}
+      .stamp{font-size:10.5px;color:#555;white-space:nowrap}
+    </style></head><body><div class="sheet">
+      <div class="head">
+        <div class="brand">
+          <img src="${escapeHtml(logoSrc)}" alt="" onerror="this.style.display='none'" />
+          <div class="org">${escapeHtml(orgDetails?.name || "")}</div>
+        </div>
+        <div class="titleblock">
+          <div class="kicker">${escapeHtml(documentTitles.JOB_CARD)} &middot; Mechanic instructions</div>
+          <div class="jobno">${escapeHtml(jobLabel)}</div>
+          <div class="tags"><span class="tag">${escapeHtml(layout.typeTag)}</span>${layout.extraTags.map((t) => `<span class="tag2">${escapeHtml(t)}</span>`).join("")}</div>
+        </div>
       </div>
-      <h2>Date in</h2>
-      <div class="half-width"><table>${rows([["Date in", fmt(form.dateReceived)]])}</table></div>
-      <h2>Machine / component details</h2>
-      <div class="half-width"><table>${rows([
-        ["Machine make", form.machineMake],
-        ["Machine model", form.machineModel],
-        ["Machine serial", form.machineSerial],
-        ["Component", form.component],
-        ["Component serial", form.componentSerial],
-        ["Part number", form.componentPartNumber],
-        ["Plant number", form.plantNumber],
-        ["Machine hours", form.machineHours],
-      ])}</table></div>
-      <h2>Job details</h2>
-      <div class="half-width"><table>${rows([["Job type", JOB_TYPE_LABELS[job.type]]])}</table></div>
-      <h3>Job description</h3>
-      <div class="description-block">${escapeHtml(form.description || "—")}</div>
-    </body></html>`);
+      <div class="strip">
+        <div><div class="lab">Date in</div><div class="val">${escapeHtml(fmt(form.dateReceived))}</div></div>
+        <div><div class="lab">Previous job</div><div class="val mono">${escapeHtml(form.previousJobNumber || "—")}</div></div>
+        <div><div class="lab">Customer ref / PO</div><div class="val mono">${escapeHtml(customerRef || "—")}</div></div>
+      </div>
+      <div class="block">
+        <div class="sec"><b>Machine / component</b><i></i></div>
+        <div class="cols">
+          <div class="col">${kv([["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]], ["Machine serial"])}</div>
+          <div class="col">${kv([["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]], ["Component serial", "Part number"])}</div>
+        </div>
+      </div>
+      ${extraHtml}
+      <div class="block"><div class="sec"><b>${escapeHtml(layout.descriptionHeading)}</b><i></i></div><div class="text desc">${escapeHtml(form.description || "—")}</div></div>
+      <div class="block"><div class="sec"><b>Notes</b><i></i></div><div class="text notes">${escapeHtml(form.notes || "—")}</div></div>
+      ${findingsHtml}
+      <div class="foot">
+        <div class="line" style="flex:1">Mechanic<span></span></div>
+        <div class="line" style="width:150px">Date<span></span></div>
+        <div class="stamp mono">${escapeHtml(jobLabel)} &middot; Printed ${escapeHtml(new Date().toLocaleDateString("en-ZA"))}</div>
+      </div>
+    </div><script>window.onload = function () { window.print(); };</script></body></html>`);
     win.document.close();
     win.focus();
-    win.print();
     return true;
   }
 

@@ -46,6 +46,8 @@ export type JobDocLabels = {
   salesRepresentative: string;
   stripMechanic: string;
   buildMechanic: string;
+  /** Display label of the job's PEX status (e.g. "Awaiting core"), when it has a PEX record. */
+  pexStatus?: string;
 };
 
 function customerAddressLine(job: JobDocJob) {
@@ -84,21 +86,94 @@ function partRows(lines: Rec[]) {
   ]);
 }
 
+// 2026-10-07, user request: redesign the Print job card as simple mechanic
+// instructions (mockup approved in chat): job number + job type up top, date
+// in / previous job / customer ref-PO, machine and component, the job
+// description, notes, and a lined space for the mechanic's findings. No
+// customer name, prices, parts or outwork (that is Job History / Parts List).
+// What varies by job type lives here so the print window (JobWorkspace.tsx's
+// printJobCard) and the saved PDF (buildJobCardSpec below) always agree:
+//   - Partial repair: the description is headed "Agreed scope of repair".
+//   - Warranty: warranty status tag + a Warranty block; findings are headed
+//     "Cause of failure / findings".
+//   - PEX supply / return: PEX status tag + a PEX block (linked job).
+//   - Directly allocated to PEX Inventory: an extra "Pex" tag.
+//   - Outright sale: no strip/assembly, so no lined findings space.
+export type JobCardLayout = {
+  typeTag: string;
+  extraTags: string[];
+  descriptionHeading: string;
+  /** null = no lined "mechanic notes" space on this job type. */
+  findingsHeading: string | null;
+  findingsHint: string;
+  extra: { title: string; rows: [string, string][] } | null;
+};
+
+const jobRefText = (ref: unknown) => {
+  const r = (ref ?? null) as Rec | null;
+  return r ? str(r.jobNumber) || str(r.draftNumber) : "";
+};
+
+export function jobCardLayout(job: JobDocJob, form: JobDocForm, labels: JobDocLabels): JobCardLayout {
+  const record = job as unknown as Rec;
+  const pexSupply = (record.pexAsSupply ?? null) as Rec | null;
+  const pexReturn = (record.pexAsReturn ?? null) as Rec | null;
+  const layout: JobCardLayout = {
+    typeTag: (labels.jobType || "").toUpperCase(),
+    extraTags: [],
+    descriptionHeading: "Job description",
+    findingsHeading: "Mechanic notes",
+    findingsHint: "Findings on strip-down",
+    extra: null,
+  };
+  if (job.type === "PARTIAL_REPAIR") layout.descriptionHeading = "Agreed scope of repair";
+  if (job.type === "OUTRIGHT_SALE") layout.findingsHeading = null;
+  if (job.type === "WARRANTY") {
+    const status = words(form.warrantyStatus || "PENDING").toLowerCase();
+    const label = status.charAt(0).toUpperCase() + status.slice(1);
+    layout.extraTags.push(`Warranty: ${label}`);
+    layout.findingsHeading = "Cause of failure / findings";
+    layout.extra = { title: "Warranty", rows: [["Warranty status", label], ["Warranty notes", form.warrantyNotes || "—"]] };
+  }
+  if (job.type === "PEX_SUPPLY" && pexSupply) {
+    if (labels.pexStatus) layout.extraTags.push(`PEX: ${labels.pexStatus}`);
+    layout.extra = { title: "PEX", rows: [["Return job", jobRefText(pexSupply.returnJob) || "Not linked yet"], ["Supply date", dateText(str(pexSupply.supplyDate) || null)]] };
+  }
+  if (job.type === "PEX_RETURN" && pexReturn) {
+    if (labels.pexStatus) layout.extraTags.push(`PEX: ${labels.pexStatus}`);
+    layout.extra = { title: "PEX", rows: [["Supply job", jobRefText(pexReturn.supplyJob) || "—"], ["Core received", "[   ]   Date: ________"]] };
+  }
+  // A job sent straight to PEX Inventory (no supply/return chain) carries a plain "Pex" tag.
+  if (job.type !== "PEX_RETURN" && pexReturn && !pexReturn.supplyJob && str(pexReturn.status) !== "SCRAPPED") layout.extraTags.push("Pex");
+  return layout;
+}
+
 function buildJobCardSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; labels: JobDocLabels }): DocSpec {
-  const { title, jobLabel, form, labels } = input;
+  const { title, jobLabel, job, form, labels } = input;
+  const layout = jobCardLayout(job, form, labels);
+  const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
+  const blocks: DocBlock[] = [
+    { type: "table", headers: ["Date in", "Previous job", "Customer ref / PO"], rows: [[dateText(form.dateReceived), form.previousJobNumber || "—", customerRef || "—"]] },
+    { type: "heading", text: "Machine / component" },
+    {
+      type: "twoCol",
+      left: [{ type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]] }],
+      right: [{ type: "kv", rows: [["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]] }],
+    },
+  ];
+  if (layout.extra) blocks.push({ type: "heading", text: layout.extra.title }, { type: "kv", rows: layout.extra.rows });
+  blocks.push(
+    { type: "heading", text: layout.descriptionHeading },
+    { type: "paragraph", text: form.description || "—" },
+    { type: "heading", text: "Notes" },
+    { type: "paragraph", text: form.notes || "—" },
+  );
+  if (layout.findingsHeading) blocks.push({ type: "heading", text: `${layout.findingsHeading} (${layout.findingsHint.toLowerCase()})` }, { type: "lined", count: 12 });
+  blocks.push({ type: "signatures", labels: ["Mechanic", "Date"], fields: [""] });
   return {
-    title: `${title} — for workshop use`,
-    rightLines: [`Job ${jobLabel}`],
-    blocks: [
-      { type: "heading", text: "Date in" },
-      { type: "kv", rows: [["Date in", dateText(form.dateReceived)]] },
-      { type: "heading", text: "Machine / component details" },
-      { type: "kv", rows: machineRows(form) },
-      { type: "heading", text: "Job details" },
-      { type: "kv", rows: [["Job type", labels.jobType]] },
-      { type: "heading", text: "Job description" },
-      { type: "paragraph", text: form.description || "—" },
-    ],
+    title: `${title} — mechanic instructions`,
+    rightLines: [`Job ${jobLabel}`, [layout.typeTag, ...layout.extraTags].join(" · ")],
+    blocks,
   };
 }
 
