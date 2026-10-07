@@ -33,6 +33,15 @@ function requirePexTrackingRead(ctx: RequestContext) {
   return ctx.companyId!;
 }
 
+function requirePexHistoryRead(ctx: RequestContext) {
+  for (const attempt of [requirePexStockRead, requirePexTrackingRead, (c: RequestContext) => { requireModule(c, "JOBS_WIP", "READ"); requireTenantPermission(c, "JOBS_VIEW"); return c.companyId!; }]) {
+    try { return attempt(ctx); } catch { /* try the next view that can reach this */ }
+  }
+  // None of them passed: re-run the original gate so the caller gets its normal error.
+  return requirePexStockRead(ctx);
+}
+
+
 // Every mutating PEX action lives conceptually "under" the job page's PEX
 // section, regardless of which of the two list pages (PEX Stock/PEX
 // Tracking) happens to surface the resulting record — so, unlike the old
@@ -77,6 +86,19 @@ async function addActivity(tx: Tx, ctx: RequestContext, jobId: string, type: Job
 // syncPexConsumption/the PEX block inside updateJobStatus.
 // ---------------------------------------------------------------------------
 
+// 2026-10-07 — user report (job BRE1135): "status is moved to delivered
+// awaiting payment but pex status still shows to be delivered". A PEX Supply
+// unit counts as delivered once its Delivery date is filled in OR the job's
+// own status says it has gone out (Delivered awaiting payment, Complete,
+// Closed) — previously only the date counted, so moving the status stepper
+// past delivery without also filling the date left the record on "To be
+// delivered". Every place that picks between TO_BE_DELIVERED and AWAIT_CORE
+// goes through this one rule.
+const DELIVERED_JOB_STATUSES: JobStatus[] = ["DELIVERED_AWAITING_PAYMENT", "COMPLETE", "CLOSED"];
+export function pexSupplyDeliveredStatus(job: { deliveryDate: Date | null; status?: JobStatus | string | null }): PexStatus {
+  return job.deliveryDate || (job.status && DELIVERED_JOB_STATUSES.includes(job.status as JobStatus)) ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+}
+
 // Mirrors ModApp's inline "if (jobType === PEX_SUPPLY) { create a PexRecord
 // if one doesn't already exist }" — done at job creation and, separately,
 // whenever a save changes an existing job's type to PEX_SUPPLY. Makes the
@@ -86,7 +108,7 @@ export async function createPexRecordForSupplyJob(
   tx: Tx,
   ctx: RequestContext,
   companyId: string,
-  job: { id: string; type: JobType; customerId: string; component: string | null; componentType: string | null; deliveryDate: Date | null },
+  job: { id: string; type: JobType; customerId: string; component: string | null; componentType: string | null; deliveryDate: Date | null; status?: JobStatus | string | null },
 ) {
   if (job.type !== "PEX_SUPPLY") return;
   const existing = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
@@ -102,7 +124,7 @@ export async function createPexRecordForSupplyJob(
       // date on file — see syncPexAwaitCoreFromDeliveryDate below for the
       // normal, far more common path (deliveryDate set on an already-PEX
       // job later).
-      status: job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED",
+      status: pexSupplyDeliveredStatus(job),
       createdById: ctx.userId,
       updatedById: ctx.userId,
     },
@@ -128,12 +150,12 @@ export async function syncPexAwaitCoreFromDeliveryDate(
   tx: Tx,
   ctx: RequestContext,
   companyId: string,
-  job: { id: string; type: JobType; deliveryDate: Date | null },
+  job: { id: string; type: JobType; deliveryDate: Date | null; status?: JobStatus | string | null },
 ) {
   if (job.type !== "PEX_SUPPLY") return;
   const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
   if (!pexAsSupply || pexAsSupply.returnJobId || pexAsSupply.status === "SCRAPPED") return;
-  const desired: PexStatus = job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+  const desired: PexStatus = pexSupplyDeliveredStatus(job);
   if (pexAsSupply.status !== desired) {
     await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
   }
@@ -380,7 +402,7 @@ export async function syncPexStatusFromJobStatus(
       // yet". See syncPexAwaitCoreFromDeliveryDate's own comment for the
       // full reasoning — same rule, applied here too since a status change
       // is a save just like any other.
-      const desired: PexStatus = job.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+      const desired: PexStatus = pexSupplyDeliveredStatus({ deliveryDate: job.deliveryDate, status: nextStatus });
       if (pexAsSupply.status !== desired) {
         await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
       }
@@ -452,7 +474,7 @@ export async function unlinkPexReturnJob(ctx: RequestContext, supplyJobId: strin
     const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
     if (!pexAsSupply?.returnJobId) throw new StockError("PEX_NOT_LINKED", "This job isn't linked to a return job.");
     const returnJob = await tx.job.findFirst({ where: { id: pexAsSupply.returnJobId, companyId } });
-    const resetStatus: PexStatus = supplyJob.deliveryDate ? "AWAIT_CORE" : "TO_BE_DELIVERED";
+    const resetStatus: PexStatus = pexSupplyDeliveredStatus(supplyJob);
     await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { returnJobId: null, status: resetStatus, updatedById: ctx.userId } });
     if (returnJob && returnJob.previousJobNumber === supplyJob.jobNumber) {
       await tx.job.update({ where: { id: returnJob.id }, data: { previousJobNumber: null, updatedById: ctx.userId } });
@@ -770,9 +792,16 @@ async function getPreviousPexCycle(companyId: string, previousJobNumber: string 
 // since it's the less-restrictive of the two view gates a company could
 // have configured and both pages' users need to be able to open it.
 export async function getPexRecordHistory(ctx: RequestContext, id: string) {
-  const companyId = requirePexStockRead(ctx);
+  // 2026-10-07 — user report: "View history also not working". The job page's
+  // View history button called this with a PEX Stock-only gate, so anyone who
+  // could open the job (and see its PEX panel) but didn't also hold the PEX
+  // Stock view permission/module got a 403 and an error banner instead of the
+  // list. It is read-only data about jobs they can already see, so any of the
+  // three views that can reach it now opens it: PEX Stock, PEX Tracking, or
+  // Jobs.
+  const companyId = requirePexHistoryRead(ctx);
   const pex = await prisma.pexRecord.findFirst({ where: { id, companyId }, include: { supplyJob: true, returnJob: true, consumedByJob: true } });
-  if (!pex) notFound();
+  if (!pex) throw new StockError("PEX_NOT_FOUND", "This PEX record could not be found.");
 
   const jobIds = [pex.supplyJobId, pex.returnJobId].filter((jobId): jobId is string => !!jobId);
   const activity = jobIds.length
@@ -792,26 +821,39 @@ export async function getPexRecordHistory(ctx: RequestContext, id: string) {
   // JOBS in this unit's chain (job number, supply/return, date delivered,
   // status, PO number), newest first — each earlier cycle contributes its
   // return job and its supply job. Built in the same walk as previousCycles.
-  const previousJobs: Array<{ jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null }> = [];
+  const previousJobs: Array<{ jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN" | "JOB"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null }> = [];
   let cursorPreviousJobNumber = pex.supplyJob?.previousJobNumber ?? null;
-  for (let i = 0; i < 50; i++) {
+  const seenJobNumbers = new Set<string>();
+  for (let i = 0; i < 50 && cursorPreviousJobNumber && !seenJobNumbers.has(cursorPreviousJobNumber); i++) {
+    seenJobNumbers.add(cursorPreviousJobNumber);
     const prior = await getPreviousPexCycle(companyId, cursorPreviousJobNumber);
-    if (!prior) break;
-    if (prior.returnJob) {
-      previousJobs.push({ jobId: prior.returnJob.id, jobNumber: prior.returnJob.jobNumber ?? prior.returnJob.draftNumber ?? null, kind: "RETURN", deliveredAt: (prior.returnJob.deliveryDate ?? prior.returnDate)?.toISOString() ?? null, status: prior.returnJob.status, purchaseOrderNumber: prior.returnJob.purchaseOrderNumber ?? null });
+    if (prior) {
+      if (prior.returnJob) {
+        previousJobs.push({ jobId: prior.returnJob.id, jobNumber: prior.returnJob.jobNumber ?? prior.returnJob.draftNumber ?? null, kind: "RETURN", deliveredAt: (prior.returnJob.deliveryDate ?? prior.returnDate)?.toISOString() ?? null, status: prior.returnJob.status, purchaseOrderNumber: prior.returnJob.purchaseOrderNumber ?? null });
+      }
+      if (prior.supplyJob) {
+        previousJobs.push({ jobId: prior.supplyJob.id, jobNumber: prior.supplyJob.jobNumber ?? prior.supplyJob.draftNumber ?? null, kind: "SUPPLY", deliveredAt: (prior.supplyJob.deliveryDate ?? prior.supplyDate)?.toISOString() ?? null, status: prior.supplyJob.status, purchaseOrderNumber: prior.supplyJob.purchaseOrderNumber ?? null });
+      }
+      previousCycles.push({
+        supplyJobNumber: prior.supplyJob?.jobNumber ?? null,
+        supplyJobId: prior.supplyJobId,
+        supplyDate: prior.supplyDate ? prior.supplyDate.toISOString() : null,
+        returnJobNumber: prior.returnJob?.jobNumber ?? null,
+        returnJobId: prior.returnJobId,
+        returnDate: prior.returnDate ? prior.returnDate.toISOString() : null,
+      });
+      cursorPreviousJobNumber = prior.supplyJob?.previousJobNumber ?? null;
+      continue;
     }
-    if (prior.supplyJob) {
-      previousJobs.push({ jobId: prior.supplyJob.id, jobNumber: prior.supplyJob.jobNumber ?? prior.supplyJob.draftNumber ?? null, kind: "SUPPLY", deliveredAt: (prior.supplyJob.deliveryDate ?? prior.supplyDate)?.toISOString() ?? null, status: prior.supplyJob.status, purchaseOrderNumber: prior.supplyJob.purchaseOrderNumber ?? null });
-    }
-    previousCycles.push({
-      supplyJobNumber: prior.supplyJob?.jobNumber ?? null,
-      supplyJobId: prior.supplyJobId,
-      supplyDate: prior.supplyDate ? prior.supplyDate.toISOString() : null,
-      returnJobNumber: prior.returnJob?.jobNumber ?? null,
-      returnJobId: prior.returnJobId,
-      returnDate: prior.returnDate ? prior.returnDate.toISOString() : null,
-    });
-    cursorPreviousJobNumber = prior.supplyJob?.previousJobNumber ?? null;
+    // 2026-10-07 — the earlier job exists but isn't one half of a linked PEX
+    // record (a return job that was never linked, a plain repair, a job from
+    // before PEX tracking): previously the walk stopped here and the list
+    // looked empty/broken. Show that job as a row and keep following ITS
+    // "Previous job number".
+    const earlier = await prisma.job.findFirst({ where: { companyId, jobNumber: cursorPreviousJobNumber } });
+    if (!earlier) break;
+    previousJobs.push({ jobId: earlier.id, jobNumber: earlier.jobNumber ?? earlier.draftNumber ?? null, kind: earlier.type === "PEX_RETURN" ? "RETURN" : earlier.type === "PEX_SUPPLY" ? "SUPPLY" : "JOB", deliveredAt: earlier.deliveryDate?.toISOString() ?? null, status: earlier.status, purchaseOrderNumber: earlier.purchaseOrderNumber ?? null });
+    cursorPreviousJobNumber = earlier.previousJobNumber ?? null;
   }
 
   return {

@@ -10,7 +10,7 @@ import { StatusPill } from "@/components/StatusPill";
 export type PexPreviousJob = {
   jobId: string;
   jobNumber: string | null;
-  kind: "SUPPLY" | "RETURN";
+  kind: "SUPPLY" | "RETURN" | "JOB";
   deliveredAt: string | null;
   status: string;
   purchaseOrderNumber: string | null;
@@ -24,7 +24,7 @@ export function PexPreviousJobsTable({ jobs }: { jobs: PexPreviousJob[] }) {
       <tbody>
         {jobs.map((job) => <tr key={`${job.kind}-${job.jobId}`}>
           <td className="mono"><Link href={`/jobs/${job.jobId}`} className="table-action">{job.jobNumber || "—"}</Link></td>
-          <td>{job.kind === "RETURN" ? "Return" : "Supply"}</td>
+          <td>{job.kind === "RETURN" ? "Return" : job.kind === "SUPPLY" ? "Supply" : "Job"}</td>
           <td>{job.deliveredAt ? new Date(job.deliveredAt).toLocaleDateString("en-ZA") : "—"}</td>
           <td><StatusPill status={job.status as never} /></td>
           <td>{job.purchaseOrderNumber || "—"}</td>

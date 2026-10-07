@@ -115,7 +115,7 @@ type PexRecordSummary = Row & {
 };
 // getPexRecordHistory's actual (flat) return shape — see pex/service.ts.
 type PexHistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
-type PexHistoryJob = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null };
+type PexHistoryJob = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN" | "JOB"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null };
 type PexHistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
 type PexHistoryResponse = {
   id: string;
