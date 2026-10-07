@@ -14,7 +14,7 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
-import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
+import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -2639,173 +2639,180 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // them, and uses the same window.onload-triggers-print pattern as those
   // two (see companyLogoImgSrc's comment) since it now has an image that
   // needs to finish loading before the print dialog opens.
+  //
+  // 2026-10-07 — user request: "Build this version for now" (Job History
+  // mockup). Same look as the new job card: logo + org details left, large
+  // job number with job-type / status / extra tags right, a four-cell strip,
+  // Customer beside Machine / component, description, notes, Workshop beside
+  // Commercial & logistics (quote, sales order, invoice, PO and delivery put
+  // number + date on one row), then the Warranty / PEX / Field service
+  // block when it applies. Parts list and Outwork start page 2 as banded
+  // tables with status tags. Same fields as before; no activity history.
+  // Tags, headings and extra blocks come from jobHistoryLayout() so the
+  // saved PDF copy matches.
   async function printJobHistory(): Promise<boolean> {
     if (!job) return false;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the job record."); return false; }
+    const layout = jobHistoryLayout(job as unknown as JobDocJob, form, jobDocLabels());
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
-    const jobLabel = job.jobNumber || job.draftNumber || "";
+    const jobLabel = String(job.jobNumber || job.draftNumber || "—");
     const logoSrc = companyLogoImgSrc();
     const orgDetails = await fetchCompanyOrgDetails();
-    const orgDetailsHtml = orgDetails ? `<div class="org-details">
-        <p class="org-name">${escapeHtml(orgDetails.name)}</p>
-        ${orgDetails.addressLines.map((l) => `<p>${escapeHtml(l)}</p>`).join("")}
-        ${orgDetails.registrationNumber ? `<p>Reg: ${escapeHtml(orgDetails.registrationNumber)}</p>` : ""}
-        ${orgDetails.vatNumber ? `<p>VAT: ${escapeHtml(orgDetails.vatNumber)}</p>` : ""}
-        ${orgDetails.contact ? `<p>${escapeHtml(orgDetails.contact)}</p>` : ""}
-        ${orgDetails.email ? `<p>${escapeHtml(orgDetails.email)}</p>` : ""}
-      </div>` : "";
-    const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
+    const orgLines = orgDetails ? [
+      ...orgDetails.addressLines,
+      [orgDetails.registrationNumber ? `Reg ${orgDetails.registrationNumber}` : "", orgDetails.vatNumber ? `VAT ${orgDetails.vatNumber}` : ""].filter(Boolean).join(" · "),
+      [orgDetails.contact, orgDetails.email].filter(Boolean).join(" · "),
+    ].filter(Boolean) : [];
+    const kv = (pairs: Array<[string, string]>, mono: string[] = []) => pairs.map(([label, value]) => `<div class="kv"><span>${escapeHtml(label)}</span><em${mono.includes(label) ? ' class="mono"' : ""}>${escapeHtml(value || "—")}</em></div>`).join("");
+    const section = (title: string, inner: string, hint = "") => `<div class="block"><div class="sec"><b>${escapeHtml(title)}</b><i></i>${hint ? `<span class="hint">${escapeHtml(hint)}</span>` : ""}</div>${inner}</div>`;
     const address = (job.customer?.addresses || [])[0] as Record<string, unknown> | undefined;
     const addressLine = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter(Boolean).map(String).join(", ") : "";
     const contact = (job.customer?.contacts || [])[0] as Record<string, unknown> | undefined;
     const contactLine = contact ? [[contact.firstName, contact.lastName].filter(Boolean).join(" "), contact.telephone || contact.mobile, contact.email].filter(Boolean).map(String).join(" · ") : "";
+    const printed = new Date().toLocaleDateString("en-ZA");
+    const tag = (text: string, i: number) => `<span class="${i === 0 ? "tag" : "tag2"}">${escapeHtml(text)}</span>`;
     const partsRows = job.partLines.map((line) => `<tr>
-        <td>${escapeHtml(String(line.partNumber || ""))}</td>
+        <td class="mono">${escapeHtml(String(line.partNumber || ""))}</td>
         <td>${escapeHtml(String(line.description || ""))}</td>
-        <td class="qty">${escapeHtml(decimalText(line.quantity))}</td>
-        <td class="qty">${escapeHtml(decimalText(line.receivedQuantity ?? 0))}</td>
-        <td>${escapeHtml(String(line.orderNumber || "—"))}</td>
+        <td class="c">${escapeHtml(decimalText(line.quantity))}</td>
+        <td class="c">${escapeHtml(decimalText(line.receivedQuantity ?? 0))}</td>
+        <td class="mono">${escapeHtml(String(line.orderNumber || "—"))}</td>
         <td>${escapeHtml(String(line.orderedFromSupplier?.name || "—"))}</td>
-        <td>${escapeHtml(String(line.status || "").replaceAll("_", " "))}</td>
+        <td><span class="st">${escapeHtml(String(line.status || "").replaceAll("_", " "))}</span></td>
       </tr>`).join("");
     const outworkRows = job.outworkItems.map((item) => `<tr>
         <td>${escapeHtml(String(item.description || ""))}</td>
-        <td class="qty">${escapeHtml(String(item.quantity ?? ""))}</td>
+        <td class="c">${escapeHtml(String(item.quantity ?? ""))}</td>
         <td>${escapeHtml(String(item.supplier?.name || "—"))}</td>
         <td>${fmt(String(item.dateSentOut || ""))}</td>
         <td>${fmt(String(item.dateReceived || ""))}</td>
-        <td>${escapeHtml(String(item.status || "").replaceAll("_", " "))}</td>
+        <td><span class="st">${escapeHtml(String(item.status || "").replaceAll("_", " "))}</span></td>
       </tr>`).join("");
+    const extrasHtml = layout.extras.map((extra) => section(extra.title, `<div class="cols"><div class="col">${kv(extra.rows)}</div></div>`)).join("");
     win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_HISTORY}`)}</title><meta charset="utf-8" /><style>
-      /* 2026-09-29 — user request: "fit all sections on one page, dont let
-         overflow; move logo above job record heading." Padding, table cell
-         padding, heading margins and font sizes are all tightened from the
-         original (which matched printJobCard/printJobDeliveryNote's own
-         sizing) specifically for this view — it has more sections on one
-         sheet than any other print in this file (Customer + Machine,
-         Job details + Commercial, plus the conditional Notes/Field
-         service/Warranty blocks, all before Parts list's own page break —
-         see .page-break below, unchanged from the earlier request). h2
-         keeps page-break-after:avoid and .two-col/table keep
-         page-break-inside:avoid so a heading or a table doesn't get split
-         right at a page boundary if the content does still run long. */
-      body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#111;font-size:12px}
-      .note-head{display:flex;justify-content:space-between;align-items:flex-start}
-      h1{font-size:17px;margin:0 0 8px}
-      h2{font-size:12px;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.04em;color:#555;page-break-after:avoid}
-      .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
-      .logo{max-height:70px;max-width:220px;object-fit:contain;margin-bottom:8px;display:block}
-      .org-details{text-align:left;margin-bottom:4px}
-      .org-details .org-name{font-weight:bold;font-size:12px;color:#111;margin:0 0 2px}
-      .org-details p{font-size:10px;color:#444;margin:0}
-      .job-number{font-size:15px;font-weight:bold;text-align:right}
-      table{width:100%;border-collapse:collapse;page-break-inside:avoid}
-      th,td{border:1px solid #ccc;padding:4px 7px;text-align:left;font-size:12px}
-      th{width:32%;background:#f6f6f6;font-weight:600}
-      .description{white-space:pre-wrap}
-      table.list-table th{width:auto;background:#f9fafb;border-bottom:2px solid #7a5c14}
-      table.list-table td.qty{text-align:center;font-weight:600}
-      table.list-table{font-size:11px}
-      .two-col{display:flex;gap:18px;align-items:flex-start;page-break-inside:avoid}
-      .two-col > div{flex:1;min-width:0}
-      .page-break{page-break-before:always}
+      @page{size:A4;margin:0}
+      *{box-sizing:border-box}
+      body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .sheet{width:210mm;min-height:296mm;padding:10mm 13mm 8mm;display:flex;flex-direction:column;gap:12px}
+      .sheet.p2{page-break-before:always;gap:16px}
+      .head{display:flex;justify-content:space-between;align-items:stretch;gap:16px;padding-bottom:12px;border-bottom:3px solid #111}
+      .brand{width:250px;flex:none;display:flex;flex-direction:column;gap:6px}
+      .brand img{max-height:44px;max-width:170px;object-fit:contain;object-position:left;align-self:flex-start}
+      .org{font-size:10px;line-height:1.4;color:#444}
+      .org b{display:block;font-size:11px;color:#111}
+      .titleblock{flex:1;display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;text-align:right;gap:6px}
+      .kicker{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#444}
+      .mono{font-family:"Courier New",Consolas,monospace}
+      .jobno{font-family:"Courier New",Consolas,monospace;font-size:42px;font-weight:700;line-height:1;letter-spacing:-.02em}
+      .tags{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+      .tag{background:#111;color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 9px}
+      .tag2{border:1.4px solid #111;font-size:11px;font-weight:700;padding:2px 8px}
+      .strip{display:flex;border:1px solid #9a9a9a}
+      .strip div{flex:1;padding:5px 10px;border-right:1px solid #c8c8c8}
+      .strip div:last-child{border-right:0}
+      .lab{font-size:10px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em}
+      .val{font-size:14px;font-weight:700;margin-top:1px}
+      .sec{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+      .sec b{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
+      .sec i{flex:1;height:1px;background:#111;display:block}
+      .hint{font-size:11px;color:#555;white-space:nowrap}
+      .block{page-break-inside:avoid}
+      .cols{display:flex;gap:16px;align-items:flex-start;page-break-inside:avoid}
+      .cols > .block{flex:1;min-width:0}
+      .col{flex:1;min-width:0;border-top:1px solid #c8c8c8;border-left:1px solid #c8c8c8;border-right:1px solid #c8c8c8}
+      .kv{display:flex;border-bottom:1px solid #c8c8c8;min-height:24px;align-items:stretch}
+      .kv span{width:42%;flex:none;background:#f1f1f1;padding:3px 8px;font-size:10.5px;font-weight:600;color:#444;border-right:1px solid #c8c8c8;display:flex;align-items:center}
+      .kv em{flex:1;padding:3px 8px;font-style:normal;font-size:12px;font-weight:500;display:flex;align-items:center;white-space:pre-wrap;min-width:0;overflow-wrap:anywhere}
+      .box{border:1px solid #9a9a9a;padding:8px 12px;font-size:13px;line-height:1.5;white-space:pre-wrap}
+      .box.desc{min-height:22mm}
+      .box.notes{min-height:12mm}
+      table{width:100%;border-collapse:collapse;font-size:11.5px}
+      th{background:#111;color:#fff;text-align:left;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 7px}
+      td{padding:5px 7px;border-bottom:1px solid #d6d6d6;vertical-align:top}
+      tr{page-break-inside:avoid}
+      tr:nth-child(even) td{background:#f7f7f7}
+      td.c,th.c{text-align:center}
+      .st{border:1.2px solid #111;font-size:10px;font-weight:700;padding:1px 6px;white-space:nowrap;text-transform:capitalize}
+      .p2head{display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;border-bottom:3px solid #111}
+      .p2head .no{display:flex;align-items:center;gap:12px}
+      .p2head .no .mono{font-size:24px;font-weight:700}
+      .foot{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;border-top:1px solid #111;padding-top:8px;font-size:10.5px;color:#555}
     </style></head><body>
-      <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
-      <div class="note-head">
-        <h1>${escapeHtml(documentTitles.JOB_HISTORY)}</h1>
-        <div class="note-right">
-          ${orgDetailsHtml}
-          <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+    <div class="sheet">
+      <div class="head">
+        <div class="brand">
+          <img src="${escapeHtml(logoSrc)}" alt="" onerror="this.style.display='none'" />
+          ${orgDetails ? `<div class="org"><b>${escapeHtml(orgDetails.name)}</b>${orgLines.map((l) => escapeHtml(l)).join("<br>")}</div>` : ""}
+        </div>
+        <div class="titleblock">
+          <div class="kicker">${escapeHtml(documentTitles.JOB_HISTORY)} &middot; Full job record</div>
+          <div class="jobno">${escapeHtml(jobLabel)}</div>
+          <div class="tags">${layout.tags.map(tag).join("")}</div>
         </div>
       </div>
-      <div class="two-col">
-        <div>
-          <h2>Customer details</h2>
-          <table>${rows([
-            ["Customer", String(job.customer?.name || "")],
-            ["Trading name", String(job.customer?.tradingName || "")],
-            ["Address", addressLine],
-            ["Contact", contactLine],
-            ["Date in", fmt(form.dateReceived)],
-            ["Customer reference", form.customerReference],
-            ["Sales representative", String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—")],
-            ["Report number", form.reportNumber],
-          ])}</table>
-        </div>
-        <div>
-          <h2>Machine / component details</h2>
-          <table>${rows([
-            ["Machine make", form.machineMake],
-            ["Machine model", form.machineModel],
-            ["Machine serial", form.machineSerial],
-            ["Component", form.component],
-            ["Component serial", form.componentSerial],
-            ["Part number", form.componentPartNumber],
-            ["Plant number", form.plantNumber],
-            ["Machine hours", form.machineHours],
-          ])}</table>
-        </div>
+      <div class="strip">
+        <div><div class="lab">Date in</div><div class="val">${escapeHtml(fmt(form.dateReceived))}</div></div>
+        <div><div class="lab">Previous job</div><div class="val mono">${escapeHtml(form.previousJobNumber || "—")}</div></div>
+        <div><div class="lab">Customer ref</div><div class="val mono">${escapeHtml(form.customerReference || "—")}</div></div>
+        <div><div class="lab">Report number</div><div class="val mono">${escapeHtml(form.reportNumber || "—")}</div></div>
       </div>
-      ${form.notes ? `<h2>Notes</h2><table><tr><td class="description">${escapeHtml(form.notes)}</td></tr></table>` : ""}
-      <div class="two-col">
-        <div>
-          <h2>Job details</h2>
-          <table>
-            ${rows([
-              ["Job type", JOB_TYPE_LABELS[job.type]],
-              ["Status", JOB_STATUS_LABELS[job.status]],
-              ["ETA date", fmt(form.etaDate)],
-              ["Mechanic ETA date", fmt(form.mechanicEtaDate)],
-              ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
-              ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
-              ["Import tracking number", form.importTrackingNumber],
-              ["Previous job number", form.previousJobNumber],
-            ])}
-            <tr><th>Job description</th><td class="description">${escapeHtml(form.description || "—")}</td></tr>
-          </table>
-        </div>
-        <div>
-          <h2>Commercial &amp; logistics</h2>
-          <table>${rows([
-            ["Quote number", form.quoteNumber],
-            ["Quote date", fmt(form.quoteDate)],
-            ["Sales order number", form.salesOrderNumber],
-            ["Sales order date", fmt(form.salesOrderDate)],
-            ["Invoice number", form.invoiceNumber],
-            ["Invoice date", fmt(form.invoiceDate)],
-            ["Payment date received", form.paymentNotApplicable === "true" ? "N/A" : fmt(form.paymentDateReceived)],
-            ["Purchase order number", form.purchaseOrderNumber],
-            ["Purchase order date", fmt(form.purchaseOrderDate)],
-            ["Purchase order status", form.purchaseOrderStatus.replaceAll("_", " ")],
-            ["Receiving transport", form.receivingTransport.replaceAll("_", " ")],
-            ["Delivery type", form.deliveryType.replaceAll("_", " ")],
-            ["Delivery date", fmt(form.deliveryDate)],
-          ])}</table>
-        </div>
+      <div class="cols">
+        ${section("Customer", `<div class="col">${kv([
+          ["Customer", String(job.customer?.name || "")],
+          ["Trading name", String(job.customer?.tradingName || "")],
+          ["Address", addressLine],
+          ["Contact", contactLine],
+          ["Sales rep", String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—")],
+        ])}</div>`)}
+        ${section("Machine / component", `<div class="col">${kv([
+          ["Machine make", form.machineMake],
+          ["Machine model", form.machineModel],
+          ["Machine serial", form.machineSerial],
+          ["Plant number", form.plantNumber],
+          ["Machine hours", form.machineHours],
+          ["Component", form.component],
+          ["Component serial", form.componentSerial],
+          ["Part number", form.componentPartNumber],
+        ], ["Machine serial", "Component serial", "Part number"])}</div>`)}
       </div>
-      ${job.type === "FIELD_SERVICE" ? `<h2>Field service</h2><table>${rows([
-        ["Site", form.fieldSite],
-        ["Technician", form.fieldTechnician],
-        ["Vehicle", form.fieldVehicle],
-        ["Hours", form.fieldHours],
-        ["Kms travelled", form.kmsTravelled],
-      ])}<tr><th>Report</th><td class="description">${escapeHtml(form.fieldReport || "—")}</td></tr></table>` : ""}
-      ${job.type === "WARRANTY" ? `<h2>Warranty</h2><table>${rows([
-        ["Warranty status", form.warrantyStatus],
-        ["Historical source status", form.warrantyHistorical],
-      ])}<tr><th>Warranty notes</th><td class="description">${escapeHtml(form.warrantyNotes || "—")}</td></tr></table>` : ""}
-      <div class="page-break">
-        <h2>Parts list</h2>
-        ${job.partLines.length > 0
-          ? `<table class="list-table"><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${partsRows}</tbody></table>`
-          : `<p>No parts on this job.</p>`}
+      ${section(layout.descriptionHeading, `<div class="box desc">${escapeHtml(form.description || "—")}</div>`)}
+      ${form.notes ? section("Notes", `<div class="box notes">${escapeHtml(form.notes)}</div>`) : ""}
+      <div class="cols">
+        ${section("Workshop", `<div class="col">${kv([
+          ["ETA date", fmt(form.etaDate)],
+          ["Mechanic ETA", fmt(form.mechanicEtaDate)],
+          ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
+          ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
+          ["Import tracking", form.importTrackingNumber],
+        ])}</div>`)}
+        ${section("Commercial & logistics", `<div class="col">${kv([
+          ["Quote", numberAndDate(form.quoteNumber, form.quoteDate)],
+          ["Sales order", numberAndDate(form.salesOrderNumber, form.salesOrderDate)],
+          ["Invoice", numberAndDate(form.invoiceNumber, form.invoiceDate)],
+          ["Payment received", form.paymentNotApplicable === "true" ? "N/A" : form.paymentDateReceived ? fmt(form.paymentDateReceived) : ""],
+          ["Purchase order", numberAndDate(form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus.replaceAll("_", " "))],
+          ["Receiving transport", form.receivingTransport.replaceAll("_", " ")],
+          ["Delivery", numberAndDate(form.deliveryType.replaceAll("_", " "), form.deliveryDate)],
+        ])}</div>`)}
       </div>
-      <h2>Outwork</h2>
-      ${job.outworkItems.length > 0
-        ? `<table class="list-table"><thead><tr><th>Description</th><th>Qty</th><th>Supplier</th><th>Date sent out</th><th>Date received</th><th>Status</th></tr></thead><tbody>${outworkRows}</tbody></table>`
-        : `<p>No outwork on this job.</p>`}
-      <script>window.onload = function () { window.print(); };</script>
+      ${extrasHtml}
+      <div class="foot"><div class="mono">${escapeHtml(jobLabel)} &middot; Printed ${escapeHtml(printed)}</div><div>Page 1</div></div>
+    </div>
+    <div class="sheet p2">
+      <div class="p2head">
+        <div class="no"><span class="mono">${escapeHtml(jobLabel)}</span><span class="tag">${escapeHtml(layout.tags[0] || "")}</span></div>
+        <div class="kicker">${escapeHtml(documentTitles.JOB_HISTORY)} &middot; Parts &amp; outwork</div>
+      </div>
+      ${section("Parts list", job.partLines.length > 0
+        ? `<table><thead><tr><th style="width:15%">Part number</th><th>Description</th><th class="c" style="width:6%">Qty</th><th class="c" style="width:9%">Received</th><th style="width:12%">Order no.</th><th style="width:15%">Supplier</th><th style="width:12%">Status</th></tr></thead><tbody>${partsRows}</tbody></table>`
+        : `<p>No parts on this job.</p>`, `${job.partLines.length} ${job.partLines.length === 1 ? "line" : "lines"}`)}
+      ${section("Outwork", job.outworkItems.length > 0
+        ? `<table><thead><tr><th>Description</th><th class="c" style="width:6%">Qty</th><th style="width:18%">Supplier</th><th style="width:13%">Sent out</th><th style="width:13%">Received</th><th style="width:12%">Status</th></tr></thead><tbody>${outworkRows}</tbody></table>`
+        : `<p>No outwork on this job.</p>`, `${job.outworkItems.length} ${job.outworkItems.length === 1 ? "item" : "items"}`)}
+      <div class="foot"><div class="mono">${escapeHtml(jobLabel)} &middot; Printed ${escapeHtml(printed)}</div><div>Page 2</div></div>
+    </div>
+    <script>window.onload = function () { window.print(); };</script>
     </body></html>`);
     win.document.close();
     win.focus();

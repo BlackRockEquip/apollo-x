@@ -177,81 +177,83 @@ function buildJobCardSpecRaw(input: { title: string; jobLabel: string; job: JobD
   };
 }
 
+// 2026-10-07, user request: Job History gets the same look as the new job
+// card (mockup approved in chat). Page 1 is the full office record; parts and
+// outwork follow on page 2. Same fields as before, no activity history.
+// Tags, per-type headings and the Warranty / PEX / Field service blocks are
+// shared with the printed window (JobWorkspace.tsx printJobHistory) so the
+// print and the saved PDF always agree.
+export type JobHistoryLayout = {
+  tags: string[];
+  descriptionHeading: string;
+  extras: Array<{ title: string; rows: [string, string][] }>;
+};
+
+export function jobHistoryLayout(job: JobDocJob, form: JobDocForm, labels: JobDocLabels): JobHistoryLayout {
+  const card = jobCardLayout(job, form, labels);
+  const extras: JobHistoryLayout["extras"] = [];
+  if (job.type === "FIELD_SERVICE") {
+    extras.push({ title: "Field service", rows: [["Site", form.fieldSite], ["Technician", form.fieldTechnician], ["Vehicle", form.fieldVehicle], ["Hours", form.fieldHours], ["Kms travelled", form.kmsTravelled], ["Report", form.fieldReport]] });
+  }
+  if (job.type === "WARRANTY") {
+    extras.push({ title: "Warranty", rows: [["Warranty status", words(form.warrantyStatus)], ["Historical source status", words(form.warrantyHistorical)], ["Warranty notes", form.warrantyNotes]] });
+  }
+  // The job card's PEX block carries a write-in "Core received" line; the record only needs the linked job.
+  if (card.extra && card.extra.title === "PEX") extras.push({ title: "PEX", rows: card.extra.rows.filter(([label]) => label !== "Core received") });
+  return {
+    tags: [card.typeTag, labels.status ? `Status: ${labels.status}` : "", ...card.extraTags].filter(Boolean),
+    descriptionHeading: card.descriptionHeading,
+    extras,
+  };
+}
+
+/** "QT-20418 · 02/10/2026": number and date on one row, blank when neither is set. */
+export const numberAndDate = (number: string | undefined, date: string | undefined, extra = "") =>
+  [number || "", date ? dateText(date) : "", extra].filter(Boolean).join(" · ");
+
 function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; labels: JobDocLabels }): DocSpec {
   const { title, jobLabel, job, form, labels } = input;
-  const left: DocBlock[] = [
-    { type: "heading", text: "Customer details" },
+  const layout = jobHistoryLayout(job, form, labels);
+  const blocks: DocBlock[] = [
+    { type: "table", headers: ["Date in", "Previous job", "Customer ref", "Report number"], rows: [[dateText(form.dateReceived), form.previousJobNumber || "—", form.customerReference || "—", form.reportNumber || "—"]] },
     {
-      type: "kv",
-      rows: [
-        ["Customer", str(job.customer?.name)],
-        ["Trading name", str(job.customer?.tradingName)],
-        ["Address", customerAddressLine(job)],
-        ["Contact", customerContactLine(job)],
-        ["Date in", dateText(form.dateReceived)],
-        ["Customer reference", form.customerReference],
-        ["Sales representative", labels.salesRepresentative],
-        ["Report number", form.reportNumber],
+      type: "twoCol",
+      left: [
+        { type: "heading", text: "Customer" },
+        { type: "kv", rows: [["Customer", str(job.customer?.name)], ["Trading name", str(job.customer?.tradingName)], ["Address", customerAddressLine(job)], ["Contact", customerContactLine(job)], ["Sales rep", labels.salesRepresentative]] },
+      ],
+      right: [
+        { type: "heading", text: "Machine / component" },
+        { type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber], ["Machine hours", form.machineHours], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber]] },
       ],
     },
-  ];
-  const blocks: DocBlock[] = [
-    { type: "twoCol", left, right: [{ type: "heading", text: "Machine / component details" }, { type: "kv", rows: machineRows(form) }] },
+    { type: "heading", text: layout.descriptionHeading },
+    { type: "paragraph", text: form.description || "—" },
   ];
   if (form.notes) blocks.push({ type: "heading", text: "Notes" }, { type: "paragraph", text: form.notes });
   blocks.push({
     type: "twoCol",
     left: [
-      { type: "heading", text: "Job details" },
-      {
-        type: "kv",
-        rows: [
-          ["Job type", labels.jobType],
-          ["Status", labels.status],
-          ["ETA date", dateText(form.etaDate)],
-          ["Mechanic ETA date", dateText(form.mechanicEtaDate)],
-          ["Mechanic strip", labels.stripMechanic],
-          ["Mechanic assemble", labels.buildMechanic],
-          ["Import tracking number", form.importTrackingNumber],
-          ["Previous job number", form.previousJobNumber],
-          ["Job description", form.description],
-        ],
-      },
+      { type: "heading", text: "Workshop" },
+      { type: "kv", rows: [["ETA date", dateText(form.etaDate)], ["Mechanic ETA", dateText(form.mechanicEtaDate)], ["Mechanic strip", labels.stripMechanic], ["Mechanic assemble", labels.buildMechanic], ["Import tracking", form.importTrackingNumber]] },
     ],
     right: [
       { type: "heading", text: "Commercial & logistics" },
       {
         type: "kv",
         rows: [
-          ["Quote number", form.quoteNumber],
-          ["Quote date", dateText(form.quoteDate)],
-          ["Sales order number", form.salesOrderNumber],
-          ["Sales order date", dateText(form.salesOrderDate)],
-          ["Invoice number", form.invoiceNumber],
-          ["Invoice date", dateText(form.invoiceDate)],
-          ["Payment date received", form.paymentNotApplicable === "true" ? "N/A" : dateText(form.paymentDateReceived)],
-          ["Purchase order number", form.purchaseOrderNumber],
-          ["Purchase order date", dateText(form.purchaseOrderDate)],
-          ["Purchase order status", words(form.purchaseOrderStatus)],
+          ["Quote", numberAndDate(form.quoteNumber, form.quoteDate)],
+          ["Sales order", numberAndDate(form.salesOrderNumber, form.salesOrderDate)],
+          ["Invoice", numberAndDate(form.invoiceNumber, form.invoiceDate)],
+          ["Payment received", form.paymentNotApplicable === "true" ? "N/A" : form.paymentDateReceived ? dateText(form.paymentDateReceived) : ""],
+          ["Purchase order", numberAndDate(form.purchaseOrderNumber, form.purchaseOrderDate, words(form.purchaseOrderStatus))],
           ["Receiving transport", words(form.receivingTransport)],
-          ["Delivery type", words(form.deliveryType)],
-          ["Delivery date", dateText(form.deliveryDate)],
+          ["Delivery", numberAndDate(words(form.deliveryType), form.deliveryDate)],
         ],
       },
     ],
   });
-  if (job.type === "FIELD_SERVICE") {
-    blocks.push(
-      { type: "heading", text: "Field service" },
-      { type: "kv", rows: [["Site", form.fieldSite], ["Technician", form.fieldTechnician], ["Vehicle", form.fieldVehicle], ["Hours", form.fieldHours], ["Kms travelled", form.kmsTravelled], ["Report", form.fieldReport]] }
-    );
-  }
-  if (job.type === "WARRANTY") {
-    blocks.push(
-      { type: "heading", text: "Warranty" },
-      { type: "kv", rows: [["Warranty status", form.warrantyStatus], ["Historical source status", form.warrantyHistorical], ["Warranty notes", form.warrantyNotes]] }
-    );
-  }
+  for (const extra of layout.extras) blocks.push({ type: "heading", text: extra.title }, { type: "kv", rows: extra.rows });
   blocks.push({ type: "pageBreak" }, { type: "heading", text: "Parts list" });
   if (job.partLines.length > 0) blocks.push({ type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(job.partLines) });
   else blocks.push({ type: "paragraph", text: "No parts on this job." });
@@ -272,7 +274,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
       ]),
     });
   } else blocks.push({ type: "paragraph", text: "No outwork on this job." });
-  return { title, rightLines: [`Job ${jobLabel}`], blocks };
+  return { title: `${title} — full job record`, rightLines: [`Job ${jobLabel}`, layout.tags.join(" · ")], blocks };
 }
 
 function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; items?: Array<{ description: string; quantity: string }>; notes?: string }): DocSpec {
