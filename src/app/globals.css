@@ -1351,7 +1351,6 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .pex-chain-footer p { margin: 0; color: var(--ink-500); font-size: 10.5px; line-height: 1.45; }
 /* 2026-10-08 — PEX Return panel restyled to match the PEX Supply chain panel now
    that it sits beside Attachments (half width): Supply job -> This return job. */
-.job-pair-row > .job-pair-stack { min-width: 0; display: grid; gap: 16px; align-content: start; }
 .pex-chain.two { grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr); }
 .pex-chain-unit { color: #5c4109; font-size: 10.5px; overflow-wrap: anywhere; }
 .pex-return-note { margin: 0; padding: 0 15px 8px; color: var(--ink-500); font-size: 11px; }
