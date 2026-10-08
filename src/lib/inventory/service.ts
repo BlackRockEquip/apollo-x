@@ -1,4 +1,5 @@
 import { Prisma, type StockMovementType, type StockReferenceType } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import type { RequestContext } from "@/lib/auth/context-types";
@@ -2245,7 +2246,7 @@ async function reduceReservationTx(tx: Tx, ctx: RequestContext & { companyId: st
 async function takeOverReservationsForLineTx(
   tx: Tx,
   ctx: RequestContext & { companyId: string },
-  input: { jobNumber: string; lineId: string; partId: string; partNumber: string; need: Quantity },
+  input: { jobNumber: string; lineId: string; partId: string; partNumber: string; need: Quantity; pickSlipId: string },
 ): Promise<Quantity> {
   // 2026-10-08, user request: "when taking from reserved stock take from the
   // last listed job." The Reserved parts window lists the jobs holding the
@@ -2277,10 +2278,11 @@ async function takeOverReservationsForLineTx(
   if (short.lte(0)) return new D(0);
 
   let freed = new D(0);
-  const affected: Array<{ line: { id: string; jobId: string; partNumber: string; status: string; quantity: Quantity; orderedQuantity: Quantity | null; stockIssuedQuantity: Quantity | null; job: { jobNumber: string | null; draftNumber: string | null } }; took: Quantity }> = [];
+  const affected: Array<{ line: { id: string; jobId: string; partNumber: string; status: string; quantity: Quantity; orderedQuantity: Quantity | null; stockIssuedQuantity: Quantity | null; job: { jobNumber: string | null; draftNumber: string | null } }; took: Quantity; heldBefore: Quantity; locationId: string }> = [];
   for (const reservation of reservations) {
     if (short.lte(0)) break;
     if (reservation.referenceId === input.lineId) continue;
+    const heldBefore = (await getReservationRemaining(tx, reservation as unknown as LockedReservation)).remaining;
     const took = await reduceReservationTx(tx, ctx, reservation.id, short, `Pulled for job ${input.jobNumber} picking slip (reservation overridden)`);
     if (took.lte(0)) continue;
     freed = freed.plus(took);
@@ -2291,7 +2293,7 @@ async function takeOverReservationsForLineTx(
         select: { id: true, jobId: true, partNumber: true, status: true, quantity: true, orderedQuantity: true, stockIssuedQuantity: true, job: { select: { jobNumber: true, draftNumber: true } } },
       });
       if (otherLine) {
-        affected.push({ line: otherLine, took });
+        affected.push({ line: otherLine, took, heldBefore, locationId: reservation.locationId });
       }
     }
   }
@@ -2308,14 +2310,15 @@ async function takeOverReservationsForLineTx(
   // alone, they are not waiting on shelf stock.
   const afterBalances = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: input.partId, quantityOnHand: { gt: 0 } } });
   const unreservedNow = afterBalances.reduce((sum, b) => sum.plus(D.max(b.quantityOnHand.minus(b.quantityReserved), new D(0))), new D(0));
-  const handled = new Map<string, { jobId: string; partNumber: string; took: Quantity; status: string; toPending: boolean }>();
-  for (const { line, took } of affected) {
+  const handled = new Map<string, { jobId: string; partNumber: string; took: Quantity; status: string; toPending: boolean; heldBefore: Quantity; locationId: string; leftoverReleased: Quantity }>();
+  for (const { line, took, heldBefore, locationId } of affected) {
     const prior = handled.get(line.id);
     if (prior) {
       prior.took = prior.took.plus(took);
       continue;
     }
     let toPending = false;
+    let leftoverReleased = new D(0);
     if (line.status === "IN_STOCK") {
       const heldRows = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" } });
       let held = new D(0);
@@ -2323,13 +2326,14 @@ async function takeOverReservationsForLineTx(
       const needed = line.quantity.minus(line.orderedQuantity ?? new D(0)).minus(line.stockIssuedQuantity ?? new D(0));
       if (needed.gt(0) && held.plus(unreservedNow).lt(needed)) {
         toPending = true;
+        leftoverReleased = held;
         await tx.jobPartLine.update({ where: { id: line.id }, data: { status: "PENDING" as never } });
         // A Pending line holds nothing (same as everywhere else), so what it
         // still held goes back to free stock.
         await reconcileJobPartLineReservationTx(tx, ctx, { jobNumber: line.job.jobNumber ?? line.job.draftNumber ?? "", lineId: line.id, partId: input.partId, targetQuantity: new D(0) });
       }
     }
-    handled.set(line.id, { jobId: line.jobId, partNumber: line.partNumber, took, status: line.status, toPending });
+    handled.set(line.id, { jobId: line.jobId, partNumber: line.partNumber, took, status: line.status, toPending, heldBefore, locationId, leftoverReleased });
   }
   for (const [lineId, info] of handled) {
     await tx.jobActivity.create({
@@ -2339,11 +2343,122 @@ async function takeOverReservationsForLineTx(
         actorId: ctx.userId,
         type: "RESERVATION_RELEASED",
         description: `${info.took.toString()} x ${info.partNumber} reserved for this job were pulled for job ${input.jobNumber}'s picking slip.${info.toPending ? " The line was set to Pending." : ""}`,
-        metadata: { lineId, partNumber: info.partNumber, quantity: info.took.toString(), takenByJob: input.jobNumber, statusChangedTo: info.toPending ? "PENDING" : null } as Prisma.InputJsonValue,
+        // Everything needed to put it back if that picking slip is deleted
+        // (see revertPickSlipOverridesTx).
+        metadata: {
+          kind: "PICK_SLIP_OVERRIDE",
+          pickSlipId: input.pickSlipId,
+          lineId,
+          partId: input.partId,
+          partNumber: info.partNumber,
+          quantity: info.took.toString(),
+          heldBefore: info.heldBefore.toString(),
+          leftoverReleased: info.leftoverReleased.toString(),
+          locationId: info.locationId,
+          previousStatus: info.status,
+          statusChangedTo: info.toPending ? "PENDING" : null,
+          takenByJob: input.jobNumber,
+          overridingLineId: input.lineId,
+        } as Prisma.InputJsonValue,
       },
     });
   }
   return freed;
+}
+
+// 2026-10-08, user request: "when deleting a pickslip, the all reservations
+// need to revert back." Undoes what the override did when the picking slip
+// was made: the units the overriding part line was holding because of it go
+// back to free stock, and each other job's line gets its hold back (to what
+// it held before), with its previous status again if the override had set it
+// to Pending and it is covered once more. Driven by the PICK_SLIP_OVERRIDE
+// records written to the other jobs' activity when the slip was created.
+// An overriding line that has moved on since (no longer just picked, e.g. it
+// was received and the stock is gone) is left alone.
+async function revertPickSlipOverridesTx(tx: Tx, ctx: RequestContext & { companyId: string }, pickSlipId: string, slipJobNumber: string, options?: { slipNeverMade?: boolean }): Promise<{ restoredLines: number }> {
+  const activities = await tx.jobActivity.findMany({
+    where: { companyId: ctx.companyId, type: "RESERVATION_RELEASED", metadata: { path: ["pickSlipId"], equals: pickSlipId } },
+    orderBy: { createdAt: "asc" },
+  });
+  type Rec = { lineId: string; partId: string; partNumber: string; heldBefore: Quantity; leftoverReleased: Quantity; locationId: string | null; previousStatus: string; statusChangedTo: string | null; overridingLineId: string; quantity: Quantity };
+  const byOverriding = new Map<string, Rec[]>();
+  for (const a of activities) {
+    const m = (a.metadata ?? {}) as Record<string, unknown>;
+    if (m.kind !== "PICK_SLIP_OVERRIDE" || typeof m.lineId !== "string" || typeof m.overridingLineId !== "string" || typeof m.partId !== "string") continue;
+    const rec: Rec = {
+      lineId: m.lineId,
+      partId: m.partId,
+      partNumber: String(m.partNumber ?? ""),
+      quantity: new D(String(m.quantity ?? "0")),
+      heldBefore: new D(String(m.heldBefore ?? "0")),
+      leftoverReleased: new D(String(m.leftoverReleased ?? "0")),
+      locationId: typeof m.locationId === "string" ? m.locationId : null,
+      previousStatus: String(m.previousStatus ?? "IN_STOCK"),
+      statusChangedTo: typeof m.statusChangedTo === "string" ? m.statusChangedTo : null,
+      overridingLineId: m.overridingLineId,
+    };
+    byOverriding.set(rec.overridingLineId, [...(byOverriding.get(rec.overridingLineId) ?? []), rec]);
+  }
+
+  let restoredLines = 0;
+  for (const [overridingLineId, recs] of byOverriding) {
+    const overriding = await tx.jobPartLine.findFirst({ where: { id: overridingLineId, companyId: ctx.companyId }, select: { status: true } });
+    if (!overriding || (!options?.slipNeverMade && overriding.status !== "PICKED")) continue;
+    const partId = recs[0].partId;
+    const totalTook = recs.reduce((sum, r) => sum.plus(r.quantity), new D(0));
+
+    // 1. The overriding line gives the pulled units back.
+    let released = new D(0);
+    const ownReservations = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: overridingLineId, status: "ACTIVE", partId } });
+    for (const reservation of ownReservations) {
+      const left = totalTook.minus(released);
+      if (left.lte(0)) break;
+      released = released.plus(await reduceReservationTx(tx, ctx, reservation.id, left, `Pick slip for job ${slipJobNumber} deleted (override reversed)`));
+    }
+
+    // 2. Each other job's line gets its hold back, in the order it was taken.
+    let budget = released;
+    for (const rec of recs) {
+      const fromOverride = D.min(rec.quantity, budget);
+      if (fromOverride.plus(rec.leftoverReleased).lte(0)) continue;
+      const line = await tx.jobPartLine.findFirst({
+        where: { id: rec.lineId, companyId: ctx.companyId },
+        select: { id: true, jobId: true, status: true, quantity: true, orderedQuantity: true, stockIssuedQuantity: true, job: { select: { jobNumber: true, draftNumber: true } } },
+      });
+      if (!line) continue;
+      const heldRows = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE", partId } });
+      let held = new D(0);
+      for (const row of heldRows) held = held.plus((await getReservationRemaining(tx, row as unknown as LockedReservation)).remaining);
+      // What the override took, plus what a line set to Pending let go of.
+      const want = D.min(rec.heldBefore.minus(held), fromOverride.plus(rec.leftoverReleased));
+      let added = new D(0);
+      if (want.gt(0)) {
+        added = await reserveJobPartLineStockTx(tx, ctx, { jobNumber: line.job.jobNumber ?? line.job.draftNumber ?? "", lineId: line.id, partId, quantity: want, preferredLocationId: rec.locationId });
+        budget = budget.minus(D.min(added, fromOverride));
+        held = held.plus(added);
+      }
+      let backToPrevious = false;
+      if (rec.statusChangedTo === "PENDING" && line.status === "PENDING") {
+        const needed = line.quantity.minus(line.orderedQuantity ?? new D(0)).minus(line.stockIssuedQuantity ?? new D(0));
+        if (needed.gt(0) && held.gte(needed)) {
+          await tx.jobPartLine.update({ where: { id: line.id }, data: { status: rec.previousStatus as never } });
+          backToPrevious = true;
+        }
+      }
+      restoredLines += 1;
+      await tx.jobActivity.create({
+        data: {
+          companyId: ctx.companyId,
+          jobId: line.jobId,
+          actorId: ctx.userId,
+          type: "PART_RESERVED",
+          description: `${added.toString()} x ${rec.partNumber} reserved for this job again: job ${slipJobNumber}'s picking slip was deleted.${backToPrevious ? ` The line was set back to ${rec.previousStatus === "IN_STOCK" ? "In stock" : rec.previousStatus}.` : ""}`,
+          metadata: { kind: "PICK_SLIP_OVERRIDE_REVERTED", pickSlipId, lineId: line.id, partNumber: rec.partNumber, quantity: added.toString() } as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+  return { restoredLines };
 }
 
 export async function createPickSlipForJob(ctx: RequestContext, jobId: string, options?: { overrideLineIds?: string[] }) {
@@ -2351,6 +2466,9 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
   // Part lines whose reservations held by other jobs the person chose to
   // override (see previewPickSlipForJob).
   const overrideLineIds = new Set(options?.overrideLineIds ?? []);
+  // Chosen up front so the override records written while the lines are
+  // processed can point at the slip (deleting the slip reverses them).
+  const pickSlipId = randomUUID();
 
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, include: { customer: true } });
   if (!job) notFound();
@@ -2462,6 +2580,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
           partId: part.id,
           partNumber: line.partNumber,
           need: remaining,
+          pickSlipId,
         });
       }
 
@@ -2530,9 +2649,14 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
       picked.push(...pickedForLine);
     }
 
-    if (picked.length === 0) return { pickSlipId: null as string | null, picked, skipped };
+    if (picked.length === 0) {
+      // Nothing ended up on a slip, so any reservation an override pulled has
+      // to go back as well.
+      await revertPickSlipOverridesTx(tx, { ...ctx, companyId: ctx.companyId }, pickSlipId, job.jobNumber ?? job.draftNumber ?? job.id, { slipNeverMade: true });
+      return { pickSlipId: null as string | null, picked, skipped };
+    }
 
-    const pickSlip = await tx.pickSlip.create({ data: { companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
+    const pickSlip = await tx.pickSlip.create({ data: { id: pickSlipId, companyId: ctx.companyId, jobId: job.id, createdById: ctx.userId } });
     await tx.pickSlipLine.createMany({
       data: picked.map((l) => ({
         pickSlipId: pickSlip.id,
@@ -2643,6 +2767,10 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
   const result = await prisma.$transaction(async (tx) => {
     let revertedLines = 0;
     let skippedLines = 0;
+
+    // Reservations an override pulled from other jobs when this slip was made
+    // go back first (while the overriding lines still show as picked).
+    await revertPickSlipOverridesTx(tx, { ...ctx, companyId: ctx.companyId }, pickSlip.id, pickSlip.job.jobNumber ?? pickSlip.job.draftNumber ?? pickSlip.job.id);
 
     for (const line of pickSlip.lines) {
       // 2026-10-05 — job pick slips made from this date on never take stock
