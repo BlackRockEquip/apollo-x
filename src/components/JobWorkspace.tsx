@@ -5077,23 +5077,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 so only some job types got the side-by-side row. It now sits in
                 this row with Attachments like the PEX Supply / Send to PEX /
                 In PEX Inventory panels. */}
-            {job.type === "PEX_RETURN" && job.pexAsReturn && <section className="detail-panel"><header><div><h2>PEX Return</h2><p>This job is the return leg of a PEX cycle. Status follows the job's own workflow status automatically.</p></div></header>
-              <div className="record-list pex-record-list"><article>
-                <div className="record-icon">RT</div>
-                <div><strong>{text(job.pexAsReturn.supplyJob?.jobNumber || job.pexAsReturn.supplyJob?.draftNumber)}</strong><span>{text(job.pexAsReturn.unitDescription || job.component)}</span></div>
-                <PexStatusPill status={job.pexAsReturn.status} />
-                <div className="stack-grid pex-link-stack">
-                  {job.pexAsReturn.supplyJob?.id && <Link href={`/jobs/${job.pexAsReturn.supplyJob.id}`} className="table-action">Open supply job</Link>}
-                  {job.pexAsReturn.consumedByJob && <span className="muted small-line">Redeployed on {text(job.pexAsReturn.consumedByJob.jobNumber || job.pexAsReturn.consumedByJob.draftNumber)}.</span>}
+            {job.type === "PEX_RETURN" && job.pexAsReturn && <section className="detail-panel">
+              <header><div><h2>PEX Return</h2></div><PexStatusPill status={job.pexAsReturn.status} /></header>
+              <div className="pex-chain two">
+                <div className={`pex-chain-tile${job.pexAsReturn.supplyJob ? "" : " empty"}`}><span>PEX supply job</span>
+                  {job.pexAsReturn.supplyJob?.id
+                    ? <Link href={`/jobs/${job.pexAsReturn.supplyJob.id}`} className="pex-chain-number">{text(job.pexAsReturn.supplyJob.jobNumber || job.pexAsReturn.supplyJob.draftNumber)}</Link>
+                    : <span className="muted small-line pex-chain-none">None — sent straight to PEX Inventory</span>}
                 </div>
-                <div className="stack-row">
-                  <button type="button" className="quiet-button" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsReturn?.id))}>View history</button>
-                  {job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && <button type="button" className="table-action danger" disabled={saving} onClick={() => setDialog("pex-scrap")}>Scrap unit</button>}
-                  {pexAllocatedDirect && canSendToPex && !job.pexAsReturn.consumedByJob && <button type="button" className="quiet-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button>}
+                <div className="pex-chain-arrow" aria-hidden="true">→</div>
+                <div className="pex-chain-tile current"><span>This return job</span><strong className="pex-chain-number">{text(job.jobNumber || job.draftNumber)}</strong>
+                  {(job.pexAsReturn.unitDescription || job.component) ? <span className="small-line pex-chain-unit">{text(job.pexAsReturn.unitDescription || job.component)}</span> : null}
                 </div>
-              </article></div>
-              <div className="drawer-fields"><label className="wide"><span>PEX notes</span><textarea rows={3} value={form.pexNotes} onChange={(e) => updateField("pexNotes", e.target.value)} /></label></div>
-              <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving} onClick={() => void patchAction(`/api/v1/pex/${job.pexAsReturn?.id}/notes`, { notes: form.pexNotes || null })}>Save PEX notes</button></footer>
+              </div>
+              {job.pexAsReturn.consumedByJob && <p className="pex-return-note">Redeployed on {text(job.pexAsReturn.consumedByJob.jobNumber || job.pexAsReturn.consumedByJob.draftNumber)}.</p>}
+              {((job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob) || (pexAllocatedDirect && canSendToPex && !job.pexAsReturn.consumedByJob)) && <div className="pex-chain-actions">
+                {job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && <button type="button" className="section-action-button" disabled={saving} onClick={() => setDialog("pex-scrap")}>Scrap unit</button>}
+                {pexAllocatedDirect && canSendToPex && !job.pexAsReturn.consumedByJob && <button type="button" className="section-action-button" disabled={saving} onClick={() => void undoSendToPexInventory()}>Undo send to PEX</button>}
+              </div>}
+              <div className="pex-return-notes">
+                <label><span>PEX notes</span><textarea rows={2} value={form.pexNotes} onChange={(e) => updateField("pexNotes", e.target.value)} /></label>
+                <button type="button" className="section-action-button" disabled={saving} onClick={() => void patchAction(`/api/v1/pex/${job.pexAsReturn?.id}/notes`, { notes: form.pexNotes || null })}>Save PEX notes</button>
+              </div>
+              <div className="pex-chain-footer">
+                <p>Status follows this job&apos;s own workflow status automatically.</p>
+                <div><button type="button" className="table-action" disabled={saving} onClick={() => void openPexHistory(String(job.pexAsReturn?.id))}>View history</button></div>
+              </div>
             </section>}
           </div>
           )}

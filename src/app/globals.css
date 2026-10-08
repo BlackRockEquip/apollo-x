@@ -1349,6 +1349,15 @@ td.actions { display: flex; justify-content: flex-end; gap: 6px; align-items: ce
 .pex-link-search { padding-top: 0; }
 .pex-chain-footer { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--ink-100); padding: 12px 15px 14px; }
 .pex-chain-footer p { margin: 0; color: var(--ink-500); font-size: 10.5px; line-height: 1.45; }
+/* 2026-10-08 — PEX Return panel restyled to match the PEX Supply chain panel now
+   that it sits beside Attachments (half width): Supply job -> This return job. */
+.pex-chain.two { grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr); }
+.pex-chain-unit { color: #5c4109; font-size: 10.5px; overflow-wrap: anywhere; }
+.pex-return-note { margin: 0; padding: 0 15px 8px; color: var(--ink-500); font-size: 11px; }
+.pex-return-notes { display: grid; gap: 8px; justify-items: end; padding: 0 15px 14px; }
+.pex-return-notes label { display: grid; gap: 4px; width: 100%; font-size: 11px; font-weight: 700; }
+.pex-return-notes textarea { width: 100%; min-height: 54px; border: 1px solid var(--ink-300); border-radius: 6px; padding: 8px 9px; outline: none; resize: vertical; font: inherit; font-weight: 400; }
+.pex-return-notes textarea:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fbf2d7; }
 .pex-previous-jobs-dialog { width: min(760px, 96vw); }
 
 /* 2026-10-06 — Field service job layout (see fieldJobLayout in
