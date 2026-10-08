@@ -3834,7 +3834,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 description so a partial memory of either still finds the
                 line. Hidden when there's nothing yet to search. */}
             {job.partLines.length > 0 && (
-              <div className="drawer-fields" style={{ padding: "10px 14px 0" }}>
+              <div className="drawer-fields" style={{ padding: "10px 14px 14px" }}>
                 <div className="search-control inventory-search-control">
                   <Search size={15} />
                   <input
@@ -5158,14 +5158,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               hold the stock; nothing has been created yet. */}
           {pickSlipConflicts && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
-              <aside className="form-drawer compact-dialog job-editor-drawer" style={{ width: "min(860px, 96vw)", maxHeight: "90vh" }}>
+              <aside className="form-drawer compact-dialog job-editor-drawer" style={{ width: "min(1000px, 96vw)", maxHeight: "90vh" }}>
                 <header>
-                  <div><h2>Reserved parts</h2><p>These parts are reserved for other jobs, so only part (or none) of what this job needs can be listed. Tick a part to override those reservations and pull it from stock for this job — the other jobs are told on their activity log.</p></div>
+                  <div><h2>Reserved parts</h2><p>These parts are reserved for other jobs, so only part (or none) of what this job needs can be listed. Tick a part to override those reservations and pull it from stock for this job. Units are taken from the last job listed first, and the other jobs are told on their activity log.</p></div>
                   <button type="button" onClick={() => setPickSlipConflicts(null)} aria-label="Close dialog"><X size={18} /></button>
                 </header>
                 <div className="quote-compare-body" style={{ overflowY: "auto" }}>
-                  <div className="data-table-wrap"><table className="data-table"><thead>
-                    <tr><th>Part</th><th>Needed</th><th>Can list now</th><th>Reserved for other jobs</th><th style={{ width: 150 }}>Override reservation</th></tr>
+                  <div className="data-table-wrap" style={{ overflowX: "hidden" }}><table className="data-table" style={{ tableLayout: "fixed", width: "100%" }}><colgroup><col style={{ width: "26%" }} /><col style={{ width: "10%" }} /><col style={{ width: "17%" }} /><col style={{ width: "27%" }} /><col style={{ width: "20%" }} /></colgroup><thead>
+                    <tr><th>Part</th><th>Needed</th><th>Can list now</th><th>Reserved for other jobs</th><th>Override reservation</th></tr>
                   </thead><tbody>
                     {pickSlipConflicts.map((c) => {
                       const checked = pickSlipOverrides.includes(c.lineId);
@@ -5173,7 +5173,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         <td>{text(c.partNumber)}{c.description ? <div className="muted small-line">{text(c.description)}</div> : null}</td>
                         <td>{c.needed}</td>
                         <td>{c.availableNow}{Number(c.reservedForThisJob) > 0 ? <div className="muted small-line">{c.reservedForThisJob} reserved for this job</div> : null}</td>
-                        <td>{c.reservedByOthers.map((o) => `${o.reference}: ${o.quantity}`).join(", ")}<div className="muted small-line">{c.onHand} on hand · {c.heldBack} held back</div></td>
+                        <td>{c.reservedByOthers.map((o) => <div key={o.reference}>{o.reference}: {o.quantity}</div>)}<div className="muted small-line">{c.onHand} on hand · {c.heldBack} needed from reserved</div></td>
                         <td><label className="inline-check"><input type="checkbox" checked={checked} onChange={(e) => setPickSlipOverrides((cur) => e.target.checked ? [...cur, c.lineId] : cur.filter((id) => id !== c.lineId))} /><span>Pull from stock</span></label></td>
                       </tr>;
                     })}

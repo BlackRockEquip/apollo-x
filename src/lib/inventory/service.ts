@@ -2247,10 +2247,25 @@ async function takeOverReservationsForLineTx(
   ctx: RequestContext & { companyId: string },
   input: { jobNumber: string; lineId: string; partId: string; partNumber: string; need: Quantity },
 ): Promise<Quantity> {
-  const reservations = await tx.stockReservation.findMany({
+  // 2026-10-08, user request: "when taking from reserved stock take from the
+  // last listed job." The Reserved parts window lists the jobs holding the
+  // part oldest reservation first (previewPickSlipForJob), so the units are
+  // taken from the bottom of that list upwards: reservations are grouped by
+  // job reference in the same first-seen order and the groups are walked in
+  // reverse.
+  const reservationsAsc = await tx.stockReservation.findMany({
     where: { companyId: ctx.companyId, partId: input.partId, status: "ACTIVE" },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
+  const groupOrder: string[] = [];
+  for (const r of reservationsAsc) {
+    const key = r.referenceNumber || "Manual reservation";
+    if (!groupOrder.includes(key)) groupOrder.push(key);
+  }
+  const reservations = reservationsAsc
+    .map((r, index) => ({ r, index, group: groupOrder.indexOf(r.referenceNumber || "Manual reservation") }))
+    .sort((a, b) => b.group - a.group || b.index - a.index)
+    .map((x) => x.r);
   let own = new D(0);
   for (const reservation of reservations) {
     if (reservation.referenceId !== input.lineId) continue;
