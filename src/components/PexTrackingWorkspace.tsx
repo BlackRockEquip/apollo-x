@@ -25,7 +25,7 @@ type TrackingRow = Row & {
 };
 type HistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
 type HistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
-type HistoryPayload = { id: string; status: string; entries: HistoryEntry[]; previousCycles: HistoryCycle[]; previousJobs: PexPreviousJob[] };
+type HistoryPayload = { id: string; status: string; entries: HistoryEntry[]; previousCycles: HistoryCycle[]; previousJobs: PexPreviousJob[]; chainJobs: PexPreviousJob[] };
 
 function text(value: unknown) { return value == null || value === "" ? "—" : String(value); }
 function dateText(value: unknown) { return value ? new Date(String(value)).toLocaleDateString("en-ZA") : "—"; }
@@ -83,9 +83,9 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
     </table></div>
     {historyOpenId && <div className="drawer-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) setHistoryOpenId(""); }}>
       <aside className="form-drawer compact-dialog pex-previous-jobs-dialog">
-        <header><div><p className="eyebrow">PEX</p><h2>Previous jobs</h2></div><button type="button" onClick={() => setHistoryOpenId("")} aria-label="Close dialog"><X size={18} /></button></header>
+        <header><div><p className="eyebrow">PEX</p><h2>PEX job history</h2></div><button type="button" onClick={() => setHistoryOpenId("")} aria-label="Close dialog"><X size={18} /></button></header>
         {historyLoadingId === historyOpenId && <span className="muted small-line">Loading history…</span>}
-        {historyById[historyOpenId] && <PexPreviousJobsTable jobs={historyById[historyOpenId].previousJobs} />}
+        {historyById[historyOpenId] && <PexPreviousJobsTable jobs={historyById[historyOpenId].chainJobs} />}
       </aside>
     </div>}
   </>;

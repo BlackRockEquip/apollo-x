@@ -115,7 +115,7 @@ type PexRecordSummary = Row & {
 };
 // getPexRecordHistory's actual (flat) return shape — see pex/service.ts.
 type PexHistoryEntry = { id: string; type: string; description: string; userName: string | null; createdAt: string };
-type PexHistoryJob = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN" | "JOB"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null };
+type PexHistoryJob = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN" | "JOB"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null; current?: boolean };
 type PexHistoryCycle = { supplyJobNumber: string | null; supplyJobId: string | null; supplyDate: string | null; returnJobNumber: string | null; returnJobId: string | null; returnDate: string | null };
 type PexHistoryResponse = {
   id: string;
@@ -134,6 +134,7 @@ type PexHistoryResponse = {
   entries: PexHistoryEntry[];
   previousCycles: PexHistoryCycle[];
   previousJobs: PexHistoryJob[];
+  chainJobs: PexHistoryJob[];
 };
 type JobComponentRow = Row & { component?: string | null; componentType?: string | null; componentPartNumber?: string | null; componentSerial?: string | null };
 // Attachments — new (see schema.prisma's JobAttachment comment). Metadata
@@ -4633,8 +4634,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {pexHistory && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
               <aside className="form-drawer compact-dialog pex-previous-jobs-dialog">
-                <header><div><p className="eyebrow">PEX</p><h2>Previous jobs</h2></div><button type="button" onClick={() => setPexHistory(null)} aria-label="Close dialog"><X size={18} /></button></header>
-                <PexPreviousJobsTable jobs={pexHistory.previousJobs} />
+                <header><div><p className="eyebrow">PEX</p><h2>PEX job history</h2></div><button type="button" onClick={() => setPexHistory(null)} aria-label="Close dialog"><X size={18} /></button></header>
+                <PexPreviousJobsTable jobs={pexHistory.chainJobs} currentJobId={job?.id} />
               </aside>
             </div>
           )}

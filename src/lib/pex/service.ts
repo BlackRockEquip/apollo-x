@@ -864,6 +864,49 @@ export async function getPexRecordHistory(ctx: RequestContext, id: string) {
     cursorPreviousJobNumber = earlier.previousJobNumber ?? null;
   }
 
+  // 2026-10-08 — user request: "the view history button should pickup all even
+  // future linked pex units so no matter which job I click history, it will show
+  // the whole list". chainJobs is the unit's WHOLE chain, newest first: every
+  // later job it was supplied on (and that job's return, and so on, found via
+  // "Previous job number" pointing at the return job), this record's own supply
+  // and return jobs, then everything earlier (previousJobs above). The same list
+  // comes back whichever job in the chain the History button is clicked from.
+  type ChainRow = { jobId: string; jobNumber: string | null; kind: "SUPPLY" | "RETURN" | "JOB"; deliveredAt: string | null; status: string; purchaseOrderNumber: string | null; current?: boolean };
+  type ChainJob = { id: string; jobNumber: string | null; draftNumber: string | null; status: string; deliveryDate: Date | null; purchaseOrderNumber: string | null; type: string };
+  const chainRow = (j: ChainJob, kind: ChainRow["kind"], fallbackDate: Date | null, current: boolean): ChainRow => ({
+    jobId: j.id,
+    jobNumber: j.jobNumber ?? j.draftNumber ?? null,
+    kind,
+    deliveredAt: (j.deliveryDate ?? fallbackDate)?.toISOString() ?? null,
+    status: j.status,
+    purchaseOrderNumber: j.purchaseOrderNumber ?? null,
+    current,
+  });
+  const laterJobs: ChainRow[] = []; // oldest -> newest
+  let cursorReturn: ChainJob | null = pex.returnJob ?? null;
+  const seenLater = new Set<string>();
+  for (let i = 0; i < 50 && cursorReturn?.jobNumber && !seenLater.has(cursorReturn.id); i++) {
+    seenLater.add(cursorReturn.id);
+    const next: ChainJob | null = await prisma.job.findFirst({
+      where: { companyId, previousJobNumber: cursorReturn.jobNumber, id: { not: cursorReturn.id } },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!next || seenLater.has(next.id)) break;
+    seenLater.add(next.id);
+    laterJobs.push(chainRow(next, next.type === "PEX_SUPPLY" ? "SUPPLY" : next.type === "PEX_RETURN" ? "RETURN" : "JOB", null, false));
+    if (next.type !== "PEX_SUPPLY") break;
+    const nextRecord = await prisma.pexRecord.findFirst({ where: { companyId, supplyJobId: next.id }, include: { returnJob: true } });
+    if (!nextRecord?.returnJob) break;
+    laterJobs.push(chainRow(nextRecord.returnJob, "RETURN", nextRecord.returnDate, false));
+    cursorReturn = nextRecord.returnJob;
+  }
+  const chainJobs: ChainRow[] = [
+    ...laterJobs.reverse(),
+    ...(pex.returnJob ? [chainRow(pex.returnJob, "RETURN", pex.returnDate, true)] : []),
+    ...(pex.supplyJob ? [chainRow(pex.supplyJob, "SUPPLY", pex.supplyDate, true)] : []),
+    ...previousJobs,
+  ];
+
   return {
     id: pex.id,
     unitDescription: pex.unitDescription,
@@ -887,5 +930,6 @@ export async function getPexRecordHistory(ctx: RequestContext, id: string) {
     })),
     previousCycles,
     previousJobs,
+    chainJobs,
   };
 }
