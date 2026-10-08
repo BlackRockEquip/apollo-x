@@ -300,7 +300,7 @@ async function getJobScoped(companyId: string, id: string) {
           // the Stock Levels screen already does (see sumBalances in
           // inventory/service.ts) — not selecting anything else about
           // location here since only the total is shown on this table.
-          part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true, stockBalances: { select: { quantityOnHand: true } } } },
+          part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true, stockBalances: { select: { quantityOnHand: true, quantityReserved: true } } } },
           orderedFromSupplier: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "asc" },
@@ -1565,13 +1565,21 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
     // 2026-10-05, user report (BRE1071 / 4D3107): typing a supplier on an
     // in-stock line moves it to ON_ORDER (and frees its reservation), but
     // removing the supplier again never moved it back, so the line kept
-    // saying "On order" with nothing ordered. With order details gone and
-    // nothing received, put it back to In stock when the reservation now
-    // covers what's left, otherwise Pending.
+    // saying "On order" with nothing ordered.
+    // 2026-10-08, user report: "when supplier name is removed status changes
+    // to pending, it should go back to check if in stock." With the order
+    // details gone and nothing received, the line is checked against stock
+    // again, the same way a newly added part is: In stock when what this line
+    // holds plus the unreserved stock in all bins covers what is still
+    // needed, otherwise Pending. The reservation reconcile above has already tried to hold the
+    // units again.
     if (line.status === "ON_ORDER" && !hasOrderInfo && line.partId && !(line.receivedQuantity && line.receivedQuantity.gt(0))) {
+      const balances = await tx.stockBalance.findMany({ where: { companyId, partId: line.partId, quantityOnHand: { gt: 0 } }, select: { quantityOnHand: true, quantityReserved: true } });
+      const unreserved = balances.reduce((sum, b) => sum.plus(Prisma.Decimal.max(b.quantityOnHand.minus(b.quantityReserved), new Prisma.Decimal(0))), new Prisma.Decimal(0));
       const held = await tx.stockReservation.findMany({ where: { companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" }, select: { quantity: true } });
       const heldQty = held.reduce((sum, r) => sum.plus(r.quantity), new Prisma.Decimal(0));
-      const restored = heldQty.gte(line.quantity.minus(alreadyIssued)) && heldQty.gt(0) ? "IN_STOCK" : "PENDING";
+      const needed = line.quantity.minus(alreadyIssued);
+      const restored = needed.gt(0) && heldQty.plus(unreserved).gte(needed) ? "IN_STOCK" : "PENDING";
       await tx.jobPartLine.update({ where: { id: line.id }, data: { status: restored as never } });
     }
 

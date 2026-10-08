@@ -44,7 +44,7 @@ type PartLineRow = Row & {
   previousStatus?: string | null;
   orderNumber?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
-  part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; stockBalances?: Array<{ quantityOnHand?: unknown }> }) | null;
+  part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; stockBalances?: Array<{ quantityOnHand?: unknown; quantityReserved?: unknown }> }) | null;
 };
 // Outwork — new (see schema.prisma's OutworkItem comment). batchId groups
 // every item from the same "Record outwork" submission — added 2026-09-09
@@ -216,6 +216,14 @@ function decimalText(value: unknown) {
 function partStockOnHand(part: PartLineRow["part"]): number | null {
   if (!part || !Array.isArray(part.stockBalances)) return null;
   return part.stockBalances.reduce((sum, b) => sum + Number(b.quantityOnHand ?? 0), 0);
+}
+
+// 2026-10-08, user request: show how many of the part are reserved next to
+// the In stock figure. Total reserved across every job (the units on hand that
+// are already spoken for), summed from the same per-location balances.
+function partStockReserved(part: PartLineRow["part"]): number | null {
+  if (!part || !Array.isArray(part.stockBalances)) return null;
+  return part.stockBalances.reduce((sum, b) => sum + Number(b.quantityReserved ?? 0), 0);
 }
 
 function escapeHtml(value: string) {
@@ -419,6 +427,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // updates the job's existing part lines in place rather than creating
   // new ones the way Stock Levels' own pick flow does.
   const [creatingPickSlip, setCreatingPickSlip] = useState(false);
+  // 2026-10-08 — parts the picking slip cannot list in full because other
+  // jobs hold the stock; shown in a window before anything is created, each
+  // with a tick to override that reservation. See previewPickSlipForJob.
+  type PickSlipConflict = { lineId: string; partNumber: string; description: string | null; needed: string; availableNow: string; heldBack: string; onHand: string; reservedForThisJob: string; reservedByOthers: { reference: string; quantity: string }[] };
+  const [pickSlipConflicts, setPickSlipConflicts] = useState<PickSlipConflict[] | null>(null);
+  const [pickSlipOverrides, setPickSlipOverrides] = useState<string[]>([]);
   const [pickSlipError, setPickSlipError] = useState("");
   const [pickSlipResult, setPickSlipResult] = useState<{ pickedCount: number; outstandingCount: number; skipped?: { partNumber: string; reason: string }[]; pickSlip: { id: string; jobNumber: string | null; lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] } | null } | null>(null);
   // 2026-09-29 — "Cancel"/"Delete" on a pick slip (user request: "need a
@@ -1735,11 +1749,28 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }, [jobId]);
   useEffect(() => { void loadJobPickSlips(); }, [loadJobPickSlips]);
 
-  async function createJobPickSlip() {
+  async function createJobPickSlip(overrideLineIds?: string[]) {
     if (!jobId) return;
     setCreatingPickSlip(true); setPickSlipError(""); setPickSlipResult(null);
     try {
-      const r = await fetch(`/api/v1/jobs/${jobId}/pick-slip`, { method: "POST" });
+      // First pass (no choice made yet): ask which parts are held back by
+      // other jobs' reservations. If there are any, stop and show the window;
+      // OK there calls this again with the lines to override.
+      if (!overrideLineIds) {
+        const pr = await fetch(`/api/v1/jobs/${jobId}/pick-slip`, { cache: "no-store" });
+        const pb = await pr.json();
+        if (pr.ok && Array.isArray(pb.conflicts) && pb.conflicts.length > 0) {
+          setPickSlipConflicts(pb.conflicts);
+          setPickSlipOverrides([]);
+          return;
+        }
+      }
+      setPickSlipConflicts(null);
+      const r = await fetch(`/api/v1/jobs/${jobId}/pick-slip`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ overrideLineIds: overrideLineIds ?? [] }),
+      });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to create picking slip.");
       setPickSlipResult(b);
@@ -3246,6 +3277,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (entries.length === 0) { closeSavedQuotes(); return; }
     setApplyingPreferred(true); setError("");
     try {
+      const stockNotes: string[] = [];
       for (const [partLineId, desired] of entries) {
         let current: string | null = null;
         for (const request of job?.rfqRequests || []) {
@@ -3257,8 +3289,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         const r = await fetch(`/api/v1/jobs/${jobId}/rfq/preferred`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ partLineId, rfqQuoteId: target }) });
         const b = await r.json();
         if (!r.ok) throw new Error(b.error?.message || "Unable to save the preferred prices.");
+        // Picking a supplier checks stock first (see setPreferredQuoteLine):
+        // tell the person when a part was left off the order or only partly
+        // ordered because stock covers it.
+        const partNumber = job?.partLines.find((l) => String(l.id) === partLineId)?.partNumber;
+        if (b.preferred && !b.supplierFilled && desired) stockNotes.push(`${text(partNumber)}: fully covered by stock, so the supplier was not added to the order.`);
+        else if (b.preferred && b.supplierFilled && Number(b.coveredByStock) > 0) stockNotes.push(`${text(partNumber)}: ${b.coveredByStock} on stock, the rest ordered from the supplier.`);
       }
       await load(true);
+      if (stockNotes.length > 0) setDocumentNotice(stockNotes.join(" "));
       closeSavedQuotes();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save the preferred prices.");
@@ -4046,7 +4085,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {(() => {
                       const onHand = partStockOnHand(line.part);
                       if (onHand == null) return null;
-                      return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}</div>;
+                      const reserved = partStockReserved(line.part) ?? 0;
+                      return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}{onHand > 0 ? <>, reserved: {reserved}</> : null}</div>;
                     })()}
                   </td>
                   <td className="actions">
@@ -5109,6 +5149,43 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
             );
           })()}
+
+          {/* 2026-10-08, user request: "when clicking generate picking slip,
+              and a part is reserved, allow a window to show ... all reserved
+              part numbers, next to part number allow user to override
+              reservation to pull the part from stock (before creating)". Only
+              shown when some part cannot be listed in full because other jobs
+              hold the stock; nothing has been created yet. */}
+          {pickSlipConflicts && (
+            <div className="drawer-backdrop" role="dialog" aria-modal="true">
+              <aside className="form-drawer compact-dialog job-editor-drawer" style={{ width: "min(860px, 96vw)", maxHeight: "90vh" }}>
+                <header>
+                  <div><h2>Reserved parts</h2><p>These parts are reserved for other jobs, so only part (or none) of what this job needs can be listed. Tick a part to override those reservations and pull it from stock for this job — the other jobs are told on their activity log.</p></div>
+                  <button type="button" onClick={() => setPickSlipConflicts(null)} aria-label="Close dialog"><X size={18} /></button>
+                </header>
+                <div className="quote-compare-body" style={{ overflowY: "auto" }}>
+                  <div className="data-table-wrap"><table className="data-table"><thead>
+                    <tr><th>Part</th><th>Needed</th><th>Can list now</th><th>Reserved for other jobs</th><th style={{ width: 150 }}>Override reservation</th></tr>
+                  </thead><tbody>
+                    {pickSlipConflicts.map((c) => {
+                      const checked = pickSlipOverrides.includes(c.lineId);
+                      return <tr key={c.lineId}>
+                        <td>{text(c.partNumber)}{c.description ? <div className="muted small-line">{text(c.description)}</div> : null}</td>
+                        <td>{c.needed}</td>
+                        <td>{c.availableNow}{Number(c.reservedForThisJob) > 0 ? <div className="muted small-line">{c.reservedForThisJob} reserved for this job</div> : null}</td>
+                        <td>{c.reservedByOthers.map((o) => `${o.reference}: ${o.quantity}`).join(", ")}<div className="muted small-line">{c.onHand} on hand · {c.heldBack} held back</div></td>
+                        <td><label className="inline-check"><input type="checkbox" checked={checked} onChange={(e) => setPickSlipOverrides((cur) => e.target.checked ? [...cur, c.lineId] : cur.filter((id) => id !== c.lineId))} /><span>Pull from stock</span></label></td>
+                      </tr>;
+                    })}
+                  </tbody></table></div>
+                </div>
+                <footer>
+                  <button type="button" className="quiet-button" onClick={() => setPickSlipConflicts(null)}>Cancel</button>
+                  <button type="button" className="gold-button" disabled={creatingPickSlip} onClick={() => void createJobPickSlip(pickSlipOverrides)}>{creatingPickSlip && <Loader2 className="spin" size={14} />} Create picking slip</button>
+                </footer>
+              </aside>
+            </div>
+          )}
 
           {/* 2026-10-01 — user request: "generated pickslips (label each
               'Pickslip 1 date etc' not just date and time (For all users),

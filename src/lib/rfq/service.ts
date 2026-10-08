@@ -10,6 +10,7 @@ import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
 import { guessPricesFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
+import { reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
 
 // RFQ (request for quote) — new, added 2026-09-09 at the user's request
 // ("add the RFQ from suppliers section of ModApp"). Updated the same day
@@ -393,21 +394,65 @@ export async function setPreferredQuoteLine(ctx: RequestContext, jobId: string, 
   if (!target || target.unitPrice === null || !target.available) throw new Error("RFQ_LINE_NOT_QUOTED");
 
   const nowPreferred = !target.preferred;
-  const shouldAutoFillSupplier = nowPreferred && partLine.status !== "RECEIVED";
+  const wantsSupplierFill = nowPreferred && partLine.status !== "RECEIVED";
 
+  let supplierFilled = false;
+  let stockCovers = new Prisma.Decimal(0);
   await prisma.$transaction(async (tx) => {
     for (const l of lines) {
       if (l.id !== target.id && l.preferred) await tx.jobRfqQuoteLine.update({ where: { id: l.id }, data: { preferred: false } });
     }
     await tx.jobRfqQuoteLine.update({ where: { id: target.id }, data: { preferred: nowPreferred } });
-    if (shouldAutoFillSupplier) {
-      await tx.jobPartLine.update({ where: { id: input.partLineId }, data: { orderedFromSupplierId: target.rfqQuote.rfqRequest.supplierId } });
+
+    if (wantsSupplierFill) {
+      // 2026-10-08, user request: "when selecting a preferred supplier via the
+      // compare quotes section before it adds the supplier to the ordered
+      // from field it should check if there is stock, if only 1 of 2 is in
+      // stock it should automatically change qty ordered correctly." How much
+      // of the line stock can cover: units already taken off the shelf for it,
+      // plus what it holds in reservation, plus unreserved stock in any bin
+      // (capped at the line quantity). All covered -> nothing needs ordering,
+      // so the supplier is not filled in; partly covered -> the supplier is
+      // filled in and only the shortfall is marked as ordered (the rest stays
+      // on stock); nothing covered -> the whole line is ordered.
+      const qty = partLine.quantity;
+      let cover = new Prisma.Decimal(partLine.stockIssuedQuantity ?? 0);
+      if (partLine.partId) {
+        const held = await tx.stockReservation.findMany({ where: { companyId, referenceType: "JOB", referenceId: partLine.id, status: "ACTIVE" }, select: { quantity: true } });
+        const heldQty = held.reduce((sum, r) => sum.plus(r.quantity), new Prisma.Decimal(0));
+        const balances = await tx.stockBalance.findMany({ where: { companyId, partId: partLine.partId, quantityOnHand: { gt: 0 } }, select: { quantityOnHand: true, quantityReserved: true } });
+        const unreserved = balances.reduce((sum, b) => sum.plus(Prisma.Decimal.max(b.quantityOnHand.minus(b.quantityReserved), new Prisma.Decimal(0))), new Prisma.Decimal(0));
+        cover = cover.plus(heldQty).plus(unreserved);
+      }
+      cover = Prisma.Decimal.min(cover, qty);
+      stockCovers = cover;
+
+      if (cover.lt(qty)) {
+        const orderedQuantity = cover.gt(0) ? qty.minus(cover) : null;
+        const nextStatus = partLine.status === "IN_STOCK" && cover.lte(0) ? "ON_ORDER" : partLine.status;
+        await tx.jobPartLine.update({
+          where: { id: partLine.id },
+          data: { orderedFromSupplierId: target.rfqQuote.rfqRequest.supplierId, orderedQuantity, status: nextStatus, updatedById: ctx.userId },
+        });
+        supplierFilled = true;
+        // Hold only the units that stay on stock; the ordered ones are freed
+        // for other jobs (same as typing the quantity ordered by hand).
+        if (partLine.partId) {
+          const jobRow = await tx.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } });
+          await reconcileJobPartLineReservationTx(tx, { ...ctx, companyId }, {
+            jobNumber: jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId,
+            lineId: partLine.id,
+            partId: partLine.partId,
+            targetQuantity: Prisma.Decimal.max(cover.minus(partLine.stockIssuedQuantity ?? 0), new Prisma.Decimal(0)),
+          });
+        }
+      }
     }
-    await addActivity(tx, ctx, jobId, "RFQ_PREFERRED_SUPPLIER_SET", nowPreferred ? `${partLine.partNumber}: preferred supplier set.` : `${partLine.partNumber}: preferred supplier cleared.`, { partLineId: input.partLineId, rfqQuoteId: input.rfqQuoteId, preferred: nowPreferred });
+    await addActivity(tx, ctx, jobId, "RFQ_PREFERRED_SUPPLIER_SET", nowPreferred ? `${partLine.partNumber}: preferred supplier set.${wantsSupplierFill ? (supplierFilled ? (stockCovers.gt(0) ? ` ${stockCovers.toString()} of ${partLine.quantity.toString()} on stock, ${partLine.quantity.minus(stockCovers).toString()} ordered from the supplier.` : " Ordered from the supplier.") : " Fully covered by stock, so the supplier was not added to the order.") : ""}` : `${partLine.partNumber}: preferred supplier cleared.`, { partLineId: input.partLineId, rfqQuoteId: input.rfqQuoteId, preferred: nowPreferred });
   });
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobRfqQuoteLine", entityId: target.id, action: "SET_PREFERRED", afterData: { jobId, partLineId: input.partLineId, rfqQuoteId: input.rfqQuoteId, preferred: nowPreferred } });
-  return { ok: true, preferred: nowPreferred };
+  return { ok: true, preferred: nowPreferred, supplierFilled, coveredByStock: stockCovers.toString() };
 }
 
 // ---------------------------------------------------------------------------

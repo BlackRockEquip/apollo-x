@@ -2108,8 +2108,234 @@ export async function reconcileJobPartLineReservationTx(
 // needs one.
 // ============================================================
 
-export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
+// 2026-10-08, user request (picking slips): "when clicking generate picking
+// slip, and a part is reserved, allow a window to show all reserved part
+// numbers, next to part number allow user to override reservation to pull the
+// part from stock." Read-only look at what Create picking slip would do for
+// this job: for every part line that cannot be listed in full because the
+// stock it needs is reserved for OTHER jobs, one row saying how much can be
+// listed now, how much is held back and by whom. Nothing is changed here; the
+// person picks which rows to override and createPickSlipForJob does it.
+export type PickSlipReservationConflict = {
+  lineId: string;
+  partNumber: string;
+  description: string | null;
+  needed: string;
+  availableNow: string;
+  heldBack: string;
+  onHand: string;
+  reservedForThisJob: string;
+  reservedByOthers: { reference: string; quantity: string }[];
+};
+
+export async function previewPickSlipForJob(ctx: RequestContext, jobId: string): Promise<{ conflicts: PickSlipReservationConflict[] }> {
   requireInventory(ctx, "INVENTORY_ISSUE");
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, select: { id: true } });
+  if (!job) notFound();
+  const eligibleLines = await prisma.jobPartLine.findMany({
+    where: { companyId: ctx.companyId, jobId: job.id, partId: { not: null }, status: { not: "RECEIVED" } },
+  });
+
+  const conflicts = await prisma.$transaction(async (tx) => {
+    const out: PickSlipReservationConflict[] = [];
+    for (const line of eligibleLines) {
+      if (!line.partId) continue;
+      const qtys = partLineQuantities({
+        quantity: line.quantity.toString(),
+        orderedQuantity: line.orderedQuantity?.toString() ?? null,
+        orderNumber: line.orderNumber,
+        hasSupplier: Boolean(line.orderedFromSupplierId),
+        receivedQuantity: line.receivedQuantity?.toString() ?? null,
+        stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+        pickedQuantity: line.pickedQuantity?.toString() ?? null,
+      });
+      const needed = new D(qtys.toListOnPickSlip.toString());
+      if (needed.lte(0)) continue;
+      const part = await tx.part.findFirst({ where: { id: line.partId, companyId: ctx.companyId } });
+      if (!part || !part.active) continue;
+
+      const reservations = await tx.stockReservation.findMany({
+        where: { companyId: ctx.companyId, partId: part.id, status: "ACTIVE" },
+        orderBy: { createdAt: "asc" },
+      });
+      let own = new D(0);
+      const others = new Map<string, Quantity>();
+      for (const reservation of reservations) {
+        const usage = await getReservationRemaining(tx, reservation as unknown as LockedReservation);
+        if (usage.remaining.lte(0)) continue;
+        if (reservation.referenceId === line.id) own = own.plus(usage.remaining);
+        else others.set(reservation.referenceNumber || "Manual reservation", (others.get(reservation.referenceNumber || "Manual reservation") ?? new D(0)).plus(usage.remaining));
+      }
+      const balances = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: part.id, quantityOnHand: { gt: 0 } } });
+      let onHand = new D(0);
+      let freeToAnyone = new D(0);
+      for (const balance of balances) {
+        onHand = onHand.plus(balance.quantityOnHand);
+        freeToAnyone = freeToAnyone.plus(D.max(balance.quantityOnHand.minus(balance.quantityReserved), new D(0)));
+      }
+      const availableNow = D.min(needed, own.plus(freeToAnyone));
+      const heldBack = needed.minus(availableNow);
+      const othersTotal = Array.from(others.values()).reduce((sum, q) => sum.plus(q), new D(0));
+      if (heldBack.lte(0) || othersTotal.lte(0)) continue;
+      out.push({
+        lineId: line.id,
+        partNumber: line.partNumber,
+        description: line.description,
+        needed: needed.toString(),
+        availableNow: availableNow.toString(),
+        heldBack: D.min(heldBack, othersTotal).toString(),
+        onHand: onHand.toString(),
+        reservedForThisJob: own.toString(),
+        reservedByOthers: Array.from(others.entries()).map(([reference, quantity]) => ({ reference, quantity: quantity.toString() })),
+      });
+    }
+    return out;
+  });
+  return { conflicts };
+}
+
+// Takes `by` units off another reservation's hold without cancelling the
+// rest of it — a RESERVATION_RELEASE movement for just that many, so the
+// reservation's remaining quantity (quantity - issued - released) shrinks and
+// the bin's reserved figure drops with it. Returns how many were freed.
+async function reduceReservationTx(tx: Tx, ctx: RequestContext & { companyId: string }, reservationId: string, by: Quantity, reason: string): Promise<Quantity> {
+  const reservation = await lockReservation(tx, ctx.companyId, reservationId);
+  if (!reservation || reservation.status !== "ACTIVE") return new D(0);
+  const balance = await lockBalance(tx, ctx.companyId, reservation.partId, reservation.locationId);
+  if (!balance) return new D(0);
+  const usage = await getReservationRemaining(tx, reservation);
+  const take = D.min(by, D.min(usage.remaining, balance.reserved));
+  if (take.lte(0)) return new D(0);
+  const nextReserved = balance.reserved.minus(take);
+  const originalMovement = await tx.stockMovement.findFirst({
+    where: { companyId: ctx.companyId, referenceType: "RESERVATION", referenceId: reservation.id },
+    orderBy: { occurredAt: "asc" },
+  });
+  await tx.stockMovement.create({
+    data: buildMovement({
+      companyId: ctx.companyId,
+      partId: reservation.partId,
+      movementType: "RESERVATION_RELEASE",
+      quantity: take,
+      toLocationId: reservation.locationId,
+      referenceType: "RESERVATION",
+      referenceId: reservation.id,
+      referenceNumber: reservation.referenceNumber ?? null,
+      reason,
+      notes: null,
+      actorId: ctx.userId,
+      resultingToQuantity: balance.onHand.minus(nextReserved),
+      idempotencyKey: null,
+      reversalOfId: originalMovement?.id ?? null,
+      correlationId: ctx.correlationId,
+    }),
+  });
+  if (take.eq(usage.remaining)) {
+    await tx.stockReservation.update({ where: { id: reservation.id }, data: { status: "RELEASED", releasedById: ctx.userId, releasedAt: new Date() } });
+  }
+  await saveBalance(tx, balance, { reserved: nextReserved });
+  return take;
+}
+
+// The override itself: frees up to `need` units that other jobs hold (newest
+// reservations first), tells each affected job on its activity log, and
+// reserves the freed units for this line so the stock is still held for it
+// until Mark received takes it off the shelf. Only frees what is actually
+// short after this line's own reservation and any unreserved stock.
+async function takeOverReservationsForLineTx(
+  tx: Tx,
+  ctx: RequestContext & { companyId: string },
+  input: { jobNumber: string; lineId: string; partId: string; partNumber: string; need: Quantity },
+): Promise<Quantity> {
+  const reservations = await tx.stockReservation.findMany({
+    where: { companyId: ctx.companyId, partId: input.partId, status: "ACTIVE" },
+    orderBy: { createdAt: "desc" },
+  });
+  let own = new D(0);
+  for (const reservation of reservations) {
+    if (reservation.referenceId !== input.lineId) continue;
+    own = own.plus((await getReservationRemaining(tx, reservation as unknown as LockedReservation)).remaining);
+  }
+  const balances = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: input.partId, quantityOnHand: { gt: 0 } } });
+  const free = balances.reduce((sum, b) => sum.plus(D.max(b.quantityOnHand.minus(b.quantityReserved), new D(0))), new D(0));
+  let short = input.need.minus(own).minus(free);
+  if (short.lte(0)) return new D(0);
+
+  let freed = new D(0);
+  const affected: Array<{ line: { id: string; jobId: string; partNumber: string; status: string; quantity: Quantity; orderedQuantity: Quantity | null; stockIssuedQuantity: Quantity | null; job: { jobNumber: string | null; draftNumber: string | null } }; took: Quantity }> = [];
+  for (const reservation of reservations) {
+    if (short.lte(0)) break;
+    if (reservation.referenceId === input.lineId) continue;
+    const took = await reduceReservationTx(tx, ctx, reservation.id, short, `Pulled for job ${input.jobNumber} picking slip (reservation overridden)`);
+    if (took.lte(0)) continue;
+    freed = freed.plus(took);
+    short = short.minus(took);
+    if (reservation.referenceType === "JOB" && reservation.referenceId) {
+      const otherLine = await tx.jobPartLine.findFirst({
+        where: { id: reservation.referenceId, companyId: ctx.companyId },
+        select: { id: true, jobId: true, partNumber: true, status: true, quantity: true, orderedQuantity: true, stockIssuedQuantity: true, job: { select: { jobNumber: true, draftNumber: true } } },
+      });
+      if (otherLine) {
+        affected.push({ line: otherLine, took });
+      }
+    }
+  }
+  if (freed.gt(0)) {
+    await reserveJobPartLineStockTx(tx, ctx, { jobNumber: input.jobNumber, lineId: input.lineId, partId: input.partId, quantity: freed });
+  }
+
+  // 2026-10-08, user request: "create the picking slip override with the
+  // pending status automatically switching." Once the units are re-held for
+  // the overriding line, each job that lost units is checked the way a newly
+  // added part is: a line showing In stock stays In stock only while what it
+  // still holds plus the unreserved stock covers what it needs; otherwise it
+  // switches to Pending. Lines already picked, ordered or received are left
+  // alone, they are not waiting on shelf stock.
+  const afterBalances = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId: input.partId, quantityOnHand: { gt: 0 } } });
+  const unreservedNow = afterBalances.reduce((sum, b) => sum.plus(D.max(b.quantityOnHand.minus(b.quantityReserved), new D(0))), new D(0));
+  const handled = new Map<string, { jobId: string; partNumber: string; took: Quantity; status: string; toPending: boolean }>();
+  for (const { line, took } of affected) {
+    const prior = handled.get(line.id);
+    if (prior) {
+      prior.took = prior.took.plus(took);
+      continue;
+    }
+    let toPending = false;
+    if (line.status === "IN_STOCK") {
+      const heldRows = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" } });
+      let held = new D(0);
+      for (const row of heldRows) held = held.plus((await getReservationRemaining(tx, row as unknown as LockedReservation)).remaining);
+      const needed = line.quantity.minus(line.orderedQuantity ?? new D(0)).minus(line.stockIssuedQuantity ?? new D(0));
+      if (needed.gt(0) && held.plus(unreservedNow).lt(needed)) {
+        toPending = true;
+        await tx.jobPartLine.update({ where: { id: line.id }, data: { status: "PENDING" as never } });
+        // A Pending line holds nothing (same as everywhere else), so what it
+        // still held goes back to free stock.
+        await reconcileJobPartLineReservationTx(tx, ctx, { jobNumber: line.job.jobNumber ?? line.job.draftNumber ?? "", lineId: line.id, partId: input.partId, targetQuantity: new D(0) });
+      }
+    }
+    handled.set(line.id, { jobId: line.jobId, partNumber: line.partNumber, took, status: line.status, toPending });
+  }
+  for (const [lineId, info] of handled) {
+    await tx.jobActivity.create({
+      data: {
+        companyId: ctx.companyId,
+        jobId: info.jobId,
+        actorId: ctx.userId,
+        type: "RESERVATION_RELEASED",
+        description: `${info.took.toString()} x ${info.partNumber} reserved for this job were pulled for job ${input.jobNumber}'s picking slip.${info.toPending ? " The line was set to Pending." : ""}`,
+        metadata: { lineId, partNumber: info.partNumber, quantity: info.took.toString(), takenByJob: input.jobNumber, statusChangedTo: info.toPending ? "PENDING" : null } as Prisma.InputJsonValue,
+      },
+    });
+  }
+  return freed;
+}
+
+export async function createPickSlipForJob(ctx: RequestContext, jobId: string, options?: { overrideLineIds?: string[] }) {
+  requireInventory(ctx, "INVENTORY_ISSUE");
+  // Part lines whose reservations held by other jobs the person chose to
+  // override (see previewPickSlipForJob).
+  const overrideLineIds = new Set(options?.overrideLineIds ?? []);
 
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, include: { customer: true } });
   if (!job) notFound();
@@ -2210,6 +2436,19 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string) {
       }
 
       const pickedForLine: PickedLine[] = [];
+
+      // Person chose to override other jobs' reservations for this line: free
+      // what is short (and hold it for this line) before listing, so the
+      // normal steps below find it as this line's own reserved stock.
+      if (overrideLineIds.has(line.id)) {
+        await takeOverReservationsForLineTx(tx, { ...ctx, companyId: ctx.companyId }, {
+          jobNumber: job.jobNumber ?? job.draftNumber ?? job.id,
+          lineId: line.id,
+          partId: part.id,
+          partNumber: line.partNumber,
+          need: remaining,
+        });
+      }
 
       // 1. Bins this line already has stock reserved at, first — a line's
       // own reservation shouldn't look like unavailable stock to itself.
