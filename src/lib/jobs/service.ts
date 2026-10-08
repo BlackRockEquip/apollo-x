@@ -1191,12 +1191,67 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
       // assigned, a race against another reservation, etc.) never blocks
       // adding the part line — it just leaves the line unreserved, same as
       // before this change.
-      let inStock = false;
+      let onHand = new Prisma.Decimal(0);
       if (part) {
         const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: part.id }, _sum: { quantityOnHand: true } });
-        const onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
-        inStock = onHand.gte(row.quantity);
+        onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
       }
+
+      // 2026-10-08, user request: "in jobs or other places that import parts,
+      // check that if there is a duplicate that it adds to the qty." A part
+      // that is already on this job's list (same number, or the same catalog
+      // part reached through an old/group number) and is not fully received
+      // yet has the new quantity added to its line instead of a second line
+      // being created. Duplicates inside one paste/file land here too: the
+      // first row creates the line (below) and the later rows find it. A line
+      // that is already RECEIVED stays as it is and the new quantity becomes a
+      // new line, since those units were delivered for the earlier need.
+      const existing = await tx.jobPartLine.findFirst({
+        where: {
+          companyId,
+          jobId,
+          status: { not: "RECEIVED" },
+          OR: [...(part ? [{ partId: part.id }] : []), { partNumber }],
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      if (existing) {
+        const newTotal = existing.quantity.plus(row.quantity);
+        // Only a line that is still just waiting (PENDING / IN_STOCK) can flip
+        // between the two; one that is on order, partly received or picked
+        // keeps its status, as applyJobKitToJob does when it tops a line up.
+        const reopenable = existing.status === "PENDING" || existing.status === "IN_STOCK";
+        const nextStatus = reopenable ? (part && onHand.gte(newTotal) ? "IN_STOCK" : "PENDING") : existing.status;
+        const updatedLine = await tx.jobPartLine.update({
+          where: { id: existing.id },
+          data: {
+            quantity: newTotal,
+            status: nextStatus,
+            description: existing.description || row.description || part?.description || null,
+            updatedById: ctx.userId,
+          },
+        });
+        await addActivity(tx, ctx, jobId, "PART_ADDED", `Part line quantity increased: ${existing.partNumber} (qty ${existing.quantity.toString()} + ${row.quantity} = ${newTotal.toString()}).`, { lineId: existing.id, partNumber: existing.partNumber, quantity: row.quantity, newTotal: newTotal.toString() });
+        // Keep the stock held for the line in step with its new quantity (the
+        // units meant to come from stock, less any already taken).
+        if (part && reopenable && !existing.receivedQuantity) {
+          const qtys = partLineQuantities({
+            quantity: updatedLine.quantity.toString(),
+            orderedQuantity: updatedLine.orderedQuantity?.toString() ?? null,
+            orderNumber: updatedLine.orderNumber,
+            hasSupplier: Boolean(updatedLine.orderedFromSupplierId),
+            receivedQuantity: updatedLine.receivedQuantity?.toString() ?? null,
+            stockIssuedQuantity: updatedLine.stockIssuedQuantity?.toString() ?? null,
+            pickedQuantity: updatedLine.pickedQuantity?.toString() ?? null,
+          });
+          const target = Prisma.Decimal.max(new Prisma.Decimal(qtys.stockQty.toString()).minus(updatedLine.stockIssuedQuantity ?? new Prisma.Decimal(0)), new Prisma.Decimal(0));
+          const held = nextStatus === "IN_STOCK" ? target : new Prisma.Decimal(0);
+          await reconcileJobPartLineReservationTx(tx, { ...ctx, companyId }, { jobNumber: jobNumberLabel ?? "", lineId: existing.id, partId: part.id, targetQuantity: held });
+        }
+        continue;
+      }
+
+      const inStock = !!part && onHand.gte(row.quantity);
 
       const created = await tx.jobPartLine.create({
         data: {
