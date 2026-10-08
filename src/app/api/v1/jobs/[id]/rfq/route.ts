@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { requireSameOrigin } from "@/lib/security/request";
-import { requestRfqFromSupplier, getRfqRequestAttachment } from "@/lib/rfq/service";
+import { requestRfqFromSupplier, getRfqRequestAttachment, listRfqSupplierOptions } from "@/lib/rfq/service";
 
 // Adds a supplier to this job's RFQ / quote comparison list. Body:
 // { supplierId, sendEmail?, attachmentFileName?, attachmentMimeType?,
@@ -28,9 +28,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 // than adding another dynamic route segment for one lookup.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const { id } = await params;
+    // GET ?suppliers=1[&q=...] — the "Add existing supplier" list: active
+    // suppliers with the ones that deal in this job's make first (matchesBrand).
+    if (request.nextUrl.searchParams.get("suppliers")) {
+      return NextResponse.json(await listRfqSupplierOptions(await requireRequestContext(), id, request.nextUrl.searchParams.get("q")));
+    }
     const rfqRequestId = request.nextUrl.searchParams.get("rfqId");
     if (!rfqRequestId) throw new Error("RFQ_ID_REQUIRED");
-    const { id } = await params;
     return NextResponse.json(await getRfqRequestAttachment(await requireRequestContext(), id, rfqRequestId));
   } catch (error) {
     return apiError(error);

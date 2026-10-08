@@ -10,6 +10,7 @@ import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
 import { guessPricesFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
+import { normalized } from "@/lib/master-data/validation";
 import { reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
 
 // RFQ (request for quote) — new, added 2026-09-09 at the user's request
@@ -141,6 +142,62 @@ async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequest
   }
 }
 
+// 2026-10-08, user request: "if a job Make is Caterpillar then when clicking
+// request quote from supplier that it will add suppliers that brands match the
+// list ... if a supplier is added which brand doesnt match, then the brand gets
+// added to that supplier." The job's machine make is matched to the company's
+// Manufacturers list by name (case-insensitive); suppliers carry the brands
+// they deal in (SupplierManufacturer).
+async function findManufacturerForMake(db: Prisma.TransactionClient | typeof prisma, companyId: string, machineMake: string | null | undefined) {
+  const key = normalized(machineMake);
+  if (!key) return null;
+  return db.manufacturer.findFirst({ where: { companyId, nameNormalized: key, active: true }, select: { id: true, name: true } });
+}
+
+// Makes sure the supplier is linked to the job's make. Returns the brand name
+// when a link was added (or switched back on), null when nothing changed.
+async function ensureSupplierBrandTx(tx: Prisma.TransactionClient, companyId: string, supplierId: string, machineMake: string | null | undefined): Promise<string | null> {
+  const manufacturer = await findManufacturerForMake(tx, companyId, machineMake);
+  if (!manufacturer) return null;
+  const link = await tx.supplierManufacturer.findUnique({ where: { companyId_supplierId_manufacturerId: { companyId, supplierId, manufacturerId: manufacturer.id } } });
+  if (link?.active) return null;
+  if (link) {
+    await tx.supplierManufacturer.update({ where: { id: link.id }, data: { active: true, deactivatedAt: null, deactivatedById: null } });
+  } else {
+    await tx.supplierManufacturer.create({ data: { companyId, supplierId, manufacturerId: manufacturer.id } });
+  }
+  return manufacturer.name;
+}
+
+// The supplier list behind "Add existing supplier" on the Request quotes
+// popup: active suppliers (optionally narrowed by a typed search), with the
+// ones that deal in the job's make listed first and flagged.
+export async function listRfqSupplierOptions(ctx: RequestContext, jobId: string, query: string | null) {
+  const companyId = requireJobsRead(ctx);
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { machineMake: true } });
+  if (!job) notFound();
+  const manufacturer = await findManufacturerForMake(prisma, companyId, job.machineMake);
+  const q = query?.trim();
+  const base: Prisma.SupplierWhereInput = { companyId, active: true, ...(q ? { OR: [{ name: { contains: q, mode: "insensitive" } }, { accountCode: { contains: q, mode: "insensitive" } }] } : {}) };
+  const limit = 20;
+  const matching = manufacturer
+    ? await prisma.supplier.findMany({ where: { ...base, manufacturers: { some: { manufacturerId: manufacturer.id, active: true } } }, select: { id: true, name: true }, orderBy: { name: "asc" }, take: limit })
+    : [];
+  const others = matching.length < limit
+    ? await prisma.supplier.findMany({
+        where: { ...base, ...(manufacturer ? { NOT: { manufacturers: { some: { manufacturerId: manufacturer.id, active: true } } } } : {}) },
+        select: { id: true, name: true }, orderBy: { name: "asc" }, take: limit - matching.length,
+      })
+    : [];
+  return {
+    brand: manufacturer?.name ?? (job.machineMake?.trim() || null),
+    items: [
+      ...matching.map((x) => ({ id: x.id, name: x.name, matchesBrand: true })),
+      ...others.map((x) => ({ id: x.id, name: x.name, matchesBrand: false })),
+    ],
+  };
+}
+
 // Adds a supplier to this job's RFQ/comparison list, sending a real RFQ
 // email when requested and the company has SMTP set up (see
 // attemptRfqSend above) — otherwise, or when input.sendEmail is false,
@@ -181,7 +238,9 @@ export async function requestRfqFromSupplier(ctx: RequestContext, jobId: string,
       },
       include: { supplier: { select: { id: true, name: true } } },
     });
-    const description = send.status === "SENT" ? `Quote request emailed to ${supplier.name}.` : send.status === "FAILED" ? `Quote request to ${supplier.name} could not be emailed — added to the comparison list.` : send.status === "QUOTED" ? `Quote re-requested from ${supplier.name}.` : `${supplier.name} added to the comparison list (no email sent).`;
+    const brandAdded = await ensureSupplierBrandTx(tx, companyId, supplier.id, job.machineMake);
+    const brandNote = brandAdded ? ` ${brandAdded} was added to ${supplier.name}'s brands.` : "";
+    const description = (send.status === "SENT" ? `Quote request emailed to ${supplier.name}.` : send.status === "FAILED" ? `Quote request to ${supplier.name} could not be emailed — added to the comparison list.` : send.status === "QUOTED" ? `Quote re-requested from ${supplier.name}.` : `${supplier.name} added to the comparison list (no email sent).`) + brandNote;
     await addActivity(tx, ctx, jobId, "RFQ_REQUESTED", description, { rfqRequestId: record.id, supplierId: supplier.id, status: send.status });
     return record;
   });

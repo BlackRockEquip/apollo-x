@@ -18,7 +18,7 @@ import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
-type SupplierOption = Row & { name: string };
+type SupplierOption = Row & { name: string; matchesBrand?: boolean };
 // "Mechanic Strip"/"Mechanic Assemble" (2026-09-19 user request) — the
 // company's own staff list, for assigning who stripped/assembled a job.
 type MechanicOption = { id: string; label: string };
@@ -632,6 +632,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [rfqSupplierQuery, setRfqSupplierQuery] = useState("");
   const [rfqSupplierOptions, setRfqSupplierOptions] = useState<SupplierOption[]>([]);
   const [rfqSupplierId, setRfqSupplierId] = useState("");
+  const [rfqBrandLabel, setRfqBrandLabel] = useState("");
   const [rfqSupplierPickerOpen, setRfqSupplierPickerOpen] = useState(false);
   const [rfqSendEmail, setRfqSendEmail] = useState(true);
   // 2026-09-29, user report: "on RFQ form inside a job, when resending an
@@ -1107,12 +1108,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!rfqSupplierPickerOpen) { setRfqSupplierOptions([]); return; }
     const q = rfqSupplierQuery.trim();
     const timer = setTimeout(async () => {
-      const r = await fetch(`/api/v1/master-data/suppliers?${q ? `q=${encodeURIComponent(q)}&` : ""}status=active&pageSize=20`, { cache: "no-store" });
+      // 2026-10-08: served by the job's own RFQ endpoint so suppliers that deal
+      // in the job's machine make come first (matchesBrand).
+      const r = await fetch(`/api/v1/jobs/${jobId}/rfq?suppliers=1${q ? `&q=${encodeURIComponent(q)}` : ""}`, { cache: "no-store" });
       const b = await r.json();
       setRfqSupplierOptions(b.items || []);
+      setRfqBrandLabel(b.brand || "");
     }, 200);
     return () => clearTimeout(timer);
-  }, [rfqSupplierQuery, rfqSupplierPickerOpen]);
+  }, [rfqSupplierQuery, rfqSupplierPickerOpen, jobId]);
 
   // Bulk part-line update — see bulkEditMode's declaration above.
   useEffect(() => {
@@ -4821,7 +4825,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
 
             <div className="drawer-fields">
-              <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setRfqSupplierPickerOpen(false))}><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); setRfqSupplierPickerOpen(true); }} onFocus={() => setRfqSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{rfqSupplierPickerOpen && rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}</div>}</label>
+              <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setRfqSupplierPickerOpen(false))}><span>Add existing supplier</span><div><Search size={15} /><input value={rfqSupplierQuery} onChange={(e) => { setRfqSupplierQuery(e.target.value); setRfqSupplierId(""); setRfqSupplierPickerOpen(true); }} onFocus={() => setRfqSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{rfqSupplierPickerOpen && rfqSupplierOptions.length > 0 && <div className="selector-results">{rfqSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setRfqSupplierId(s.id); setRfqSupplierQuery(s.name); setRfqSupplierOptions([]); setRfqSupplierPickerOpen(false); }}><strong>{s.name}</strong>{s.matchesBrand ? <span>{rfqBrandLabel} supplier</span> : null}</button>)}</div>}</label>
               <label>
                 <span>&nbsp;</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
