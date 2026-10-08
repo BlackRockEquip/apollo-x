@@ -327,6 +327,17 @@ const RFQ_STATUS_LABELS: Record<string, string> = {
   QUOTED: "Quoted",
 };
 
+type JobViewer = { userId: string; name: string; initials: string; you: boolean };
+
+// Soft, distinct colours for the initials circles, picked from the user id so a
+// person keeps the same colour for everyone.
+const VIEWER_COLOURS = ["#2f6f9f", "#7a5ca8", "#2e8b6e", "#b5651d", "#a04668", "#4b6a88", "#8a7a1f", "#3f7f8f"];
+function viewerColour(userId: string): string {
+  let h = 0;
+  for (let i = 0; i < userId.length; i += 1) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  return VIEWER_COLOURS[h % VIEWER_COLOURS.length];
+}
+
 export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId?: string }) {
   const router = useRouter();
   // 2026-10-01 — user request ("User type: User/Mechanic — inside a job,
@@ -350,6 +361,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // the bottom of this component's JSX.
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [job, setJob] = useState<JobDetail | null>(null);
+  const [jobViewers, setJobViewers] = useState<JobViewer[]>([]);
   // 2026-10-05 — "Send to PEX Inventory" is available at any status once the
   // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
   // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
@@ -947,6 +959,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   /* eslint-disable react-hooks/set-state-in-effect -- async resource loading and search result synchronization are intentional here */
   useEffect(() => { void load(); }, [load]);
+
+  // 2026-10-08, user request: small profile circles showing who has this job
+  // open. A heartbeat every 3 seconds (paused while this tab is hidden, so a
+  // forgotten tab drops out) returns everyone currently in the job; leaving
+  // the page removes the person straight away.
+  useEffect(() => {
+    if (mode !== "detail" || !jobId) return;
+    let stopped = false;
+    const beat = async () => {
+      if (stopped || document.hidden) return;
+      try {
+        const res = await fetch(`/api/v1/jobs/${jobId}/presence`, { method: "POST", cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json() as { viewers?: JobViewer[] };
+        if (!stopped) setJobViewers(data.viewers ?? []);
+      } catch { /* presence is a nicety, never an error banner */ }
+    };
+    void beat();
+    const timer = window.setInterval(() => { void beat(); }, 3000);
+    const onVisible = () => { if (!document.hidden) void beat(); };
+    document.addEventListener("visibilitychange", onVisible);
+    const leave = () => { try { void fetch(`/api/v1/jobs/${jobId}/presence`, { method: "DELETE", keepalive: true }); } catch { /* ignore */ } };
+    window.addEventListener("pagehide", leave);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pagehide", leave);
+      leave();
+    };
+  }, [mode, jobId]);
 
   useEffect(() => {
     (async () => {
@@ -4544,6 +4587,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               {mode === "detail" && job?.type === "WARRANTY" && <> · <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} /></>}
             </p>
           </div>
+          <div className="header-actions-stack">
           <div className="header-actions">
             {mode === "create" ? (
               <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create job"}</button>
@@ -4597,6 +4641,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
               </>
             )}
+          </div>
+          {mode === "detail" && jobViewers.length > 0 && (
+            <div className="job-viewers" aria-label="People in this job">
+              {jobViewers.slice(0, 6).map((v) => (
+                <span key={v.userId} className={`job-viewer${v.you ? " you" : ""}`} style={{ background: viewerColour(v.userId) }} title={v.you ? `${v.name} (you)` : `${v.name} is in this job`}>{v.initials}</span>
+              ))}
+              {jobViewers.length > 6 && <span className="job-viewer more" title={jobViewers.slice(6).map((v) => v.name).join(", ")}>+{jobViewers.length - 6}</span>}
+            </div>
+          )}
           </div>
         </header>
 

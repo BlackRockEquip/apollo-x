@@ -1530,3 +1530,10 @@ a.dash-card { color: inherit; text-decoration: none; }
 .jobs-bulk-result li { display: flex; gap: 10px; border-bottom: 1px solid var(--ink-100); padding: 6px 0; font-size: 12px; }
 .jobs-bulk-result li strong { flex: none; }
 .jobs-bulk-result li span { color: var(--ink-700); }
+
+/* 2026-10-08 — who has the job open: small initials circles under the job header's buttons. */
+.header-actions-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.job-viewers { display: flex; flex-direction: row; justify-content: flex-end; align-items: center; }
+.job-viewer { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; border: 2px solid #fff; margin-left: -6px; cursor: default; box-shadow: 0 0 0 1px rgba(23, 32, 51, 0.12); }
+.job-viewer.you { box-shadow: 0 0 0 2px var(--gold-500); }
+.job-viewer.more { background: var(--ink-500, #5b6477); }

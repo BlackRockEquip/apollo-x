@@ -548,6 +548,7 @@ model UserIdentity {
   // Platform-side counterpart of notifications above — see
   // PlatformNotification's own comment.
   platformNotifications PlatformNotification[]
+  jobPresences          JobPresence[]
 }
 
 model Company {
@@ -612,6 +613,7 @@ model Company {
   dashboardConfigs  UserDashboardConfig[]
   tableColumnConfigs UserTableColumns[]
   notifications     Notification[]
+  jobPresences      JobPresence[]
 }
 
 // The top-level subscription record: which Product(s) an organization is
@@ -1761,6 +1763,7 @@ model Job {
   @@index([companyId, status, createdAt])
   @@index([companyId, type, createdAt])
   @@index([companyId, customerId, createdAt])
+  presences           JobPresence[]
 }
 
 model JobComponent {
@@ -2784,4 +2787,23 @@ model UserTableColumns {
   company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([userId, companyId, tableKey])
+}
+
+// Who has a job open right now (the small profile circles under the job
+// header's buttons). One row per person per job; the open job page touches
+// lastSeenAt every few seconds and anyone not seen for ~45 seconds is no longer
+// shown. Rows are removed when the person leaves the job.
+model JobPresence {
+  id         String   @id @default(cuid())
+  companyId  String
+  jobId      String
+  userId     String
+  lastSeenAt DateTime @default(now())
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  job     Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user    UserIdentity @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([companyId, jobId, lastSeenAt])
 }
