@@ -272,7 +272,15 @@ async function getJobScoped(companyId: string, id: string) {
         include: { returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } } },
       },
       pexAsReturn: {
-        include: { supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } } },
+        // 2026-10-08 — consumedByJob added: the job this unit was redeployed on
+        // (another job whose "Previous job number" is this return job). Feeds
+        // the "Redeployed" card beside the PEX Return panel; before this it was
+        // never loaded, so the panel's "Redeployed on" note and the hiding of
+        // Scrap / Undo for a redeployed unit could not work.
+        include: {
+          supplyJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true } },
+          consumedByJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true, type: true, deliveryDate: true, customer: { select: { name: true, tradingName: true } } } },
+        },
       },
       pexConsumedBy: {
         include: { returnJob: { select: { id: true, jobNumber: true, draftNumber: true } } },
