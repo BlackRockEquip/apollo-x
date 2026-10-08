@@ -207,7 +207,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         <div>
           <p className="eyebrow">Jobs</p>
           <h1>Jobs & WIP</h1>
-          <p>Create draft jobs, register authoritative BRE numbers, and work live status queues from one workspace.</p>
+          <p>Create jobs (numbered and registered straight away) and work live status queues from one workspace.</p>
         </div>
         {canCreate && <Link href="/jobs/new" className="gold-button"><Plus size={16} /> New job</Link>}
       </header>

@@ -1181,6 +1181,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
+      // 2026-10-08, user request: "create draft ... becomes the Create Job
+      // button skipping the register job section" — register the new job
+      // straight away, at the first stage of its flow (the same status the
+      // Register dialog preselects). If that step fails (e.g. the person can
+      // create but not edit jobs) the job still exists as a draft, so open it
+      // anyway and its Register button is still there.
+      try {
+        await fetch(`/api/v1/jobs/${b.id}/register`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ initialStatus: statusStepsForJobType(form.type as Parameters<typeof statusStepsForJobType>[0])[0] }),
+        });
+      } catch {
+        // fall through — see above
+      }
       router.push(`/jobs/${b.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save job.");
@@ -4491,7 +4506,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           </div>
           <div className="header-actions">
             {mode === "create" ? (
-              <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create draft"}</button>
+              <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create job"}</button>
             ) : (
               // Save button removed in detail mode (2026-09-14, user
               // request) — every field autosaves on its own (see the
