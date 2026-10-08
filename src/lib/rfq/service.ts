@@ -504,8 +504,11 @@ function jobRfqReceivingStatus(status: string, decidedCount: number, totalPartLi
 // actions (requireJobsRead), not the Suppliers module.
 export async function listAllOutworkItems(ctx: RequestContext) {
   const companyId = requireJobsRead(ctx);
+  // 2026-10-08, user request: "if outwork is received remove from table" —
+  // the Outwork menu only lists items still out; received ones stay on the
+  // job's own Outwork section.
   return prisma.outworkItem.findMany({
-    where: { companyId },
+    where: { companyId, status: { not: "RECEIVED" } },
     include: {
       supplier: { select: { id: true, name: true } },
       job: { select: { id: true, jobNumber: true, draftNumber: true } },

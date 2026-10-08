@@ -292,25 +292,6 @@ function rfqQuoteTotal(quote: RfqQuoteRow, partLines: PartLineRow[]): number {
   return total;
 }
 
-// Total cost + how many part lines have a preferred supplier picked —
-// mirrors ModApp's QuoteComparisonSection preferredSummary().
-function preferredPurchaseSummary(job: JobDetail): { total: number; pickedCount: number } {
-  let total = 0;
-  let pickedCount = 0;
-  for (const line of job.partLines) {
-    for (const request of job.rfqRequests) {
-      const quoteLine = request.quote?.lines.find((l) => l.partLineId === String(line.id) && l.preferred);
-      if (!quoteLine || quoteLine.unitPrice == null || quoteLine.unitPrice === "") continue;
-      const price = Number(quoteLine.unitPrice);
-      if (Number.isNaN(price)) continue;
-      const qty = Number(line.quantity ?? 0);
-      total += price * (Number.isNaN(qty) ? 0 : qty);
-      pickedCount += 1;
-    }
-  }
-  return { total, pickedCount };
-}
-
 function csvEscapeField(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
@@ -683,6 +664,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // and scroll with the entry table above it.
   const [showSavedQuotesCompare, setShowSavedQuotesCompare] = useState(false);
   const [quoteCompareMaximized, setQuoteCompareMaximized] = useState(false);
+  // 2026-10-08, user request: "the compare pricing window, add a ok and cancel
+  // button at the bottom right, same with the saved quotes window". Stars
+  // clicked in the Saved quotes dialog are now staged here (partLineId ->
+  // chosen rfqQuoteId, or null = cleared) and only written when OK is
+  // pressed; Cancel / X just drops them.
+  const [pendingPreferred, setPendingPreferred] = useState<Record<string, string | null>>({});
+  const [applyingPreferred, setApplyingPreferred] = useState(false);
+  const [savingAllQuotes, setSavingAllQuotes] = useState(false);
   const [partsFollowupResult, setPartsFollowupResult] = useState<{ sent: { supplierName: string }[]; skipped: { supplierName: string; reason: string }[] } | null>(null);
   const [jobKitQuery, setJobKitQuery] = useState("");
   const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
@@ -3146,8 +3135,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  async function saveQuoteForRequest(rfqRequestId: string) {
-    if (!jobId) return;
+  async function saveQuoteForRequest(rfqRequestId: string): Promise<boolean> {
+    if (!jobId) return false;
     setQuoteSavingId(rfqRequestId); setError("");
     try {
       const file = quoteFiles[rfqRequestId] || null;
@@ -3181,10 +3170,85 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       }
       setQuoteFiles((current) => ({ ...current, [rfqRequestId]: null }));
       await load(true);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to record quote.");
+      return false;
     } finally {
       setQuoteSavingId("");
+    }
+  }
+
+  // True when this supplier's column in the Compare quotes grid differs from
+  // what is saved (or has a file waiting to be imported) — OK saves only
+  // these, so pressing OK with nothing typed doesn't create empty quotes.
+  function quoteDraftDirty(request: JobDetail["rfqRequests"][number]): boolean {
+    const id = String(request.id);
+    if (quoteFiles[id]) return true;
+    if ((quoteNotesByRequest[id] || "").trim() !== String(request.quote?.notes || "").trim()) return true;
+    for (const line of job?.partLines || []) {
+      const draft = quoteDrafts[id]?.[String(line.id)];
+      if (!draft) continue;
+      const existing = request.quote?.lines.find((l) => l.partLineId === String(line.id));
+      const existingPrice = existing && existing.unitPrice != null && existing.unitPrice !== "" ? Number(existing.unitPrice) : null;
+      const draftPrice = draft.available && draft.unitPrice !== "" ? Number(draft.unitPrice) : null;
+      if (draft.available !== (existing?.available !== false)) return true;
+      if (draftPrice !== existingPrice) return true;
+      if (draft.notes.trim() !== String(existing?.notes || "").trim()) return true;
+    }
+    return false;
+  }
+
+  // OK on the Compare quotes dialog: save every supplier column that has
+  // unsaved changes, then close. Stops (dialog stays open, error shown) if
+  // any save fails.
+  async function saveAllQuotesAndClose() {
+    const dirty = (job?.rfqRequests || []).filter((r) => quoteDraftDirty(r));
+    setSavingAllQuotes(true);
+    try {
+      for (const request of dirty) {
+        const ok = await saveQuoteForRequest(String(request.id));
+        if (!ok) return;
+      }
+      closeQuoteCompare();
+    } finally {
+      setSavingAllQuotes(false);
+    }
+  }
+
+  function closeSavedQuotes() {
+    setPendingPreferred({});
+    setShowSavedQuotesCompare(false);
+  }
+
+  // OK on the Saved quotes dialog: write the staged star picks. The
+  // preferred endpoint toggles, so a pick is sent as one call on the chosen
+  // quote line, and a clear as one call on the line that is currently
+  // preferred; lines already in the wanted state are skipped.
+  async function applyPendingPreferred() {
+    if (!jobId) return;
+    const entries = Object.entries(pendingPreferred);
+    if (entries.length === 0) { closeSavedQuotes(); return; }
+    setApplyingPreferred(true); setError("");
+    try {
+      for (const [partLineId, desired] of entries) {
+        let current: string | null = null;
+        for (const request of job?.rfqRequests || []) {
+          if (request.quote?.lines.some((l) => l.partLineId === partLineId && l.preferred)) current = String(request.quote.id);
+        }
+        if (desired === current) continue;
+        const target = desired ?? current;
+        if (!target) continue;
+        const r = await fetch(`/api/v1/jobs/${jobId}/rfq/preferred`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ partLineId, rfqQuoteId: target }) });
+        const b = await r.json();
+        if (!r.ok) throw new Error(b.error?.message || "Unable to save the preferred prices.");
+      }
+      await load(true);
+      closeSavedQuotes();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the preferred prices.");
+    } finally {
+      setApplyingPreferred(false);
     }
   }
 
@@ -3204,11 +3268,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       total += price * (Number.isNaN(qty) ? 0 : qty);
     }
     return total;
-  }
-
-  async function togglePreferred(partLineId: string, rfqQuoteId: string) {
-    if (!jobId) return;
-    await postAction(`/api/v1/jobs/${jobId}/rfq/preferred`, { partLineId, rfqQuoteId });
   }
 
   async function viewQuoteFile(rfqRequestId: string) {
@@ -4875,14 +4934,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 the compare Prices button, make that it opens its own
                 dialog" — see the separate popup below, rendered as a
                 sibling of this one, instead of expanding inline here. */}
-            {job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <button type="button" className="quiet-button" onClick={() => setShowSavedQuotesCompare(true)}>
-                  <Columns3 size={14} /> Compare Prices
-                </button>
-              </div>
-            )}
             </div>
+            {/* 2026-10-08, user report: "the compare prices button only shows
+                if the first column supplier is saved, if a second suppliers
+                data is received first it doesnt show the button" — it was
+                tucked under the entry table and only rendered once a quote
+                existed, so it could sit out of view (or be missing) while a
+                later supplier's column was being filled in. It now lives in
+                the dialog footer and is always there; it simply stays
+                disabled until at least one supplier's quote has been saved.
+                OK saves every changed supplier column and closes; Cancel
+                closes without saving (user request: "add a ok and cancel
+                button at the bottom right"). */}
+            <footer style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <button type="button" className="quiet-button" disabled={!(job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0)} title={job.rfqRequests.some((r) => r.quote) ? undefined : "Save at least one supplier's prices first"} onClick={() => { setPendingPreferred({}); setShowSavedQuotesCompare(true); }}>
+                <Columns3 size={14} /> Compare Prices
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="quiet-button" onClick={closeQuoteCompare} disabled={savingAllQuotes}>Cancel</button>
+                <button type="button" className="gold-button" onClick={() => void saveAllQuotesAndClose()} disabled={savingAllQuotes || !!quoteSavingId}>{savingAllQuotes && <Loader2 className="spin" size={14} />} OK</button>
+              </div>
+            </footer>
           </aside>
           </div>
           )}
@@ -4898,13 +4970,51 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               if the Compare quotes dialog behind it is later closed. */}
           {showSavedQuotesCompare && job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (() => {
             const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-            const { total: preferredTotal, pickedCount } = preferredPurchaseSummary(job);
+            // Effective pick for a part line: the staged choice when there is one
+            // (a key in pendingPreferred, null = cleared), else what is saved.
+            const effectivePickId = (partLineId: string): string | null => {
+              if (Object.prototype.hasOwnProperty.call(pendingPreferred, partLineId)) return pendingPreferred[partLineId];
+              for (const request of quotedRequests) {
+                if (request.quote!.lines.some((l) => l.partLineId === partLineId && l.preferred)) return String(request.quote!.id);
+              }
+              return null;
+            };
+            const isQuoted = (quoteLine: { available?: boolean | null; unitPrice?: unknown } | undefined) => !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
+            let preferredTotal = 0;
+            let pickedCount = 0;
+            for (const line of job.partLines) {
+              const pickId = effectivePickId(String(line.id));
+              if (!pickId) continue;
+              const request = quotedRequests.find((r) => String(r.quote!.id) === pickId);
+              const quoteLine = request?.quote!.lines.find((l) => l.partLineId === String(line.id));
+              if (!isQuoted(quoteLine)) continue;
+              const price = Number(quoteLine!.unitPrice);
+              if (Number.isNaN(price)) continue;
+              const qty = Number(line.quantity ?? 0);
+              preferredTotal += price * (Number.isNaN(qty) ? 0 : qty);
+              pickedCount += 1;
+            }
+            const pickLine = (partLineId: string, quoteId: string) => setPendingPreferred((c) => ({ ...c, [partLineId]: effectivePickId(partLineId) === quoteId ? null : quoteId }));
+            // 2026-10-08, user request: "create a star at the top by the supplier
+            // name that will select all from that supplier" — picks (or, when
+            // every priced line is already that supplier's, clears) all of this
+            // supplier's priced lines in one click.
+            const pickSupplierLines = (request: (typeof quotedRequests)[number]) => {
+              const quoteId = String(request.quote!.id);
+              const pricedLineIds = job.partLines.map((l) => String(l.id)).filter((id) => isQuoted(request.quote!.lines.find((l) => l.partLineId === id)));
+              const allPicked = pricedLineIds.length > 0 && pricedLineIds.every((id) => effectivePickId(id) === quoteId);
+              setPendingPreferred((c) => {
+                const next = { ...c };
+                for (const id of pricedLineIds) next[id] = allPicked ? null : quoteId;
+                return next;
+              });
+            };
             return (
               <div className="drawer-backdrop" role="dialog" aria-modal="true">
                 <aside className="form-drawer compact-dialog job-editor-drawer quote-compare-dialog" style={{ maxHeight: "90vh", overflowY: "auto" }}>
                   <header>
                     <div><h2>Saved quotes</h2><p>Every supplier with a saved quote on this job, compared side by side.</p></div>
-                    <button type="button" onClick={() => setShowSavedQuotesCompare(false)} aria-label="Close dialog"><X size={18} /></button>
+                    <button type="button" onClick={closeSavedQuotes} aria-label="Close dialog"><X size={18} /></button>
                   </header>
                   <div className="quote-compare-body">
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -4915,7 +5025,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       <tr>
                         <th rowSpan={2}>Part</th>
                         <th rowSpan={2}>Qty</th>
-                        {quotedRequests.map((r) => <th key={r.id} colSpan={2} className="supplier-group-start">{text(r.supplier.name)}</th>)}
+                        {quotedRequests.map((r) => {
+                          const quoteId = String(r.quote!.id);
+                          const pricedLineIds = job.partLines.map((l) => String(l.id)).filter((id) => isQuoted(r.quote!.lines.find((l) => l.partLineId === id)));
+                          const allPicked = pricedLineIds.length > 0 && pricedLineIds.every((id) => effectivePickId(id) === quoteId);
+                          return <th key={r.id} colSpan={2} className="supplier-group-start">
+                            <button type="button" className="table-action" disabled={pricedLineIds.length === 0} style={allPicked ? { fontWeight: 700 } : undefined} onClick={() => pickSupplierLines(r)} title={`Select all ${text(r.supplier.name)} prices`} aria-label={`Select all prices from ${text(r.supplier.name)}`}>
+                              <Star size={13} fill={allPicked ? "currentColor" : "none"} /> {text(r.supplier.name)}
+                            </button>
+                          </th>;
+                        })}
                       </tr>
                       <tr>
                         {quotedRequests.map((r) => <Fragment key={r.id}><th className="supplier-group-start">Unit</th><th>Total</th></Fragment>)}
@@ -4932,13 +5051,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                             const quoteLine = quote.lines.find((l) => l.partLineId === String(line.id));
                             const quoted = !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
                             const isCheapest = quoted && String(quote.id) === cheapestQuoteId;
-                            const isPreferred = !!quoteLine?.preferred;
+                            const isPreferred = effectivePickId(String(line.id)) === String(quote.id);
                             const unit = quoted ? Number(quoteLine!.unitPrice) : null;
                             const cellStyle = isCheapest ? { background: "rgba(59,130,246,0.1)" } : undefined;
                             return <Fragment key={request.id}>
                               <td className="supplier-group-start" style={cellStyle}>
                                 {quoteLine && quoteLine.available === false ? <span className="muted small-line">Unavailable</span> : quoted ? (
-                                  <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => void togglePreferred(String(line.id), String(quote.id))}>
+                                  <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => pickLine(String(line.id), String(quote.id))}>
                                     <Star size={12} fill={isPreferred ? "currentColor" : "none"} /> R{unit!.toFixed(2)}
                                   </button>
                                 ) : <span className="muted small-line">—</span>}
@@ -4965,8 +5084,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
                       </tr>
                     </tfoot></table></div>
-                    <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part — this also fills in the part&apos;s &quot;ordered from&quot; supplier.</p>
+                    <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part, or the star by a supplier&apos;s name to pick everything they quoted — press OK to save; this also fills in each part&apos;s &quot;ordered from&quot; supplier.</p>
                   </div>
+                  <footer>
+                    <button type="button" className="quiet-button" onClick={closeSavedQuotes} disabled={applyingPreferred}>Cancel</button>
+                    <button type="button" className="gold-button" onClick={() => void applyPendingPreferred()} disabled={applyingPreferred}>{applyingPreferred && <Loader2 className="spin" size={14} />} OK</button>
+                  </footer>
                 </aside>
               </div>
             );

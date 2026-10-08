@@ -66,14 +66,18 @@ export function OutworkAllWorkspace() {
   // client-side against the already-loaded `rows` — this list isn't paged,
   // so there's nothing to round-trip to the server for.
   const [filters, setFilters] = useState({ job: "", supplier: "", description: "", status: "ALL" });
+  // 2026-10-08: received outwork is no longer listed here (the API leaves it
+  // out); this client-side guard also drops a row the moment it is marked
+  // received without a reload.
   const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
+    if (row.status === "RECEIVED") return false;
     if (filters.job && !jobRef(row.job).toLowerCase().includes(filters.job.toLowerCase())) return false;
     if (filters.supplier && !(row.supplier.name || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
     if (filters.description && !(row.description || "").toLowerCase().includes(filters.description.toLowerCase())) return false;
     if (filters.status !== "ALL" && row.status !== filters.status) return false;
     return true;
   }), [rows, filters]);
-  const filtersActive = filters.job || filters.supplier || filters.description || filters.status !== "ALL";
+  const filtersActive = filters.job || filters.supplier || filters.description;
 
   async function load() {
     try {
@@ -147,11 +151,12 @@ export function OutworkAllWorkspace() {
     }
   }
 
+  const openCount = rows ? rows.filter((r) => r.status !== "RECEIVED").length : 0;
   if (!rows) return <div className="table-state">{error || <><Loader2 className="spin" size={18} />Loading outwork…</>}</div>;
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{filtersActive ? `${filteredRows.length} of ${rows.length} item${rows.length === 1 ? "" : "s"}` : `${rows.length} item${rows.length === 1 ? "" : "s"}`}</span>
+      <span>{filtersActive ? `${filteredRows.length} of ${openCount} item${openCount === 1 ? "" : "s"}` : `${openCount} item${openCount === 1 ? "" : "s"}`}</span>
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Create outwork</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
@@ -162,12 +167,12 @@ export function OutworkAllWorkspace() {
         <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
         <th><input value={filters.description} onChange={(e) => setFilters((f) => ({ ...f, description: e.target.value }))} placeholder="Filter description…" aria-label="Filter by description" /></th>
         <th></th>
-        <th><select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} aria-label="Filter by status"><option value="ALL">All</option><option value="SENT_OUT">Sent out</option><option value="RECEIVED">Received</option></select></th>
+        <th></th>
         <th></th><th></th><th></th>
         <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", description: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
       </tr>
     </thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={9} className="table-state">No outwork recorded yet.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={9} className="table-state compact-empty-state">No outwork matches these filters.</td></tr> : filteredRows.map((row) => (
+      {openCount === 0 ? <tr><td colSpan={9} className="table-state">No outwork currently out.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={9} className="table-state compact-empty-state">No outwork matches these filters.</td></tr> : filteredRows.map((row) => (
         <tr key={row.id}>
           <td><Link href={`/jobs/${row.job.id}`}>{jobRef(row.job)}</Link></td>
           <td>{text(row.supplier.name)}</td>
