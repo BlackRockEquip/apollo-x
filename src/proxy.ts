@@ -1,23 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/constants";
 
-// 2026-09-15 — /api/v1/integrations/excel-sync added here. It's a
-// machine-to-machine endpoint (scripts/excel-sync-bridge.ts pushing the WIP
-// workbook from the user's own PC), so it never carries a browser session
-// cookie and was being caught by the "no session -> redirect to /login"
-// rule below before it ever reached the route handler — the bridge script
-// saw this as "HTTP 200 but not JSON" (the /login page's HTML), since
-// fetch() follows a redirect automatically. The route itself already does
-// its own authentication (a constant-time comparison against
-// EXCEL_SYNC_API_KEY — see that route's own header comment); exempting it
-// here just lets that check run instead of never being reached, the same
-// way /api/v1/auth/login is exempted so a session can be created in the
-// first place.
-//
 // 2026-09-22 — user reports: "Favicon when not logged in must stay as
 // Apollo X or the default, must not show any organization logo" and "logos
-// not showing on login screen." Same root cause as the excel-sync case
-// above, just discovered a second time: /api/v1/company-settings/favicon
+// not showing on login screen." Signed-out requests to /api/v1/company-settings/favicon
 // and /api/v1/public/companies (+ its nested .../[id]/logo route) were
 // both written to be safely callable while signed out — the favicon route
 // already falls back to the "AX" SVG in a try/catch, and the public
@@ -55,7 +41,6 @@ const PUBLIC_PATHS = [
   "/api/v1/auth/forgot-password",
   "/api/v1/auth/reset-password",
   "/api/v1/health",
-  "/api/v1/integrations/excel-sync",
   "/api/v1/company-settings/favicon",
   "/api/v1/public/companies",
   // Signed, short-lived file links from the "Local folder" storage option

@@ -12,16 +12,6 @@
 # one go. Every envVar marked `sync: false` prompts for a value in the
 # dashboard at creation time instead of being committed here — several of
 # those are genuine secrets and must never be typed into this file.
-#
-# IMPORTANT — do NOT add JOBS_SYNC_FILE_PATH / JOBS_SYNC_COMPANY_NAME /
-# JOBS_SYNC_USE_POLLING to this service's env vars. Leaving them unset here
-# is exactly what keeps src/instrumentation.ts's in-process Excel-sync
-# watcher correctly disabled on Render (it has no access to a file on the
-# user's PC anyway) — see scripts/excel-sync-bridge.ts for the replacement,
-# which runs on the user's own machine instead and only needs
-# EXCEL_SYNC_API_KEY (below, shared with this service) and its own
-# EXCEL_SYNC_TARGET_URL (set locally, points AT this deployed service — not
-# a var this service itself needs).
 
 databases:
   - name: apollox-staging-db
@@ -101,10 +91,3 @@ services:
         sync: false
       - key: STORAGE_S3_SECRET_ACCESS_KEY
         sync: false
-      # Shared secret for the Excel-sync bridge script (scripts/excel-sync-
-      # bridge.ts) running on the user's own PC — generateValue creates a
-      # random 256-bit value on first deploy. Copy it from this service's
-      # Environment tab in the Render dashboard into EXCEL_SYNC_API_KEY in
-      # the bridge script's own local .env (same value on both sides).
-      - key: EXCEL_SYNC_API_KEY
-        generateValue: true
