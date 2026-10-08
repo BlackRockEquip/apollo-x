@@ -691,9 +691,15 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
   // way too in case an old bookmarked/shared URL still has it.
   const statusFilter: Prisma.PexRecordWhereInput["status"] =
     query.status === "AWAIT_CORE" || query.status === "OUTSTANDING" ? { in: ["AWAIT_CORE", "OUTSTANDING"] } : (query.status as PexStatus);
+  // 2026-10-08 — user request: "if a unit is redistributed it should not show
+  // on the table". A unit whose return job has been redeployed on another job
+  // (consumedByJobId set by syncPexRedeployment) has left this chain, so it is
+  // dropped from the list, its status filter results and the summary cards.
+  // Clearing the redeploying job's Previous job number releases it again.
   const where: Prisma.PexRecordWhereInput = {
     companyId,
     supplyJobId: { not: null },
+    consumedByJobId: null,
     ...(query.status !== "ALL" ? { status: statusFilter } : {}),
     ...(query.q
       ? {
@@ -736,7 +742,7 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
   });
   const byId = new Map(pageRows.map((r) => [r.id, r]));
   const items = pageIds.map((id) => byId.get(id)!).filter(Boolean);
-  const countsBase: Prisma.PexRecordWhereInput = { companyId, supplyJobId: { not: null } };
+  const countsBase: Prisma.PexRecordWhereInput = { companyId, supplyJobId: { not: null }, consumedByJobId: null };
   // 2026-09-23, user report: "Pex tracking if status is awaiting core or
   // outstanding, it is the same thing, so the stats cards can be combined
   // with the outstanding at client card." AWAIT_CORE and OUTSTANDING are
