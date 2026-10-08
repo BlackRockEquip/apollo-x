@@ -431,7 +431,24 @@ export async function allocateDocumentNumberTx(tx: Prisma.TransactionClient, ctx
     // field (Job.jobNumber) can be checked against today — a future
     // document type (quotes, invoices, ...) with its own numbered model
     // would need the same treatment added here once it exists.
-    if ((type === "JOB" || type === "PEX_JOB") && await tx.job.findUnique({ where: { jobNumber: number }, select: { id: true } })) continue;
+    if ((type === "JOB" || type === "PEX_JOB") && await tx.job.findUnique({ where: { jobNumber: number }, select: { id: true } })) {
+      // 2026-10-08, user report: creating a job failed with "Couldn't allocate
+      // a free number for JOB after 100 attempts". The counter had fallen
+      // more than 100 behind the jobs that already exist (a sequence reset
+      // under Settings > Numbering, or jobs imported/created with their own
+      // numbers), and because a failed attempt rolls the transaction back,
+      // stepping forward one number at a time never got past the gap — every
+      // later attempt started from the same stuck value. On a clash, jump the
+      // counter straight past the highest existing number with this prefix,
+      // then carry on (the next pass allocates the first free number).
+      const numberPrefix = `${r.prefix}${r.includeFinancialYear ? `${year}/` : ""}`;
+      const highest = await tx.$queryRaw<Array<{ highest: bigint | null }>>`SELECT MAX(CAST(SUBSTRING("jobNumber" FROM CHAR_LENGTH(${numberPrefix}) + 1) AS BIGINT)) AS highest FROM "Job" WHERE "jobNumber" IS NOT NULL AND STARTS_WITH("jobNumber", ${numberPrefix}) AND SUBSTRING("jobNumber" FROM CHAR_LENGTH(${numberPrefix}) + 1) ~ '^[0-9]{1,15}$'`;
+      const top = highest[0]?.highest;
+      if (top != null) {
+        await tx.$executeRaw`UPDATE "DocumentNumberSequence" SET "nextValue"=GREATEST("nextValue", ${top + BigInt(1)}), "updatedAt"=NOW() WHERE id=${r.id}`;
+      }
+      continue;
+    }
     await tx.auditEvent.create({data:audit(ctx,"numbering",r.id,"ALLOCATE",undefined,{type,number})});
     return number;
   }
