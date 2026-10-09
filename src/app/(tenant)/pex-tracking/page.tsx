@@ -38,7 +38,7 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
             now matches both AWAIT_CORE and OUTSTANDING records (see
             listPexTracking's statusFilter), same merge as the Status
             column's own label (StatusPill.tsx). */}
-        <select name="status" defaultValue={status === "OUTSTANDING" ? "AWAIT_CORE" : status} form="pex-tracking-filter-form"><option value="ALL">All</option><option value="TO_BE_DELIVERED">To be delivered</option><option value="AWAIT_CORE">Awaiting core</option><option value="RECEIVED">Received</option><option value="IN_REPAIR">In repair</option><option value="COMPLETED">Completed</option><option value="SCRAPPED">Scrapped</option></select>
+        <select name="status" defaultValue={status === "OUTSTANDING" ? "AWAIT_CORE" : status} form="pex-tracking-filter-form"><option value="ALL">All</option><option value="TO_BE_DELIVERED">To be delivered</option><option value="AWAIT_CORE">Awaiting core</option><option value="RECEIVED">Received</option><option value="IN_REPAIR">In repair</option><option value="SCRAPPED">Scrapped</option></select>
         <button type="submit" form="pex-tracking-filter-form" className="quiet-button">Apply</button>
         <span>{data.total} chain{data.total === 1 ? "" : "s"}</span>
       </div>

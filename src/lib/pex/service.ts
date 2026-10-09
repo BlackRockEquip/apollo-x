@@ -99,6 +99,23 @@ export function pexSupplyDeliveredStatus(job: { deliveryDate: Date | null; statu
   return job.deliveryDate || (job.status && DELIVERED_JOB_STATUSES.includes(job.status as JobStatus)) ? "AWAIT_CORE" : "TO_BE_DELIVERED";
 }
 
+// 2026-10-09 — user request: "if a pex supply is delivered but still
+// awaiting payment status, the pex supply date can still be allocated to
+// table". PEX Tracking's Supply date column used to stay blank until a
+// return job was linked (that is when the date was first written). It now
+// fills in as soon as the supply counts as delivered (see
+// pexSupplyDeliveredStatus): the job's Delivery date when there is one,
+// otherwise the date it was first seen as delivered. A supply that is not
+// delivered (yet, or any more) has no supply date.
+export function pexSupplyDateFor(job: { deliveryDate: Date | null; status?: JobStatus | string | null }, existing: Date | null): Date | null {
+  if (pexSupplyDeliveredStatus(job) === "TO_BE_DELIVERED") return null;
+  return job.deliveryDate ?? existing ?? new Date();
+}
+
+function sameInstant(a: Date | null, b: Date | null) {
+  return (a ? a.getTime() : null) === (b ? b.getTime() : null);
+}
+
 // Mirrors ModApp's inline "if (jobType === PEX_SUPPLY) { create a PexRecord
 // if one doesn't already exist }" — done at job creation and, separately,
 // whenever a save changes an existing job's type to PEX_SUPPLY. Makes the
@@ -125,6 +142,7 @@ export async function createPexRecordForSupplyJob(
       // normal, far more common path (deliveryDate set on an already-PEX
       // job later).
       status: pexSupplyDeliveredStatus(job),
+      supplyDate: pexSupplyDateFor(job, null),
       createdById: ctx.userId,
       updatedById: ctx.userId,
     },
@@ -156,8 +174,9 @@ export async function syncPexAwaitCoreFromDeliveryDate(
   const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: job.id } });
   if (!pexAsSupply || pexAsSupply.returnJobId || pexAsSupply.status === "SCRAPPED") return;
   const desired: PexStatus = pexSupplyDeliveredStatus(job);
-  if (pexAsSupply.status !== desired) {
-    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
+  const desiredDate = pexSupplyDateFor(job, pexAsSupply.supplyDate);
+  if (pexAsSupply.status !== desired || !sameInstant(pexAsSupply.supplyDate, desiredDate)) {
+    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, supplyDate: desiredDate, updatedById: ctx.userId } });
   }
 }
 
@@ -249,7 +268,7 @@ async function attachReturnJobTx(
   returnJob: ScopedJob,
   pexAsSupply: { id: string; supplyDate: Date | null; returnDate: Date | null } | null,
 ) {
-  const supplyDate = pexAsSupply?.supplyDate ?? supplyJob.dateReceived ?? supplyJob.createdAt;
+  const supplyDate = pexAsSupply?.supplyDate ?? supplyJob.deliveryDate ?? supplyJob.dateReceived ?? supplyJob.createdAt;
   const unitDescription = supplyJob.componentType ?? supplyJob.component ?? null;
   // Derive the PexRecord's status from the return job's OWN current status
   // (same JOB_STATUS_TO_PEX_STATUS mapping syncPexStatusFromJobStatus uses)
@@ -401,8 +420,9 @@ export async function syncPexStatusFromJobStatus(
       // full reasoning — same rule, applied here too since a status change
       // is a save just like any other.
       const desired: PexStatus = pexSupplyDeliveredStatus({ deliveryDate: job.deliveryDate, status: nextStatus });
-      if (pexAsSupply.status !== desired) {
-        await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, updatedById: ctx.userId } });
+      const desiredDate = pexSupplyDateFor({ deliveryDate: job.deliveryDate, status: nextStatus }, pexAsSupply.supplyDate);
+      if (pexAsSupply.status !== desired || !sameInstant(pexAsSupply.supplyDate, desiredDate)) {
+        await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { status: desired, supplyDate: desiredDate, updatedById: ctx.userId } });
       }
     }
   }
@@ -472,7 +492,7 @@ export async function unlinkPexReturnJob(ctx: RequestContext, supplyJobId: strin
     if (!pexAsSupply?.returnJobId) throw new StockError("PEX_NOT_LINKED", "This job isn't linked to a return job.");
     const returnJob = await tx.job.findFirst({ where: { id: pexAsSupply.returnJobId, companyId } });
     const resetStatus: PexStatus = pexSupplyDeliveredStatus(supplyJob);
-    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { returnJobId: null, status: resetStatus, updatedById: ctx.userId } });
+    await tx.pexRecord.update({ where: { id: pexAsSupply.id }, data: { returnJobId: null, status: resetStatus, supplyDate: pexSupplyDateFor(supplyJob, pexAsSupply.supplyDate), updatedById: ctx.userId } });
     if (returnJob && returnJob.previousJobNumber === supplyJob.jobNumber) {
       await tx.job.update({ where: { id: returnJob.id }, data: { previousJobNumber: null, updatedById: ctx.userId } });
     }
@@ -688,13 +708,14 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
   // way too in case an old bookmarked/shared URL still has it.
   const statusFilter: Prisma.PexRecordWhereInput["status"] =
     query.status === "AWAIT_CORE" || query.status === "OUTSTANDING" ? { in: ["AWAIT_CORE", "OUTSTANDING"] } : (query.status as PexStatus);
-  // 2026-10-08 — user request, rephrased: "if a job is completed and
-  // redistributed then should not show, else if still in repair it can stay on
-  // the table". So a unit only drops off once it is BOTH redeployed on another
-  // job (consumedByJobId, set by syncPexRedeployment) AND completed; one that is
-  // still in repair (e.g. its return job was reopened) stays listed. Applied to
-  // the list, the status filter results and the summary cards alike.
-  const redeployedAndCompletedHidden: Prisma.PexRecordWhereInput = { NOT: { consumedByJobId: { not: null }, status: "COMPLETED" } };
+  // 2026-10-09 — user request: "status that are complete should not show in
+  // table". Every unit whose PEX status is Completed (its return job is
+  // Complete or Closed) is left off the list, the status filter results and
+  // the summary cards — no longer only the ones also redeployed on another
+  // job (the 2026-10-08 rule). A unit that comes back into repair (its return
+  // job is reopened) shows again. NOT (rather than a status condition) so it
+  // still combines with the status filter below.
+  const redeployedAndCompletedHidden: Prisma.PexRecordWhereInput = { NOT: { status: "COMPLETED" } };
   const where: Prisma.PexRecordWhereInput = {
     companyId,
     supplyJobId: { not: null },

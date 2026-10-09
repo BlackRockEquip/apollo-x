@@ -7,6 +7,13 @@
 // next saved or has its status changed — this script fixes records that are
 // already wrong.
 //
+// 2026-10-09 — also fills in the Supply date shown on PEX Tracking for a
+// delivered supply that has no return job yet (the live code now does this
+// on every save/status change; this catches records that are already
+// delivered). Date used: the job's Delivery date, else the date already on
+// the record, else the day the supply job was last updated (the closest
+// record of when it moved to delivered).
+//
 // Unlinked, non-scrapped PEX Supply records only (once a return job is
 // linked, its own status drives the PEX status).
 //
@@ -21,16 +28,18 @@ const APPLY = process.argv.includes("--apply");
 async function main() {
   const records = await prisma.pexRecord.findMany({
     where: { supplyJobId: { not: null }, returnJobId: null, status: { in: ["TO_BE_DELIVERED", "AWAIT_CORE"] } },
-    include: { supplyJob: { select: { jobNumber: true, draftNumber: true, status: true, deliveryDate: true } } },
+    include: { supplyJob: { select: { jobNumber: true, draftNumber: true, status: true, deliveryDate: true, updatedAt: true } } },
   });
   let changed = 0;
   for (const record of records) {
     if (!record.supplyJob) continue;
     const desired = pexSupplyDeliveredStatus(record.supplyJob);
-    if (desired === record.status) continue;
-    console.log(`${APPLY ? "Fixing" : "Would fix"}: ${record.supplyJob.jobNumber ?? record.supplyJob.draftNumber} (job status ${record.supplyJob.status}) ${record.status} -> ${desired}`);
+    const desiredDate = desired === "TO_BE_DELIVERED" ? null : (record.supplyJob.deliveryDate ?? record.supplyDate ?? record.supplyJob.updatedAt);
+    const dateSame = (record.supplyDate?.getTime() ?? null) === (desiredDate?.getTime() ?? null);
+    if (desired === record.status && dateSame) continue;
+    console.log(`${APPLY ? "Fixing" : "Would fix"}: ${record.supplyJob.jobNumber ?? record.supplyJob.draftNumber} (job status ${record.supplyJob.status}) ${record.status} -> ${desired}, supply date ${record.supplyDate?.toISOString().slice(0, 10) ?? "none"} -> ${desiredDate?.toISOString().slice(0, 10) ?? "none"}`);
     changed++;
-    if (APPLY) await prisma.pexRecord.update({ where: { id: record.id }, data: { status: desired } });
+    if (APPLY) await prisma.pexRecord.update({ where: { id: record.id }, data: { status: desired, supplyDate: desiredDate } });
   }
   console.log(`\nChecked ${records.length} unlinked PEX supply record(s); ${changed} ${APPLY ? "corrected" : "would be corrected"}.`);
   if (!APPLY && changed > 0) console.log("Dry run — re-run with --apply to write these corrections.");

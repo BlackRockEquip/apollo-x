@@ -315,7 +315,7 @@ export async function getDashboardData(ctx: RequestContext) {
     // leg count here, matching PEX Tracking's own "chains" scope, not PEX
     // Stock's inventory scope.
     enabled.includes("pex-status")
-      ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null }, NOT: { consumedByJobId: { not: null }, status: "COMPLETED" } }, _count: { _all: true } })
+      ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null }, NOT: { status: "COMPLETED" } }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("support-tickets")
       ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId, tenantDeletedAt: null }, _count: { _all: true } })

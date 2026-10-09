@@ -676,6 +676,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [quoteFiles, setQuoteFiles] = useState<Record<string, File | null>>({});
   const [quoteAnalyzingId, setQuoteAnalyzingId] = useState("");
   const [quoteGuessCounts, setQuoteGuessCounts] = useState<Record<string, number>>({});
+  // How many lines an imported file left ticked N/A for each supplier (see analyzeQuoteFileForRequest).
+  const [quoteNaCounts, setQuoteNaCounts] = useState<Record<string, number>>({});
   const [quoteSavingId, setQuoteSavingId] = useState("");
   // 2026-09-29 — follow-up polish on the Compare quotes dialog: the
   // read-only "Saved quotes" comparison is now tucked behind its own
@@ -3146,6 +3148,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteNotesByRequest(notes);
     setQuoteFiles({});
     setQuoteGuessCounts({});
+    setQuoteNaCounts({});
     setQuoteAnalyzingId("");
     setShowRfqPopup(false);
     setShowQuoteComparePopup(true);
@@ -3157,6 +3160,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteNotesByRequest({});
     setQuoteFiles({});
     setQuoteGuessCounts({});
+    setQuoteNaCounts({});
     setQuoteAnalyzingId("");
     setShowSavedQuotesCompare(false);
     setQuoteCompareMaximized(false);
@@ -3194,15 +3198,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to analyze the quote file.");
       const guesses = (b.guesses || {}) as Record<string, number>;
       let applied = 0;
+      let markedNa = 0;
+      // 2026-10-09, user request: "if a supplier only quotes on certain items,
+      // the other items not quoted on should automatically select the N/A
+      // checkbox". Once the file yielded at least one price, every part line it
+      // had no price for (and that has no price typed in already) is ticked
+      // N/A for this supplier. If nothing at all could be read from the file
+      // (e.g. a scanned image) nothing is ticked, so a failed read never marks
+      // the whole list as unavailable. The person can still untick any of them
+      // before saving.
+      const foundPrices = Object.keys(guesses).length > 0;
       setQuoteDrafts((current) => {
+        applied = 0; markedNa = 0; // reset: React may run this updater twice
         const requestDrafts = { ...(current[rfqRequestId] || {}) };
         for (const [partLineId, price] of Object.entries(guesses)) {
           const existing = requestDrafts[partLineId];
-          if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price) }; applied += 1; }
+          if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price), available: true }; applied += 1; }
+        }
+        if (foundPrices) {
+          for (const line of job?.partLines || []) {
+            const partLineId = String(line.id);
+            if (guesses[partLineId] !== undefined) continue;
+            const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "" };
+            if (existing.unitPrice || !existing.available) continue;
+            requestDrafts[partLineId] = { ...existing, available: false };
+            markedNa += 1;
+          }
         }
         return { ...current, [rfqRequestId]: requestDrafts };
       });
       setQuoteGuessCounts((current) => ({ ...current, [rfqRequestId]: applied }));
+      setQuoteNaCounts((current) => ({ ...current, [rfqRequestId]: markedNa }));
     } catch (e) {
       // Extraction is best-effort — a failure here just means no guesses;
       // the file is still attached and priced by hand at Save time.
@@ -4944,6 +4970,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           const tone = status === "QUOTED" ? "tone-green" : status === "SENT" ? "tone-blue" : status === "FAILED" ? "tone-red" : "neutral";
                           const analyzing = quoteAnalyzingId === requestId;
                           const guessCount = quoteGuessCounts[requestId] || 0;
+                          const naCount = quoteNaCounts[requestId] || 0;
                           const importedFile = quoteFiles[requestId];
                           return (
                             <th key={request.id} className="supplier-group-start quote-entry-head">
@@ -4961,7 +4988,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                                   <input type="file" onChange={(e) => { const file = e.target.files?.[0] || null; setQuoteFiles((c) => ({ ...c, [requestId]: file })); if (file) void analyzeQuoteFileForRequest(requestId, file); }} />
                                 </label>
                                 {analyzing && <span className="muted small-line">Analyzing file for prices…</span>}
-                                {!analyzing && guessCount > 0 && <span className="muted small-line">Guessed {guessCount} price{guessCount === 1 ? "" : "s"} — review below.</span>}
+                                {!analyzing && guessCount > 0 && <span className="muted small-line">Guessed {guessCount} price{guessCount === 1 ? "" : "s"}{naCount > 0 ? `; ${naCount} item${naCount === 1 ? "" : "s"} not quoted set to N/A` : ""} — review below.</span>}
                                 <input className="quote-entry-notes" value={quoteNotesByRequest[requestId] || ""} onChange={(e) => setQuoteNotesByRequest((c) => ({ ...c, [requestId]: e.target.value }))} placeholder="Notes (optional)" />
                               </div>
                             </th>
