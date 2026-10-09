@@ -17,6 +17,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:validate": "prisma validate",
     "seed": "tsx prisma/seed.ts",
+    "seed:demo": "tsx scripts/seed-demo-company.ts",
+    "seed:demo:reset": "tsx scripts/seed-demo-company.ts --reset",
     "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-db.ps1",
     "db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-db.ps1",
     "db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status-db.ps1"
