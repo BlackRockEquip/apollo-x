@@ -16,7 +16,7 @@ import { JOB_STATUS_LABELS } from "@/lib/jobs/ui";
 // not-started -> neutral, waiting on something incoming -> amber, waiting
 // on a person/decision -> purple, active hands-on work -> blue, a problem/
 // dead-end -> red, actually finished -> green), so nothing new falls back
-// to neutral by omission — only DRAFT/TO_BE_COLLECTED/TO_BE_RECEIVED/
+// to neutral by omission — only TO_BE_COLLECTED/TO_BE_RECEIVED/
 // TO_ATTEND keep neutral on purpose, since "hasn't started yet" is the one
 // state that should look muted.
 // One deliberate change to an already-mapped value: TO_BE_DELIVERED moves
@@ -27,7 +27,6 @@ import { JOB_STATUS_LABELS } from "@/lib/jobs/ui";
 // before this change and would have inherited the same bland-neutral
 // problem this whole pass exists to fix.
 const JOB_STATUS_TONE: Record<string, string> = {
-  DRAFT: "neutral",
   TO_BE_COLLECTED: "neutral",
   TO_BE_RECEIVED: "neutral",
   TO_STRIP: "amber",

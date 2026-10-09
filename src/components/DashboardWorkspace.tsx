@@ -350,7 +350,7 @@ export function DashboardWorkspace() {
               {recentJobs.length === 0 && <div className="dash-empty">No jobs yet.</div>}
               {recentJobs.slice(0, 6).map((job) => (
                 <Link key={job.id} href={`/jobs/${job.id}`} className="dash-row">
-                  <div className="dash-row-main"><div className="dash-job">{job.jobNumber || "Draft"}</div><div className="dash-sub">{job.customer?.name || "—"}</div></div>
+                  <div className="dash-row-main"><div className="dash-job">{job.jobNumber || "—"}</div><div className="dash-sub">{job.customer?.name || "—"}</div></div>
                   <StatusPill status={job.status} />
                 </Link>
               ))}

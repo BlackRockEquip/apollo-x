@@ -12,21 +12,21 @@ const optionalDecimal = z.union([z.string().regex(/^\d+(\.\d{1,4})?$/), z.number
 // type (flow families). Kept as one array here so every endpoint below
 // stays in sync instead of repeating (and drifting from) the same list.
 export const ALL_JOB_STATUSES = [
-  "DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP", "STRIPPING", "QUOTE_IN_PROGRESS",
+  "TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP", "STRIPPING", "QUOTE_IN_PROGRESS",
   "AWAITING_GO_AHEAD", "AWAIT_OUTWORK", "WAITING_FOR_PARTS", "ASSEMBLY", "TESTING", "TO_PAINT_WRAP",
   "TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED",
   "TO_ATTEND", "ON_ROUTE", "IN_PROGRESS", "AWAIT_PAYMENT", "RECEIVED", "INSPECTING",
 ] as const;
 
-// Valid as an initial/mid-flow status for register, status-change and
-// reopen actions — excludes the DRAFT/CLOSED/CANCELLED wrapper states
-// (those go through their own dedicated register/close actions, not a
+// Valid as an initial/mid-flow status for create, status-change and
+// reopen actions — excludes the CLOSED/CANCELLED wrapper states
+// (those go through their own dedicated close/cancel actions, not a
 // plain status set) and RETURNED_UNREPAIRED, which as of 2026-10-01 is no
 // longer a status anything can be SET to at all — see
 // SETTABLE_JOB_STATUSES below and Job.returnedUnrepaired's own comment in
 // schema.prisma.
 export const FLOW_JOB_STATUSES = ALL_JOB_STATUSES.filter(
-  (status) => !["DRAFT", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"].includes(status),
+  (status) => !["CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"].includes(status),
 ) as [(typeof ALL_JOB_STATUSES)[number], ...(typeof ALL_JOB_STATUSES)[number][]];
 
 // 2026-10-01 — the general job-update endpoint (jobUpdateInput.status
@@ -34,7 +34,7 @@ export const FLOW_JOB_STATUSES = ALL_JOB_STATUSES.filter(
 // status value. Now that it's a separate flag (Job.returnedUnrepaired) that
 // the job's real status just keeps running alongside, nothing should ever
 // write that status value again — unlike FLOW_JOB_STATUSES above (which
-// also excludes DRAFT/CLOSED/CANCELLED, each with its own dedicated
+// also excludes CLOSED/CANCELLED, each with its own dedicated
 // action), this is jobUpdateInput's own full set minus just the one retired
 // value.
 const SETTABLE_JOB_STATUSES = ALL_JOB_STATUSES.filter(
@@ -45,7 +45,7 @@ const jobTypeEnum = z.enum(["STANDARD_REPAIR", "PARTIAL_REPAIR", "PEX_SUPPLY", "
 const deliveryTypeEnum = z.enum(["INTERNAL_BAKKIE", "INTERNAL_TRUCK", "INTERNAL_COURIER", "EXTERNAL_BAKKIE", "EXTERNAL_TRUCK", "EXTERNAL_COURIER"]);
 const purchaseOrderStatusEnum = z.enum(["TBA", "AWAIT_PAYMENT", "PARTIALLY_PAID", "PAID", "NOT_APPLICABLE"]);
 
-export const jobCreateDraftInput = z.object({
+export const jobCreateInput = z.object({
   customerId: z.string().cuid(),
   customerReference: optionalText,
   customerPo: optionalText,
@@ -97,7 +97,7 @@ export const jobCreateDraftInput = z.object({
   salesRepresentativeId: optionalId,
 });
 
-export const jobUpdateInput = jobCreateDraftInput.partial().extend({
+export const jobUpdateInput = jobCreateInput.partial().extend({
   status: z.enum(SETTABLE_JOB_STATUSES).optional(),
   // 2026-10-01 — user request ("mark unrepaired return ... let it add a
   // status pill next to the job status 'Return Unrepaired'"): settable here
@@ -106,10 +106,6 @@ export const jobUpdateInput = jobCreateDraftInput.partial().extend({
   // free-text without needing a reason the sheet has no column for. See
   // Job.returnedUnrepaired's own comment in schema.prisma.
   returnedUnrepaired: z.boolean().optional(),
-});
-
-export const jobRegisterInput = z.object({
-  initialStatus: z.enum(FLOW_JOB_STATUSES).default("TO_BE_RECEIVED"),
 });
 
 export const jobStatusChangeInput = z.object({
@@ -140,7 +136,7 @@ export const jobMarkReturnedUnrepairedInput = z.object({
 
 // 2026-09-16 — jobNoteCreateInput/jobNoteUpdateInput/jobNoteDeleteInput
 // (for the old add/edit/delete JobNote list) removed here — Notes is now
-// the plain `notes` field on jobCreateDraftInput/jobUpdateInput above,
+// the plain `notes` field on jobCreateInput/jobUpdateInput above,
 // autosaved exactly like description. See jobs/service.ts's matching
 // comment where addJobNote/updateJobNote/deleteJobNote were removed.
 

@@ -206,7 +206,7 @@ export async function syncPexRedeployment(
 // makes sense — there's no separate user-facing PEX-status control, it's
 // derived automatically here. Mirrors ModApp's JOB_STATUS_TO_PEX_STATUS.
 // Only the main-workshop flow's real step list is covered (a PEX_RETURN
-// job is never field-service) — DRAFT/CANCELLED/RETURNED_UNREPAIRED and
+// job is never field-service) — CANCELLED/RETURNED_UNREPAIRED and
 // every field-service-only status intentionally have no entry, so
 // syncPexStatusFromJobStatus below leaves the PexRecord's status exactly
 // as it was for those, the same as ModApp's mapping simply never being
@@ -304,10 +304,8 @@ async function attachReturnJobTx(
 // Creates the return job itself, then attaches it — shared by the
 // "Create linked return job now" button and the automatic trigger inside
 // syncPexStatusFromJobStatus (a PEX supply job reaching Complete). Numbers
-// and activates the job immediately (status TO_BE_RECEIVED, no DRAFT
-// limbo), matching ModApp's own return jobs — unlike a normal Apollo X job
-// created through the New Job form, this one is system-created on behalf
-// of an already-committed supply job, so there's nothing left to "draft".
+// and activates the job immediately (status TO_BE_RECEIVED),
+// matching ModApp's own return jobs.
 async function createAndAttachReturnJobTx(
   tx: Tx,
   ctx: RequestContext,
@@ -356,8 +354,8 @@ async function createAndAttachReturnJobTx(
 }
 
 // Called from jobs/service.ts whenever a job's status actually changes
-// (changeJobStatus, updateJob when it includes a status change, registerJob
-// moving a job out of DRAFT, closeJob, reopenJob) — safe/no-op for any job
+// (changeJobStatus, updateJob when it includes a status change, createJob,
+// closeJob, reopenJob) — safe/no-op for any job
 // that isn't currently a linked PEX return job, or an unlinked PEX supply
 // job. Mirrors the PEX block inside ModApp's updateJobStatus.
 export async function syncPexStatusFromJobStatus(
@@ -439,7 +437,6 @@ export async function linkPexReturnJob(ctx: RequestContext, supplyJobId: string,
   const result = await prisma.$transaction(async (tx) => {
     const supplyJob = await requireScopedJob(tx, companyId, supplyJobId);
     if (supplyJob.type !== "PEX_SUPPLY") throw new StockError("INVALID_JOB_TYPE", "Only a PEX Supply job can be linked to a return job.");
-    if (supplyJob.status === "DRAFT") throw new StockError("PEX_SUPPLY_NOT_REGISTERED", "Register the PEX Supply job before linking a return job.");
     if (input.returnJobId === supplyJob.id) throw new StockError("INVALID_JOB_TYPE", "A job can't be linked to itself.");
     const pexAsSupply = await tx.pexRecord.findFirst({ where: { companyId, supplyJobId: supplyJob.id } });
     if (pexAsSupply?.returnJobId) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a return job.");
@@ -525,7 +522,7 @@ export async function scrapPexRecord(ctx: RequestContext, pexId: string, raw: un
   return { ok: true };
 }
 
-export const PEX_ALLOCATE_BLOCKED_STATUSES: string[] = ["DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"];
+export const PEX_ALLOCATE_BLOCKED_STATUSES: string[] = ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"];
 
 // "Send job to PEX Inventory" — any completed job of ANY type, not
 // otherwise part of a PEX supply/return cycle, can be allocated straight
@@ -546,7 +543,7 @@ export async function allocateJobToPexInventory(ctx: RequestContext, jobId: stri
     // including mid-repair (PEX Stock already lists those under "To be
     // repaired"; only COMPLETE units are ever matched for redeployment, see
     // the "Previous job number" lookup above). Excluded: statuses where the
-    // unit hasn't arrived (DRAFT, TO_BE_COLLECTED, TO_BE_RECEIVED — PEX
+    // unit hasn't arrived (TO_BE_COLLECTED, TO_BE_RECEIVED — PEX
     // Stock's listing hides TO_BE_RECEIVED returns, so allocating then
     // would recreate the "allocated but not showing" report from
     // 2026-09-16) and CANCELLED.

@@ -178,7 +178,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
                 <optgroup label="Field service flow">{FIELD_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
               </select>
             </label>
-            <p className="muted small-line wide">Each job only accepts statuses from its own flow. Jobs the status doesn't suit (or that are still drafts) are left unchanged and listed afterwards.</p>
+            <p className="muted small-line wide">Each job only accepts statuses from its own flow. Jobs the status doesn't suit are left unchanged and listed afterwards.</p>
             {error && <div className="inline-error wide">{error}</div>}
           </div>
           <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || !status} onClick={() => void run({ action: "status", status })}>{busy ? "Updating…" : "Update status"}</button></footer>

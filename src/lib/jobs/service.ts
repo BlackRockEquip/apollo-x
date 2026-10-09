@@ -19,9 +19,8 @@ import { looseNormalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import {
   jobsListQuery,
-  jobCreateDraftInput,
+  jobCreateInput,
   jobUpdateInput,
-  jobRegisterInput,
   jobStatusChangeInput,
   jobCloseInput,
   jobReopenInput,
@@ -576,48 +575,28 @@ export async function listJobs(ctx: RequestContext, raw: unknown) {
   return { items, total, page: query.page, pageSize: query.pageSize };
 }
 
-export async function createDraftJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string }) {
+// Creates a job, numbered and active straight away: it starts at the first
+// stage of its own flow (or `options.initialStatus` when a caller such as the
+// spreadsheet import needs a different one). There is no draft state.
+export async function createJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string; initialStatus?: JobStatus }) {
   const companyId = requireJobs(ctx, "JOBS_CREATE");
-  const input = jobCreateDraftInput.parse(raw);
+  const input = jobCreateInput.parse(raw);
   await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
   const buildMechanicId = await getMechanicOrNull(companyId, input.buildMechanicId);
   const salesRepresentativeId = await getSalesRepresentativeOrNull(companyId, input.salesRepresentativeId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
   const job = await prisma.$transaction(async (tx) => {
-    // Numbered immediately at creation, matching ModApp's nextJobNumber
-    // (called right inside its createJob, no separate step) — at the
-    // user's explicit request, since Apollo X's old two-step "Draft, then
-    // Register to allocate the number" flow was leaving newly-created jobs
-    // showing their raw internal id instead of picking up the prefix
-    // configured under Settings > Numbering. PEX Supply/Return jobs draw
-    // from the same "PEX_JOB" sequence registerJob used to allocate at
-    // registration; every other type draws from "JOB". Note this throws
-    // SEQUENCE_NOT_FOUND if the company hasn't set up (and activated) a
-    // Numbering entry for that document type yet — job creation now
-    // depends on one existing, where before it didn't.
-    //
-    // registerJob (below) still exists — it now only moves the job out of
-    // DRAFT status into wherever the workflow should start — and keeps a
-    // fallback that allocates a number there instead, purely for any job
-    // that was already sitting in DRAFT (unnumbered) before this change
-    // shipped.
-    //
-    // Note (2026-09-09): the PEX_SUPPLY/PEX_RETURN special-casing this
-    // comment used to describe here — an auto-created PEX return job
-    // deliberately staying unnumbered/DRAFT until a real Register — belonged
-    // to the old PexStockUnit/PexSupplyLink model and no longer applies.
-    // Under the PexRecord replacement (see schema.prisma's PexRecord
-    // comment), a return job created by pex/service.ts's
-    // createAndAttachReturnJobTx is numbered and active immediately, the
-    // same as ModApp's own return jobs — there's no unnumbered-draft state
-    // to protect and no special unwind path for it.
+    // Numbered immediately at creation, matching ModApp's nextJobNumber.
+    // PEX Supply/Return jobs draw from the "PEX_JOB" sequence; every other
+    // type draws from "JOB". Throws SEQUENCE_NOT_FOUND if the company hasn't
+    // set up (and activated) a Numbering entry for that document type yet.
     // literalJobNumber lets a caller preserve a job's own real number
     // instead of allocating a fresh one from this company's Numbering
     // sequence — currently only the historical Jobs import
     // (src/lib/import-export/service.ts) passes it, so a legacy job can
     // keep its original number on the way in. Never exposed through the
-    // public create-job API/validation (jobCreateDraftInput has no such
+    // public create-job API/validation (jobCreateInput has no such
     // field) — only this internal service function accepts it, as a
     // second, explicit argument, so the ordinary New Job form still can't
     // set an arbitrary number by itself.
@@ -628,6 +607,7 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
       data: {
         companyId,
         jobNumber,
+        status: options?.initialStatus ?? statusStepsForJobType(input.type as JobType)[0],
         customerId: input.customerId,
         customerReference: input.customerReference,
         customerPo: input.customerPo,
@@ -695,6 +675,9 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
     // unit visible on PEX Tracking immediately, not only once a return job
     // is linked to it (see createPexRecordForSupplyJob's own comment).
     await createPexRecordForSupplyJob(tx, ctx, companyId, created);
+    // The job is active from creation, so its PEX record's status follows it
+    // straight away (this used to happen when the job was registered).
+    await syncPexStatusFromJobStatus(tx, ctx, companyId, created, created.status as JobStatus);
     // Picks up "Previous job number" immediately if it was filled in on
     // the create form — previously a no-op here since the job had no
     // jobNumber yet to sync against (see the numbering comment above).
@@ -703,7 +686,7 @@ export async function createDraftJob(ctx: RequestContext, raw: unknown, options?
     await syncPexRedeployment(tx, ctx, companyId, created);
     return created;
   });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: job.id, action: "CREATE_DRAFT", afterData: { id: job.id, jobNumber: job.jobNumber } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: job.id, action: "CREATE", afterData: { id: job.id, jobNumber: job.jobNumber } });
   // The job's folder (named by its job number, e.g. BRE1122) is created in the
   // company's storage location straight away where that storage has real
   // folders (a local folder); best effort, never blocks job creation.
@@ -836,7 +819,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
 
     // Covers a save that changes an existing job's type TO PEX_SUPPLY —
     // same "create the PexRecord if one doesn't already exist" as
-    // createDraftJob above, safe/no-op otherwise.
+    // createJob above, safe/no-op otherwise.
     await createPexRecordForSupplyJob(tx, ctx, companyId, job);
     // Unconditional for every job type, matching ModApp's own
     // syncPexConsumption call.
@@ -856,48 +839,11 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   return updated;
 }
 
-export async function registerJob(ctx: RequestContext, id: string, raw: unknown) {
-  const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireNotMechanicRestricted(ctx);
-  const input = jobRegisterInput.parse(raw);
-  const existing = await getJobScoped(companyId, id);
-  // "Already registered" is now a status question, not a numbering one —
-  // every job created via createDraftJob above already has a jobNumber
-  // from the moment it exists, so the old `if (existing.jobNumber)` guard
-  // would reject registering any newly-created job at all. DRAFT is still
-  // the one status Register is meant to move a job out of.
-  if (existing.status !== "DRAFT") throw new Error("Job is already registered.");
-  if (!statusStepsForJobType(existing.type as JobType).includes(input.initialStatus as JobStatus)) {
-    throw new Error(`Status ${input.initialStatus} is not valid for a ${existing.type} job.`);
-  }
-  // PEX_SUPPLY/PEX_RETURN jobs now go through this same generic path —
-  // createDraftJob already numbers every job (including these two types)
-  // immediately at creation, so there's no more "stays unregistered/
-  // unnumbered until Register" special case to delegate to a separate
-  // registerPexJob for (that quirk belonged to the old PexStockUnit/
-  // PexSupplyLink model's auto-created return draft, which the PexRecord
-  // replace removed — see schema.prisma's PexRecord comment). Only the PEX
-  // status sync below is genuinely PEX-specific now.
-  const updated = await prisma.$transaction(async (tx) => {
-    // Normally a no-op now (see createDraftJob) — this only fires for a
-    // job that reached DRAFT before job numbers were assigned at creation
-    // time, so it isn't stuck showing its raw internal id forever.
-    const jobNumber = existing.jobNumber ?? (await allocateDocumentNumberTx(tx, ctx, existing.type === "PEX_SUPPLY" || existing.type === "PEX_RETURN" ? "PEX_JOB" : "JOB"));
-    const registered = await tx.job.update({ where: { id: existing.id }, data: { jobNumber, status: input.initialStatus as JobStatus, updatedById: ctx.userId }, include: { customer: true } });
-    await addActivity(tx, ctx, existing.id, "JOB_REGISTERED", `Job registered — status set to ${input.initialStatus}.`, { jobNumber, status: input.initialStatus });
-    await syncPexStatusFromJobStatus(tx, ctx, companyId, registered, registered.status as JobStatus);
-    return registered;
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "REGISTER", afterData: { id: updated.id, jobNumber: updated.jobNumber, status: updated.status } });
-  return updated;
-}
-
 export async function changeJobStatus(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
   const input = jobStatusChangeInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  if (existing.status === "DRAFT") throw new Error("Draft jobs must be registered before status changes.");
   const allowedStatuses = [...statusStepsForJobType(existing.type as JobType), ...UNIVERSAL_STATUSES];
   if (!allowedStatuses.includes(input.status as JobStatus)) {
     throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
@@ -969,7 +915,7 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
   if (!canMarkReturnedUnrepaired(existing.type as JobType)) {
     throw new Error(`${existing.type} jobs cannot be marked returned unrepaired — this action is only available for the main workshop flow.`);
   }
-  if (["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
+  if (["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
     throw new Error(`A job with status ${existing.status} cannot be marked returned unrepaired.`);
   }
   if (existing.returnedUnrepaired) {

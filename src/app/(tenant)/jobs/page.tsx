@@ -223,7 +223,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 CUSTOMERS_VIEW (see mapListWhere's own comment in
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
-            <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, draft, linked job #, customer, machine, component or reference" : "Search BRE, draft, linked job #, machine, component or reference"} defaultValue={q} />
+            <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}
@@ -265,7 +265,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         </div>
 
         {/* 2026-10-05 — user request: "remove the search pills under search
-            bar in jobs/wip". The chip strip (All jobs / Drafts / Collection /
+            bar in jobs/wip". The chip strip (All jobs / Collection /
             ... / Completed / All WIP) is gone; the status dropdown above
             covers single statuses, plus the "Pex" and "Returned unrepaired"
             entries, which are flags rather than statuses. */}

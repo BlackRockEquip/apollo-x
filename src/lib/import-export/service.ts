@@ -9,7 +9,7 @@ import { receiveStock, adjustStock } from "@/lib/inventory/service";
 import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { looseNormalized, normalized } from "@/lib/master-data/validation";
 import { receiptInput, adjustmentInput } from "@/lib/inventory/validation";
-import { createDraftJob, registerJob, updateJob } from "@/lib/jobs/service";
+import { createJob, updateJob } from "@/lib/jobs/service";
 import { flowFamilyForJobType } from "@/lib/jobs/ui";
 import { notifyAdminsAndManagers } from "@/lib/notifications/service";
 import { ALL_JOB_STATUSES } from "@/lib/jobs/validation";
@@ -35,7 +35,7 @@ import { ALLOWED_IMPORT_MIME_TYPES, MAX_IMPORT_FILE_BYTES, importFileInput, impo
 //    the real createMaster (master-data/service.ts), the same function the
 //    "New customer"/"New supplier" forms use, so validation, normalized-name
 //    indexing, and audit logging all stay in one place. Likewise, Job
-//    creation calls the real createDraftJob + registerJob
+//    creation calls the real createJob
 //    (jobs/service.ts) — a row gets exactly the same PEX-record creation,
 //    activity log, and audit trail a job created by hand would.
 //  - Apollo X's Customer/Supplier addresses are separate child records
@@ -52,7 +52,7 @@ import { ALLOWED_IMPORT_MIME_TYPES, MAX_IMPORT_FILE_BYTES, importFileInput, impo
 //       row's own real job number (e.g. "BRE001") — used as that job's
 //       actual Job.jobNumber, verbatim, INSTEAD of Apollo X's normal
 //       auto-allocation from the company's own Numbering sequence (see
-//       createDraftJob's literalJobNumber option). This is what lets a
+//       createJob's literalJobNumber option). This is what lets a
 //       historical-data import preserve real legacy numbers rather than
 //       everything getting a fresh BRE0000xx from today's counter. A row
 //       with no "Job number" mapped/filled in is skipped outright — unlike
@@ -263,8 +263,8 @@ function rawMappedValue(row: Record<string, unknown>, mapping: RowMapping, field
 // 2026-09-14 — exported (was module-private) so the new WIP Excel
 // auto-sync watcher (src/lib/jobs/excel-sync.ts) can reuse this exact
 // date/enum/name-matching logic instead of re-implementing it — same
-// reasoning that already had this manual importer share createDraftJob/
-// registerJob/updateJob/createMaster with the rest of the app. See
+// reasoning that already had this manual importer share createJob/
+// updateJob/createMaster with the rest of the app. See
 // excelSerialToDate / normalizeEnumValue / NameCandidate / findBestNameMatch
 // below, all now exported for that one caller.
 export function excelSerialToDate(serial: number): Date | null {
@@ -1085,10 +1085,10 @@ export async function importJobs(ctx: RequestContext, raw: unknown): Promise<Imp
   // whose "Job number" already exists goes through the real updateJob
   // instead — both need JOBS_EDIT on top of the JOBS_CREATE authorize()
   // just checked. Verified once up front, before any row is written, so a
-  // user who can create but not edit/register jobs fails the whole import
-  // cleanly instead of leaving a trail of unregistered DRAFT jobs behind
-  // (one per row, each reported as "skipped" only after already being
-  // created) once registerJob starts rejecting every row mid-loop.
+  // user who can create but not edit jobs fails the whole import
+  // cleanly instead of leaving a trail of half-imported jobs behind (one per
+  // row, each reported as "skipped" only after already being created)
+  // once the status update starts rejecting every row mid-loop.
   requireTenantPermission(ctx, "JOBS_EDIT");
   // A row whose customer name doesn't match anyone on file now gets a new
   // customer created for it instead of being skipped (see the loop below)
@@ -1247,22 +1247,18 @@ export async function importJobs(ctx: RequestContext, raw: unknown): Promise<Imp
         rowResults.push({ label: jobNumberValue, status: "updated", detail: `Updated existing job ${jobNumberValue}.${customerNote}` });
       } else {
         // literalJobNumber preserves this row's own real number instead of
-        // Apollo X's normal auto-allocation (see createDraftJob) — the
+        // Apollo X's normal auto-allocation (see createJob) — the
         // whole reason this import can carry historical job numbers over
         // at all.
-        const job = await createDraftJob(ctx, payload, { literalJobNumber: jobNumberValue });
-        // New jobs start in DRAFT (see createDraftJob) — register with a
-        // safe, always-valid starting step first (registerJob's own
-        // jobRegisterInput rejects terminal statuses like
-        // Closed/Cancelled as an *initial* status), then, if the sheet's
-        // own Status column names something more specific (including a
-        // terminal one), set it directly right after via the same
-        // no-transition-check updateJob path the update branch above
-        // uses — so a historical "Complete" or "Closed" row ends up
-        // exactly where the sheet says, not just wherever registration
-        // alone would land it.
+        // Created at a safe, always-valid starting step first (a terminal
+        // status such as Closed/Cancelled can't be an *initial* status),
+        // then, if the sheet's own Status column names something more
+        // specific (including a terminal one), set directly right after via
+        // the same no-transition-check updateJob path the update branch above
+        // uses — so a historical "Complete" or "Closed" row ends up exactly
+        // where the sheet says.
         const initialStatus = flowFamilyForJobType(type) === "FIELD_SERVICE" ? "TO_ATTEND" : "TO_BE_RECEIVED";
-        await registerJob(ctx, job.id, { initialStatus });
+        const job = await createJob(ctx, payload, { literalJobNumber: jobNumberValue, initialStatus });
         if (targetStatus && targetStatus !== initialStatus) await updateJob(ctx, job.id, { status: targetStatus });
         created++;
         rowResults.push({ label: jobNumberValue, status: "created", detail: `Imported as job ${jobNumberValue}.${customerNote}` });
@@ -1411,7 +1407,7 @@ export async function exportModuleData(ctx: RequestContext, kind: ImportExportKi
     rows = jobs.map((j) =>
       toExportRow(JOB_IMPORT_FIELDS, {
         // jobNumber is nullable in the schema (String? — see schema.prisma)
-        // even though createDraftJob always sets a real value in practice;
+        // even though createJob always sets a real value in practice;
         // draftNumber is the fallback only a job created before that fix
         // could still lack one for.
         jobNumber: j.jobNumber ?? j.draftNumber,

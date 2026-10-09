@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { requireSameOrigin } from "@/lib/security/request";
-import { createDraftJob, listJobs } from "@/lib/jobs/service";
+import { createJob, listJobs } from "@/lib/jobs/service";
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,8 +17,8 @@ export async function POST(request: NextRequest) {
   try {
     requireSameOrigin(request);
     const ctx = await requireRequestContext();
-    return NextResponse.json(await createDraftJob(ctx, await request.json()), { status: 201 });
+    return NextResponse.json(await createJob(ctx, await request.json()), { status: 201 });
   } catch (error) {
     return apiError(error);
   }
-}
+}

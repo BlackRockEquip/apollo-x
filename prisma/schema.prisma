@@ -213,7 +213,6 @@ enum JobType {
 // dedicated parts-supply stages, and the reversible "quoted, client
 // declined, returned unrepaired" off-ramp.
 enum JobStatus {
-  DRAFT
   TO_BE_COLLECTED
   TO_BE_RECEIVED
   // Queued for stripping, after receipt but before STRIPPING actually
@@ -1603,7 +1602,7 @@ model Job {
   companyId           String
   jobNumber           String?     @unique
   draftNumber         String      @unique @default(cuid())
-  status              JobStatus   @default(DRAFT)
+  status              JobStatus   @default(TO_BE_COLLECTED)
   type                JobType
   customerId          String
   customerReference   String?

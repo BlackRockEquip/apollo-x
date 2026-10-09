@@ -76,7 +76,7 @@ export const SUPPLIER_IMPORT_FIELDS: ImportFieldDef[] = [
   ...ADDRESS_IMPORT_FIELDS,
 ];
 
-// Every scalar field jobCreateDraftInput (jobs/validation.ts) accepts,
+// Every scalar field jobCreateInput (jobs/validation.ts) accepts,
 // except the internal cuid references (stripMechanicId/buildMechanicId/
 // relatedJobId/salesRepresentativeId — the last one joined this list
 // 2026-09-22, when Job.salesRepresentative was retargeted from a
@@ -93,7 +93,7 @@ export const SUPPLIER_IMPORT_FIELDS: ImportFieldDef[] = [
 //  - "jobNumber" (this row's own real number, e.g. "BRE001") is used
 //    verbatim as the created/updated job's actual Job.jobNumber, in place
 //    of Apollo X's normal auto-allocation from the company's own Numbering
-//    sequence (see literalJobNumber in jobs/service.ts's createDraftJob).
+//    sequence (see literalJobNumber in jobs/service.ts's createJob).
 //    Required — there's no reasonable fallback for a row with no number of
 //    its own — and it's also this import's real external key: a row whose
 //    "jobNumber" matches an already-existing job in this company UPDATES

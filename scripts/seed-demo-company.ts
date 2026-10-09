@@ -31,10 +31,9 @@ import {
   addPartLinesBulk,
   changeJobStatus,
   closeJob,
-  createDraftJob,
+  createJob,
   markPartLineReceived,
-  registerJob,
-  updatePartLineOrder,
+    updatePartLineOrder,
   upsertJobFieldService,
   upsertJobWarranty,
 } from "../src/lib/jobs/service";
@@ -218,7 +217,7 @@ type JobSeed = {
   component?: string;
   description: string;
   notes?: string;
-  status: string | null; // null = leave as draft
+  status: string | null;
   receivedDaysAgo?: number;
   etaInDays?: number;
   po?: string;
@@ -244,7 +243,7 @@ const JOBS: JobSeed[] = [
   { key: "field2", type: "FIELD_SERVICE", customer: "Eastern Cape Plant Hire", make: "Komatsu", model: "D65PX-16", serial: "KMT-D65-31288", component: "Dozer - service", description: "2000 hour service and track tension adjustment on site.", status: "AWAIT_PAYMENT", receivedDaysAgo: 8, parts: [["EN-OIL-FILT", 2], ["EN-FUEL-FILT", 2], ["MS-GREASE-CART", 1]], mechanic: "Mike Mechanic", rep: "Priya Naidoo" },
   { key: "warranty", type: "WARRANTY", customer: "Coastline Construction", make: "Hitachi", model: "ZX250LC-6", serial: "HIT-ZX250-90177", component: "Swing bearing", description: "Swing bearing failed within the warranty period. Claim lodged with the supplier.", status: "AWAITING_GO_AHEAD", receivedDaysAgo: 10, etaInDays: 14, parts: [["DT-BRG-22220", 1], ["MS-STUD-KIT", 1]], mechanic: "Sipho Dlamini", rep: "Sam Sales" },
   { key: "sale", type: "OUTRIGHT_SALE", customer: "Platinum Ridge Mining", description: "Parts supply: filters and consumables for the site workshop.", status: "TO_BE_DELIVERED", receivedDaysAgo: 2, etaInDays: 1, po: "PRM-9951", parts: [["EN-OIL-FILT", 10], ["EN-FUEL-FILT", 10], ["HP-FILT-HY", 6], ["MS-GASKET-SIL", 6]], rep: "Johan Botha" },
-  { key: "draft", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Komatsu", model: "HD465-7", component: "Brake pack", description: "Enquiry for a wet brake pack rebuild. Machine details still to be confirmed.", status: null, rep: "Sam Sales" },
+  { key: "enquiry", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Komatsu", model: "HD465-7", component: "Brake pack", description: "Enquiry for a wet brake pack rebuild. Machine details still to be confirmed.", status: "TO_BE_COLLECTED", rep: "Sam Sales" },
 ];
 
 async function main() {
@@ -429,7 +428,7 @@ async function main() {
     const customerId = customerIds.get(j.customer);
     if (!customerId) continue;
     const created = await step(`job ${j.key}`, async () => {
-      const draft = (await createDraftJob(ctx, {
+      const draft = (await createJob(ctx, {
         customerId,
         type: j.type,
         machineMake: j.make ?? null,
@@ -451,11 +450,10 @@ async function main() {
     if (!created) continue;
     jobIds.set(j.key, created.id);
     if (j.status === null) continue;
-    // Register into the first workflow stage, then step forward.
-    const firstStage = j.type === "FIELD_SERVICE" ? "TO_ATTEND" : "TO_BE_RECEIVED";
-    await step(`register ${j.key}`, () => registerJob(ctx, created.id, { initialStatus: j.status === "TO_BE_COLLECTED" ? "TO_BE_COLLECTED" : firstStage }));
+    // Jobs are created at the first stage of their flow; step forward from there.
+    const firstStage = j.type === "FIELD_SERVICE" ? "TO_ATTEND" : "TO_BE_COLLECTED";
     const final = j.status === "CLOSED" ? "COMPLETE" : j.status;
-    if (final !== "TO_BE_COLLECTED" && final !== firstStage) await step(`status ${j.key}`, () => changeJobStatus(ctx, created.id, { status: final }));
+    if (final !== firstStage) await step(`status ${j.key}`, () => changeJobStatus(ctx, created.id, { status: final }));
     if (j.receivedDaysAgo != null) {
       await prisma.job.update({ where: { id: created.id }, data: { createdAt: daysAgo(j.receivedDaysAgo + 1) } }).catch(() => undefined);
     }

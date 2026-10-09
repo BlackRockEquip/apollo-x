@@ -33,12 +33,11 @@ type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
 // existing slash-separated wording to ModApp's evidently-unintended
 // literal output seemed like the wrong call — flagged here in case that
 // reasoning should go the other way.
-// DRAFT, TO_BE_COLLECTED, QUOTE_IN_PROGRESS and WAITING_FOR_PARTS have no
+// TO_BE_COLLECTED, QUOTE_IN_PROGRESS and WAITING_FOR_PARTS have no
 // ModApp equivalent at all (Apollo X's own 14-step flow is deliberately
 // richer than ModApp's 11-step one — see the JOB_FLOW_FAMILIES comment
-// below), so there is no ModApp wording to match for those four.
+// below), so there is no ModApp wording to match for those.
 export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
-  DRAFT: "Draft",
   TO_BE_COLLECTED: "To be collected",
   TO_BE_RECEIVED: "To be received",
   TO_STRIP: "To strip",
@@ -120,10 +119,10 @@ export function flowFamilyForJobType(type: JobType): JobFlowFamily {
   return type === "FIELD_SERVICE" ? "FIELD_SERVICE" : "MAIN_WORKSHOP";
 }
 
-// Ordered stepper stages per flow family, DRAFT/CLOSED/CANCELLED excluded
-// (those are Apollo X's own registration/closure wrapper around every
-// flow, handled separately by the register/close/reopen actions already
-// built in the Jobs service — not stepper stages themselves).
+// Ordered stepper stages per flow family, CLOSED/CANCELLED excluded
+// (those are Apollo X's own closure wrapper around every flow, handled
+// separately by the close/reopen actions in the Jobs service — not
+// stepper stages themselves).
 // AWAIT_OUTWORK is the one stepper stage covering both outwork and parts
 // waiting — WAITING_FOR_PARTS deliberately excluded here (2026-09-10, user
 // request: "combine the status stepper stage 'Await Outwork' and 'Await
@@ -174,8 +173,8 @@ export function statusStepsForJobType(type: JobType): JobStatus[] {
 }
 
 // Statuses always selectable regardless of flow family, on top of that
-// job's own stepper stages — matches how DRAFT/CLOSED/CANCELLED already
-// work in JobWorkspace.tsx's REGISTERABLE_STATUSES/CHANGEABLE_STATUSES.
+// job's own stepper stages — matches how CLOSED/CANCELLED already
+// work in JobWorkspace.tsx's CHANGEABLE_STATUSES.
 export const UNIVERSAL_STATUSES: JobStatus[] = ["CANCELLED"];
 
 // "Mark returned unrepaired" is reachable from several earlier
@@ -195,7 +194,6 @@ export function canMarkReturnedUnrepaired(type: JobType): boolean {
 // app/(tenant)/jobs/page.tsx.
 export const JOB_WIP_FILTERS: Array<{ key: string; label: string; statuses?: JobStatus[]; returnedUnrepaired?: boolean }> = [
   { key: "all", label: "All jobs" },
-  { key: "drafts", label: "Drafts", statuses: ["DRAFT"] },
   { key: "collection", label: "Collection / receipt", statuses: ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP"] },
   { key: "workshop", label: "Workshop", statuses: ["STRIPPING", "AWAIT_OUTWORK", "ASSEMBLY", "TESTING", "TO_PAINT_WRAP"] },
   { key: "commercial", label: "Quote / approval", statuses: ["QUOTE_IN_PROGRESS", "AWAITING_GO_AHEAD"] },

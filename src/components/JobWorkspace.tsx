@@ -365,7 +365,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-05 — "Send to PEX Inventory" is available at any status once the
   // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
   // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
-  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["DRAFT", "TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"].includes(String(job.status));
+  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"].includes(String(job.status));
   // 2026-10-05 — true while this job is sitting in PEX Inventory by way of
   // "Send to PEX Inventory" (a return record with no supply job, not
   // scrapped): drives the header "Pex" pill and the undo button.
@@ -713,7 +713,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // value in pex/service.ts — see PexHistoryEntry/PexHistoryCycle above.
   const [pexHistory, setPexHistory] = useState<PexHistoryResponse | null>(null);
   const [pexHistoryLoading, setPexHistoryLoading] = useState(false);
-  const [dialog, setDialog] = useState<null | "register" | "close" | "reopen" | "returned-unrepaired" | "pex-scrap">(null);
+  const [dialog, setDialog] = useState<null | "close" | "reopen" | "returned-unrepaired" | "pex-scrap">(null);
   // Full autosave (2026-09-14, user request: "make it that it autosaves
   // all changes without having to click save button" — the Save button is
   // removed entirely in detail/edit mode, see header-actions below).
@@ -830,7 +830,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     importTrackingNumber: "",
     previousJobNumber: "",
     salesRepresentativeId: "",
-    registerStatus: "TO_BE_RECEIVED",
     closingOutcome: "",
     closingNote: "",
     reopenStatus: "TO_BE_RECEIVED",
@@ -920,7 +919,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         importTrackingNumber: body.importTrackingNumber || "",
         previousJobNumber: body.previousJobNumber || "",
         salesRepresentativeId: body.salesRepresentativeId || "",
-        registerStatus: body.status === "DRAFT" ? statusStepsForJobType(body.type)[0] : body.status,
         reopenStatus: statusStepsForJobType(body.type)[0],
         fieldSite: body.fieldServiceReport?.site ? String(body.fieldServiceReport.site) : "",
         fieldTechnician: body.fieldServiceReport?.technician ? String(body.fieldServiceReport.technician) : "",
@@ -1242,21 +1240,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
-      // 2026-10-08, user request: "create draft ... becomes the Create Job
-      // button skipping the register job section" — register the new job
-      // straight away, at the first stage of its flow (the same status the
-      // Register dialog preselects). If that step fails (e.g. the person can
-      // create but not edit jobs) the job still exists as a draft, so open it
-      // anyway and its Register button is still there.
-      try {
-        await fetch(`/api/v1/jobs/${b.id}/register`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ initialStatus: statusStepsForJobType(form.type as Parameters<typeof statusStepsForJobType>[0])[0] }),
-        });
-      } catch {
-        // fall through — see above
-      }
+      // The server creates the job numbered and at the first stage of its flow.
       router.push(`/jobs/${b.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save job.");
@@ -4626,13 +4610,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     — leaving them visible would let a Mechanic route around
                     the locked stepper. Server-side: requireNotMechanicRestricted
                     in jobs/service.ts rejects all of these regardless. */}
-                {!mechanicFieldsLocked && job.status === "DRAFT" && <button type="button" className="gold-button" onClick={() => setDialog("register")}><Plus size={14} /> Register</button>}
                 {/* 2026-10-01 — no longer excludes a "RETURNED_UNREPAIRED"
                     status (that status is retired — see
                     Job.returnedUnrepaired's own comment in schema.prisma);
                     instead hidden once the flag itself is already set,
                     since the job can only be flagged once. */}
-                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
+                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
                 {/* 2026-10-01, user request: "Mark return unrepaired button,
                     allow to undo once clicked." Shown whenever the flag is
                     set, including once the job has reached COMPLETE (it's
@@ -4640,8 +4623,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     ReturnUnrepairedPill), since it was still set by mistake
                     and should still be clearable. */}
                 {!mechanicFieldsLocked && job.returnedUnrepaired && !["CLOSED", "CANCELLED"].includes(job.status) && <button type="button" className="table-action" onClick={() => { void confirm({ message: "Undo \"Returned unrepaired\" on this job?", tone: "neutral", confirmLabel: "Undo" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/returned-unrepaired/undo`, {}); }); }}>Undo returned unrepaired</button>}
-                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
-                {!mechanicFieldsLocked && !["DRAFT", "CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
+                {!mechanicFieldsLocked && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
+                {!mechanicFieldsLocked && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
                 {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
               </>
             )}
@@ -4660,7 +4643,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         {error && <div className="inline-error">{error}</div>}
         {documentNotice && <div className="inline-success">{documentNotice}</div>}
 
-        {job && job.status !== "DRAFT" && (
+        {job && (
           <div className="job-header-stepper">
             {["CLOSED", "CANCELLED"].includes(job.status) ? (
               <p className="status-stepper-note">
@@ -4732,17 +4715,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
           )}
 
-          {dialog === "register" && (
-            <div className="drawer-backdrop" role="dialog" aria-modal="true">
-              <aside className="form-drawer compact-dialog">
-                <header><div><p className="eyebrow">Jobs</p><h2>Register job</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
-                <div className="drawer-fields">
-                  <label><span>Initial status</span><select value={form.registerStatus} onChange={(e) => updateField("registerStatus", e.target.value)}>{statusStepsForJobType(job.type).map((value) => <option key={value} value={value}>{JOB_STATUS_LABELS[value as keyof typeof JOB_STATUS_LABELS]}</option>)}</select></label>
-                </div>
-                <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving} onClick={() => { void postAction(`/api/v1/jobs/${job.id}/register`, { initialStatus: form.registerStatus }).then(() => setDialog(null)); }}>Register job</button></footer>
-              </aside>
-            </div>
-          )}
 
           {dialog === "close" && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">
