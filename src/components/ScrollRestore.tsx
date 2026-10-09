@@ -25,11 +25,24 @@ export function ScrollRestore({ selector, storageKey }: { selector: string; stor
     if (!el) return;
     const key = `apollox.scroll.${storageKey}`;
 
+    // 2026-10-09 — restores again a moment later (unless the user has touched the
+    // table in the meantime): the Excel-style column filters (TableColumnFilters)
+    // hide rows right after the list first renders, which shortens the table and
+    // would otherwise clamp the position restored here.
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let touched = false;
+    const markTouched = () => { touched = true; };
+    el.addEventListener("wheel", markTouched, { passive: true });
+    el.addEventListener("touchstart", markTouched, { passive: true });
+    el.addEventListener("mousedown", markTouched);
     try {
       const saved = sessionStorage.getItem(key);
       if (saved) {
         const y = Number(saved);
-        if (Number.isFinite(y)) el.scrollTop = y;
+        if (Number.isFinite(y)) {
+          el.scrollTop = y;
+          for (const delay of [80, 250]) timers.push(setTimeout(() => { if (!touched && Math.abs(el.scrollTop - y) > 1) el.scrollTop = y; }, delay));
+        }
       }
     } catch {
       // Private browsing / storage blocked — just skip restoring.
@@ -45,7 +58,13 @@ export function ScrollRestore({ selector, storageKey }: { selector: string; stor
       });
     }
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", markTouched);
+      el.removeEventListener("touchstart", markTouched);
+      el.removeEventListener("mousedown", markTouched);
+      timers.forEach(clearTimeout);
+    };
   }, [selector, storageKey]);
 
   return null;

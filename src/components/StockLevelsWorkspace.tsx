@@ -11,6 +11,8 @@ import { ImportModule } from "@/components/ImportExportWorkspace";
 import { PART_IMPORT_FIELDS } from "@/lib/import-export/fields";
 import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { readListState, writeListState } from "@/components/list-state";
+import { ScrollRestore } from "@/components/ScrollRestore";
 
 // 2026-09-10 — Parts Catalog merged into Stock Levels at the user's request
 // ("combine parts catalog to Stock levels... One page, Stock Levels only").
@@ -281,13 +283,21 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // earlier sweep because it searched for `window.confirm` specifically;
   // fixed here while already touching this file's delete actions.
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
-  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">("stock");
+  // 2026-10-09, user request: "When clicking back, let it remember where you
+  // were." Tab, search, state filter, manufacturer/bin filters and page are
+  // kept in sessionStorage (components/list-state.ts) so opening a part and
+  // coming back (browser Back or the part's "Back to Stock Levels" link)
+  // lands on the same filtered page; the table's scroll position is restored
+  // by <ScrollRestore> further down.
+  const saved = useState(() => readListState("stock-levels", { tab: "stock", q: "", stockState: "ALL", page: 1, manufacturerFilter: "", locationFilter: "" }))[0];
+  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">(saved.tab === "pickslips" ? "pickslips" : "stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
-  const [q, setQ] = useState("");
-  const [stockState, setStockState] = useState("ALL");
-  const [page, setPage] = useState(1);
+  const [q, setQ] = useState(saved.q);
+  const [stockState, setStockState] = useState(saved.stockState);
+  const [page, setPage] = useState(saved.page);
   const [loading, setLoading] = useState(true);
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
   const [error, setError] = useState("");
   // 2026-10-02 — user request: "make the table filterable by each heading
   // (dropdown that lets you select etc)." listInventoryPositions
@@ -305,8 +315,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // Price/Selling Price/On Hand/Reserved/Available have no natural
   // dropdown domain to filter by. State already has its own filter (the
   // radio buttons above the table) and is left as-is.
-  const [manufacturerFilter, setManufacturerFilter] = useState("");
-  const [locationFilter, setLocationFilter] = useState("");
+  const [manufacturerFilter, setManufacturerFilter] = useState(saved.manufacturerFilter);
+  const [locationFilter, setLocationFilter] = useState(saved.locationFilter);
+  useEffect(() => { writeListState("stock-levels", { tab, q, stockState, page, manufacturerFilter, locationFilter }); }, [tab, q, stockState, page, manufacturerFilter, locationFilter]);
 
   const [manufacturers, setManufacturers] = useState<Option[]>([]);
   const [taxCodes, setTaxCodes] = useState<Option[]>([]);
@@ -438,7 +449,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       if (!response.ok) throw new Error(body.error?.message || "Unable to load stock levels.");
       setData(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load stock levels."); }
-    finally { if (!silent) setLoading(false); }
+    finally { if (!silent) setLoading(false); setFirstLoadDone(true); }
   }, [q, stockState, page, manufacturerFilter, locationFilter]);
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
 
@@ -955,7 +966,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
           {error ? <div className="inline-error">{error}</div> : null}
 
-          <div className="data-table-wrap">
+          {/* Mounted once the first load has finished (not on every filter reload) so a later filter change starts from the top. */}
+          {firstLoadDone && <ScrollRestore selector="[data-scroll='stock-levels']" storageKey="stock-levels" />}
+          <div className="data-table-wrap" data-scroll="stock-levels">
             <table className="data-table">
               <thead>
                 <tr>

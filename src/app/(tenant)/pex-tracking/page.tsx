@@ -4,6 +4,8 @@ import { requireModule } from "@/lib/auth/guards";
 import { requireTenantPageAccess } from "@/lib/auth/page-guard";
 import { listPexTracking } from "@/lib/pex/service";
 import { PexTrackingWorkspace } from "@/components/PexTrackingWorkspace";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +28,7 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";
-  const data = await listPexTracking(ctx, { q, status, page: 1, pageSize: 50 });
+  const data = await listPexTracking(ctx, { q, status, page: 1, pageSize: 200 });
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Tracking</h1><p>Every PEX unit supplied and returned, linked pair by pair for full history and auditing. Looking for what&apos;s currently on the shelf? See PEX Stock instead.</p></div></header>
     <section className="master-panel jobs-panel">
@@ -41,6 +43,8 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
         <select name="status" defaultValue={status === "OUTSTANDING" ? "AWAIT_CORE" : status} form="pex-tracking-filter-form"><option value="ALL">All</option><option value="TO_BE_DELIVERED">To be delivered</option><option value="AWAIT_CORE">Awaiting core</option><option value="RECEIVED">Received</option><option value="IN_REPAIR">In repair</option><option value="SCRAPPED">Scrapped</option></select>
         <button type="submit" form="pex-tracking-filter-form" className="quiet-button">Apply</button>
         <span>{data.total} chain{data.total === 1 ? "" : "s"}</span>
+        <TablePrintButton tableId="pex-tracking-table" title="PEX Tracking" noun="chain" />
+        <TableColumnFilters tableId="pex-tracking-table" storageKey="pex-tracking" noun="chain" />
       </div>
       {/* 2026-09-23, user report: "Pex tracking if status is awaiting core
           or outstanding, it is the same thing, so the stats cards can be

@@ -4,6 +4,8 @@ import { requireModule } from "@/lib/auth/guards";
 import { requireTenantPageAccess } from "@/lib/auth/page-guard";
 import { listPexInventory } from "@/lib/pex/service";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +30,7 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";
-  const data = await listPexInventory(ctx, { q, status, page: 1, pageSize: 50 });
+  const data = await listPexInventory(ctx, { q, status, page: 1, pageSize: 200 });
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that have physically come back from a client and aren&apos;t out on a job yet — what&apos;s on the shelf right now. For the full supply → return history of every unit, see PEX Tracking.</p></div></header>
     <section className="master-panel jobs-panel">
@@ -37,6 +39,8 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
         <select name="status" defaultValue={status} form="pex-stock-filter-form"><option value="ALL">All</option><option value="READY">Ready to go</option><option value="TO_BE_REPAIRED">To be repaired</option></select>
         <button type="submit" form="pex-stock-filter-form" className="quiet-button">Apply</button>
         <span>{data.totalCount} unit{data.totalCount === 1 ? "" : "s"}</span>
+        <TablePrintButton tableId="pex-stock-table" title="PEX Stock" noun="unit" />
+        <TableColumnFilters tableId="pex-stock-table" storageKey="pex-stock" noun="unit" />
       </div>
       <section className="metric-grid compact">
         <article className="metric-card compact"><span>Total units in inventory</span><strong>{data.totalCount}</strong></article>

@@ -58,7 +58,8 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
   const syncDom = useCallback(() => {
     const table = document.getElementById(tableId);
     if (!table) return;
-    const boxes = Array.from(table.querySelectorAll<HTMLInputElement>("input.jobs-select"));
+    // Rows hidden by a column filter (TableColumnFilters.tsx) don't count.
+    const boxes = Array.from(table.querySelectorAll<HTMLInputElement>("input.jobs-select")).filter((box) => box.closest("tr")?.style.display !== "none");
     let checkedCount = 0;
     for (const box of boxes) {
       const on = selectedRef.current.has(box.dataset.jobId || "");
@@ -79,7 +80,8 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
       const target = e.target as HTMLInputElement;
       if (!target || target.type !== "checkbox") return;
       if (target.classList.contains("jobs-select-all")) {
-        const boxes = Array.from(table!.querySelectorAll<HTMLInputElement>("input.jobs-select"));
+        // "Select all" means all rows currently shown — not ones a column filter has hidden.
+        const boxes = Array.from(table!.querySelectorAll<HTMLInputElement>("input.jobs-select")).filter((box) => box.closest("tr")?.style.display !== "none");
         setSelected((prev) => {
           const next = new Set(prev);
           for (const box of boxes) { if (target.checked) next.add(box.dataset.jobId || ""); else next.delete(box.dataset.jobId || ""); }

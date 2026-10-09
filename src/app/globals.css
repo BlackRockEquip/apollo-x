@@ -1537,3 +1537,32 @@ a.dash-card { color: inherit; text-decoration: none; }
 .job-viewer { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; border: 2px solid #fff; margin-left: -6px; cursor: default; box-shadow: 0 0 0 1px rgba(23, 32, 51, 0.12); }
 .job-viewer.you { box-shadow: 0 0 0 2px var(--gold-500); }
 .job-viewer.more { background: var(--ink-500, #5b6477); }
+
+/* 2026-10-09, user request: "on all tables under jobs add filter to each table
+   header (like excel filter, dropdown and select)". Styles for
+   TableColumnFilters.tsx: the ▾ button added to each header cell, the
+   searchable tick-list popup, and the "X of Y shown" strip in the toolbar.
+   The header cells are already position: sticky (generic .data-table-wrap
+   thead th rule), so the button can sit absolutely at their right edge. */
+.data-table th.tcf-th { padding-right: 24px; }
+.tcf-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--ink-500); font-size: 10px; line-height: 1; cursor: pointer; z-index: 3; }
+.tcf-btn:hover { background: var(--ink-100); border-color: var(--ink-300); color: var(--ink-900); }
+.tcf-btn.tcf-active { background: var(--gold-500); border-color: var(--gold-600); color: #fff; }
+.tcf-summary { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-700); }
+.tcf-summary > span { margin-left: 0; font-weight: 650; color: var(--gold-600); }
+.tcf-popup { position: fixed; z-index: 2000; width: 260px; max-height: min(420px, 70vh); display: flex; flex-direction: column; gap: 6px; padding: 10px; background: #fff; border: 1px solid var(--ink-300); border-radius: 8px; box-shadow: 0 10px 28px rgba(12, 26, 44, .22); font-size: 12px; color: var(--ink-900); }
+.tcf-title { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-500); }
+.tcf-search { width: 100%; border: 1px solid var(--ink-300); border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none; }
+.tcf-search:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fbf2d7; }
+.tcf-actions { display: flex; gap: 6px; }
+.tcf-actions button, .tcf-foot button { flex: 1; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; padding: 4px 6px; font-size: 11px; font-weight: 650; color: var(--ink-700); cursor: pointer; }
+.tcf-actions button:hover, .tcf-foot button:hover { background: var(--ink-100); }
+.tcf-list { flex: 1; min-height: 60px; overflow-y: auto; border: 1px solid var(--ink-150); border-radius: 6px; padding: 3px 0; }
+.tcf-list label { display: flex; align-items: center; gap: 7px; padding: 3px 8px; cursor: pointer; }
+.tcf-list label:hover { background: var(--ink-100); }
+.tcf-list input[type="checkbox"] { flex: none; margin: 0; }
+.tcf-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcf-list em { flex: none; font-style: normal; font-size: 10px; color: var(--ink-500); }
+.tcf-empty { padding: 8px; font-size: 11px; color: var(--ink-500); }
+.tcf-foot { display: flex; }
+@media print { .tcf-btn, .tcf-popup { display: none !important; } }

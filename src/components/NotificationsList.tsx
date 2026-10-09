@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { readListState, writeListState } from "@/components/list-state";
 import { Bell, History, X } from "lucide-react";
 
 // 2026-09-19 — the "own page that a user can view all notifications" from
@@ -24,6 +25,9 @@ export function NotificationsList({ initialItems, initialUnreadCount, initialHis
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const [markingAll, setMarkingAll] = useState(false);
   const [tab, setTab] = useState<"active" | "history">("active");
+  // 2026-10-09, user request: "When clicking back, let it remember where you were." Active vs History tab is remembered for this browser session (restored after mount so the server-rendered markup matches).
+  useEffect(() => { if (readListState<{ tab: string }>("notifications", { tab: "active" }).tab === "history") setTab("history"); }, []);
+  useEffect(() => { writeListState("notifications", { tab }); }, [tab]);
   const [dismissingId, setDismissingId] = useState("");
 
   async function markRead(id: string) {

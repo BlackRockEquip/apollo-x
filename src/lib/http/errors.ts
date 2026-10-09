@@ -72,6 +72,9 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "SUPPLIER_HAS_NO_EMAIL") return NextResponse.json({ error: { code: "SUPPLIER_HAS_NO_EMAIL", message: "This supplier has no email address on file — add one on the Suppliers screen first." } }, { status: 409 });
   if (error instanceof Error && error.message === "EMAIL_NOT_CONFIGURED") return NextResponse.json({ error: { code: "EMAIL_NOT_CONFIGURED", message: "Email isn't set up for this company yet — add SMTP details under Settings > Company / Branding first." } }, { status: 409 });
   if (error instanceof Error && error.message === "SMTP_PASSWORD_REQUIRED") return NextResponse.json({ error: { code: "SMTP_PASSWORD_REQUIRED", message: "Enter the SMTP password (or save it first) before testing the connection." } }, { status: 400 });
+  // 2026-10-09 — Settings > Users > Delete (users/service.ts deleteTenantUser).
+  if (error instanceof Error && error.message === "CANNOT_DELETE_SELF") return NextResponse.json({ error: { code: "CANNOT_DELETE_SELF", message: "You can't delete your own account. Ask another admin to do it." } }, { status: 409 });
+  if (error instanceof Error && error.message === "LAST_COMPANY_ADMIN_REQUIRED") return NextResponse.json({ error: { code: "LAST_COMPANY_ADMIN_REQUIRED", message: "This is the last active Company Admin. Make another user a Company Admin first, then delete this one." } }, { status: 409 });
   // 2026-10-05 — job part line actions (jobs/service.ts) used to throw bare
   // codes that fell through to the generic 500 below, so a failed Mark
   // received / Undo receive just said "The request could not be completed."

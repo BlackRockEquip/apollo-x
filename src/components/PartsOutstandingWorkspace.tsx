@@ -1,9 +1,12 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FocusEvent } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
+import { ScrollRestore } from "@/components/ScrollRestore";
 
 type Row = {
   key: string; jobId: string; jobNumber: string; supplierId: string | null; supplierName: string; ordered: boolean;
@@ -29,7 +32,6 @@ function daysOutstanding(row: Row) {
 export function PartsOutstandingWorkspace() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState("");
-  const [filters, setFilters] = useState({ job: "", supplier: "" });
 
   const load = useCallback(async () => {
     try {
@@ -102,31 +104,22 @@ export function PartsOutstandingWorkspace() {
     }
   }
 
-  const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
-    if (filters.job && !row.jobNumber.toLowerCase().includes(filters.job.toLowerCase())) return false;
-    if (filters.supplier && !row.supplierName.toLowerCase().includes(filters.supplier.toLowerCase())) return false;
-    return true;
-  }), [rows, filters]);
-  const filtersActive = Boolean(filters.job || filters.supplier);
 
   if (!rows) return <div className="table-state">{error || <><Loader2 className="spin" size={18} />Loading outstanding parts…</>}</div>;
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{filtersActive ? `${filteredRows.length} of ${rows.length} row${rows.length === 1 ? "" : "s"}` : `${rows.length} row${rows.length === 1 ? "" : "s"}`}</span>
+      <span>{rows.length} row{rows.length === 1 ? "" : "s"}</span>
+      <TablePrintButton tableId="parts-outstanding-table" title="Parts Outstanding" noun="row" />
+      <TableColumnFilters tableId="parts-outstanding-table" storageKey="parts-outstanding" noun="row" />
       <button className="gold-button" onClick={openAdd}><Plus size={15} /> Add Part to job</button>
     </div>
     {error ? <div className="inline-error">{error}</div> : null}
-    <div className="data-table-wrap"><table className="data-table"><thead>
+    <ScrollRestore selector="[data-scroll='parts-outstanding']" storageKey="parts-outstanding" />
+    <div className="data-table-wrap" data-scroll="parts-outstanding"><table id="parts-outstanding-table" className="data-table"><thead>
       <tr><th>Job #</th><th>Supplier</th><th>Parts Outstanding</th><th>Days Outstanding</th><th></th></tr>
-      <tr className="filter-row">
-        <th><input value={filters.job} onChange={(e) => setFilters((f) => ({ ...f, job: e.target.value }))} placeholder="Filter job…" aria-label="Filter by job" /></th>
-        <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
-        <th></th><th></th>
-        <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "" })} title="Clear filters"><X size={13} /></button>}</th>
-      </tr>
     </thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={5} className="table-state">No parts outstanding on any job.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={5} className="table-state compact-empty-state">No jobs match these filters.</td></tr> : filteredRows.map((row) => (
+      {rows.length === 0 ? <tr><td colSpan={5} className="table-state">No parts outstanding on any job.</td></tr> : rows.map((row) => (
         <tr key={row.key}>
           <td><Link href={`/jobs/${row.jobId}`}><strong>{row.jobNumber}</strong></Link></td>
           <td>{row.ordered ? row.supplierName : <span className="muted">{row.supplierName}</span>}</td>

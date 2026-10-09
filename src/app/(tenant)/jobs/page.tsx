@@ -1,10 +1,12 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
-import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill } from "@/components/StatusPill";
+import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
+import { RememberListUrl } from "@/components/RememberListUrl";
 import { FitToViewportBottom } from "@/components/FitToViewportBottom";
-import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
+import { LiveSearchInput } from "@/components/LiveSearchInput";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
@@ -12,7 +14,7 @@ import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
-import { JOB_STATUS_LABELS, JOB_TYPE_LABELS } from "@/lib/jobs/ui";
+import { JOB_TYPE_LABELS } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
 import { JOBS_WIP_COLUMNS, filterColumnsByPermission, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
@@ -36,6 +38,18 @@ function fmtDate(value: Date | string | null | undefined): string {
 
 function fmtEnum(value: string | null | undefined): string {
   return value ? value.replaceAll("_", " ") : "—";
+}
+
+// 2026-10-09 — values the Status column's header filter offers for a job: its
+// status label, plus "Return Unrepaired" / "Pex" for the flags that show as
+// extra pills beside it (the old Status dropdown had both as entries). Kept
+// in step with the pill conditions in renderCell below.
+const FILTER_SEP = "|~|";
+function statusFilterValues(job: JobRow): string {
+  const values = [jobStatusLabel(job.status, job.returnedUnrepaired)];
+  if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
+  if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && job.status !== "TO_BE_RECEIVED") values.push("Pex");
+  return values.join(FILTER_SEP);
 }
 
 // One cell per column id — the jobNumber cell also carries the row's
@@ -169,8 +183,19 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   // UI on this list, so it scrolls internally within a fixed-height panel
   // instead (see .jobs-panel .data-table-wrap in globals.css). 5000 is the
   // validated ceiling in jobsListQuery; see the comment there.
+  // 2026-10-09, user request: Job type and Status filters moved off the toolbar
+  // into the table's own column headers (Excel-style, TableColumnFilters.tsx),
+  // which filter the rows already on the page. So the page now loads every job
+  // that matches the search/view and a ?type= / ?status= link (the dashboard
+  // cards use these) just pre-ticks that value in the header filter instead of
+  // filtering on the server.
+  const include: Record<string, string[]> = {};
+  if (type) include[COLUMN_LABELS.type] = [JOB_TYPE_LABELS[type as keyof typeof JOB_TYPE_LABELS] ?? type];
+  if (pexAllocated) include[COLUMN_LABELS.status] = ["Pex"];
+  else if (returnedUnrepaired) include[COLUMN_LABELS.status] = ["Return Unrepaired", jobStatusLabel("COMPLETE", true)];
+  else if (status) include[COLUMN_LABELS.status] = status === "COMPLETE" ? [jobStatusLabel("COMPLETE"), jobStatusLabel("COMPLETE", true)] : [jobStatusLabel(status)];
   const [data, columns] = await Promise.all([
-    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, type, status, returnedUnrepaired: returnedUnrepaired || undefined, pexAllocated: pexAllocated || undefined, sort: "newest", page: 1, pageSize: 5000 }),
+    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, sort: "newest", page: 1, pageSize: 5000 }),
     getJobsWipColumns(ctx),
   ]);
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
@@ -186,13 +211,10 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const VIEW_LABELS: Record<string, string> = { wip: "Work in progress", completed: "Completed" };
   const filterParts = [
     view !== "all" && VIEW_LABELS[view] ? `View: ${VIEW_LABELS[view]}` : "",
-    type ? `Type: ${JOB_TYPE_LABELS[type as keyof typeof JOB_TYPE_LABELS] ?? type}` : "",
-    pexAllocated ? "Status: Pex" : returnedUnrepaired ? "Status: Returned unrepaired" : status ? `Status: ${JOB_STATUS_LABELS[status as keyof typeof JOB_STATUS_LABELS] ?? status}` : "",
     q ? `Search: "${q}"` : "",
   ].filter(Boolean);
   const clearViewParams = new URLSearchParams();
   if (q) clearViewParams.set("q", q);
-  if (type) clearViewParams.set("type", type);
   const clearViewHref = clearViewParams.toString() ? `/jobs?${clearViewParams.toString()}` : "/jobs";
   const filterSummary = filterParts.length > 0 ? filterParts.join("  ·  ") : "No filters (all jobs)";
 
@@ -223,21 +245,13 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 CUSTOMERS_VIEW (see mapListWhere's own comment in
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
-            <input type="text" name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
+            <LiveSearchInput name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}
             {view !== "all" && !rawStatus && <input type="hidden" name="view" value={view} />}
           </form>
-          <AutoSubmitSelect name="type" defaultValue={type || ""} form="jobs-filter-form">
-            <option value="">All job types</option>
-            {Object.entries(JOB_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </AutoSubmitSelect>
-          <AutoSubmitSelect name="status" dropWhenChanged="view" defaultValue={pexAllocated ? "PEX" : returnedUnrepaired ? "RETURNED_UNREPAIRED" : status || ""} form="jobs-filter-form">
-            <option value="">All statuses</option>
-            {Object.entries(JOB_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            <option value="PEX">Pex</option>
-          </AutoSubmitSelect>
+          {/* 2026-10-09 — Job type / Status dropdowns removed: both now live in the table headers (Excel-style filters). */}
           {/* 2026-09-14 — "Move the custom column button selctor and apply
               button to the far right" (explicit request). The item-count
               span already carries the shared .master-toolbar > span rule's
@@ -250,7 +264,6 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               than the dropdowns say. */}
           {view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
-          <button type="submit" form="jobs-filter-form" className="quiet-button">Apply</button>
           {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
               viewer's role is entitled to) now travels down alongside
               `selected`, so e.g. a Mechanic never even sees "Customer" as a
@@ -262,6 +275,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
           <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
+          <TableColumnFilters tableId="jobs-wip-table" storageKey="jobs-wip" noun="job" initialInclude={include} stripParams={["type", "status", "returnedUnrepaired"]} />
         </div>
 
         {/* 2026-10-05 — user request: "remove the search pills under search
@@ -287,7 +301,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               {data.items.map((job) => (
                 <tr key={job.id} className="clickable-row">
                   {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
-                  {columns.map((id) => <td key={id}>{renderCell(id, job)}</td>)}
+                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job) : undefined}>{renderCell(id, job)}</td>)}
                   <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
                 </tr>
               ))}
@@ -302,6 +316,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               browser Back already restores those correctly — only the
               table's own internal scroll position needed fixing. */}
           <ScrollRestore selector=".jobs-panel .data-table-wrap" storageKey="jobs-wip" />
+          {/* 2026-10-09 — remembers this exact filtered URL so a job's "Back to jobs" link returns here, not to a bare /jobs. */}
+          <RememberListUrl storageKey="jobs" />
           <FitToViewportBottom selector=".jobs-panel .data-table-wrap" />
         </div>
       </section>

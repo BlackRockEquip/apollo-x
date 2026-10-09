@@ -7,7 +7,7 @@ export const jobKitListQuery = z.object({
   q: z.string().trim().max(120).default(""),
   status: z.enum(["active", "inactive", "all"]).default("active"),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  pageSize: z.coerce.number().int().min(1).max(500).default(25),
 });
 
 export const jobKitLineInput = z.object({

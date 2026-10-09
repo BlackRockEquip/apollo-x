@@ -1,9 +1,12 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FocusEvent } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
+import { ScrollRestore } from "@/components/ScrollRestore";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
 type OutworkRow = {
@@ -60,24 +63,14 @@ export function OutworkAllWorkspace() {
   const [dateSentOut, setDateSentOut] = useState("");
   const [lines, setLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
 
-  // 2026-09-29, user request: "Suppliers/Outwork - Make table headers
-  // filterable." A filter row under the headers: text boxes for the
-  // free-text columns, a dropdown for Status (only two real values). All
-  // client-side against the already-loaded `rows` — this list isn't paged,
-  // so there's nothing to round-trip to the server for.
-  const [filters, setFilters] = useState({ job: "", supplier: "", description: "", status: "ALL" });
+  // 2026-10-09, user request: "on all tables under jobs add filter to each
+  // table header (like excel filter, dropdown and select)". Replaces the
+  // 2026-09-29 text-box filter row: every column header now has an Excel-style
+  // filter (TableColumnFilters.tsx).
   // 2026-10-08: received outwork is no longer listed here (the API leaves it
   // out); this client-side guard also drops a row the moment it is marked
   // received without a reload.
-  const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
-    if (row.status === "RECEIVED") return false;
-    if (filters.job && !jobRef(row.job).toLowerCase().includes(filters.job.toLowerCase())) return false;
-    if (filters.supplier && !(row.supplier.name || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
-    if (filters.description && !(row.description || "").toLowerCase().includes(filters.description.toLowerCase())) return false;
-    if (filters.status !== "ALL" && row.status !== filters.status) return false;
-    return true;
-  }), [rows, filters]);
-  const filtersActive = filters.job || filters.supplier || filters.description;
+  const openRows = (rows ?? []).filter((row) => row.status !== "RECEIVED");
 
   async function load() {
     try {
@@ -151,28 +144,22 @@ export function OutworkAllWorkspace() {
     }
   }
 
-  const openCount = rows ? rows.filter((r) => r.status !== "RECEIVED").length : 0;
+  const openCount = openRows.length;
   if (!rows) return <div className="table-state">{error || <><Loader2 className="spin" size={18} />Loading outwork…</>}</div>;
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{filtersActive ? `${filteredRows.length} of ${openCount} item${openCount === 1 ? "" : "s"}` : `${openCount} item${openCount === 1 ? "" : "s"}`}</span>
+      <span>{openCount} item{openCount === 1 ? "" : "s"}</span>
+      <TablePrintButton tableId="outwork-all-table" title="Outwork" noun="item" />
+      <TableColumnFilters tableId="outwork-all-table" storageKey="outwork-all" noun="item" />
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Create outwork</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
-    <div className="data-table-wrap"><table className="data-table"><thead>
+    <ScrollRestore selector="[data-scroll='outwork-all']" storageKey="outwork-all" />
+    <div className="data-table-wrap" data-scroll="outwork-all"><table id="outwork-all-table" className="data-table"><thead>
       <tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th>Days outstanding</th><th></th></tr>
-      <tr className="filter-row">
-        <th><input value={filters.job} onChange={(e) => setFilters((f) => ({ ...f, job: e.target.value }))} placeholder="Filter job…" aria-label="Filter by job" /></th>
-        <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
-        <th><input value={filters.description} onChange={(e) => setFilters((f) => ({ ...f, description: e.target.value }))} placeholder="Filter description…" aria-label="Filter by description" /></th>
-        <th></th>
-        <th></th>
-        <th></th><th></th><th></th>
-        <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", description: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
-      </tr>
     </thead><tbody>
-      {openCount === 0 ? <tr><td colSpan={9} className="table-state">No outwork currently out.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={9} className="table-state compact-empty-state">No outwork matches these filters.</td></tr> : filteredRows.map((row) => (
+      {openCount === 0 ? <tr><td colSpan={9} className="table-state">No outwork currently out.</td></tr> : openRows.map((row) => (
         <tr key={row.id}>
           <td><Link href={`/jobs/${row.job.id}`}>{jobRef(row.job)}</Link></td>
           <td>{text(row.supplier.name)}</td>

@@ -1,9 +1,12 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect -- async loaders synchronize this view with REST resources */
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FocusEvent } from "react";
 import { Loader2, Plus, Search, X } from "lucide-react";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
+import { ScrollRestore } from "@/components/ScrollRestore";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 type Option = { id: string; name?: string; jobNumber?: string | null; draftNumber?: string | null };
@@ -113,27 +116,15 @@ export function RfqAllWorkspace() {
   // below since only one is used per submit.
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
 
-  // 2026-09-29, user request: "Suppliers/Outwork - Make table headers
-  // filterable" — same treatment on this RFQ tab. All client-side against
-  // the already-loaded `rows`.
-  const [filters, setFilters] = useState({ job: "", supplier: "", status: "ALL" });
+  // 2026-10-09, user request: "on all tables under jobs add filter to each
+  // table header (like excel filter, dropdown and select)". The text-box /
+  // dropdown filter row that used to sit under the headers is gone: every
+  // column header now has an Excel-style filter (TableColumnFilters.tsx).
   // 2026-10-06, user request: "once all parts pricing captured the RFQ goes
-  // away from table basically similar to parts outstanding". A job RFQ whose
-  // every part line has a price (or is marked unavailable) is receivingStatus
-  // RECEIVED (see jobRfqReceivingStatus in rfq/service.ts); a general RFQ the
-  // user has set to Received is the same thing. Those rows drop out of the
-  // table by default. They are not deleted: picking Status = "Received" in
-  // the filter row brings them back, for looking something up later.
-  const isCompleted = (row: RfqRow) => (row.kind === "general" ? row.status === "RECEIVED" : row.receivingStatus === "RECEIVED");
-  const completedCount = (rows ?? []).filter(isCompleted).length;
-  const filteredRows = useMemo(() => (rows ?? []).filter((row) => {
-    if (filters.status !== "Received" && isCompleted(row)) return false;
-    if (filters.job && !(row.jobId ? text(row.jobNumber) : "General").toLowerCase().includes(filters.job.toLowerCase())) return false;
-    if (filters.supplier && !(row.supplierName || "").toLowerCase().includes(filters.supplier.toLowerCase())) return false;
-    if (filters.status !== "ALL" && rowStatusLabel(row) !== filters.status) return false;
-    return true;
-  }), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps -- isCompleted is a pure helper
-  const filtersActive = filters.job || filters.supplier || filters.status !== "ALL";
+  // away from table basically similar to parts outstanding" — fully priced
+  // (Received) RFQs are still loaded but start unticked in the Status filter,
+  // so they drop out of the table by default; tick "Received" there to see
+  // them again.
 
   function fileToBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -242,7 +233,9 @@ export function RfqAllWorkspace() {
 
   return <section className="master-panel">
     <div className="master-toolbar">
-      <span>{filteredRows.length} RFQ{filteredRows.length === 1 ? "" : "s"}{completedCount > 0 && filters.status !== "Received" ? ` · ${completedCount} fully priced hidden (set Status to Received to see them)` : ""}</span>
+      <span>{rows.length} RFQ{rows.length === 1 ? "" : "s"}</span>
+      <TablePrintButton tableId="rfq-all-table" title="RFQs" noun="RFQ" />
+      <TableColumnFilters tableId="rfq-all-table" storageKey="rfq-all" noun="RFQ" defaultExclude={{ Status: ["Received"] }} />
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Add RFQ</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
@@ -251,22 +244,16 @@ export function RfqAllWorkspace() {
         Attachment upload on Add RFQ (below) is unchanged — this only drops
         the column that let you view one from the list, plus swaps Notes
         for a computed Days Outstanding (see that function's own comment). */}
-    <div className="data-table-wrap"><table className="data-table"><thead>
+    <ScrollRestore selector="[data-scroll='rfq-all']" storageKey="rfq-all" />
+    <div className="data-table-wrap" data-scroll="rfq-all"><table id="rfq-all-table" className="data-table"><thead>
       <tr><th>Job</th><th>Supplier</th><th>Status</th><th>Parts outstanding</th><th>Date</th><th>Days Outstanding</th><th></th></tr>
-      <tr className="filter-row">
-        <th><input value={filters.job} onChange={(e) => setFilters((f) => ({ ...f, job: e.target.value }))} placeholder="Filter job…" aria-label="Filter by job" /></th>
-        <th><input value={filters.supplier} onChange={(e) => setFilters((f) => ({ ...f, supplier: e.target.value }))} placeholder="Filter supplier…" aria-label="Filter by supplier" /></th>
-        <th><select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} aria-label="Filter by status"><option value="ALL">All</option><option value="Sent">Sent</option><option value="Received">Received</option><option value="Partially received">Partially received</option><option value="Outstanding">Outstanding</option><option value="Skipped">Skipped</option></select></th>
-        <th></th><th></th><th></th>
-        <th>{filtersActive && <button type="button" className="quiet-button" onClick={() => setFilters({ job: "", supplier: "", status: "ALL" })} title="Clear filters"><X size={13} /></button>}</th>
-      </tr>
     </thead><tbody>
-      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : filteredRows.length === 0 && !filtersActive ? <tr><td colSpan={7} className="table-state compact-empty-state">No outstanding RFQs — every RFQ is fully priced.</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={7} className="table-state compact-empty-state">No RFQs match these filters.</td></tr> : filteredRows.map((row) => {
+      {rows.length === 0 ? <tr><td colSpan={7} className="table-state">No RFQs yet.</td></tr> : rows.map((row) => {
         const info = receivingStatusInfo(row.receivingStatus);
         return <tr key={`${row.kind}-${row.id}`}>
           <td>{row.jobId ? <Link href={`/jobs/${row.jobId}`}>{text(row.jobNumber)}</Link> : <span className="muted">General</span>}</td>
           <td>{text(row.supplierName)}</td>
-          <td>{row.kind === "general" ? (
+          <td data-filter-values={rowStatusLabel(row)}>{row.kind === "general" ? (
             <select value={row.status} onChange={(e) => void updateGeneralStatus(row.id, e.target.value)}>
               <option value="SENT">Sent</option><option value="RECEIVED">Received</option><option value="SKIPPED">Skipped</option>
             </select>

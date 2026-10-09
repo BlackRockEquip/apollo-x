@@ -5,6 +5,8 @@ import type { FocusEvent } from "react";
 import { FileText, Loader2, Plus, Search } from "lucide-react";
 import { readListState, writeListState } from "./list-state";
 import { ScrollRestore } from "./ScrollRestore";
+import { TableColumnFilters } from "./TableColumnFilters";
+import { TablePrintButton } from "./TablePrintButton";
 
 type PartOption = { id: string; partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; active?: boolean };
 type ManufacturerOption = { id: string; name: string };
@@ -73,7 +75,7 @@ export function JobKitsWorkspace() {
   const loadList = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const params = new URLSearchParams({ q: query, status, page: "1", pageSize: "50" });
+      const params = new URLSearchParams({ q: query, status, page: "1", pageSize: "500" });
       const response = await fetch(`/api/v1/job-kits?${params}`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load job kits.");
@@ -314,9 +316,11 @@ export function JobKitsWorkspace() {
       <div className="master-toolbar">
         <label className="search-control"><Search size={15} /><input aria-label="Search job kits" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search kit name, make, model or component" /></label>
         <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option></select>
+        <TablePrintButton tableId="job-kits-table" title="Job Kits" noun="kit" />
+        {!loading && <TableColumnFilters tableId="job-kits-table" storageKey="job-kits" noun="kit" />}
         <button type="button" className="gold-button" onClick={() => { setSelectedKit(null); setForm({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", quantityDefault: "1", notes: "", sortOrder: "0" }); setEditorOpen(true); }}><Plus size={15} /> New job kit</button>
       </div>
-      {loading ? <div className="table-state"><Loader2 className="spin" size={20} /> Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Kit</th><th>Applicability</th><th>Lines</th><th>Total Qty</th><th>Status</th><th></th></tr></thead><tbody>{kits.map((kit) => <tr key={kit.id}><td><strong>{kit.name}</strong><div className="muted small-line">{text(kit.description)}</div></td><td>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "—"}</td><td>{kit.lineCount ?? kit.lines?.length ?? 0}</td><td>{text(kit.totalQuantity)}</td><td><span className={`status-pill ${kit.active ? "" : "neutral"}`}>{kit.active ? "Active" : "Inactive"}</span></td><td className="actions"><button type="button" className="table-action" onClick={() => void openKit(kit.id)}>Open</button> <button type="button" className="table-action" disabled={deletingId === kit.id} onClick={() => void removeKit(kit)}>{deletingId === kit.id ? "Deleting…" : "Delete"}</button></td></tr>)}{kits.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No job kits found.</td></tr>}</tbody></table></div>}
+      {loading ? <div className="table-state"><Loader2 className="spin" size={20} /> Loading…</div> : <div className="data-table-wrap"><table id="job-kits-table" className="data-table"><thead><tr><th>Kit</th><th>Applicability</th><th>Lines</th><th>Total Qty</th><th>Status</th><th></th></tr></thead><tbody>{kits.map((kit) => <tr key={kit.id}><td data-filter-values={kit.name}><strong>{kit.name}</strong><div className="muted small-line">{text(kit.description)}</div></td><td>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "—"}</td><td>{kit.lineCount ?? kit.lines?.length ?? 0}</td><td>{text(kit.totalQuantity)}</td><td><span className={`status-pill ${kit.active ? "" : "neutral"}`}>{kit.active ? "Active" : "Inactive"}</span></td><td className="actions"><button type="button" className="table-action" onClick={() => void openKit(kit.id)}>Open</button> <button type="button" className="table-action" disabled={deletingId === kit.id} onClick={() => void removeKit(kit)}>{deletingId === kit.id ? "Deleting…" : "Delete"}</button></td></tr>)}{kits.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No job kits found.</td></tr>}</tbody></table></div>}
       {/* 2026-09-15, user request: "Back button to take you back to where
           you last were." Only mounted once the list has actually rendered
           — see ScrollRestore's own comment for why. */}

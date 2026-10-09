@@ -234,6 +234,47 @@ export async function resetTenantUserSessions(ctx: RequestContext, membershipId:
   });
 }
 
+// 2026-10-09 — user request: "Settings - Users, add a delete button next to
+// reset". Deleting a user removes them from THIS company (their membership,
+// permissions and sign-in sessions go with it) — it does not erase the person
+// behind the login. Their name has to stay on everything they did (job
+// history, stock movements, audit trail all point at the login), and the same
+// login can belong to other companies. If the login is left with no company
+// and no platform role it is also switched off, so it can't sign in anywhere.
+// Guarded: you can't delete yourself, and the last active Company Admin can't
+// be deleted (the company would be locked out of its own user list).
+export async function deleteTenantUser(ctx: RequestContext, membershipId: string) {
+  const companyId = auth(ctx);
+  return prisma.$transaction(async (tx) => {
+    const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true } });
+    if (!membership) throw new Error("NOT_FOUND");
+    if (membership.userId === ctx.userId) throw new Error("CANNOT_DELETE_SELF");
+    if (membership.role === "COMPANY_ADMIN") {
+      const otherAdmins = await tx.companyMembership.count({
+        where: { companyId, role: "COMPANY_ADMIN", status: "ACTIVE", id: { not: membershipId }, user: { active: true } },
+      });
+      if (otherAdmins === 0) throw new Error("LAST_COMPANY_ADMIN_REQUIRED");
+    }
+    await tx.companyMembership.delete({ where: { id: membershipId } });
+    const remainingMemberships = await tx.companyMembership.count({ where: { userId: membership.userId } });
+    const platformRoles = await tx.platformRoleAssignment.count({ where: { userId: membership.userId } });
+    const loginDisabled = remainingMemberships === 0 && platformRoles === 0;
+    if (loginDisabled) {
+      await tx.userIdentity.update({ where: { id: membership.userId }, data: { active: false, sessionVersion: { increment: 1 } } });
+      await tx.userSession.updateMany({ where: { userId: membership.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
+    await tx.auditEvent.create({
+      data: {
+        companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId,
+        action: "TENANT_USER_DELETED", correlationId: ctx.correlationId,
+        beforeData: { email: membership.user.email, displayName: membership.user.displayName, role: membership.role },
+        afterData: { loginDisabled },
+      },
+    });
+    return { ok: true, loginDisabled };
+  });
+}
+
 // 2026-09-19 — user request: "User Setup will be where an admin can setup
 // Mechanic Names that the corresponding fields in jobs pickup." A
 // lightweight named list (no login of its own — see the Mechanic model

@@ -249,6 +249,23 @@ export function UsersWorkspace() {
     finally { setSaving(false); }
   }
 
+  // 2026-10-09 — user request: "Settings - Users, add a delete button next to
+  // reset". Removes the user from this company (server: deleteTenantUser) —
+  // their name stays on past job history.
+  async function deleteUser(user: UserRow) {
+    if (!(await confirm({ message: `Delete ${user.displayName} (${user.email})? They will lose access to this company straight away. Their name stays on past jobs and history.`, tone: "danger", confirmLabel: "Delete" }))) return;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/v1/users/${user.id}`, { method: "DELETE" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to delete user.");
+      if (editingId === user.id) resetForm();
+      setNotice(`${user.displayName} deleted.`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to delete user."); }
+    finally { setSaving(false); }
+  }
+
   const groupedModules = useMemo(() => {
     const groups = new Map<string, ModuleOption[]>();
     for (const row of editorSeed?.availableModules ?? []) {
@@ -305,7 +322,7 @@ export function UsersWorkspace() {
         </section>
         <section className="detail-panel">
           <header><div><h2>Tenant users</h2></div></header>
-          {loading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>{users.map((user) => <tr key={user.id}><td><strong>{user.displayName}</strong></td><td>{user.roleLabel}</td><td>{user.active ? user.membershipStatus : "USER_DISABLED"}</td><td className="actions"><button type="button" className="table-action" onClick={() => void startEdit(user.id)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void resetSessions(user.id)}><KeyRound size={14} /> Reset</button></td></tr>)}{users.length === 0 && <tr><td colSpan={4} className="table-state compact-empty-state">No tenant users found.</td></tr>}</tbody></table></div>}
+          {loading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>{users.map((user) => <tr key={user.id}><td><strong>{user.displayName}</strong></td><td>{user.roleLabel}</td><td>{user.active ? user.membershipStatus : "USER_DISABLED"}</td><td className="actions"><button type="button" className="table-action" onClick={() => void startEdit(user.id)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void resetSessions(user.id)}><KeyRound size={14} /> Reset</button><button type="button" className="table-action danger" disabled={saving} onClick={() => void deleteUser(user)}><Trash2 size={14} /> Delete</button></td></tr>)}{users.length === 0 && <tr><td colSpan={4} className="table-state compact-empty-state">No tenant users found.</td></tr>}</tbody></table></div>}
         </section>
       </div>
       <section className="detail-panel" style={{ marginTop: 16 }}>

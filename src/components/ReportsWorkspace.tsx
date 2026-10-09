@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { CombinedAnalyticsChart, type AnalyticsSeries } from "@/components/AnalyticsLineChart";
 import { useTenantPermissions } from "@/components/AppShell";
+import { readListState, writeListState } from "@/components/list-state";
 
 // ---------------------------------------------------------------------------
 // 2026-10-02 — new "Reports" sidebar section (user request: "Create a
@@ -614,6 +615,12 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
 // ---------------------------------------------------------------------------
 export function ReportsWorkspace() {
   const [tab, setTab] = useState<TabKey>("overview");
+  // 2026-10-09, user request: "When clicking back, let it remember where you were." Remember the last report tab (restored after mount, so the server-rendered markup still matches). The per-customer tab isn't remembered — it only exists once a customer has been picked.
+  useEffect(() => {
+    const saved = readListState<{ tab: string }>("reports", { tab: "" }).tab;
+    if (TABS.some((t) => t.key === saved)) setTab(saved as TabKey);
+  }, []);
+  useEffect(() => { if (tab !== "customer") writeListState("reports", { tab }); }, [tab]);
   const [months, setMonths] = useState(12);
   const [focusCustomer, setFocusCustomer] = useState<{ id: string; name: string } | null>(null);
 

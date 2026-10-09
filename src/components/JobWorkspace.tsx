@@ -1,5 +1,6 @@
 "use client";
 
+import { useRememberedListUrl } from "@/components/RememberListUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1376,12 +1377,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // needed, shows the dialog, and — only on "yes" — navigates there itself
   // via the router. When no confirmation is needed (the common case,
   // autosaveState idle) nothing changes: the Link navigates normally.
+  const backHref = useRememberedListUrl("jobs", "/jobs");
   function handleBackClick(e: React.MouseEvent<HTMLAnchorElement>) {
     if (mode !== "detail") return;
     if (autosaveState !== "saving" && autosaveState !== "error") return;
     e.preventDefault();
     const message = autosaveState === "saving" ? "Your changes are still saving. Leave this job anyway?" : "Your last change failed to save. Leave anyway and lose it?";
-    void confirm({ message, tone: "warning", confirmLabel: "Leave anyway" }).then((ok) => { if (ok) router.push("/jobs"); });
+    void confirm({ message, tone: "warning", confirmLabel: "Leave anyway" }).then((ok) => { if (ok) router.push(backHref); });
   }
 
   // 2026-10-05 — user request: confirm before "Send to PEX Inventory", and
@@ -4561,7 +4563,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div className="job-sticky-header" ref={setStickyHeaderNode}>
         <header className="page-header compact">
           <div>
-            <Link href="/jobs" className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
+            <Link href={backHref} className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
             <p className="eyebrow">Jobs</p>
             {/* Status pill moved up next to the job number, and the status
                 stepper (below, still inside .job-sticky-header) moved from

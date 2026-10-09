@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { X } from "lucide-react";
+import { ScrollRestore } from "@/components/ScrollRestore";
 import { PexPreviousJobsTable, type PexPreviousJob } from "@/components/PexPreviousJobs";
 
 type Row = Record<string, unknown> & { id: string };
@@ -79,7 +80,9 @@ export function PexStockWorkspace({ initial }: { initial: { items: InventoryRow[
 
   return <>
     {error && <div className="inline-error">{error}</div>}
-    <div className="data-table-wrap"><table className="data-table">
+    {/* 2026-10-09, user request: "When clicking back, let it remember where you were" — table scroll position (filters/page are already in the URL). */}
+    <ScrollRestore selector="[data-scroll='pex-stock']" storageKey="pex-stock" />
+    <div className="data-table-wrap" data-scroll="pex-stock"><table id="pex-stock-table" className="data-table">
       <thead><tr><th>Job #</th><th>Unit</th><th>Make</th><th>Model</th><th>Status</th><th>Received</th><th>Original supply job</th><th></th></tr></thead>
       <tbody>
         {items.map((item) => {
