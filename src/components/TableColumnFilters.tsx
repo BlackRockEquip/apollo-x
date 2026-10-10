@@ -81,6 +81,40 @@ function cellValues(tr: HTMLTableRowElement, index: number): string[] {
   return [text === "" || text === "—" ? BLANK : text];
 }
 
+// 2026-10-09, user report: "job wip search bar is very slow". The Jobs & WIP
+// search used to ask the server for a fresh, filtered list on every keystroke
+// (re-running the query and re-rendering the whole table). The page now loads
+// the jobs once and the search runs here, in the browser, over those rows: each
+// <tr> carries data-search (the fields the server search used to look at, in
+// lower case), and data-job / data-prev (its own and its "previous job"
+// number). A row matches when data-search contains the typed text; like the old
+// server search, it also pulls in the jobs linked to a match through previous
+// job numbers, in both directions (a few hops at most).
+function searchRows(rows: HTMLTableRowElement[], needle: string): Set<HTMLTableRowElement> {
+  const direct = rows.filter((tr) => (tr.dataset.search ?? "").includes(needle));
+  const result = new Set(direct);
+  const byNumber = new Map<string, HTMLTableRowElement[]>();
+  const byPrev = new Map<string, HTMLTableRowElement[]>();
+  for (const tr of rows) {
+    const n = tr.dataset.job;
+    if (n) byNumber.set(n, [...(byNumber.get(n) ?? []), tr]);
+    const pv = tr.dataset.prev;
+    if (pv) byPrev.set(pv, [...(byPrev.get(pv) ?? []), tr]);
+  }
+  let frontier = direct;
+  for (let hop = 0; hop < 5 && frontier.length > 0; hop += 1) {
+    const next: HTMLTableRowElement[] = [];
+    for (const tr of frontier) {
+      const pv = tr.dataset.prev;
+      if (pv) for (const r of byNumber.get(pv) ?? []) if (!result.has(r)) { result.add(r); next.push(r); }
+      const n = tr.dataset.job;
+      if (n) for (const r of byPrev.get(n) ?? []) if (!result.has(r)) { result.add(r); next.push(r); }
+    }
+    frontier = next;
+  }
+  return result;
+}
+
 function passes(tr: HTMLTableRowElement, filters: Array<{ index: number; ex: Set<string> }>): boolean {
   return filters.every((f) => cellValues(tr, f.index).some((v) => !f.ex.has(v)));
 }
@@ -91,6 +125,10 @@ export type TableColumnFiltersProps = {
   storageKey: string;
   // Singular noun for the "X of Y jobs shown" summary.
   noun?: string;
+  // Jobs & WIP only: text already typed in the page's search box (?q=), and the
+  // switch for in-browser searching (see searchRows). LiveSearchInput sends
+  // what is typed afterwards in a "tcf:search" window event.
+  initialSearch?: string;
   // Applied the first time the table is opened in a browser session (nothing
   // stored yet): values to leave unticked, e.g. { Status: ["Received"] }.
   defaultExclude?: Record<string, string[]>;
@@ -102,10 +140,11 @@ export type TableColumnFiltersProps = {
   stripParams?: string[];
 };
 
-export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultExclude, initialInclude, stripParams }: TableColumnFiltersProps) {
+export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultExclude, initialInclude, stripParams, initialSearch = "" }: TableColumnFiltersProps) {
   const [excluded, setExcluded] = useState<Excluded>({});
   const [ready, setReady] = useState(false);
-  const [counts, setCounts] = useState({ shown: 0, total: 0, active: 0 });
+  const [counts, setCounts] = useState({ shown: 0, total: 0, active: 0, filters: 0 });
+  const [pageSearch, setPageSearch] = useState(initialSearch);
   const [popup, setPopup] = useState<{ label: string; left: number; top: number } | null>(null);
   const [search, setSearch] = useState("");
   const [tick, setTick] = useState(0);
@@ -143,6 +182,15 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     setReady(true);
     // Mount-only on purpose.
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function onSearch(e: Event) {
+      const detail = (e as CustomEvent<{ tableId: string; q: string }>).detail;
+      if (detail && detail.tableId === tableId) setPageSearch(detail.q || "");
+    }
+    window.addEventListener("tcf:search", onSearch);
+    return () => window.removeEventListener("tcf:search", onSearch);
+  }, [tableId]);
 
   useEffect(() => { if (ready) writeListState(storeKey, { set: true, ex: excluded }); }, [ready, excluded, storeKey]);
 
@@ -207,6 +255,8 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     if (!table) return;
     const cols = readColumns(table);
     const rows = readRows(table);
+    const needle = pageSearch.trim().toLowerCase();
+    const matched = needle ? searchRows(rows, needle) : null;
     const active = Object.entries(excluded)
       .filter(([, v]) => v.length > 0)
       .map(([label, v]) => ({ label, col: cols.find((c) => c.label === label), ex: new Set(v) }))
@@ -214,7 +264,7 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
       .map((a) => ({ label: a.label, index: a.col.index, ex: a.ex }));
     let shown = 0;
     for (const tr of rows) {
-      const visible = passes(tr, active);
+      const visible = (!matched || matched.has(tr)) && passes(tr, active);
       const hidden = tr.style.display === "none";
       if (visible) {
         if (hidden) tr.style.display = "";
@@ -231,13 +281,15 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     // Plain-words description for the Print view.
     const parts = active.map((a) => {
       const values = new Set<string>();
-      for (const tr of rows) for (const v of cellValues(tr, a.index)) values.add(v);
+      for (const tr of rows) if (!matched || matched.has(tr)) for (const v of cellValues(tr, a.index)) values.add(v);
       const kept = Array.from(values).filter((v) => !a.ex.has(v)).sort((x, y) => collator.compare(x, y));
       return `${a.label}: ${kept.length === 0 ? "none" : kept.length <= 4 ? kept.join(", ") : `${kept.slice(0, 4).join(", ")} +${kept.length - 4} more`}`;
     });
+    if (needle) parts.unshift(`Search: "${pageSearch.trim()}"`);
     table.dataset.filterSummary = parts.join("  ·  ");
-    setCounts((c) => (c.shown === shown && c.total === rows.length && c.active === active.length ? c : { shown, total: rows.length, active: active.length }));
-  }, [excluded, ready, tick, tableId]);
+    const activeAll = active.length + (needle ? 1 : 0);
+    setCounts((c) => (c.shown === shown && c.total === rows.length && c.active === activeAll && c.filters === active.length ? c : { shown, total: rows.length, active: activeAll, filters: active.length }));
+  }, [excluded, ready, tick, tableId, pageSearch]);
 
   // Close the popup on outside click / Esc / scroll.
   useEffect(() => {
@@ -275,7 +327,11 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
       .map(([label, v]) => ({ index: cols.find((c) => c.label === label)?.index ?? -1, ex: new Set(v) }))
       .filter((f) => f.index >= 0);
     const tally = new Map<string, number>();
-    for (const tr of readRows(table)) {
+    const allRows = readRows(table);
+    const needle = pageSearch.trim().toLowerCase();
+    const matched = needle ? searchRows(allRows, needle) : null;
+    for (const tr of allRows) {
+      if (matched && !matched.has(tr)) continue;
       if (!passes(tr, others)) continue;
       for (const v of cellValues(tr, target.index)) tally.set(v, (tally.get(v) ?? 0) + 1);
     }
@@ -283,7 +339,7 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     for (const v of excluded[popup.label] ?? []) if (!tally.has(v)) tally.set(v, 0);
     return Array.from(tally.entries()).sort((a, b) => (a[0] === BLANK ? 1 : b[0] === BLANK ? -1 : collator.compare(a[0], b[0])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [popup, excluded, tick, tableId]);
+  }, [popup, excluded, tick, tableId, pageSearch]);
 
   const needle = search.trim().toLowerCase();
   const listed = needle ? options.filter(([v]) => v.toLowerCase().includes(needle)) : options;
@@ -320,7 +376,7 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     {ready && counts.active > 0 && (
       <div className="tcf-summary">
         <span>{counts.shown} of {counts.total} {noun}{counts.total === 1 ? "" : "s"} shown</span>
-        <button type="button" className="quiet-button" onClick={() => { setExcluded({}); setPopup(null); }}>Clear filters</button>
+        {counts.filters > 0 && <button type="button" className="quiet-button" onClick={() => { setExcluded({}); setPopup(null); }}>Clear filters</button>}
       </div>
     )}
     {popup && typeof document !== "undefined" && createPortal(

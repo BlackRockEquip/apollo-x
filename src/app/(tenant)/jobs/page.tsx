@@ -52,6 +52,20 @@ function statusFilterValues(job: JobRow): string {
   return values.join(FILTER_SEP);
 }
 
+// 2026-10-09 — what the in-browser search looks at for a job: the same fields
+// the server search used (BRE / job number, linked job, references, machine,
+// component, description, and — only for viewers allowed to see customers —
+// the customer's name, trading name and account code), lower-cased, one per
+// line so a match can't straddle two fields. See searchRows in
+// TableColumnFilters.tsx.
+function searchText(job: JobRow, canSearchCustomerName: boolean): string {
+  return [
+    job.jobNumber, job.draftNumber, job.previousJobNumber, job.customerReference, job.customerPo,
+    job.machineModel, job.machineSerial, job.component, job.componentSerial, job.componentPartNumber, job.description,
+    ...(canSearchCustomerName ? [job.customer.name, job.customer.tradingName, job.customer.accountCode] : []),
+  ].filter(Boolean).join("\n").toLowerCase();
+}
+
 // One cell per column id — the jobNumber cell also carries the row's
 // whole-row click target (see .stretched-link/.clickable-row in
 // globals.css, which positions relative to the <tr> so it works from any
@@ -194,10 +208,18 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   if (pexAllocated) include[COLUMN_LABELS.status] = ["Pex"];
   else if (returnedUnrepaired) include[COLUMN_LABELS.status] = ["Return Unrepaired", jobStatusLabel("COMPLETE", true)];
   else if (status) include[COLUMN_LABELS.status] = status === "COMPLETE" ? [jobStatusLabel("COMPLETE"), jobStatusLabel("COMPLETE", true)] : [jobStatusLabel(status)];
-  const [data, columns] = await Promise.all([
-    listJobs(ctx, { view: ["all", "wip", "completed"].includes(view) ? view : "all", q, sort: "newest", page: 1, pageSize: 5000 }),
+  // 2026-10-09, user report: "job wip search bar is very slow". The search now
+  // runs in the browser over the loaded rows (LiveSearchInput + TableColumnFilters)
+  // instead of asking the server on every keystroke, so the page loads every job
+  // for the view WITHOUT the search text. Only if the company has more jobs than
+  // one page load can hold (the 5000 cap) does the server keep doing the search.
+  const jobsBase = { view: ["all", "wip", "completed"].includes(view) ? view : "all", sort: "newest", page: 1, pageSize: 5000 } as const;
+  const [firstLoad, columns] = await Promise.all([
+    listJobs(ctx, jobsBase),
     getJobsWipColumns(ctx),
   ]);
+  const serverSearch = firstLoad.total > jobsBase.pageSize;
+  const data = serverSearch && q ? await listJobs(ctx, { ...jobsBase, q }) : firstLoad;
   const canCreate = ctx.tenantPermissions.has("JOBS_CREATE") && ctx.moduleAccess.get("JOBS_WIP") === "FULL";
   const canSearchCustomerName = ctx.tenantPermissions.has("CUSTOMERS_VIEW");
   // 2026-10-06 — bulk update (see JobsWipBulkBar.tsx). Mirrors the server-side
@@ -211,7 +233,6 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   const VIEW_LABELS: Record<string, string> = { wip: "Work in progress", completed: "Completed" };
   const filterParts = [
     view !== "all" && VIEW_LABELS[view] ? `View: ${VIEW_LABELS[view]}` : "",
-    q ? `Search: "${q}"` : "",
   ].filter(Boolean);
   const clearViewParams = new URLSearchParams();
   if (q) clearViewParams.set("q", q);
@@ -245,7 +266,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 CUSTOMERS_VIEW (see mapListWhere's own comment in
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
-            <LiveSearchInput name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
+            <LiveSearchInput tableId="jobs-wip-table" serverMode={serverSearch} name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}
@@ -275,7 +296,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
           <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
-          <TableColumnFilters tableId="jobs-wip-table" storageKey="jobs-wip" noun="job" initialInclude={include} stripParams={["type", "status", "returnedUnrepaired"]} />
+          <TableColumnFilters tableId="jobs-wip-table" storageKey="jobs-wip" noun="job" initialSearch={serverSearch ? "" : q} initialInclude={include} stripParams={["type", "status", "returnedUnrepaired"]} />
         </div>
 
         {/* 2026-10-05 — user request: "remove the search pills under search
@@ -299,7 +320,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             <thead><tr>{showSelect && <th className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select-all" aria-label="Select all jobs shown" /></th>}{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}<th className="jobs-no-print"></th></tr></thead>
             <tbody>
               {data.items.map((job) => (
-                <tr key={job.id} className="clickable-row">
+                <tr key={job.id} className="clickable-row" data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()}>
                   {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
                   {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job) : undefined}>{renderCell(id, job)}</td>)}
                   <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>

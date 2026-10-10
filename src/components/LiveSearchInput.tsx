@@ -4,26 +4,52 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 // 2026-10-09, user request: "when typing in the search of Job Wip, allow that
-// fields filter as you type". The Jobs & WIP search used to need Enter / the
-// Apply button. This is the same <input name="q"> inside the same GET form
-// (Enter still works), but it also updates the page's ?q= a moment after each
-// keystroke (router.replace, so no history entry per letter) and the server
-// page re-runs its search — so the search keeps covering every field it always
-// did (BRE, linked job, customer, machine, component, reference), not just the
-// columns on screen. Other query params (view …) are left alone.
-export function LiveSearchInput({ name = "q", placeholder, defaultValue = "", delayMs = 300 }: { name?: string; placeholder?: string; defaultValue?: string; delayMs?: number }) {
+// fields filter as you type"; user report straight after: "job wip search bar is
+// very slow, is there a way to make it faster".
+//
+// First version asked the server for a new list on every keystroke (router.replace
+// -> re-run the query -> re-render every row), which is what made it slow. Now the
+// Jobs page loads its jobs once and this box filters them right here in the
+// browser: it broadcasts what is typed to TableColumnFilters (a "tcf:search" window
+// event), which hides the rows that don't match — see searchRows there for which
+// fields it looks at. Typing is instant, and ?q= in the URL is kept in step (no
+// history entry, no reload) so a refresh or a "Back to jobs" link comes back to
+// the same search.
+//
+// serverMode is the fallback for a company with more jobs than the page loads in
+// one go (the page then keeps searching on the server, as before): same box, but
+// it updates ?q= and lets the server re-run the search, after a longer pause.
+export function LiveSearchInput({ tableId, name = "q", placeholder, defaultValue = "", serverMode = false }: { tableId: string; name?: string; placeholder?: string; defaultValue?: string; serverMode?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const [value, setValue] = useState(defaultValue);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const filterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const urlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => () => {
+    if (filterTimer.current) clearTimeout(filterTimer.current);
+    if (urlTimer.current) clearTimeout(urlTimer.current);
+  }, []);
 
-  function push(next: string) {
+  function nextUrl(next: string) {
     const params = new URLSearchParams(window.location.search);
     if (next.trim()) params.set(name, next); else params.delete(name);
     const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    return qs ? `${pathname}?${qs}` : pathname;
+  }
+
+  function onChange(next: string) {
+    setValue(next);
+    if (filterTimer.current) clearTimeout(filterTimer.current);
+    if (urlTimer.current) clearTimeout(urlTimer.current);
+    if (serverMode) {
+      urlTimer.current = setTimeout(() => router.replace(nextUrl(next), { scroll: false }), 500);
+      return;
+    }
+    filterTimer.current = setTimeout(() => window.dispatchEvent(new CustomEvent("tcf:search", { detail: { tableId, q: next } })), 60);
+    urlTimer.current = setTimeout(() => {
+      try { window.history.replaceState(window.history.state, "", nextUrl(next)); } catch { /* best-effort */ }
+    }, 500);
   }
 
   return <input
@@ -32,11 +58,8 @@ export function LiveSearchInput({ name = "q", placeholder, defaultValue = "", de
     value={value}
     autoComplete="off"
     placeholder={placeholder}
-    onChange={(e) => {
-      const next = e.target.value;
-      setValue(next);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => push(next), delayMs);
-    }}
+    onChange={(e) => onChange(e.target.value)}
+    // Enter used to submit the (GET) form and reload the page; filtering is live now, so it just keeps the box focused.
+    onKeyDown={(e) => { if (e.key === "Enter" && !serverMode) e.preventDefault(); }}
   />;
 }
