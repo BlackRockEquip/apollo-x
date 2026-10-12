@@ -44,6 +44,8 @@ type PartLineRow = Row & {
   stockIssuedQuantity?: unknown;
   previousStatus?: string | null;
   orderNumber?: string | null;
+  // 2026-10-12 — free-text note per part line (Notes column).
+  notes?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
   part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; stockBalances?: Array<{ quantityOnHand?: unknown; quantityReserved?: unknown }> }) | null;
 };
@@ -679,6 +681,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [quoteGuessCounts, setQuoteGuessCounts] = useState<Record<string, number>>({});
   // How many lines an imported file left ticked N/A for each supplier (see analyzeQuoteFileForRequest).
   const [quoteNaCounts, setQuoteNaCounts] = useState<Record<string, number>>({});
+  // 2026-10-12 — one-line result of the last file import per supplier column (what was read, what was set to N/A).
+  const [quoteImportNotes, setQuoteImportNotes] = useState<Record<string, string>>({});
   const [quoteSavingId, setQuoteSavingId] = useState("");
   // 2026-09-29 — follow-up polish on the Compare quotes dialog: the
   // read-only "Saved quotes" comparison is now tucked behind its own
@@ -1743,6 +1747,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <td>${esc(String(line.orderNumber || ""))}</td>
           <td>${esc(String(line.orderedFromSupplier?.name || ""))}</td>
           <td>${esc(status)}</td>
+          <td>${esc(String(line.notes || ""))}</td>
         </tr>`;
       })
       .join("");
@@ -1755,7 +1760,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       td.qty{text-align:center;font-weight:600}
     </style></head><body>
       <h1>${esc(documentTitles.PARTS_LIST)} — Job ${esc(jobLabel)}</h1>
-      <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(html);
     w.document.close();
@@ -1974,6 +1979,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save order number.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // 2026-10-12, user request: a note per part number on the parts list. Goes to
+  // its own endpoint so it can never reset the order number / supplier.
+  async function saveNotesInline(lineId: string, value: string) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const r = await fetch("/api/v1/jobs/part-notes", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId, lineId, notes: value.trim() || null }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to save note.");
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save note.");
     } finally {
       setSaving(false);
     }
@@ -3151,6 +3177,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteFiles({});
     setQuoteGuessCounts({});
     setQuoteNaCounts({});
+    setQuoteImportNotes({});
     setQuoteAnalyzingId("");
     setShowRfqPopup(false);
     setShowQuoteComparePopup(true);
@@ -3163,6 +3190,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteFiles({});
     setQuoteGuessCounts({});
     setQuoteNaCounts({});
+    setQuoteImportNotes({});
     setQuoteAnalyzingId("");
     setShowSavedQuotesCompare(false);
     setQuoteCompareMaximized(false);
@@ -3186,7 +3214,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // someone already typed. Now scoped per supplier column (rfqRequestId)
   // so importing one supplier's file never disturbs another's in-progress
   // entry sitting right next to it.
-  async function analyzeQuoteFileForRequest(rfqRequestId: string, file: File) {
+  // replaceExisting (2026-10-12, user request: "override a previously uploaded
+  // quote on that supplier if already imported"): this supplier already has a
+  // quote file, so its column is cleared first and the new file's prices
+  // replace whatever was there instead of only filling blanks. The server
+  // swaps the stored file and the copy kept in Attachments.
+  async function analyzeQuoteFileForRequest(rfqRequestId: string, file: File, replaceExisting = false) {
     if (!jobId) return;
     setQuoteAnalyzingId(rfqRequestId); setError("");
     try {
@@ -3213,6 +3246,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setQuoteDrafts((current) => {
         applied = 0; markedNa = 0; // reset: React may run this updater twice
         const requestDrafts = { ...(current[rfqRequestId] || {}) };
+        if (replaceExisting) {
+          for (const line of job?.partLines || []) {
+            const partLineId = String(line.id);
+            requestDrafts[partLineId] = { ...(requestDrafts[partLineId] || { notes: "" }), unitPrice: "", available: true };
+          }
+        }
         for (const [partLineId, price] of Object.entries(guesses)) {
           const existing = requestDrafts[partLineId];
           if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price), available: true }; applied += 1; }
@@ -3231,6 +3270,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       setQuoteGuessCounts((current) => ({ ...current, [rfqRequestId]: applied }));
       setQuoteNaCounts((current) => ({ ...current, [rfqRequestId]: markedNa }));
+      // 2026-10-12, user report: "when importing quote from supplier, table
+      // doesn't mark N/A for missed quotes". When the file gave no readable
+      // prices nothing is ticked (see above) — that used to be silent, which
+      // looked like the feature not working. Say so, and say what Save does.
+      setQuoteImportNotes((current) => ({
+        ...current,
+        [rfqRequestId]: foundPrices
+          ? `Read ${Object.keys(guesses).length} price${Object.keys(guesses).length === 1 ? "" : "s"}${applied !== Object.keys(guesses).length ? ` (${applied} filled in, the rest were already typed)` : ""}; ${markedNa} item${markedNa === 1 ? "" : "s"} not quoted set to N/A — review below.`
+          : "No prices could be read from this file, so nothing was set to N/A. Type the prices in, then Save — any item left without a price is set to N/A.",
+      }));
+      // The file is now stored on the quote and copied into the job's
+      // Attachments — refresh so both show up straight away.
+      await load(true);
     } catch (e) {
       // Extraction is best-effort — a failure here just means no guesses;
       // the file is still attached and priced by hand at Save time.
@@ -3258,12 +3310,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to record quote.");
 
       const requestDrafts = quoteDrafts[rfqRequestId] || {};
-      const lines = Object.entries(requestDrafts).map(([partLineId, draft]) => ({
-        partLineId,
-        unitPrice: draft.available && draft.unitPrice ? Number(draft.unitPrice) : null,
-        available: draft.available,
-        notes: draft.notes.trim() || null,
-      }));
+      // 2026-10-12, user report: "clicking save also doesn't mark unquoted
+      // items N/A". Once at least one price is entered for this supplier, every
+      // item left without a price is saved as N/A (not quoted). A save with no
+      // prices at all (e.g. only a file or a note) leaves the items alone, so
+      // saving early never marks a whole list as unavailable.
+      const anyPriced = Object.values(requestDrafts).some((d) => d.available && d.unitPrice !== "" && Number.isFinite(Number(d.unitPrice)));
+      const naIds = new Set<string>();
+      const lines = Object.entries(requestDrafts).map(([partLineId, draft]) => {
+        const unquoted = anyPriced && draft.available && draft.unitPrice === "";
+        if (unquoted) naIds.add(partLineId);
+        const available = unquoted ? false : draft.available;
+        return {
+          partLineId,
+          unitPrice: available && draft.unitPrice ? Number(draft.unitPrice) : null,
+          available,
+          notes: draft.notes.trim() || null,
+        };
+      });
       if (lines.length > 0) {
         r = await fetch(`/api/v1/jobs/${jobId}/rfq/${rfqRequestId}/quote/lines`, {
           method: "PATCH",
@@ -3274,6 +3338,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         if (!r.ok) throw new Error(b.error?.message || "Unable to save prices.");
       }
       setQuoteFiles((current) => ({ ...current, [rfqRequestId]: null }));
+      if (naIds.size > 0) {
+        // Show the N/A ticks in the open table right away.
+        setQuoteDrafts((current) => {
+          const next = { ...(current[rfqRequestId] || {}) };
+          for (const id of naIds) if (next[id]) next[id] = { ...next[id], available: false };
+          return { ...current, [rfqRequestId]: next };
+        });
+      }
       await load(true);
       return true;
     } catch (e) {
@@ -3967,7 +4039,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               return (
             <div className="data-table-wrap"><table className="data-table"><thead><tr>
               {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === visiblePartLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(visiblePartLines.map((l) => String(l.id))) : new Set())} /></th>}
-              <th>Part</th><th>Qty</th><th>Order</th><th>Supplier</th><th>Status</th><th></th>
+              <th>Part</th><th>Qty</th><th>Order</th><th>Supplier</th><th>Status</th><th>Notes</th><th></th>
             </tr></thead><tbody>
               {visiblePartLines.map((line) => {
                 const lineId = String(line.id);
@@ -4148,6 +4220,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}{onHand > 0 ? <>, reserved: {reserved}</> : null}</div>;
                     })()}
                   </td>
+                  <td>
+                    {/* 2026-10-12, user request: "add a column to write a note
+                        per part number (next to status column on the right)".
+                        Always an editable box, saved when you click away. Keyed
+                        on the stored note so it shows the saved value after a
+                        reload of the job. */}
+                    <textarea
+                      key={`${lineId}:notes:${line.notes ? String(line.notes) : ""}`}
+                      rows={2}
+                      style={{ boxSizing: "border-box", width: "100%", minWidth: 170, font: "inherit", fontSize: 13, padding: "6px 8px", border: "1px solid var(--ink-150)", borderRadius: 6, resize: "vertical", background: "#fff" }}
+                      maxLength={1000}
+                      defaultValue={line.notes ? String(line.notes) : ""}
+                      placeholder="Add a note"
+                      aria-label={`Note for ${line.partNumber || "part"}`}
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (next === (line.notes ? String(line.notes).trim() : "")) return;
+                        void queueRowSave(lineId, () => saveNotesInline(lineId, next));
+                      }}
+                    />
+                  </td>
                   <td className="actions">
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(lineId)}>Undo receive</button>}
@@ -4157,8 +4250,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   </td>
                 </tr>;
               })}
-              {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 7 : 6} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
-              {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 7 : 6} className="table-state compact-empty-state">No parts match &quot;{partSearchQuery}&quot;.</td></tr>}
+              {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
+              {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts match &quot;{partSearchQuery}&quot;.</td></tr>}
             </tbody></table></div>
               );
             })()}
@@ -4971,9 +5064,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                           const status = String(request.status || "SKIPPED");
                           const tone = status === "QUOTED" ? "tone-green" : status === "SENT" ? "tone-blue" : status === "FAILED" ? "tone-red" : "neutral";
                           const analyzing = quoteAnalyzingId === requestId;
-                          const guessCount = quoteGuessCounts[requestId] || 0;
-                          const naCount = quoteNaCounts[requestId] || 0;
                           const importedFile = quoteFiles[requestId];
+                          const savedQuoteFileName = request.quote?.fileName ? String(request.quote.fileName) : "";
                           return (
                             <th key={request.id} className="supplier-group-start quote-entry-head">
                               <div className="quote-entry-head-inner">
@@ -4986,11 +5078,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                                 </div>
                                 <label className="quote-entry-import">
                                   <Upload size={12} />
-                                  <span>{importedFile ? importedFile.name : "Import quote file"}</span>
-                                  <input type="file" onChange={(e) => { const file = e.target.files?.[0] || null; setQuoteFiles((c) => ({ ...c, [requestId]: file })); if (file) void analyzeQuoteFileForRequest(requestId, file); }} />
+                                  <span>{importedFile ? importedFile.name : savedQuoteFileName ? "Replace quote file" : "Import quote file"}</span>
+                                  <input type="file" onChange={async (e) => {
+                                    const input = e.currentTarget;
+                                    const file = input.files?.[0] || null;
+                                    if (!file) return;
+                                    // 2026-10-12, user request: a supplier that already has an imported quote
+                                    // is overridden only after confirming.
+                                    if (savedQuoteFileName) {
+                                      const ok = await confirm({ message: `${text(request.supplier.name)} already has a quote file (${savedQuoteFileName}). Replace it with ${file.name}? The earlier file and the prices in this column are replaced, and the new file is added to Attachments.`, tone: "warning", confirmLabel: "Replace quote" });
+                                      if (!ok) { input.value = ""; return; }
+                                    }
+                                    setQuoteFiles((c) => ({ ...c, [requestId]: file }));
+                                    void analyzeQuoteFileForRequest(requestId, file, !!savedQuoteFileName);
+                                    input.value = "";
+                                  }} />
                                 </label>
+                                {savedQuoteFileName && <button type="button" className="table-action" title="Open the imported quote file" disabled={saving} onClick={() => void viewQuoteFile(requestId)}>View quote file</button>}
                                 {analyzing && <span className="muted small-line">Analyzing file for prices…</span>}
-                                {!analyzing && guessCount > 0 && <span className="muted small-line">Guessed {guessCount} price{guessCount === 1 ? "" : "s"}{naCount > 0 ? `; ${naCount} item${naCount === 1 ? "" : "s"} not quoted set to N/A` : ""} — review below.</span>}
+                                {!analyzing && quoteImportNotes[requestId] && <span className="muted small-line">{quoteImportNotes[requestId]}</span>}
                                 <input className="quote-entry-notes" value={quoteNotesByRequest[requestId] || ""} onChange={(e) => setQuoteNotesByRequest((c) => ({ ...c, [requestId]: e.target.value }))} placeholder="Notes (optional)" />
                               </div>
                             </th>
@@ -5036,7 +5142,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     </tfoot>
                   </table>
                 </div>
-                <p className="muted small-line" style={{ marginTop: 8 }}>Prices are only saved once you click Save on that supplier&apos;s column — importing a file fills in blanks only, it never overwrites a price you&apos;ve already typed.</p>
+                <p className="muted small-line" style={{ marginTop: 8 }}>Prices are only saved once you click Save on that supplier&apos;s column — importing a file fills in blanks only, it never overwrites a price you&apos;ve already typed. Items without a price are set to N/A when you save.</p>
               </>
             )}
 

@@ -215,6 +215,12 @@ export const jobPartLineDescriptionUpdateInput = z.object({
   description: z.string().trim().min(1).max(500),
 });
 
+// 2026-10-12 — a free-text note on one part line (blank clears it).
+export const jobPartLineNotesUpdateInput = z.object({
+  lineId: z.string().min(1),
+  notes: z.string().trim().max(1000).nullable().optional().transform((v) => (v ? v : null)),
+});
+
 // receivedQty accumulates on top of whatever has already been received —
 // see markPartLineReceived's comment in service.ts.
 export const jobPartLineReceiveInput = z.object({

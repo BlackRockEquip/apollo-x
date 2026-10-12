@@ -1,5 +1,5 @@
-import { readStoredBlob } from "@/lib/attachments/blob-store";
-import { offloadGeneralRfqAttachment, offloadQuietly, offloadRfqQuote, offloadRfqRequestAttachment } from "@/lib/attachments/offload";
+import { deleteStoredBlob, readStoredBlob } from "@/lib/attachments/blob-store";
+import { offloadGeneralRfqAttachment, offloadJobAttachment, offloadQuietly, offloadRfqQuote, offloadRfqRequestAttachment } from "@/lib/attachments/offload";
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
@@ -22,6 +22,9 @@ import { reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
 // drives). A supplier with no email configured, or when the company hasn't
 // set up SMTP under Settings yet, falls back to the original SKIPPED
 // behaviour — added to the comparison list with no send attempt.
+
+// Same cap as a normal job attachment (jobs/service.ts MAX_ATTACHMENT_BYTES).
+const MAX_JOB_ATTACHMENT_BYTES = 8_000_000;
 
 const ALLOWED_QUOTE_MIME_TYPES = [
   "application/pdf",
@@ -358,9 +361,11 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
 
   let guesses: Record<string, number> = {};
   if (file) {
-    const partLines = await prisma.jobPartLine.findMany({ where: { companyId, jobId }, select: { id: true, partNumber: true } });
+    const partLines = await prisma.jobPartLine.findMany({ where: { companyId, jobId }, select: { id: true, partNumber: true, quantity: true } });
     try {
-      const guessesByPartNumber = await guessPricesFromFile(file.data, file.fileName, partLines.map((l) => l.partNumber));
+      const quantitiesByPartNumber: Record<string, number> = {};
+      for (const l of partLines) quantitiesByPartNumber[l.partNumber] = Number(l.quantity);
+      const guessesByPartNumber = await guessPricesFromFile(file.data, file.fileName, partLines.map((l) => l.partNumber), quantitiesByPartNumber);
       for (const line of partLines) {
         if (guessesByPartNumber[line.partNumber] !== undefined) guesses[line.id] = guessesByPartNumber[line.partNumber];
       }
@@ -370,6 +375,15 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
       guesses = {};
     }
   }
+
+  // 2026-10-12, user request: "once the imported quote file is imported, add
+  // it to attachments... override a previously uploaded quote on that supplier
+  // if already imported". A new file replaces the supplier's earlier quote
+  // file (and the copy of it kept in the job's Attachments), including the
+  // earlier file's copy in storage, which used to be left behind.
+  const previousQuote = file ? await prisma.jobRfqQuote.findUnique({ where: { rfqRequestId: rfq.id }, select: { storedAttachmentId: true } }) : null;
+  const replacedStoredIds: Array<string | null> = [previousQuote?.storedAttachmentId ?? null];
+  let attachmentCopyId: string | null = null;
 
   const quote = await prisma.$transaction(async (tx) => {
     const record = await tx.jobRfqQuote.upsert({
@@ -391,8 +405,26 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
     });
     await tx.jobRfqRequest.update({ where: { id: rfq.id }, data: { status: "QUOTED", updatedById: ctx.userId } });
     await addActivity(tx, ctx, jobId, "RFQ_QUOTE_RECORDED", `Quote recorded from ${rfq.supplier.name}.`, { rfqRequestId: rfq.id, quoteId: record.id, hasFile: !!file });
+
+    if (file && file.data.length <= MAX_JOB_ATTACHMENT_BYTES) {
+      const earlier = await tx.jobAttachment.findMany({ where: { companyId, jobId, rfqRequestId: rfq.id }, select: { id: true, storedAttachmentId: true } });
+      if (earlier.length > 0) {
+        await tx.jobAttachment.deleteMany({ where: { id: { in: earlier.map((a) => a.id) } } });
+        for (const a of earlier) replacedStoredIds.push(a.storedAttachmentId);
+      }
+      const supplierLabel = rfq.supplier.name.replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim() || "Supplier";
+      const attachmentName = `Quote - ${supplierLabel} - ${file.fileName}`.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
+      const copy = await tx.jobAttachment.create({
+        data: { companyId, jobId, fileName: attachmentName, mimeType: file.mimeType, sizeBytes: file.sizeBytes, data: file.data, notes: `Quote from ${rfq.supplier.name}`, rfqRequestId: rfq.id, createdById: ctx.userId },
+        select: { id: true },
+      });
+      attachmentCopyId = copy.id;
+      await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment uploaded: ${attachmentName}.`, { attachmentId: copy.id, fileName: attachmentName, rfqRequestId: rfq.id });
+    }
     return record;
   });
+  for (const storedId of replacedStoredIds) if (storedId) await deleteStoredBlob(companyId, storedId).catch(() => undefined);
+  if (attachmentCopyId) await offloadQuietly(offloadJobAttachment(attachmentCopyId));
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobRfqQuote", entityId: quote.id, action: "CREATE", afterData: { jobId, rfqRequestId } });
   if (file) await offloadQuietly(offloadRfqQuote(quote.id));

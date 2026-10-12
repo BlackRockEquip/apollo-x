@@ -20,7 +20,7 @@
 // heuristic — good enough as a starting point, not meant to be perfect.
 // ----------------------------------------------------------------------------
 
-export async function guessPricesFromFile(bytes: Buffer, fileName: string, partNumbers: string[]): Promise<Record<string, number>> {
+export async function guessPricesFromFile(bytes: Buffer, fileName: string, partNumbers: string[], quantities: Record<string, number> = {}): Promise<Record<string, number>> {
   const ext = fileName.toLowerCase().split(".").pop() || "";
 
   try {
@@ -29,11 +29,11 @@ export async function guessPricesFromFile(bytes: Buffer, fileName: string, partN
     }
     if (ext === "pdf") {
       const text = await extractPdfText(bytes);
-      return guessFromText(text, partNumbers);
+      return guessFromText(text, partNumbers, quantities);
     }
     if (ext === "docx") {
       const text = await extractDocxText(bytes);
-      return guessFromText(text, partNumbers);
+      return guessFromText(text, partNumbers, quantities);
     }
   } catch {
     // Corrupt file, password-protected PDF, scanned image with no text
@@ -46,11 +46,45 @@ export async function guessPricesFromFile(bytes: Buffer, fileName: string, partN
   return {};
 }
 
+// 2026-10-12, user report: three supplier PDFs (Spare Power, Babcock, Blumaq)
+// read no prices at all. pdf-parse's default text output glues neighbouring
+// table cells together with no gap ("0.47946.001,892.007 DAYS" for weight,
+// price, amount and delay), so prices can't be told apart. This renders each
+// page ourselves instead: every text item keeps its position, items on the
+// same visual row are put in left-to-right order, and cells are separated by
+// a tab so the price/qty columns survive intact.
+type PdfTextItem = { str: string; transform: number[] };
+type PdfPageData = { getTextContent: (options?: Record<string, unknown>) => Promise<{ items: PdfTextItem[] }> };
+
+async function renderPdfPageAsRows(pageData: PdfPageData): Promise<string> {
+  const content = await pageData.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: true });
+  const items = content.items
+    .filter((item) => item.str.trim() !== "")
+    .map((item) => ({ text: item.str.trim(), x: item.transform[4], y: item.transform[5] }))
+    .sort((a, b) => b.y - a.y || a.x - b.x);
+
+  const rows: Array<{ y: number; cells: Array<{ text: string; x: number }> }> = [];
+  for (const item of items) {
+    const row = rows.find((r) => Math.abs(r.y - item.y) <= 2);
+    if (row) row.cells.push({ text: item.text, x: item.x });
+    else rows.push({ y: item.y, cells: [{ text: item.text, x: item.x }] });
+  }
+  return rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) => row.cells.sort((a, b) => a.x - b.x).map((c) => c.text).join("\t"))
+    .join("\n");
+}
+
 async function extractPdfText(bytes: Buffer): Promise<string> {
   // Dynamically imported so this (fairly heavy) parser is only ever loaded
   // when someone actually uploads a PDF quote.
-  const pdfParse = (await import("pdf-parse")).default;
-  const result = await pdfParse(bytes);
+  // The package's own entry point has a debug block that tries to open a
+  // sample PDF whenever it is loaded through a bundler (module.parent is
+  // missing), which throws and would make every PDF read as "empty". The lib
+  // file below is the same parser without that block.
+  // @ts-ignore — the lib entry has no type declarations of its own
+  const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default as typeof import("pdf-parse");
+  const result = await pdfParse(bytes, { pagerender: renderPdfPageAsRows as unknown as (pageData: unknown) => string });
   return result.text || "";
 }
 
@@ -60,11 +94,12 @@ async function extractDocxText(bytes: Buffer): Promise<string> {
   return result.value || "";
 }
 
-// Matches money-looking numbers: an optional currency symbol/code, then
-// digits with optional thousand separators (comma or space) and an
-// optional 2-decimal-place cents part. Deliberately loose — this only
-// needs to find *candidates* on a line, not validate currency formatting.
-const MONEY_PATTERN = /(?:R|ZAR|\$|USD|EUR|€)?\s?(\d{1,3}(?:[ ,]\d{3})*(?:\.\d{2})?|\d+\.\d{2})/gi;
+// Money-looking numbers WITH two decimal places, in either layout: "2,054.59"
+// / "107 377.70" (point decimals) or "R23 794,82" / "1.234,56" (comma
+// decimals). Requiring the cents is what keeps quantities ("4", "1.000"),
+// lead times ("7 DAYS"), line numbers and part numbers from being mistaken for
+// prices. Percent columns are removed before scanning (see priceCandidates).
+const PRICE_TOKEN = /(?<![\d.,])(?:R|ZAR|USD|EUR|\$|€)?\s?(\d{1,3}(?:[ ,.]\d{3})+|\d+)[.,](\d{2})(?!\d)/gi;
 
 function parseMoney(raw: string): number | null {
   const cleaned = raw.replace(/[ ,]/g, "");
@@ -72,29 +107,93 @@ function parseMoney(raw: string): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function guessFromText(text: string, partNumbers: string[]): Record<string, number> {
+// Every price-looking number on a quote line, left to right. Zero values are
+// kept (so a "0.00" surcharge column keeps its place) — callers skip them.
+function priceCandidates(cells: string[]): number[] {
+  const out: number[] = [];
+  for (const cell of cells) {
+    if (cell.includes("%")) continue;
+    for (const m of cell.matchAll(PRICE_TOKEN)) {
+      const value = parseFloat(`${m[1].replace(/[ ,.]/g, "")}.${m[2]}`);
+      if (Number.isFinite(value)) out.push(value);
+    }
+  }
+  return out;
+}
+
+// Whole-number quantities on the line ("4", "4.000", "4,00"), used to tell the
+// unit price from the line total.
+function quantityCandidates(cells: string[], knownQuantity: number | undefined): number[] {
+  const out = new Set<number>();
+  if (knownQuantity && knownQuantity > 0) out.add(knownQuantity);
+  for (const cell of cells) {
+    const m = cell.trim().match(/^(\d{1,6})(?:[.,]0{1,4})?$/);
+    if (m) {
+      const q = Number(m[1]);
+      if (q > 0) out.add(q);
+    }
+  }
+  return [...out];
+}
+
+// Quotes list several amounts per row — weight, gross unit price, discount,
+// nett unit price, line total — in a different order for every supplier.
+// The unit price is the amount that, multiplied by a quantity shown on the
+// same row, gives a later amount (the line total). That picks the unit price
+// for Spare Power (unit, disc., final unit, qty, sub total), Babcock (gross,
+// surcharge, nett unit, nett total) and Blumaq (weight, price, amount) alike,
+// and skips weights/zeros since they never multiply up to a later amount.
+function pickUnitPrice(prices: number[], quantities: number[]): number | null {
+  const nonZero = prices.filter((p) => p > 0);
+  if (nonZero.length === 0) return null;
+  if (nonZero.length === 1) return nonZero[0];
+  for (let i = 0; i < prices.length; i++) {
+    const value = prices[i];
+    if (value <= 0) continue;
+    for (const q of quantities) {
+      const expected = value * q;
+      const tolerance = Math.max(0.02, expected * 0.0005);
+      if (prices.slice(i + 1).some((later) => later > 0 && Math.abs(later - expected) <= tolerance)) return value;
+    }
+  }
+  // No row-total relationship found (e.g. a quote that shows only unit
+  // prices, or a partial quantity): fall back to the last amount on the row,
+  // as before — it is always shown for review before anything is saved.
+  return nonZero[nonZero.length - 1];
+}
+
+function splitCells(line: string): string[] {
+  if (line.includes("\t")) return line.split("\t").map((c) => c.trim()).filter(Boolean);
+  const wide = line.split(/ {2,}/).map((c) => c.trim()).filter(Boolean);
+  return wide.length >= 3 ? wide : line.split(/\s+/).filter(Boolean);
+}
+
+function guessFromText(text: string, partNumbers: string[], quantities: Record<string, number>): Record<string, number> {
   const guesses: Record<string, number> = {};
   const lines = text.split(/\r?\n/);
 
   for (const partNumber of partNumbers) {
-    const pattern = loosePartNumberPattern(partNumber);
-    if (!pattern) continue;
+    const strict = loosePartNumberPattern(partNumber, false);
+    if (!strict) continue;
+    // 2026-10-12 — suppliers often print their own prefix in front of the
+    // number ("VOE14676744", "VO14622911", "SA9325-06012" for 14676744 /
+    // 14622911 / 9325-06012), which the strict pattern rejects as "part of a
+    // longer code". Tried second, so an exact match always wins when both
+    // appear.
+    const prefixed = loosePartNumberPattern(partNumber, true);
 
-    const line = lines.find((l) => pattern.test(l));
-    if (!line) continue;
-
-    // Strip the part number itself out first so a part number that happens
-    // to contain digits (e.g. "PN-4021") is never mistaken for the price.
-    const withoutPartNumber = line.replace(pattern, " ");
-    const matches = [...withoutPartNumber.matchAll(MONEY_PATTERN)]
-      .map((m) => parseMoney(m[1]))
-      .filter((n): n is number => n !== null);
-
-    if (matches.length > 0) {
-      // Quantity and part numbers tend to appear earlier on the row; the
-      // unit price (or line total) tends to be one of the last numbers —
-      // take the last match as the best guess.
-      guesses[partNumber] = matches[matches.length - 1];
+    for (const pattern of [strict, prefixed]) {
+      if (!pattern) continue;
+      let found: number | undefined;
+      for (const line of lines) {
+        if (!pattern.test(line)) continue;
+        // Strip the part number itself out first so a part number that
+        // happens to contain digits is never mistaken for the price.
+        const cells = splitCells(line.replace(new RegExp(pattern.source, "gi"), "\t"));
+        const price = pickUnitPrice(priceCandidates(cells), quantityCandidates(cells, quantities[partNumber]));
+        if (price !== null) { found = price; break; }
+      }
+      if (found !== undefined) { guesses[partNumber] = found; break; }
     }
   }
 
@@ -121,11 +220,16 @@ function looseKey(value: string): string {
 // between any two characters, and not embedded inside a longer alphanumeric
 // token (so "3J1907" doesn't match inside "3J19075"). Global-free on purpose:
 // safe to reuse with .test() and .replace() (replace swaps only the first hit).
-function loosePartNumberPattern(partNumber: string): RegExp | null {
+function loosePartNumberPattern(partNumber: string, allowSupplierPrefix: boolean): RegExp | null {
   const chars = looseKey(partNumber).split("");
   if (chars.length === 0) return null;
   const body = chars.map((c) => escapeRegExp(c)).join("[\\s\\-./_\\\\]*");
-  return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, "i");
+  // The supplier prefix is only ever letters in front of a number that itself
+  // starts with a digit, and only up to four of them — "VOE", "VO", "SA" —
+  // so "1234" is never matched inside an unrelated alphanumeric code.
+  const prefix = allowSupplierPrefix && /^\d/.test(chars[0]) ? "(?:[A-Za-z]{1,4}[\\s\\-./_]?)?" : "";
+  if (allowSupplierPrefix && !prefix) return null;
+  return new RegExp(`(?<![A-Za-z0-9])${prefix}${body}(?![A-Za-z0-9])`, "i");
 }
 
 // Ordered most-specific-first: the first label that matches a header cell
@@ -253,7 +357,13 @@ async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promi
     const row = rows[i];
     const cellPart = looseKey(String(row[partCol] ?? ""));
     if (!cellPart) continue;
-    const original = normalizedPartNumbers.get(cellPart);
+    // Exact match first; otherwise tolerate a supplier's own 1-4 letter prefix
+    // in front of a part number that starts with a digit ("VOE14676744").
+    let original = normalizedPartNumbers.get(cellPart);
+    if (!original) {
+      const stripped = cellPart.replace(/^[a-z]{1,4}(?=\d)/, "");
+      if (stripped !== cellPart) original = normalizedPartNumbers.get(stripped);
+    }
     if (!original) continue;
 
     let priceValue = parseMoney(String(row[priceCol] ?? ""));

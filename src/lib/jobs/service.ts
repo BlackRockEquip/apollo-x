@@ -29,6 +29,7 @@ import {
   jobPartLineBulkAddInput,
   jobPartLineOrderUpdateInput,
   jobPartLineDescriptionUpdateInput,
+  jobPartLineNotesUpdateInput,
   jobPartLineReceiveInput,
   outworkAddInput,
   outworkEditInput,
@@ -1549,6 +1550,18 @@ export async function updatePartLineDescription(ctx: RequestContext, jobId: stri
 
   const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { description: input.description, updatedById: ctx.userId } });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_DESCRIPTION", afterData: { jobId, lineId } });
+  return updated;
+}
+
+// 2026-10-12, user request: "add a column to write a note per part number".
+// Only ever writes the note — separate from updatePartLineOrder, which resets
+// the supplier when it isn't sent along.
+export async function updatePartLineNotes(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = jobPartLineNotesUpdateInput.parse(raw);
+  const line = await getPartLineScoped(companyId, jobId, input.lineId);
+  const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { notes: input.notes, updatedById: ctx.userId } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_NOTES", afterData: { jobId, lineId: line.id } });
   return updated;
 }
 

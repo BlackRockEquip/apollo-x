@@ -2003,6 +2003,10 @@ model JobPartLine {
   // restored exactly by "Undo" if "Mark received" was clicked by mistake.
   previousStatus        PartLineStatus?
   orderNumber           String?
+  // 2026-10-12, user request: a free-text note per part number on the job's
+  // parts list, shown next to Status. Saved on its own (updatePartLineNotes)
+  // so editing it never touches the order number / supplier.
+  notes                 String?
   orderedFromSupplierId String?
   orderedAt             DateTime?
   partId                String?
@@ -2392,6 +2396,9 @@ model JobAttachment {
   // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / FAULT /
   // SERIAL_PLATE / OTHER). Free text so other kinds of job can use it later.
   tag         String?
+  // 2026-10-12 — set when this file is the copy of a supplier's quote kept for the job (made when a quote file is
+  // imported in Compare quotes); importing a new file for the same supplier replaces it.
+  rfqRequestId String?
   createdById String?
   createdAt   DateTime      @default(now())
 
@@ -2400,6 +2407,7 @@ model JobAttachment {
   createdBy   UserIdentity? @relation("JobAttachmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([companyId, jobId])
+  @@index([rfqRequestId])
 }
 
 model JobNote {
