@@ -1710,9 +1710,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th,td{border:1px solid #d1d5db;padding:8px 10px;text-align:left}
       th{background:#f9fafb;border-bottom:2px solid #7a5c14}
       td.qty{text-align:center;font-weight:600}
+      .sign-row{display:flex;gap:32px;margin-top:48px;page-break-inside:avoid}
+      .sign-row div{flex:1;border-bottom:1px solid #111;padding-bottom:4px;font-size:12px;color:#374151}
+      .sign-row div.narrow{flex:0.7}
     </style></head><body>
       <h1>${esc(documentTitles.PICK_SLIP)} — Job ${esc(result.jobNumber || "")}</h1>
       <table><thead><tr><th>Part number</th><th>Superseded no.</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sign-row"><div>Picked by</div><div class="narrow">Date</div><div>Signature</div></div>
     </body></html>`;
     w.document.write(html);
     w.document.close();

@@ -330,6 +330,8 @@ function buildPickSlipSpecRaw(input: { title: string; jobLabel: string; lines: A
         center: [3, 4],
         rows: lines.map((line) => [line.partNumber, line.supersededNumbers || "—", line.description || "", str(line.quantity), "", line.binLocationLabel || "—"]),
       },
+      // 2026-10-12, user request: a picked by / date / signature area below the table.
+      { type: "signatures", labels: ["Picked by", "Date", "Signature"], fields: [""] },
     ],
   };
 }
