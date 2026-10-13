@@ -27,6 +27,11 @@ type SalesRepresentativeOption = { id: string; label: string };
 // Parts list — replaces the old requirement/allocation summary types above
 // (see schema.prisma's JobPartLine comment). Each row carries its own
 // direct status, no derived summary needed.
+// 2026-10-13 — what the "save this document?" question after a Print returns.
+type FileSystemFileHandleLike = { name?: string; createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> };
+type SaveChoice = { folder: boolean; computer: boolean; pickerHandle?: FileSystemFileHandleLike | null };
+type SaveFilePickerWindow = Window & { showSaveFilePicker?: (options: { suggestedName?: string; types?: Array<{ description: string; accept: Record<string, string[]> }> }) => Promise<FileSystemFileHandleLike> };
+
 type PartLineRow = Row & {
   partNumber?: string | null;
   description?: string | null;
@@ -415,6 +420,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // saved into the job's folder ("<JOB NUMBER> - <title>.pdf").
   const [documentTitles, setDocumentTitles] = useState<DocumentTitles>(DEFAULT_DOCUMENT_TITLES);
   const [savingDocumentKey, setSavingDocumentKey] = useState<string | null>(null);
+  // 2026-10-13, user request: "when asking to save documents, can it ask the
+  // user to save to local harddrive as well?" The question shown after a Print
+  // (see offerToSave): save to the job folder, to this computer, both or neither.
+  const [saveOffer, setSaveOffer] = useState<{ fileName: string; folder: boolean; computer: boolean; busy: boolean; choose: (choice: SaveChoice | null) => void } | null>(null);
   const [documentNotice, setDocumentNotice] = useState("");
   useEffect(() => {
     let cancelled = false;
@@ -1540,14 +1549,53 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const spec = buildSpec();
     if (!spec) return;
     const fileName = `${jobDocLabel} - ${documentTitles[kind]}${nameSuffix ? ` - ${nameSuffix}` : ""}.pdf`;
-    const yes = await confirm({
-      title: "Save to the job folder?",
-      message: `Also save a PDF copy of this document in the job's folder as "${fileName}"?`,
-      tone: "neutral",
-      confirmLabel: "Save to folder",
-      cancelLabel: "No thanks",
-    });
-    if (yes) await saveDocumentToFolder(kind, kind, spec, nameSuffix);
+    const choice = await new Promise<SaveChoice | null>((resolve) =>
+      setSaveOffer({ fileName, folder: true, computer: false, busy: false, choose: resolve }),
+    );
+    setSaveOffer(null);
+    if (!choice || (!choice.folder && !choice.computer)) return;
+    if (choice.computer) await saveDocumentToComputer(kind, spec, nameSuffix, fileName, choice.pickerHandle);
+    if (choice.folder) await saveDocumentToFolder(kind, kind, spec, nameSuffix);
+  }
+
+  // Saves the PDF on the user's own computer. Where the browser supports it
+  // (Chrome, Edge) the person picks the folder and name in the normal Save
+  // dialog; elsewhere the browser's normal download takes over. The picker is
+  // opened first, straight from the click, because browsers only allow it
+  // right after a click, not after the PDF has been built.
+  async function saveDocumentToComputer(kind: DocumentKind, spec: DocSpec, nameSuffix: string | undefined, suggestedName: string, handle: FileSystemFileHandleLike | null | undefined) {
+    if (!jobId) return;
+    setDocumentNotice("");
+    setError("");
+    try {
+      const response = await fetch("/api/v1/jobs/document-pdf", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId, kind, nameSuffix: nameSuffix || undefined, spec }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message || "Unable to prepare the PDF.");
+      const bytes = Uint8Array.from(atob(String(body.contentBase64)), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      if (handle) {
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        setDocumentNotice(`Saved ${handle.name || suggestedName} on this computer.`);
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = String(body.fileName || suggestedName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setDocumentNotice(`Downloaded ${body.fileName || suggestedName} to this computer.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to save the PDF on this computer.");
+    }
   }
 
   // 2026-10-06 — Field Report: the printout for a field service job. Same look
@@ -2987,7 +3035,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v): v is string => Boolean(v && String(v).trim())).map(String)
       : [];
     const contact = (job.customer?.contacts || [])[0] as Record<string, unknown> | undefined;
-    const contactLine = contact ? [[contact.firstName, contact.lastName].filter(Boolean).join(" "), contact.telephone || contact.mobile, contact.email].filter(Boolean).map(String).join(" · ") : "";
+    // 2026-10-13, user request: "Print delivery note, remove the contact name
+    // and email from the print sheet" — only the contact's phone number is kept.
+    const contactLine = contact ? String(contact.telephone || contact.mobile || "") : "";
     const commercialLines: string[] = [];
     if (form.quoteNumber) commercialLines.push(`Quote number: ${escapeHtml(form.quoteNumber)}`);
     if (form.salesOrderNumber) commercialLines.push(`Sales order number: ${escapeHtml(form.salesOrderNumber)}`);
@@ -5613,6 +5663,50 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </>
       )}
       {confirmDialog}
+      {saveOffer && (
+        <div className="drawer-backdrop confirm-dialog-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) saveOffer.choose(null); }}>
+          <aside className="form-drawer compact-dialog confirm-dialog tone-neutral" role="dialog" aria-modal="true" aria-label="Save this document?">
+            <header>
+              <div className="confirm-dialog-heading">
+                <Save size={18} className="confirm-dialog-icon" aria-hidden="true" />
+                <div><p className="eyebrow">Keep a copy?</p><h2>Save this document?</h2></div>
+              </div>
+              <button type="button" onClick={() => saveOffer.choose(null)} aria-label="Close dialog"><X size={18} /></button>
+            </header>
+            <div className="confirm-dialog-body">
+              <p>Save a PDF copy of &quot;{saveOffer.fileName}&quot;:</p>
+              <label className="inline-check" style={{ display: "flex", gap: 8, alignItems: "center", margin: "10px 0 6px" }}><input type="checkbox" checked={saveOffer.folder} onChange={(e) => setSaveOffer((cur) => (cur ? { ...cur, folder: e.target.checked } : cur))} /><span>In the job&apos;s folder (also listed under Attachments)</span></label>
+              <label className="inline-check" style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0" }}><input type="checkbox" checked={saveOffer.computer} onChange={(e) => setSaveOffer((cur) => (cur ? { ...cur, computer: e.target.checked } : cur))} /><span>On this computer (you choose where)</span></label>
+            </div>
+            <footer className="detail-actions">
+              <button type="button" className="quiet-button" onClick={() => saveOffer.choose(null)}>No thanks</button>
+              <button
+                type="button"
+                className="gold-button"
+                autoFocus
+                disabled={!saveOffer.folder && !saveOffer.computer}
+                onClick={async () => {
+                  const offer = saveOffer;
+                  let pickerHandle: FileSystemFileHandleLike | null = null;
+                  let computer = offer.computer;
+                  if (computer) {
+                    const picker = (window as SaveFilePickerWindow).showSaveFilePicker;
+                    if (picker) {
+                      try {
+                        pickerHandle = await picker.call(window, { suggestedName: offer.fileName, types: [{ description: "PDF document", accept: { "application/pdf": [".pdf"] } }] });
+                      } catch (e) {
+                        // Cancelled in the Save dialog: skip the computer copy, still do the folder copy if ticked.
+                        if (e instanceof DOMException && e.name === "AbortError") computer = false;
+                      }
+                    }
+                  }
+                  offer.choose({ folder: offer.folder, computer, pickerHandle });
+                }}
+              >Save</button>
+            </footer>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

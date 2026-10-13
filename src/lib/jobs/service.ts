@@ -1911,6 +1911,25 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   return stored ?? attachment;
 }
 
+// 2026-10-13, user request: "when asking to save documents, can it ask the user
+// to save to local harddrive as well?" Same PDF as saveJobDocument but nothing
+// is stored: the file is handed back so the browser can save it on the user's
+// own computer. Returns the file name it would have been saved under.
+export async function renderJobDocumentForDownload(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const input = saveJobDocumentInput.parse(raw);
+  const job = await getJobScoped(companyId, jobId);
+  const jobLabel = job.jobNumber ?? job.draftNumber ?? job.id;
+  const titles = await getDocumentTitlesForCompany(companyId);
+  const kind = input.kind as DocumentKind;
+  if (!DOCUMENT_KINDS.some((k) => k.key === kind)) throw new Error("INVALID_DOCUMENT_KIND");
+  const letterhead = await getCompanyLetterhead(ctx);
+  const pdf = await renderDocumentPdf(input.spec, letterhead);
+  if (pdf.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+  const baseName = sanitizeSegment(`${documentBaseName(jobLabel, titles[kind])}${input.nameSuffix ? ` - ${input.nameSuffix}` : ""}`);
+  return { fileName: `${baseName}.pdf`, mimeType: "application/pdf", contentBase64: Buffer.from(pdf).toString("base64") };
+}
+
 // 2026-09-15 — user request: "once a note is added [to an attachment],
 // allow a user to edit it as well." The file itself is immutable (upload a
 // new attachment to replace it); only the note text changes. Reuses

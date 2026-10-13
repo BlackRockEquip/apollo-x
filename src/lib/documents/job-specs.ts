@@ -281,7 +281,9 @@ function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; j
   const { title, jobLabel, job, form } = input;
   const address = (job.customer?.addresses || [])[0] as Rec | undefined;
   const addressLines = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v) => v && String(v).trim()).map(String) : [];
-  const contact = customerContactLine(job);
+  // 2026-10-13: no contact name or email on the delivery note; only the contact's phone number.
+  const firstContact = (job.customer?.contacts || [])[0] as Rec | undefined;
+  const contact = firstContact ? String(firstContact.telephone || firstContact.mobile || "") : "";
   const commercial: string[] = [];
   if (form.quoteNumber) commercial.push(`Quote number: ${form.quoteNumber}`);
   if (form.salesOrderNumber) commercial.push(`Sales order number: ${form.salesOrderNumber}`);
