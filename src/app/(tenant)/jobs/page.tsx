@@ -48,7 +48,7 @@ const FILTER_SEP = "|~|";
 function statusFilterValues(job: JobRow): string {
   const values = [jobStatusLabel(job.status, job.returnedUnrepaired)];
   if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
-  if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && job.status !== "TO_BE_RECEIVED") values.push("Pex");
+  if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)) values.push("Pex");
   return values.join(FILTER_SEP);
 }
 
@@ -93,7 +93,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
       return <>
         <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
-        {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && job.status !== "TO_BE_RECEIVED" && <> <PexAllocatedPill /></>}
+        {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId) && <> <PexAllocatedPill /></>}
       </>;
     case "dateReceived":
       return fmtDate(job.dateReceived);

@@ -368,7 +368,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-05 — "Send to PEX Inventory" is available at any status once the
   // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
   // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
-  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"].includes(String(job.status));
+  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["TO_BE_COLLECTED", "CANCELLED"].includes(String(job.status));
   // 2026-10-05 — true while this job is sitting in PEX Inventory by way of
   // "Send to PEX Inventory" (a return record with no supply job, not
   // scrapped): drives the header "Pex" pill and the undo button.
@@ -379,7 +379,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // been redeployed to another job, on a job that has arrived — the same
   // base filter as listPexInventory. Covers direct allocations too (the pill
   // now clears once the unit is redeployed).
-  const pexInStock = !!job?.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && job.status !== "TO_BE_RECEIVED";
+  const pexInStock = !!job?.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJob && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJob);
   const [loading, setLoading] = useState(mode === "detail");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

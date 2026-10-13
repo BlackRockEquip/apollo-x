@@ -39,7 +39,7 @@ import {
   jobMarkReturnedUnrepairedInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
-import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate } from "@/lib/pex/service";
+import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
 import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relinkJobPartLineToActivePartTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
@@ -79,7 +79,7 @@ const jobListSelect = {
   // in PEX Stock, whether directly allocated or a PEX Return job still being
   // repaired / waiting to be reallocated. Same test as pexInStock in
   // JobWorkspace.tsx and listPexInventory's own base filter in pex/service.ts.
-  pexAsReturn: { select: { status: true, consumedByJobId: true } },
+  pexAsReturn: { select: { status: true, consumedByJobId: true, supplyJobId: true } },
   type: true,
   customerReference: true,
   customerPo: true,
@@ -419,7 +419,7 @@ function mapListScopeWhere(companyId: string, query: JobsListQuery): Prisma.JobW
     ...(query.returnedUnrepaired ? { returnedUnrepaired: true } : {}),
     // 2026-10-05 — "Pex" status filter: the unit is in PEX Stock (see
     // jobListSelect's pexAsReturn comment) — mirrors listPexInventory.
-    ...(query.pexAllocated ? { pexAsReturn: { is: { status: { not: "SCRAPPED" as const }, consumedByJobId: null, returnJob: { is: { status: { not: "TO_BE_RECEIVED" as const } } } } } } : {}),
+    ...(query.pexAllocated ? { pexAsReturn: { is: { status: { not: "SCRAPPED" as const }, consumedByJobId: null, OR: [{ supplyJobId: null }, { returnJob: { is: { status: { not: "TO_BE_RECEIVED" as const } } } }] } } } : {}),
   };
 }
 
@@ -830,6 +830,8 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
     // than piggybacking on the status-change branch below (see
     // syncPexAwaitCoreFromDeliveryDate's own comment).
     await syncPexAwaitCoreFromDeliveryDate(tx, ctx, companyId, job);
+    // 2026-10-13 — a renamed Component carries over to the job's PEX record.
+    await syncPexUnitDescription(tx, ctx, companyId, job);
     if (input.status !== undefined && input.status !== existing.status) {
       await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
       if (RESERVATION_RELEASE_STATUSES.includes(job.status)) await releaseJobPartReservationsTx(tx, ctx, companyId, job.id);

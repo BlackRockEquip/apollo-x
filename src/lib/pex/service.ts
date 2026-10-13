@@ -112,6 +112,43 @@ export function pexSupplyDateFor(job: { deliveryDate: Date | null; status?: JobS
   return job.deliveryDate ?? existing ?? new Date();
 }
 
+// 2026-10-13, user report: "when changing component field name, it does not
+// update the pex stock record name". The unit name on a PEX record was copied
+// from the job once, when the record was created, and preferred the old
+// Component type (a field that is no longer shown or editable) over the
+// Component field people actually edit. One rule now: the Component field
+// first, Component type only when that is empty.
+export function pexUnitDescription(job: { component: string | null; componentType: string | null }): string | null {
+  return job.component?.trim() || job.componentType?.trim() || null;
+}
+
+// Called whenever a job is saved: keeps the unit name on the job's PEX
+// record in step with its Component field. The record follows the unit that
+// is physically in stock, so a PEX return job (or a job sent straight to PEX
+// Inventory) updates its record, and a supply job updates its record only
+// until a return job takes over. A job with no Component text changes nothing.
+export async function syncPexUnitDescription(
+  tx: Tx,
+  ctx: RequestContext,
+  companyId: string,
+  job: { id: string; component: string | null; componentType: string | null },
+) {
+  const unitDescription = pexUnitDescription(job);
+  if (!unitDescription) return;
+  const records = await tx.pexRecord.findMany({
+    where: {
+      companyId,
+      status: { not: "SCRAPPED" },
+      OR: [{ returnJobId: job.id }, { supplyJobId: job.id, returnJobId: null }],
+      NOT: { unitDescription },
+    },
+    select: { id: true },
+  });
+  for (const record of records) {
+    await tx.pexRecord.update({ where: { id: record.id }, data: { unitDescription, updatedById: ctx.userId } });
+  }
+}
+
 function sameInstant(a: Date | null, b: Date | null) {
   return (a ? a.getTime() : null) === (b ? b.getTime() : null);
 }
@@ -134,7 +171,7 @@ export async function createPexRecordForSupplyJob(
     data: {
       companyId,
       customerId: job.customerId,
-      unitDescription: job.componentType ?? job.component ?? null,
+      unitDescription: pexUnitDescription(job),
       supplyJobId: job.id,
       // Covers the (unusual but possible) case of a save that changes an
       // EXISTING job's type to PEX_SUPPLY when it already has a delivery
@@ -269,7 +306,7 @@ async function attachReturnJobTx(
   pexAsSupply: { id: string; supplyDate: Date | null; returnDate: Date | null } | null,
 ) {
   const supplyDate = pexAsSupply?.supplyDate ?? supplyJob.deliveryDate ?? supplyJob.dateReceived ?? supplyJob.createdAt;
-  const unitDescription = supplyJob.componentType ?? supplyJob.component ?? null;
+  const unitDescription = pexUnitDescription(supplyJob);
   // Derive the PexRecord's status from the return job's OWN current status
   // (same JOB_STATUS_TO_PEX_STATUS mapping syncPexStatusFromJobStatus uses)
   // instead of hardcoding OUTSTANDING. For the automatic "create a
@@ -542,7 +579,12 @@ export async function scrapPexRecord(ctx: RequestContext, pexId: string, raw: un
   return { ok: true };
 }
 
-export const PEX_ALLOCATE_BLOCKED_STATUSES: string[] = ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "CANCELLED"];
+// 2026-10-13, user request: "when adding a job to pex inventory, allow it to
+// work from To be received status as well" — TO_BE_RECEIVED removed. A job
+// sent straight to PEX Inventory now shows on PEX Stock (as "To be repaired")
+// even while it is still To be received; a PEX return job that is still To be
+// received on its way back from a client stays hidden until it arrives.
+export const PEX_ALLOCATE_BLOCKED_STATUSES: string[] = ["TO_BE_COLLECTED", "CANCELLED"];
 
 // "Send job to PEX Inventory" — any completed job of ANY type, not
 // otherwise part of a PEX supply/return cycle, can be allocated straight
@@ -563,18 +605,16 @@ export async function allocateJobToPexInventory(ctx: RequestContext, jobId: stri
     // including mid-repair (PEX Stock already lists those under "To be
     // repaired"; only COMPLETE units are ever matched for redeployment, see
     // the "Previous job number" lookup above). Excluded: statuses where the
-    // unit hasn't arrived (TO_BE_COLLECTED, TO_BE_RECEIVED — PEX
-    // Stock's listing hides TO_BE_RECEIVED returns, so allocating then
-    // would recreate the "allocated but not showing" report from
-    // 2026-09-16) and CANCELLED.
-    if (PEX_ALLOCATE_BLOCKED_STATUSES.includes(job.status)) throw new StockError("JOB_NOT_ELIGIBLE", "This job's unit hasn't been received yet (or the job is cancelled), so it can't be sent to PEX Inventory.");
+    // unit hasn't been collected (TO_BE_COLLECTED) and CANCELLED. (TO_BE_RECEIVED
+    // is allowed since 2026-10-13 — see PEX_ALLOCATE_BLOCKED_STATUSES.)
+    if (PEX_ALLOCATE_BLOCKED_STATUSES.includes(job.status)) throw new StockError("JOB_NOT_ELIGIBLE", "This job's unit hasn't been collected yet (or the job is cancelled), so it can't be sent to PEX Inventory.");
 const existing = await tx.pexRecord.findFirst({ where: { companyId, status: { not: "SCRAPPED" }, OR: [{ supplyJobId: job.id }, { returnJobId: job.id }] } });
     if (existing) throw new StockError("PEX_ALREADY_LINKED", "This job is already linked to a PEX record.");
     const created = await tx.pexRecord.create({
       data: {
         companyId,
         customerId: job.customerId,
-        unitDescription: job.componentType ?? job.component ?? null,
+        unitDescription: pexUnitDescription(job),
         returnJobId: job.id,
         status: "COMPLETED",
         returnDate: new Date(),
@@ -647,33 +687,41 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
   const companyId = requirePexStockRead(ctx);
   const query = pexInventoryListQuery.parse(raw);
   const contains = { contains: query.q, mode: "insensitive" as const };
+  // A return job still To be received is hidden (the unit hasn't come back
+  // yet) unless the record is a direct "Send to PEX Inventory" allocation
+  // (no supply job), which may be sent from To be received on purpose.
+  const arrivedOrDirect: Prisma.PexRecordWhereInput = { OR: [{ returnJob: { status: { not: "TO_BE_RECEIVED" } } }, { supplyJobId: null }] };
   const baseWhere: Prisma.PexRecordWhereInput = {
     companyId,
     returnJobId: { not: null },
-    returnJob: { status: { not: "TO_BE_RECEIVED" } },
     consumedByJobId: null,
     status: { not: "SCRAPPED" },
+    ...arrivedOrDirect,
   };
-  const returnJobStatusFilter: Prisma.JobWhereInput =
+  const statusFilter: Prisma.PexRecordWhereInput =
     query.status === "READY"
-      ? { status: "COMPLETE" }
+      ? { returnJob: { status: "COMPLETE" } }
       : query.status === "TO_BE_REPAIRED"
-        ? { status: { notIn: ["TO_BE_RECEIVED", "COMPLETE"] } }
-        : { status: { not: "TO_BE_RECEIVED" } };
+        ? { returnJob: { status: { not: "COMPLETE" } } }
+        : {};
   const where: Prisma.PexRecordWhereInput = {
-    ...baseWhere,
-    returnJob: returnJobStatusFilter,
-    ...(query.q
-      ? {
-          OR: [
-            { unitDescription: contains },
-            { returnJob: { jobNumber: contains } },
-            { returnJob: { machineMake: contains } },
-            { returnJob: { machineModel: contains } },
-            { supplyJob: { jobNumber: contains } },
-          ],
-        }
-      : {}),
+    AND: [
+      baseWhere,
+      statusFilter,
+      ...(query.q
+        ? [
+            {
+              OR: [
+                { unitDescription: contains },
+                { returnJob: { jobNumber: contains } },
+                { returnJob: { machineMake: contains } },
+                { returnJob: { machineModel: contains } },
+                { supplyJob: { jobNumber: contains } },
+              ],
+            } as Prisma.PexRecordWhereInput,
+          ]
+        : []),
+    ],
   };
   const [items, total, readyCount, totalCount] = await prisma.$transaction([
     prisma.pexRecord.findMany({
@@ -687,7 +735,7 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
       take: query.pageSize,
     }),
     prisma.pexRecord.count({ where }),
-    prisma.pexRecord.count({ where: { ...baseWhere, returnJob: { status: "COMPLETE" } } }),
+    prisma.pexRecord.count({ where: { AND: [baseWhere, { returnJob: { status: "COMPLETE" } }] } }),
     prisma.pexRecord.count({ where: baseWhere }),
   ]);
   return { items, total, page: query.page, pageSize: query.pageSize, readyCount, toBeRepairedCount: totalCount - readyCount, totalCount };
