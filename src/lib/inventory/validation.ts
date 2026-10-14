@@ -132,7 +132,8 @@ export const positionQuery = z.object({
   stockState: z.enum(["ALL", "IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK", "RESERVED", "PARTIALLY_RESERVED", "INACTIVE_PART"]).default("ALL"),
   active: z.enum(["all", "active", "inactive"]).default("all"),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  // 2026-10-14 — Stock Levels no longer pages (it scrolls like Jobs & WIP), so it asks for every part in one go.
+  pageSize: z.coerce.number().int().min(1).max(20000).default(25),
 });
 
 export const countQuery = z.object({

@@ -52,8 +52,8 @@ export function TablePrintButton({ tableId, title, noun = "row", filterSummary =
 
     const bodyHtml = rows.map((tr) => {
       const cells = Array.from(tr.cells);
-      // A cell that carries data-filter-values (e.g. a status cell holding a dropdown) prints those values rather than its raw text.
-      const cellText = (td: HTMLTableCellElement | undefined) => (td?.dataset.filterValues !== undefined ? td.dataset.filterValues.split("|~|").join(", ") : td?.innerText || "").replace(/\s+/g, " ").trim() || "—";
+      // A cell that carries data-print-text prints that; otherwise data-filter-values (e.g. a status cell holding a dropdown) prints those values rather than its raw text.
+      const cellText = (td: HTMLTableCellElement | undefined) => (td?.dataset.printText !== undefined ? td.dataset.printText : td?.dataset.filterValues !== undefined ? td.dataset.filterValues.split("|~|").join(", ") : td?.innerText || "").replace(/\s+/g, " ").trim() || "—";
       return `<tr>${headCells.map((c, i) => `<td${i === 0 ? ' class="first"' : ""}>${escapeHtml(cellText(cells[c.index]))}</td>`).join("")}</tr>`;
     }).join("");
 

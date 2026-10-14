@@ -13,6 +13,9 @@ import { useTenantPermissions } from "@/components/AppShell";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { readListState, writeListState } from "@/components/list-state";
 import { ScrollRestore } from "@/components/ScrollRestore";
+import { FitToViewportBottom } from "@/components/FitToViewportBottom";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { TablePrintButton } from "@/components/TablePrintButton";
 
 // 2026-09-10 — Parts Catalog merged into Stock Levels at the user's request
 // ("combine parts catalog to Stock levels... One page, Stock Levels only").
@@ -289,35 +292,19 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // coming back (browser Back or the part's "Back to Stock Levels" link)
   // lands on the same filtered page; the table's scroll position is restored
   // by <ScrollRestore> further down.
-  const saved = useState(() => readListState("stock-levels", { tab: "stock", q: "", stockState: "ALL", page: 1, manufacturerFilter: "", locationFilter: "" }))[0];
+  const saved = useState(() => readListState("stock-levels", { tab: "stock", q: "", stockState: "ALL" }))[0];
   const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">(saved.tab === "pickslips" ? "pickslips" : "stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
   const [q, setQ] = useState(saved.q);
   const [stockState, setStockState] = useState(saved.stockState);
-  const [page, setPage] = useState(saved.page);
   const [loading, setLoading] = useState(true);
   const [firstLoadDone, setFirstLoadDone] = useState(false);
   const [error, setError] = useState("");
-  // 2026-10-02 — user request: "make the table filterable by each heading
-  // (dropdown that lets you select etc)." listInventoryPositions
-  // (inventory/service.ts) and its positionQuery validator already accepted
-  // manufacturerId/locationId filters — used by nothing in this file until
-  // now, since no dropdown ever set them. Wired up as a second header row
-  // (the same "filter-row" convention RfqAllWorkspace/OutworkAllWorkspace
-  // already use) under the two columns that actually have a finite,
-  // dropdown-shaped set of values — Manufacturer and Bin locations — using
-  // the same manufacturers/locations option lists the Add/Edit Part drawer
-  // already loads. Part/Description are left to the existing search box
-  // (which already matches both, plus bin code/name and manufacturer name,
-  // in one field — a second, narrower per-column text filter for either
-  // would just be a worse version of what's already there), and Cost
-  // Price/Selling Price/On Hand/Reserved/Available have no natural
-  // dropdown domain to filter by. State already has its own filter (the
-  // radio buttons above the table) and is left as-is.
-  const [manufacturerFilter, setManufacturerFilter] = useState(saved.manufacturerFilter);
-  const [locationFilter, setLocationFilter] = useState(saved.locationFilter);
-  useEffect(() => { writeListState("stock-levels", { tab, q, stockState, page, manufacturerFilter, locationFilter }); }, [tab, q, stockState, page, manufacturerFilter, locationFilter]);
+  // 2026-10-14, user request: the Manufacturer / Bin location drop-downs are
+  // gone; every column now has the same Excel-style header filter as Jobs & WIP
+  // (TableColumnFilters.tsx), and the table scrolls instead of paging.
+  useEffect(() => { writeListState("stock-levels", { tab, q, stockState }); }, [tab, q, stockState]);
 
   const [manufacturers, setManufacturers] = useState<Option[]>([]);
   const [taxCodes, setTaxCodes] = useState<Option[]>([]);
@@ -441,16 +428,14 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     if (!silent) setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ q, stockState, page: String(page), pageSize: "25" });
-      if (manufacturerFilter) params.set("manufacturerId", manufacturerFilter);
-      if (locationFilter) params.set("locationId", locationFilter);
+      const params = new URLSearchParams({ q, stockState, page: "1", pageSize: "20000" });
       const response = await fetch(`/api/v1/inventory/positions?${params}`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load stock levels.");
       setData(body);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load stock levels."); }
     finally { if (!silent) setLoading(false); setFirstLoadDone(true); }
-  }, [q, stockState, page, manufacturerFilter, locationFilter]);
+  }, [q, stockState]);
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
 
   const loadOptions = useCallback(async () => {
@@ -765,7 +750,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const r = await fetch("/api/v1/master-data/parts", { method: "DELETE" });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to delete all parts.");
-      setPage(1);
       await load(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to delete all parts."); }
     finally { setDeletingAll(false); }
@@ -900,7 +884,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     finally { setAdjustSaving(false); }
   }
 
-  const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
   const pickItems = Array.from(pick.values());
 
   return (
@@ -948,17 +931,19 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           <div className="master-toolbar inventory-toolbar">
             <label className="search-control inventory-search-control">
               <Search size={15} />
-              <input type="text" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search part number, description, bin location or manufacturer" />
+              <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search part number, description, bin location or manufacturer" />
             </label>
             <div className="stock-filters compact">
               {(["ALL", "OUT_OF_STOCK", "LOW_STOCK", "IN_STOCK"] as const).map((s) => (
                 <label key={s}>
-                  <input type="radio" name="stockState" checked={stockState === s} onChange={() => { setStockState(s); setPage(1); }} />
+                  <input type="radio" name="stockState" checked={stockState === s} onChange={() => setStockState(s)} />
                   {s === "ALL" ? "All" : STOCK_STATE_LABEL[s as Exclude<StockState, "RESERVED" | "PARTIALLY_RESERVED" | "INACTIVE_PART">]}
                 </label>
               ))}
             </div>
             <span>{data.total} item{data.total === 1 ? "" : "s"}</span>
+            <TablePrintButton tableId="stock-levels-table" title="Stock Levels" noun="part" />
+            <TableColumnFilters tableId="stock-levels-table" storageKey="stock-levels-table" noun="part" />
             <button type="button" className="table-action" onClick={openCheck}><Search size={14} /> Check stock</button>
             {!mechanicReadOnly && <button type="button" className="table-action danger" disabled={deletingAll || data.total === 0} onClick={() => void deleteAll()}>{deletingAll ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />} Delete all</button>}
             {!mechanicReadOnly && <button type="button" className="gold-button" onClick={() => { setAddImportOpen(true); setAddImportTab("choose"); }}><Plus size={15} /> Add or Import Part</button>}
@@ -968,11 +953,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
 
           {/* Mounted once the first load has finished (not on every filter reload) so a later filter change starts from the top. */}
           {firstLoadDone && <ScrollRestore selector="[data-scroll='stock-levels']" storageKey="stock-levels" />}
+          <FitToViewportBottom selector="[data-scroll='stock-levels']" />
           <div className="data-table-wrap" data-scroll="stock-levels">
-            <table className="data-table">
+            <table id="stock-levels-table" className="data-table">
               <thead>
                 <tr>
-                  <th>Pick</th>
+                  <th className="no-print">Pick</th>
                   <th>Part</th>
                   <th>Description</th>
                   <th>Manufacturer</th>
@@ -987,37 +973,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   <th className="numeric">Reserved</th>
                   <th className="numeric">Available</th>
                   <th>State</th>
-                  <th className="actions">Actions</th>
-                </tr>
-                {/* 2026-10-02 — per-column filter row (user request: "make
-                    the table filterable by each heading"). Same filter-row
-                    convention already used on the Suppliers RFQ/Outwork
-                    tables — see this block's own state comment above for
-                    why only Manufacturer and Bin locations get a control
-                    here. */}
-                <tr className="filter-row">
-                  <th></th>
-                  <th></th>
-                  <th></th>
-                  <th>
-                    <select value={manufacturerFilter} onChange={(e) => { setManufacturerFilter(e.target.value); setPage(1); }} aria-label="Filter by manufacturer">
-                      <option value="">All</option>
-                      {manufacturers.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
-                  </th>
-                  <th>
-                    <select value={locationFilter} onChange={(e) => { setLocationFilter(e.target.value); setPage(1); }} aria-label="Filter by bin location">
-                      <option value="">All</option>
-                      {locations.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-                    </select>
-                  </th>
-                  {data.canViewCost && <th></th>}
-                  {data.canViewCost && <th></th>}
-                  <th></th>
-                  <th></th>
-                  <th></th>
-                  <th></th>
-                  <th>{(manufacturerFilter || locationFilter) && <button type="button" className="quiet-button" onClick={() => { setManufacturerFilter(""); setLocationFilter(""); setPage(1); }} title="Clear filters"><X size={13} /></button>}</th>
+                  <th className="actions no-print">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1050,7 +1006,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                           )}
                         </div>
                       </td>
-                      <td className="mono">
+                      <td className="mono" data-filter-values={row.partNumber} data-print-text={[row.partNumber, ...row.alternateNumbers.map((a) => `${ALT_KIND_LABEL[a.kind]}: ${a.number}`)].join(" · ")}>
                         {row.partNumber}
                         {/* 2026-09-29 — user request: "how can we add
                             additional part numbers for parts that have
@@ -1071,7 +1027,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                       </td>
                       <td>{row.description}</td>
                       <td>{row.manufacturerName || "—"}</td>
-                      <td>{row.binLocationLabel || "—"}</td>
+                      <td data-filter-values={(row.binLocationLabel || "").split(", ").filter(Boolean).join("|~|")}>{row.binLocationLabel || "—"}</td>
                       {data.canViewCost && <td className="numeric">{formatMoney(row.cost)}</td>}
                       {data.canViewCost && <td className="numeric">{formatMoney(row.sellingPrice)}</td>}
                       <td className="numeric">{row.quantityOnHand}</td>
@@ -1091,10 +1047,6 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             </table>
           </div>
 
-          <footer className="table-footer inventory-footer">
-            <span>Showing {data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1}-{Math.min(data.page * data.pageSize, data.total)} of {data.total}</span>
-            <div><button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</button><button disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</button></div>
-          </footer>
         </section>
       ) : tab === "stocktake" && canStockTake ? (
         <section className="master-panel">
