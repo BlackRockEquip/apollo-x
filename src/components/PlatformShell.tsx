@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Headset, LayoutDashboard, Package, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, Headset, LayoutDashboard, Settings, ShieldCheck, Users } from "lucide-react";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
@@ -22,7 +22,6 @@ import { PlatformNotificationBell } from "@/components/PlatformNotificationBell"
 const NAV = [
   { href: "/platform", label: "Overview", icon: LayoutDashboard },
   { href: "/platform/companies", label: "Companies", icon: Building2 },
-  { href: "/platform/modules", label: "Modules", icon: Package },
   { href: "/platform/users", label: "Platform Users", icon: Users },
   { href: "/platform/support", label: "Support", icon: Headset },
   // 2026-09-22 — this used to point at "/platform" (the same href as
