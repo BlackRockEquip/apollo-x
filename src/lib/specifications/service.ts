@@ -4,6 +4,8 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { recordAudit } from "@/lib/audit/service";
 import { prisma } from "@/lib/prisma";
+import { deleteStoredBlob, readStoredBlob } from "@/lib/attachments/blob-store";
+import { offloadJobAttachment, offloadQuietly } from "@/lib/attachments/offload";
 
 // 2026-10-16, Specifications module (Engineering Business). The Dimensional Size Report: a header, a
 // "recorded when the job arrived" table and a "recorded after machining" table, per component. A job can hold
@@ -66,8 +68,16 @@ export const specificationFormSettingsInput = z.object({
 
 const reportInclude = { lines: { orderBy: [{ phase: "asc" as const }, { sortOrder: "asc" as const }, { createdAt: "asc" as const }] } };
 
-function serialize<T extends { reportDate: Date | null }>(report: T) {
-  return { ...report, reportDate: report.reportDate ? report.reportDate.toISOString().slice(0, 10) : null };
+type OriginalFile = { id: string; fileName: string; mimeType: string; sizeBytes: number };
+
+function serialize<T extends { reportDate: Date | null }>(report: T, original: OriginalFile | null = null) {
+  return { ...report, reportDate: report.reportDate ? report.reportDate.toISOString().slice(0, 10) : null, original };
+}
+
+async function originalsFor(companyId: string, reports: { originalAttachmentId: string | null }[]) {
+  const ids = reports.map((report) => report.originalAttachmentId).filter((id): id is string => Boolean(id));
+  const files = ids.length ? await prisma.jobAttachment.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true } }) : [];
+  return new Map(files.map((file) => [file.id, file]));
 }
 
 async function requireJob(companyId: string, jobId: string) {
@@ -100,7 +110,8 @@ export async function listJobDimensionReports(ctx: RequestContext, jobId: string
   const companyId = requireRead(ctx);
   await requireJob(companyId, jobId);
   const reports = await prisma.jobDimensionReport.findMany({ where: { companyId, jobId }, orderBy: { createdAt: "asc" }, include: reportInclude });
-  return { items: reports.map(serialize) };
+  const originals = await originalsFor(companyId, reports);
+  return { items: reports.map((report) => serialize(report, report.originalAttachmentId ? originals.get(report.originalAttachmentId) ?? null : null)) };
 }
 
 export async function createJobDimensionReport(ctx: RequestContext, jobId: string, raw: unknown) {
@@ -145,16 +156,84 @@ export async function updateJobDimensionReport(ctx: RequestContext, reportId: st
     return tx.jobDimensionReport.findUniqueOrThrow({ where: { id: reportId }, include: reportInclude });
   });
   await recordAudit(ctx, { source: "UI", module: "SPECIFICATIONS", entityType: "JobDimensionReport", entityId: reportId, action: "UPDATE", afterData: { lineCount: report.lines.length } });
-  return serialize(report);
+  return serialize(report, (await originalsFor(companyId, [report])).get(report.originalAttachmentId ?? "") ?? null);
 }
 
 export async function deleteJobDimensionReport(ctx: RequestContext, reportId: string) {
   const companyId = requireWrite(ctx);
-  const existing = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { id: true, jobId: true } });
+  const existing = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { id: true, jobId: true, originalAttachmentId: true } });
   if (!existing) notFound();
   await prisma.jobDimensionReport.delete({ where: { id: reportId } });
+  await dropOriginalFile(companyId, existing.originalAttachmentId);
   await recordAudit(ctx, { source: "UI", module: "SPECIFICATIONS", entityType: "JobDimensionReport", entityId: reportId, action: "DELETE", afterData: { jobId: existing.jobId } as Prisma.InputJsonValue });
   return { id: reportId };
+}
+
+// ---- The original handwritten sheet --------------------------------------------------------------------------
+// Kept as an ordinary job attachment (so it also shows in the job's Attachments and goes to the company's
+// storage location); the report only remembers which attachment it is. Photos and PDFs only, 8 MB.
+const ORIGINAL_MIME_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+const MAX_ORIGINAL_BYTES = 8_000_000;
+
+export const dimensionOriginalInput = z.object({
+  fileName: z.string().trim().min(1).max(160),
+  mimeType: z.string().trim().min(3).max(120),
+  contentBase64: z.string().min(4),
+});
+
+async function dropOriginalFile(companyId: string, attachmentId: string | null | undefined) {
+  if (!attachmentId) return;
+  const file = await prisma.jobAttachment.findFirst({ where: { id: attachmentId, companyId }, select: { id: true, storedAttachmentId: true } });
+  if (!file) return;
+  await prisma.jobAttachment.delete({ where: { id: file.id } });
+  await deleteStoredBlob(companyId, file.storedAttachmentId);
+}
+
+export async function setDimensionReportOriginal(ctx: RequestContext, reportId: string, raw: unknown) {
+  const companyId = requireWrite(ctx);
+  const input = dimensionOriginalInput.parse(raw);
+  const report = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { id: true, jobId: true, originalAttachmentId: true } });
+  if (!report) notFound();
+  if (!ORIGINAL_MIME_TYPES.includes(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+  const data = Buffer.from(input.contentBase64, "base64");
+  if (data.length === 0 || data.length > MAX_ORIGINAL_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
+  const fileName = input.fileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
+  const file = await prisma.$transaction(async (tx) => {
+    const created = await tx.jobAttachment.create({
+      data: { companyId, jobId: report.jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: "Original handwritten dimensional size report", createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true },
+    });
+    await tx.jobDimensionReport.update({ where: { id: reportId }, data: { originalAttachmentId: created.id, updatedById: ctx.userId } });
+    return created;
+  });
+  await dropOriginalFile(companyId, report.originalAttachmentId);
+  await recordAudit(ctx, { source: "UI", module: "SPECIFICATIONS", entityType: "JobDimensionReport", entityId: reportId, action: "UPDATE", afterData: { originalFile: fileName, sizeBytes: data.length } });
+  await offloadQuietly(offloadJobAttachment(file.id));
+  return file;
+}
+
+export async function getDimensionReportOriginal(ctx: RequestContext, reportId: string) {
+  const companyId = requireRead(ctx);
+  const report = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { originalAttachmentId: true } });
+  if (!report?.originalAttachmentId) notFound();
+  const file = await prisma.jobAttachment.findFirst({ where: { id: report.originalAttachmentId, companyId } });
+  if (!file) notFound();
+  if (file.storedAttachmentId) {
+    const stored = await readStoredBlob(companyId, file.storedAttachmentId);
+    return { fileName: file.fileName, mimeType: file.mimeType, contentBase64: stored.data.toString("base64") };
+  }
+  if (!file.data) throw new Error("STORAGE_FILE_MISSING");
+  return { fileName: file.fileName, mimeType: file.mimeType, contentBase64: Buffer.from(file.data).toString("base64") };
+}
+
+export async function removeDimensionReportOriginal(ctx: RequestContext, reportId: string) {
+  const companyId = requireWrite(ctx);
+  const report = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { originalAttachmentId: true } });
+  if (!report) notFound();
+  await prisma.jobDimensionReport.update({ where: { id: reportId }, data: { originalAttachmentId: null, updatedById: ctx.userId } });
+  await dropOriginalFile(companyId, report.originalAttachmentId);
+  await recordAudit(ctx, { source: "UI", module: "SPECIFICATIONS", entityType: "JobDimensionReport", entityId: reportId, action: "UPDATE", afterData: { originalFile: null } });
+  return { ok: true };
 }
 
 export async function getSpecificationFormSettings(ctx: RequestContext) {

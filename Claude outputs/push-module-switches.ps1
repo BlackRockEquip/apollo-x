@@ -2,10 +2,10 @@ cd "C:\Projects\Apollo X Working"
 # Follow-up: per-user module switches in Settings > Users (only modules enabled on the platform side are listed).
 # Safe to run whether or not push.ps1 has been run - git add -A picks up everything. No new migration.
 # Needs the two previous pushes applied first (ETA cards + Job kits, then Engineering).
-# Run the database migration afterwards with your usual process (prisma migrate deploy) - one new migration (20261016160000).
+# Run the database migration afterwards with your usual process (prisma migrate deploy) - two new migrations (20261016160000, 20261016170000).
 git add -A
 @'
-Settings > Users module switches; numbering save fix; New customer pop-up; no BRE wording
+Settings > Users module switches; numbering fix; New customer pop-up; Specifications report window + original document
 
 - Every module behind a tile shown on Settings > Users can be switched on or off for a single user, including modules that used to
   appear locked (RFQs, Outwork, Pick slips, Specifications, Field service, Warranty...). A module switched off is stored for that user
@@ -18,6 +18,9 @@ Settings > Users module switches; numbering save fix; New customer pop-up; no BR
   that were hard to see in the page. Errors show inside the pop-up.
 - Examples and hints no longer mention BRE / Black Rock for other companies: job search placeholder ("Search job #, linked job #..."), Document titles
   example, import hint, storage setup guides and the Workshop build example text use neutral wording (e.g. J00123).
+- Engineering > job > Specifications: Add report / Edit now open a window for the dimensional size report. Saved reports are listed in a table
+  with View, Print report, Edit and Delete on the right. The original handwritten sheet (photo or PDF, up to 8 MB) can be uploaded, viewed,
+  replaced or removed; it is also kept in the job's Attachments. New migration 20261016170000 (one nullable column).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

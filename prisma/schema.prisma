@@ -2869,6 +2869,8 @@ model JobDimensionReport {
   // Gauge / instrument used and its calibration reference (ISO 9001 traceability).
   instrument    String?
   notes         String?
+  // The scanned / photographed original handwritten sheet, kept as a normal job attachment (JobAttachment.id).
+  originalAttachmentId String?
   createdById   String?
   updatedById   String?
   createdAt     DateTime @default(now())
