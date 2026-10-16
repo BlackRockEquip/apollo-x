@@ -1940,7 +1940,14 @@ model JobKitLine {
   id              String    @id @default(cuid())
   companyId       String
   jobKitId        String
-  partId          String
+  // 2026-10-16, user request: "Job Kits own way to enter parts". A kit line no longer needs a
+  // catalog Part: partNumber/description hold what was typed (or, for a catalog-linked line, a
+  // copy of the catalog values taken when the line was added), and partId is only set when the
+  // line is linked to a Stock levels part. Companies without Stock levels only ever use the
+  // typed fields.
+  partId          String?
+  partNumber      String?
+  description     String?
   quantityDefault Decimal   @db.Decimal(19, 4)
   notes           String?
   operationalStatus StorageOperationalStatus @default(OPERATIONAL)
@@ -1950,7 +1957,7 @@ model JobKitLine {
 
   company         Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   jobKit          JobKit    @relation(fields: [jobKitId], references: [id], onDelete: Cascade)
-  part            Part      @relation(fields: [partId], references: [id], onDelete: Restrict)
+  part            Part?     @relation(fields: [partId], references: [id], onDelete: Restrict)
 
   @@unique([jobKitId, partId])
   @@unique([id, companyId])

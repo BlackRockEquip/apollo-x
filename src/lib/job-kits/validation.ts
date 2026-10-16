@@ -10,9 +10,26 @@ export const jobKitListQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(500).default(25),
 });
 
+// 2026-10-16, user request: "Job Kits own way to enter parts". A kit line is either linked to a
+// catalog part (partId) or typed in directly (partNumber + optional description) — one of the two
+// is required. The typed route is the only one companies without Stock levels have.
+const kitLineQuantity = z.union([z.string().regex(/^\d+(\.\d{1,4})?$/), z.number().positive()]).transform(String).refine((v) => Number(v) > 0, "Quantity must be greater than zero.");
+const kitLinePartFields = {
+  partId: z.string().cuid().optional().nullable(),
+  partNumber: z.string().trim().min(1).max(120).optional().nullable(),
+  description: z.string().trim().max(500).optional().nullable(),
+};
+
 export const jobKitLineInput = z.object({
-  partId: z.string().cuid(),
-  quantityDefault: z.union([z.string().regex(/^\d+(\.\d{1,4})?$/), z.number().positive()]).transform(String).refine((v) => Number(v) > 0, "Quantity must be greater than zero."),
+  ...kitLinePartFields,
+  quantityDefault: kitLineQuantity,
+  notes: optionalText,
+  sortOrder: z.coerce.number().int().min(0).max(100000).optional(),
+}).refine((v) => Boolean(v.partId) || Boolean(v.partNumber && v.partNumber.trim()), { message: "Enter a part number." });
+
+export const jobKitLineUpdateInput = z.object({
+  ...kitLinePartFields,
+  quantityDefault: kitLineQuantity.optional(),
   notes: optionalText,
   sortOrder: z.coerce.number().int().min(0).max(100000).optional(),
 });

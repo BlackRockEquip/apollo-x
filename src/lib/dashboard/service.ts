@@ -12,6 +12,8 @@ export type DashboardWidgetKey =
   | "pex-status"
   | "outstanding-parts"
   | "procurement-summary"
+  | "upcoming-etas"
+  | "overdue-etas"
   | "support-tickets"
   | "notifications";
 
@@ -43,6 +45,11 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
   // wasn't clickable. Regated to match its real data source and wired up
   // below (procurementOpen) — see dashboard/page.tsx for the display side.
   { key: "procurement-summary", label: "Procurement / outwork", module: ["PROCUREMENT", "OUTWORK"], permission: "JOBS_VIEW" },
+  // 2026-10-16, user request: "ETA cards can be built for everyone". Part of core
+  // Jobs & WIP (not an optional module), so every industry build gets them. Both read
+  // the job's Mechanic ETA date; jobs with no Mechanic ETA are ignored.
+  { key: "upcoming-etas", label: "Upcoming ETAs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
+  { key: "overdue-etas", label: "Overdue ETAs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "support-tickets", label: "Support tickets", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
   { key: "notifications", label: "Notifications", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];
@@ -178,6 +185,58 @@ async function buildMetricSeries(companyId: string, key: DashboardAnalyticsMetri
 const STUCK_THRESHOLD_DAYS = 14;
 const PARTS_OVERDUE_THRESHOLD_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// ETA cards (2026-10-16): "Upcoming" = Mechanic ETA from today through the next
+// ETA_UPCOMING_DAYS days; "Overdue" = Mechanic ETA before today on a job that is not
+// finished. A job counts as finished for this once the work is done (ready to deliver
+// or later) or it is closed/cancelled.
+const ETA_UPCOMING_DAYS = 7;
+const ETA_LIST_SIZE = 5;
+const ETA_FINISHED_STATUSES = ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "AWAIT_PAYMENT", "COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"] as const;
+
+function startOfTodayUtc() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+type EtaJobRow = { id: string; jobNumber: string; customerName: string | null; status: string; label: string; etaDate: string; daysAway: number };
+type EtaCard = { count: number; jobs: EtaJobRow[] };
+
+async function loadEtaCard(ctx: RequestContext, companyId: string, kind: "upcoming" | "overdue"): Promise<EtaCard> {
+  const today = startOfTodayUtc();
+  const horizon = new Date(today.getTime() + (ETA_UPCOMING_DAYS + 1) * DAY_MS);
+  const where: Prisma.JobWhereInput = {
+    companyId,
+    closedAt: null,
+    status: { notIn: [...ETA_FINISHED_STATUSES] },
+    mechanicEtaDate: kind === "overdue" ? { not: null, lt: today } : { gte: today, lt: horizon },
+  };
+  const showCustomer = ctx.tenantPermissions.has("CUSTOMERS_VIEW");
+  const [count, rows] = await Promise.all([
+    prisma.job.count({ where }),
+    prisma.job.findMany({
+      where,
+      orderBy: [{ mechanicEtaDate: "asc" }, { createdAt: "asc" }],
+      take: ETA_LIST_SIZE,
+      select: { id: true, jobNumber: true, draftNumber: true, status: true, mechanicEtaDate: true, customer: { select: { name: true } } },
+    }),
+  ]);
+  return {
+    count,
+    jobs: rows.map((row) => {
+      const eta = row.mechanicEtaDate as Date;
+      return {
+        id: row.id,
+        jobNumber: row.jobNumber ?? row.draftNumber ?? "—",
+        customerName: showCustomer ? row.customer?.name ?? null : null,
+        status: row.status,
+        label: JOB_STATUS_LABELS[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
+        etaDate: eta.toISOString().slice(0, 10),
+        daysAway: Math.round((eta.getTime() - today.getTime()) / DAY_MS),
+      };
+    }),
+  };
+}
 
 // Open (non-terminal) statuses in pipeline order — same union the Jobs & WIP
 // list's own view=wip filter uses (WIP_STATUSES in lib/jobs/service.ts), kept
@@ -430,9 +489,18 @@ export async function getDashboardData(ctx: RequestContext) {
     completedThisMonth = { count, previous: prev, previousLabel: previous.label };
   }
 
+  // ETA cards — see ETA_* above.
+  const [etaUpcoming, etaOverdue] = await Promise.all([
+    jobsAccess && enabled.includes("upcoming-etas") ? loadEtaCard(ctx, companyId, "upcoming") : Promise.resolve<EtaCard>({ count: 0, jobs: [] }),
+    jobsAccess && enabled.includes("overdue-etas") ? loadEtaCard(ctx, companyId, "overdue") : Promise.resolve<EtaCard>({ count: 0, jobs: [] }),
+  ]);
+
   return {
     widgets,
     data: {
+      etaUpcoming,
+      etaOverdue,
+      etaUpcomingDays: ETA_UPCOMING_DAYS,
       attention: jobsAccess
         ? {
             partsOverdue,

@@ -5,7 +5,7 @@ import { recordAudit } from "@/lib/audit/service";
 import { prisma } from "@/lib/prisma";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { reserveStockTx } from "@/lib/inventory/service";
-import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
+import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitLineUpdateInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
 import { findPartByNumber, numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { looseNormalized, normalized as normalizedPartNumber } from "@/lib/master-data/validation";
 
@@ -18,6 +18,39 @@ async function getPartOrThrow(companyId: string, partId: string) {
   const part = await prisma.part.findFirst({ where: { id: partId, companyId, active: true }, select: { id: true, partNumber: true, description: true } });
   if (!part) notFound();
   return part;
+}
+
+// 2026-10-16, user request: "Job Kits own way to enter parts". A kit line stores its own part
+// number and description and is only linked to a catalog part (partId) when the company has Stock
+// levels on and the number matches a catalog part. With Stock levels off the catalog is never
+// touched, so a kit works for companies that have no parts catalog at all.
+function stockTrackingOn(ctx: RequestContext) { return (ctx.moduleAccess.get("INVENTORY") ?? "DENIED") !== "DENIED"; }
+
+type KitLineParts = { partId: string | null; partNumber: string; description: string | null };
+
+async function resolveKitLineParts(ctx: RequestContext, companyId: string, input: { partId?: string | null; partNumber?: string | null; description?: string | null }): Promise<KitLineParts> {
+  if (input.partId) {
+    const part = await getPartOrThrow(companyId, input.partId);
+    return { partId: part.id, partNumber: part.partNumber, description: part.description };
+  }
+  const rawNumber = (input.partNumber ?? "").trim();
+  const typed = looseNormalized(rawNumber) ?? rawNumber;
+  if (!typed) throw new Error("Enter a part number.");
+  const description = input.description?.trim() || null;
+  if (stockTrackingOn(ctx)) {
+    const match = await findPartByNumber(prisma, companyId, typed, { id: true, partNumber: true, description: true, active: true });
+    if (match?.active) return { partId: match.id, partNumber: match.partNumber, description: description ?? match.description };
+  }
+  return { partId: null, partNumber: typed, description };
+}
+
+// A line already on the kit for the same catalog part, or the same part number, is topped up
+// instead of getting a second row.
+function findKitLineMatch(client: Prisma.TransactionClient | typeof prisma, companyId: string, kitId: string, parts: KitLineParts) {
+  return client.jobKitLine.findFirst({
+    where: { companyId, jobKitId: kitId, OR: [...(parts.partId ? [{ partId: parts.partId }] : []), { partNumber: parts.partNumber }] },
+    orderBy: { createdAt: "asc" },
+  });
 }
 
 export async function listJobKits(ctx: RequestContext, raw: unknown) {
@@ -68,7 +101,13 @@ export async function getJobKitById(ctx: RequestContext, id: string) {
 export async function createJobKit(ctx: RequestContext, raw: unknown) {
   const companyId = requireJobKitsWrite(ctx, "JOB_KITS_CREATE");
   const input = jobKitCreateInput.parse(raw);
-  for (const line of input.lines) await getPartOrThrow(companyId, line.partId);
+  const resolvedLines: Array<KitLineParts & { quantity: Prisma.Decimal; notes: string | null | undefined; sortOrder: number | undefined }> = [];
+  for (const line of input.lines) {
+    const parts = await resolveKitLineParts(ctx, companyId, line);
+    const duplicate = resolvedLines.find((row) => (parts.partId && row.partId === parts.partId) || row.partNumber === parts.partNumber);
+    if (duplicate) duplicate.quantity = duplicate.quantity.plus(line.quantityDefault);
+    else resolvedLines.push({ ...parts, quantity: new Prisma.Decimal(line.quantityDefault), notes: line.notes, sortOrder: line.sortOrder });
+  }
   const created = await prisma.$transaction(async (tx) => {
     const kit = await tx.jobKit.create({
       data: {
@@ -81,11 +120,13 @@ export async function createJobKit(ctx: RequestContext, raw: unknown) {
         componentType: input.componentType,
         active: input.active,
         createdById: ctx.userId,
-        lines: input.lines.length ? {
-          create: input.lines.map((line, index) => ({
+        lines: resolvedLines.length ? {
+          create: resolvedLines.map((line, index) => ({
             companyId,
             partId: line.partId,
-            quantityDefault: new Prisma.Decimal(line.quantityDefault),
+            partNumber: line.partNumber,
+            description: line.description,
+            quantityDefault: line.quantity,
             notes: line.notes,
             sortOrder: line.sortOrder ?? index,
           })),
@@ -179,21 +220,25 @@ export async function listJobKitManufacturerOptions(ctx: RequestContext) {
 export async function addJobKitLine(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobKitsWrite(ctx, "JOB_KITS_EDIT");
   const input = jobKitLineInput.parse(raw);
-  await getPartOrThrow(companyId, input.partId);
   const existing = await prisma.jobKit.findFirst({ where: { id, companyId } });
   if (!existing) notFound();
-  const line = await prisma.jobKitLine.create({
-    data: {
-      companyId,
-      jobKitId: id,
-      partId: input.partId,
-      quantityDefault: new Prisma.Decimal(input.quantityDefault),
-      notes: input.notes,
-      sortOrder: input.sortOrder ?? 0,
-    },
-    include: { part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true, active: true } } },
-  });
-  await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKitLine", entityId: line.id, action: "CREATE", afterData: { jobKitId: id, partId: input.partId } });
+  const parts = await resolveKitLineParts(ctx, companyId, input);
+  const match = await findKitLineMatch(prisma, companyId, id, parts);
+  const line = match
+    ? await prisma.jobKitLine.update({ where: { id: match.id }, data: { quantityDefault: match.quantityDefault.plus(input.quantityDefault) } })
+    : await prisma.jobKitLine.create({
+        data: {
+          companyId,
+          jobKitId: id,
+          partId: parts.partId,
+          partNumber: parts.partNumber,
+          description: parts.description,
+          quantityDefault: new Prisma.Decimal(input.quantityDefault),
+          notes: input.notes,
+          sortOrder: input.sortOrder ?? 0,
+        },
+      });
+  await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKitLine", entityId: line.id, action: match ? "UPDATE" : "CREATE", afterData: { jobKitId: id, partId: parts.partId, partNumber: parts.partNumber } });
   return getJobKitById(ctx, id);
 }
 
@@ -250,7 +295,9 @@ function parseBulkKitLineRow(raw: string): ParsedKitLineRow | null {
   if (!partNumber) return null;
   const quantity = cells[1] ? Number(cells[1]) : 1;
   if (!Number.isFinite(quantity) || quantity <= 0) return null;
-  return { partNumber, quantity };
+  // 2026-10-16: an optional third column is the description ("PN-1001, 2, Hydraulic seal").
+  const description = cells.slice(2).filter(Boolean).join(raw.includes("\t") ? " " : ", ");
+  return { partNumber, quantity, description: description || null };
 }
 
 export type AddJobKitLinesBulkResult = {
@@ -282,6 +329,7 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
   }
 
   const rows = [...pasteRows, ...fileRows];
+  const stockOn = stockTrackingOn(ctx);
   let addedCount = 0;
   let incrementedCount = 0;
   let createdCount = 0;
@@ -293,14 +341,31 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
       let nextSortOrder = (currentMax._max.sortOrder ?? -1) + 1;
 
       for (const row of rows) {
+        // 2026-10-16: with Stock levels off the list is kept exactly as typed — the parts
+        // catalog is never looked at or added to. A number already on the kit is topped up.
+        if (!stockOn) {
+          const typedNumber = looseNormalized(row.partNumber) ?? row.partNumber;
+          const sameLine = await tx.jobKitLine.findFirst({ where: { jobKitId: id, companyId, partNumber: typedNumber } });
+          if (sameLine) {
+            await tx.jobKitLine.update({ where: { id: sameLine.id }, data: { quantityDefault: sameLine.quantityDefault.plus(row.quantity), description: sameLine.description || row.description?.trim() || null } });
+            incrementedCount += 1;
+          } else {
+            await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId: null, partNumber: typedNumber, description: row.description?.trim() || null, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
+            nextSortOrder += 1;
+            addedCount += 1;
+          }
+          continue;
+        }
         // 2026-09-29 — recognizes a SUPERSEDED or GROUP alternate number
         // the same way the part's own current number is recognized (see
         // findPartByNumber's comment and PartAlternateNumber in
         // schema.prisma), so a kit list built from an old or group number
         // still matches.
-        const part = await findPartByNumber(tx, companyId, row.partNumber, { id: true, active: true });
+        const part = await findPartByNumber(tx, companyId, row.partNumber, { id: true, active: true, partNumber: true, description: true });
 
         let partId: string;
+        let lineNumber: string;
+        let lineDescription: string | null;
         if (part) {
           // An existing but deactivated/historical part is still skipped
           // and reported — reactivating it automatically wasn't asked
@@ -308,6 +373,8 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
           // catalogued yet."
           if (!part.active) { skipped.push({ partNumber: row.partNumber, reason: "A part with this number exists in the catalog but is inactive." }); continue; }
           partId = part.id;
+          lineNumber = part.partNumber;
+          lineDescription = part.description;
         } else {
           const cleanNumber = looseNormalized(row.partNumber) ?? row.partNumber;
           // A number already recorded as some OTHER part's alternate
@@ -328,6 +395,8 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
             },
           });
           partId = createdPart.id;
+          lineNumber = createdPart.partNumber;
+          lineDescription = createdPart.description;
           createdCount += 1;
         }
 
@@ -336,7 +405,7 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
           await tx.jobKitLine.update({ where: { id: existingLine.id }, data: { quantityDefault: existingLine.quantityDefault.plus(row.quantity) } });
           incrementedCount += 1;
         } else {
-          await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
+          await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId, partNumber: lineNumber, description: lineDescription, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
           nextSortOrder += 1;
           addedCount += 1;
         }
@@ -354,14 +423,19 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
 
 export async function updateJobKitLine(ctx: RequestContext, id: string, lineId: string, raw: unknown) {
   const companyId = requireJobKitsWrite(ctx, "JOB_KITS_EDIT");
-  const input = jobKitLineInput.partial({ partId: true }).parse(raw);
+  const input = jobKitLineUpdateInput.parse(raw);
   const existing = await prisma.jobKitLine.findFirst({ where: { id: lineId, companyId, jobKitId: id } });
   if (!existing) notFound();
-  if (input.partId) await getPartOrThrow(companyId, input.partId);
+  // Re-pointing at a different catalog part refreshes the copied number/description; the typed
+  // number/description of a line that is not catalog-linked can be edited directly.
+  const relinked = input.partId && input.partId !== existing.partId ? await getPartOrThrow(companyId, input.partId) : null;
+  const typedNumber = !existing.partId && !relinked && input.partNumber ? (looseNormalized(input.partNumber) ?? input.partNumber.trim()) : null;
   await prisma.jobKitLine.update({
     where: { id: lineId },
     data: {
-      ...(input.partId !== undefined ? { partId: input.partId } : {}),
+      ...(relinked ? { partId: relinked.id, partNumber: relinked.partNumber, description: relinked.description } : {}),
+      ...(typedNumber ? { partNumber: typedNumber } : {}),
+      ...(!existing.partId && !relinked && input.description !== undefined ? { description: input.description?.trim() || null } : {}),
       ...(input.quantityDefault !== undefined ? { quantityDefault: new Prisma.Decimal(input.quantityDefault) } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
       ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
@@ -459,7 +533,10 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
     });
     if (!kit) notFound();
     if (kit.lines.length === 0) throw new Error("This job kit has no parts.");
-    if (kit.lines.some((line) => !line.part.active)) notFound();
+    // Industry builds: with Stock levels off a kit line is just a typed part, so the catalog's
+    // active flag does not matter.
+    const stockOn = stockTrackingOn(ctx);
+    if (stockOn && kit.lines.some((line) => line.part && !line.part.active)) notFound();
 
     // Targets JobPartLine (the Parts list) rather than the old
     // JobPartRequirement — updated 2026-09-09 alongside the Parts
@@ -470,9 +547,17 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
     // duplicate row; JobPartLine has no separate notes field, so the kit
     // line's own notes aren't merged in here — the applied-kit detail is
     // still captured below in the job activity's metadata.
-    const appliedLines: Array<{ partId: string; partNumber: string; quantityAdded: string; lineId: string; mode: "CREATED" | "INCREMENTED" }> = [];
+    const appliedLines: Array<{ partId: string | null; partNumber: string; quantityAdded: string; lineId: string; mode: "CREATED" | "INCREMENTED" }> = [];
 
     for (const line of kit.lines) {
+      // 2026-10-16: the line's own number/description are what get added (a catalog-linked line
+      // uses the catalog's current values). Only a line linked to a catalog part with Stock levels
+      // on is checked against stock / reserved; any other line is added as a plain part to order.
+      const partNumber = line.part?.partNumber ?? line.partNumber;
+      if (!partNumber) continue;
+      const description = line.part?.description ?? line.description ?? null;
+      const catalogPart = stockOn ? line.part : null;
+
       // 2026-09-19, user request: "once applied to job, let it check stock
       // availability like when adding a part number individually/via
       // import." Mirrors addPartLinesBulk's own stock check exactly
@@ -483,10 +568,11 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
       // claim the same units. Before this, applyJobKitToJob always left a
       // kit-sourced line as plain "PENDING" with nothing reserved, unlike
       // every other way of adding a part to a job's parts list.
-      const existing = await tx.jobPartLine.findFirst({ where: { companyId, jobId, partId: line.partId, status: { not: "RECEIVED" } } });
-      // Industry builds step C: with Stock levels off nothing is checked against stock.
-      const stockOn = (ctx.moduleAccess.get("INVENTORY") ?? "DENIED") !== "DENIED";
-      const balances = stockOn ? await tx.stockBalance.aggregate({ where: { companyId, partId: line.partId }, _sum: { quantityOnHand: true } }) : null;
+      const existing = await tx.jobPartLine.findFirst({
+        where: { companyId, jobId, status: { not: "RECEIVED" }, OR: [...(catalogPart ? [{ partId: catalogPart.id }] : []), { partNumber }] },
+        orderBy: { createdAt: "asc" },
+      });
+      const balances = catalogPart ? await tx.stockBalance.aggregate({ where: { companyId, partId: catalogPart.id }, _sum: { quantityOnHand: true } }) : null;
       const onHand = balances?._sum.quantityOnHand ?? new Prisma.Decimal(0);
 
       if (existing) {
@@ -498,36 +584,36 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
         // caution the receive/unmark flow itself takes about not
         // clobbering that state.
         const newTotal = existing.quantity.plus(line.quantityDefault);
-        const inStock = onHand.gte(newTotal);
-        const preserveStatus = existing.status === "PARTIALLY_RECEIVED" || existing.status === "PICKED";
+        const inStock = catalogPart !== null && onHand.gte(newTotal);
+        const preserveStatus = !catalogPart || existing.status === "PARTIALLY_RECEIVED" || existing.status === "PICKED";
         const nextStatus = preserveStatus ? existing.status : (inStock ? "IN_STOCK" : "PENDING");
         const updated = await tx.jobPartLine.update({
           where: { id: existing.id },
-          data: { quantity: newTotal, status: nextStatus, updatedById: ctx.userId },
+          data: { quantity: newTotal, status: nextStatus, description: existing.description || description, updatedById: ctx.userId },
         });
-        if (inStock && !preserveStatus) {
-          await reserveAcrossLocations(tx, ctx, companyId, line.partId, line.part.binLocationId, line.quantityDefault, updated.id, job.jobNumber || job.draftNumber);
+        if (catalogPart && inStock && !preserveStatus) {
+          await reserveAcrossLocations(tx, ctx, companyId, catalogPart.id, catalogPart.binLocationId, line.quantityDefault, updated.id, job.jobNumber || job.draftNumber);
         }
-        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: updated.id, mode: "INCREMENTED" });
+        appliedLines.push({ partId: catalogPart?.id ?? null, partNumber, quantityAdded: line.quantityDefault.toString(), lineId: updated.id, mode: "INCREMENTED" });
       } else {
-        const inStock = onHand.gte(line.quantityDefault);
+        const inStock = catalogPart !== null && onHand.gte(line.quantityDefault);
         const created = await tx.jobPartLine.create({
           data: {
             companyId,
             jobId,
-            partNumber: line.part.partNumber,
-            description: line.part.description,
+            partNumber,
+            description,
             quantity: line.quantityDefault,
             status: inStock ? "IN_STOCK" : "PENDING",
-            partId: line.partId,
+            partId: catalogPart?.id ?? null,
             createdById: ctx.userId,
             updatedById: ctx.userId,
           },
         });
-        if (inStock) {
-          await reserveAcrossLocations(tx, ctx, companyId, line.partId, line.part.binLocationId, line.quantityDefault, created.id, job.jobNumber || job.draftNumber);
+        if (catalogPart && inStock) {
+          await reserveAcrossLocations(tx, ctx, companyId, catalogPart.id, catalogPart.binLocationId, line.quantityDefault, created.id, job.jobNumber || job.draftNumber);
         }
-        appliedLines.push({ partId: line.partId, partNumber: line.part.partNumber, quantityAdded: line.quantityDefault.toString(), lineId: created.id, mode: "CREATED" });
+        appliedLines.push({ partId: catalogPart?.id ?? null, partNumber, quantityAdded: line.quantityDefault.toString(), lineId: created.id, mode: "CREATED" });
       }
     }
 

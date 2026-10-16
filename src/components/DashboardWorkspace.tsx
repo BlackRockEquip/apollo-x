@@ -28,7 +28,12 @@ type Attention = {
 type StuckJob = { id: string; jobNumber: string; customerName: string | null; status: string; label: string; days: number };
 type StatusRow = { status: string; label: string; count: number; stuck: number };
 type PartsJob = { jobId: string; jobNumber: string; customerName: string | null; lines: number; days: number };
+type EtaJob = { id: string; jobNumber: string; customerName: string | null; status: string; label: string; etaDate: string; daysAway: number };
+type EtaCardData = { count: number; jobs: EtaJob[] };
 type DashboardData = {
+  etaUpcoming: EtaCardData;
+  etaOverdue: EtaCardData;
+  etaUpcomingDays: number;
   attention: Attention | null;
   stuckJobs: StuckJob[];
   statusBreakdown: StatusRow[];
@@ -121,6 +126,41 @@ function widgetValue(key: string, data: DashboardData | null): string {
 }
 
 function plural(n: number, one: string, many: string) { return `${n} ${n === 1 ? one : many}`; }
+
+function etaDateLabel(iso: string) {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-ZA", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+// 2026-10-16: Upcoming / Overdue ETA cards — every build gets them (core Jobs & WIP).
+function EtaPanel({ kind, card, windowDays }: { kind: "upcoming" | "overdue"; card: EtaCardData; windowDays: number }) {
+  const overdue = kind === "overdue";
+  return (
+    <section className="dash-card dash-panel">
+      <header className="dash-panel-head">
+        <div>
+          <h2>{overdue ? "Overdue ETAs" : "Upcoming ETAs"}{card.count > 0 ? ` (${card.count})` : ""}</h2>
+          <p>{overdue ? "Mechanic ETA has passed and the job is not finished" : `Mechanic ETA in the next ${windowDays} days`}</p>
+        </div>
+        <Link href="/jobs?view=wip" className="dash-link">View jobs <ChevronRight size={12} /></Link>
+      </header>
+      {card.jobs.length === 0 && <div className="dash-empty">{overdue ? "No jobs are past their ETA." : `No jobs due in the next ${windowDays} days.`}</div>}
+      {card.jobs.map((job) => {
+        const lateDays = Math.abs(job.daysAway);
+        const note = overdue ? `▲ ${plural(lateDays, "day", "days")} late` : job.daysAway === 0 ? "Due today" : job.daysAway === 1 ? "Due tomorrow" : `In ${job.daysAway} days`;
+        return (
+          <Link key={job.id} href={`/jobs/${job.id}`} className="dash-row">
+            <div className="dash-row-main"><div className="dash-job">{job.jobNumber}</div><div className="dash-sub">{job.customerName || job.label}</div></div>
+            <div className="dash-row-end">
+              <div className="dash-row-strong">{etaDateLabel(job.etaDate)}</div>
+              <div className={overdue || job.daysAway === 0 ? "dash-flag-line" : "dash-muted-line"}>{note}</div>
+            </div>
+          </Link>
+        );
+      })}
+      {card.count > card.jobs.length && <div className="dash-empty">+ {card.count - card.jobs.length} more — open Jobs &amp; WIP and sort by Mechanic ETA.</div>}
+    </section>
+  );
+}
 
 function CompletedDelta({ completed }: { completed: NonNullable<DashboardData["completedThisMonth"]> }) {
   const { count, previous, previousLabel } = completed;
@@ -251,6 +291,13 @@ export function DashboardWorkspace() {
             />
           </div>
         </section>
+      )}
+
+      {(on("overdue-etas") || on("upcoming-etas")) && (
+        <div className="dash-bottom" style={{ marginBottom: 16 }}>
+          {on("overdue-etas") && <EtaPanel kind="overdue" card={data?.etaOverdue ?? { count: 0, jobs: [] }} windowDays={data?.etaUpcomingDays ?? 7} />}
+          {on("upcoming-etas") && <EtaPanel kind="upcoming" card={data?.etaUpcoming ?? { count: 0, jobs: [] }} windowDays={data?.etaUpcomingDays ?? 7} />}
+        </div>
       )}
 
       {kpis.length > 0 && (
