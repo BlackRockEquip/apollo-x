@@ -39,9 +39,9 @@ export async function requestPasswordReset(email: string, ip: string, origin: st
   // check above; it's simply a reset link nobody receives.
   await sendPlatformEmail({
     to: user.email,
-    subject: "Reset your Apollo X password",
-    text: `We received a request to reset your Apollo X password. This link is valid for 1 hour:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email — your password won't change.`,
-    html: `<p>We received a request to reset your Apollo X password. This link is valid for 1 hour:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email — your password won't change.</p>`,
+    subject: "Reset your Flo X Integrations password",
+    text: `We received a request to reset your Flo X Integrations password. This link is valid for 1 hour:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email — your password won't change.`,
+    html: `<p>We received a request to reset your Flo X Integrations password. This link is valid for 1 hour:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email — your password won't change.</p>`,
   }).catch(() => {});
 }
 

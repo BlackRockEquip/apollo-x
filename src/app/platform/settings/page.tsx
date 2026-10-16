@@ -70,7 +70,7 @@ export default function PlatformSettingsPage() {
           <label><span>SMTP username</span><input value={form.smtpUsername} onChange={(e) => setForm((c) => ({ ...c, smtpUsername: e.target.value }))} /></label>
           <label><span>SMTP password</span><input type="password" value={form.smtpPassword} placeholder={smtpConfigured ? "Leave blank to keep the current password" : ""} onChange={(e) => setForm((c) => ({ ...c, smtpPassword: e.target.value }))} /></label>
           <label><span>&quot;From&quot; email address</span><input value={form.smtpFromAddress} onChange={(e) => setForm((c) => ({ ...c, smtpFromAddress: e.target.value }))} /></label>
-          <label><span>&quot;From&quot; display name</span><input value={form.smtpFromName} placeholder="Apollo X" onChange={(e) => setForm((c) => ({ ...c, smtpFromName: e.target.value }))} /></label>
+          <label><span>&quot;From&quot; display name</span><input value={form.smtpFromName} placeholder="Flo X Integrations" onChange={(e) => setForm((c) => ({ ...c, smtpFromName: e.target.value }))} /></label>
         </div>
         <div className="header-actions" style={{ marginTop: 12 }}>
           <button type="button" className="gold-button" disabled={saving} onClick={() => void save()}><Save size={14} /> {saving ? "Saving…" : "Save"}</button>

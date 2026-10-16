@@ -98,7 +98,7 @@ export const STORAGE_ERROR_MESSAGES: Record<string, string> = {
   STORAGE_LOCAL_PATH_REQUIRED: "Enter the folder path on the server.",
   STORAGE_LOCAL_PATH_INVALID: "The folder must be a full path (for example D:\\ApolloFiles or /var/apollox/files) and must not contain \"..\".",
   STORAGE_SECRET_UNREADABLE: "The saved secret key can no longer be decrypted (the encryption key changed). Enter the secret access key again and save.",
-  STORAGE_EXISTING_FILES_ACK_REQUIRED: "This company already has stored files. Export them first, then tick the box confirming you understand they will not open from Apollo X after the change.",
+  STORAGE_EXISTING_FILES_ACK_REQUIRED: "This company already has stored files. Export them first, then tick the box confirming you understand they will not open from Flo X Integrations after the change.",
   PLATFORM_CONTEXT_REQUIRED: "Open this from the Platform area.",
   RESOURCE_NOT_FOUND: "Company not found.",
 };

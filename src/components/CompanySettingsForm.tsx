@@ -233,7 +233,7 @@ export function CompanySettingsForm() {
     <div className="settings-grid company-settings-grid">
       <section className="detail-panel">
         <header>
-          <div><h2>Company / Branding</h2><p>Manage tenant-specific branding without affecting Apollo X product identity.</p></div>
+          <div><h2>Company / Branding</h2><p>Manage tenant-specific branding without affecting Flo X Integrations product identity.</p></div>
           <div className="header-actions"><button type="button" className="quiet-button" onClick={() => void load()}><RotateCcw size={14} /> Reset</button><button type="button" className="gold-button" disabled={saving} onClick={() => void onSave()}><Save size={14} /> {saving ? "Saving…" : "Save"}</button></div>
         </header>
         {error ? <div className="inline-error">{error}</div> : null}
@@ -314,7 +314,7 @@ export function CompanySettingsForm() {
       <section className="detail-panel">
         <header><div><h2>Logo & preview</h2><p>Transparent PNG/JPG/WebP logos supported. Tenant-scoped only.</p></div></header>
         <div className="brand-preview-panel" style={previewStyle}>
-          <div className="brand-preview-sidebar"><div className="brand-preview-logo">{logoPreview ? <Image src={logoPreview} alt="Logo preview" className="brand-logo-preview" width={84} height={84} unoptimized /> : <ImagePlus size={28} />}</div><strong>{form.tradingName || form.legalName}</strong><span>Apollo X remains visible</span></div>
+          <div className="brand-preview-sidebar"><div className="brand-preview-logo">{logoPreview ? <Image src={logoPreview} alt="Logo preview" className="brand-logo-preview" width={84} height={84} unoptimized /> : <ImagePlus size={28} />}</div><strong>{form.tradingName || form.legalName}</strong><span>Flo X Integrations remains visible</span></div>
           <div className="brand-preview-workspace"><div className="brand-preview-topbar" /><div className="brand-preview-card-grid"><div /><div /><div /></div></div>
         </div>
         {/* 2026-09-19, user request: "When adding/removing a logo, move the

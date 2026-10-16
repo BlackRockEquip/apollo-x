@@ -66,7 +66,7 @@ export function CompanyColourFields({ initial, disabled = false, companyName }: 
       <div className="wide">
         <span className="muted small-line">Preview</span>
         <div className="brand-preview-panel" style={previewStyle} data-testid="colour-preview">
-          <div className="brand-preview-sidebar"><div className="brand-preview-logo" /><strong>{companyName || "Company name"}</strong><span>Apollo X remains visible</span></div>
+          <div className="brand-preview-sidebar"><div className="brand-preview-logo" /><strong>{companyName || "Company name"}</strong><span>Flo X Integrations remains visible</span></div>
           <div className="brand-preview-workspace"><div className="brand-preview-topbar" /><div className="brand-preview-card-grid"><div /><div /><div /></div></div>
         </div>
       </div>

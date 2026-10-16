@@ -27,10 +27,10 @@ import { resolveCompanyLogoSource } from "@/lib/master-data/company-settings-ser
 // browser signing into a second company afterward could keep showing the
 // first company's logo as its tab icon. A favicon request is infrequent
 // (once per tab, not per navigation), so re-checking each time is cheap.
-const AX_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Apollo X"><rect width="32" height="32" rx="7" fill="#172033"/><text x="16" y="21.5" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="0.5" fill="#d6a83b">AX</text></svg>`;
+const FX_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Flo X Integrations"><rect width="32" height="32" rx="7" fill="#172033"/><text x="16" y="21.5" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="0.5" fill="#d6a83b">FX</text></svg>`;
 
 function axFallback() {
-  return new NextResponse(AX_FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "no-store" } });
+  return new NextResponse(FX_FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "no-store" } });
 }
 
 export async function GET(request: NextRequest) {

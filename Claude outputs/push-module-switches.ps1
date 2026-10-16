@@ -25,6 +25,9 @@ Settings > Users module switches; numbering fix; New customer pop-up; Specificat
 - Fix: when a module (e.g. Outwork) is switched off for a company, refreshing one of its pages no longer shows a blank screen. The user is sent to the
   Dashboard (or, if that is off too, the first page they do have). Applies to every company page that depends on a module, plus a friendly
   "This page could not be shown" screen with a Go to dashboard button as a safety net for any other page error.
+- Renamed the product from "Apollo X" to "Flo X Integrations" everywhere users see it: browser tab title, login and password-reset screens, sidebars
+  (the "AX" badge is now "FX"), favicon, password-reset email, storage setup guides, platform screens, README. Internal identifiers (login cookie,
+  saved-screen keys, database names) are unchanged so nobody is logged out and nothing saved is lost.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

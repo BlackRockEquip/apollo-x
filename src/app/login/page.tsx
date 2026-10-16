@@ -16,12 +16,12 @@ export default async function LoginPage() {
   return (
     <main className="login-page">
       <section className="login-story">
-        <div className="brand-mark">AX</div>
+        <div className="brand-mark">FX</div>
         {/* 2026-09-22, user request: "Remove the 'Black Rock Equipment' on
-            the login screen and change to APOLLO X" — this is the shared,
+            the login screen and change to FLO X INTEGRATIONS" — this is the shared,
             unauthenticated login page for every tenant, so it shouldn't
             carry one specific customer's name at all. */}
-        <p className="eyebrow">APOLLO X</p>
+        <p className="eyebrow">FLO X INTEGRATIONS</p>
         <h1>Operations and commerce, connected.</h1>
         <p>Workshop, inventory, PEX and commercial workflows in one secure tenant platform.</p>
         <div className="login-capabilities">
@@ -34,7 +34,7 @@ export default async function LoginPage() {
       </section>
       <section className="login-panel">
         <div className="login-card">
-          <p className="eyebrow">Apollo X</p>
+          <p className="eyebrow">Flo X Integrations</p>
           <h2>Welcome back</h2>
           <p className="muted">Sign in with your company account.</p>
           <LoginForm />

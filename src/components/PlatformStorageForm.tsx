@@ -122,7 +122,7 @@ export function PlatformStorageForm({ companyId, initial, fileCount, totalBytes,
 
   const options: { value: Choice; title: string; text: string; icon: ReactNode }[] = [
     { value: "", title: "Platform default", text: "Use the shared bucket set up for the whole platform.", icon: <Database size={18} /> },
-    { value: "LOCAL_FOLDER", title: "Local folder on the server", text: "Save attached and system-created documents to a folder on the server that runs Apollo X.", icon: <FolderOpen size={18} /> },
+    { value: "LOCAL_FOLDER", title: "Local folder on the server", text: "Save attached and system-created documents to a folder on the server that runs Flo X Integrations.", icon: <FolderOpen size={18} /> },
     { value: "R2", title: "Cloudflare R2", text: "Private cloud bucket, no download fees. Guided set-up with a connection test.", icon: <Cloud size={18} /> },
     { value: "S3_COMPATIBLE", title: "Other S3-compatible", text: "Backblaze B2, Amazon S3, Wasabi or an on-premises MinIO server.", icon: <Server size={18} /> },
   ];
@@ -163,7 +163,7 @@ export function PlatformStorageForm({ companyId, initial, fileCount, totalBytes,
 
       {choice === "LOCAL_FOLDER" && (
         <div className="platform-form-grid compact-top-gap">
-          <label className="wide"><span>Folder path on the Apollo X server</span><input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="D:\ApolloXFiles   or   \\FILESERVER\ApolloX   or   /var/data/apollox-files" /></label>
+          <label className="wide"><span>Folder path on the Flo X Integrations server</span><input value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="D:\ApolloXFiles   or   \\FILESERVER\ApolloX   or   /var/data/apollox-files" /></label>
         </div>
       )}
 
@@ -192,7 +192,7 @@ export function PlatformStorageForm({ companyId, initial, fileCount, totalBytes,
           <AlertTriangle size={18} />
           <div>
             <strong>This company already has {fileCount} stored file{fileCount === 1 ? "" : "s"} ({sizeLabel}).</strong>
-            <p>Apollo X does not move files between locations by itself. After the change the old files will not open from Apollo X until you bring them back. Export them first; once the new location is saved, use <em>Import exported files</em> with that .zip to make them viewable again.</p>
+            <p>Flo X Integrations does not move files between locations by itself. After the change the old files will not open from Flo X Integrations until you bring them back. Export them first; once the new location is saved, use <em>Import exported files</em> with that .zip to make them viewable again.</p>
             <a className="quiet-button" href={`/api/v1/platform/companies/${companyId}/storage-export`}><Download size={14} /> Export current files (.zip)</a>
             <label className="storage-ack"><input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} /> I have exported the files I need, and understand the old files will not open until I import them into the new location.</label>
           </div>
@@ -232,7 +232,7 @@ export function PlatformStorageForm({ companyId, initial, fileCount, totalBytes,
         <div className="storage-tool">
           <div>
             <strong><Upload size={14} /> Import exported files</strong>
-            <p className="muted small-line">After changing the storage location, upload the .zip you exported from this card (or a zip of the copied folder). Each file is put back at the path Apollo X looks for it, so it opens again.</p>
+            <p className="muted small-line">After changing the storage location, upload the .zip you exported from this card (or a zip of the copied folder). Each file is put back at the path Flo X Integrations looks for it, so it opens again.</p>
           </div>
           <label className="quiet-button storage-file-button">
             {importState.running ? "Importing…" : "Choose .zip to import"}

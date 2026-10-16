@@ -24,8 +24,8 @@ import { getRequestContext } from "@/lib/auth/session";
 export async function generateMetadata(): Promise<Metadata> {
   const ctx = await getRequestContext();
   return {
-    title: { default: "Apollo X", template: "%s | Apollo X" },
-    description: "Apollo X operational and commercial platform",
+    title: { default: "Flo X Integrations", template: "%s | Flo X Integrations" },
+    description: "Flo X Integrations operational and commercial platform",
     icons: { icon: `/api/v1/company-settings/favicon?v=${ctx?.companyId ?? "anon"}` },
   };
 }

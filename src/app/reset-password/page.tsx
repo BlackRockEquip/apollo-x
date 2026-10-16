@@ -12,7 +12,7 @@ export default function ResetPasswordPage() {
   return (
     <main className="login-panel" style={{ minHeight: "100vh" }}>
       <div className="login-card">
-        <p className="eyebrow">Apollo X</p>
+        <p className="eyebrow">Flo X Integrations</p>
         <h2>Reset your password</h2>
         <p className="muted">Choose a new password for your account.</p>
         <Suspense fallback={null}>

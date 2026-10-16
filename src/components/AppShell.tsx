@@ -160,9 +160,9 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
       <aside className={mobileNavOpen ? "sidebar mobile-nav-open" : "sidebar"}>
         <div className="sidebar-brand">
           <div className="sidebar-brand-logo-wrap">
-            {logoSrc ? <Image src={logoSrc} alt={`${companyName} logo`} className="brand-logo" width={34} height={34} unoptimized /> : <div className="brand-logo-fallback">AX</div>}
+            {logoSrc ? <Image src={logoSrc} alt={`${companyName} logo`} className="brand-logo" width={34} height={34} unoptimized /> : <div className="brand-logo-fallback">FX</div>}
           </div>
-          <div><p className="eyebrow">Apollo X</p><strong>{companyName}</strong></div>
+          <div><p className="eyebrow">Flo X Integrations</p><strong>{companyName}</strong></div>
         </div>
         {/* 2026-10-01 — was rendered unconditionally for every tenant
             user; now gated by DASHBOARD_VIEW same as every other nav item

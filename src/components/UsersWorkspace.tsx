@@ -393,7 +393,7 @@ export function UsersWorkspace() {
             </div>
           </>
           : groupedModules.length === 0
-          ? <p className="table-state compact-empty-state">No modules are enabled for this company yet. Ask your Apollo X administrator to add module licensing before users can be granted access.</p>
+          ? <p className="table-state compact-empty-state">No modules are enabled for this company yet. Ask your Flo X Integrations administrator to add module licensing before users can be granted access.</p>
           : <div className="module-picker-groups">{groupedModules.map(([category, items]) => <section key={category} className="module-picker-group"><h3>{category}</h3><div className="module-pill-grid">{items.map((item) => { const selected = form.selectedModuleKeys.includes(item.moduleKey); return <button key={item.moduleKey} type="button" className={selected ? "module-pill selected" : "module-pill"} onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: selected ? current.selectedModuleKeys.filter((key) => key !== item.moduleKey) : [...current.selectedModuleKeys, item.moduleKey] }))}><span>{selected ? "✓" : "○"}</span><strong>{item.label}</strong></button>; })}</div></section>)}</div>}
       </section>
       <div className="platform-inline-note"><ShieldAlert size={14} /> Backend entitlement checks remain authoritative. UI choices cannot grant unlicensed access.</div>

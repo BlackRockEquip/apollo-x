@@ -1,6 +1,6 @@
-# Apollo X
+# Flo X Integrations
 
-Production foundation for the multi-tenant Apollo X operational and commercial platform.
+Production foundation for the multi-tenant Flo X Integrations operational and commercial platform.
 
 Phase 2 adds tenant-scoped customers (branches, contacts and typed addresses), suppliers, manufacturers/brands, parts definitions, hierarchical storage locations, services, effective-dated tax, commercial terms, controlled numbering, and expanded company settings. Stock balances and movements remain intentionally deferred to Phase 3. Source mappings are documented in `docs/phase-2-reference-mapping.md`.
 
@@ -14,7 +14,7 @@ Phase 2 adds tenant-scoped customers (branches, contacts and typed addresses), s
 - Central permission and module-access guards.
 - Tenant-safe repository mutation pattern.
 - Audit event model and service.
-- Versioned API routes and responsive Apollo UI shell.
+- Versioned API routes and responsive Flo X Integrations UI shell.
 - Unit and optional PostgreSQL tenant-isolation integration tests.
 
 ## Local setup
