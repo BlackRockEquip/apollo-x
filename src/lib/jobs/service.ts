@@ -136,6 +136,13 @@ function requireJobTypeModule(ctx: RequestContext, type: string) {
   else if (type === "PEX_SUPPLY" || type === "PEX_RETURN") requireModule(ctx, "PEX_STOCK", "WRITE");
 }
 
+// 2026-10-16, industry builds step C: "Stock levels" off means the company
+// keeps no stock figures. Part lines then skip the catalog lookup, the stock
+// check and the reservation, and run To be ordered -> Ordered -> Received.
+function stockTrackingOn(ctx: RequestContext) {
+  return (ctx.moduleAccess.get("INVENTORY") ?? "DENIED") !== "DENIED";
+}
+
 function requireJobsRead(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
@@ -1100,6 +1107,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineBulkAddInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
+  const stockOn = stockTrackingOn(ctx);
   const jobNumberLabel = job.jobNumber ?? job.draftNumber;
 
   const pasteRows = (input.bulkLines ?? "")
@@ -1139,7 +1147,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
       // and PartAlternateNumber in schema.prisma) — same lookup Stock
       // Levels search uses, so a job's parts list recognizes an old or
       // group number the same way.
-      const part = await findPartByNumber(tx, companyId, row.partNumber, { id: true, description: true, binLocationId: true });
+      const part = stockOn ? await findPartByNumber(tx, companyId, row.partNumber, { id: true, description: true, binLocationId: true }) : null;
 
       // "In stock" reflects total on-hand across all locations, same
       // purpose as ModApp's InventoryItem lookup against Apollo X's
@@ -1347,7 +1355,7 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
   const stockRemaining = new Prisma.Decimal(qtys.stockRemaining.toString());
   const source = input.source ?? "AUTO";
   let stockPart = new Prisma.Decimal(0);
-  if (line.partId) {
+  if (line.partId && stockTrackingOn(ctx)) {
     if (source === "STOCK") {
       if (enteredQty.gt(stockRemaining)) {
         throw new StockError("PART_LINE_RECEIVE_EXCEEDS_STOCK_PORTION", `Only ${stockRemaining.toString()} of this line is meant to come from stock. Receive the rest as supplier delivery.`);
@@ -1419,7 +1427,7 @@ export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string,
     // puts that stock back (and re-reserves it for the line).
     let returnedNote = "";
     let nextIssued: Prisma.Decimal | null = line.stockIssuedQuantity ?? null;
-    if (line.partId) {
+    if (line.partId && stockTrackingOn(ctx)) {
       const { returned } = await returnStockForJobPartLineTx(tx, { ...ctx, companyId }, { jobId, jobNumber: jobNumberLabel, lineId: line.id, partId: line.partId });
       if (returned.gt(0)) returnedNote = ` ${returned.toString()} returned to stock.`;
       // What stays counted as issued is only what an older pick slip took at
@@ -1501,7 +1509,10 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
     // trim the listed quantity down to what stock is now expected to supply
     // (never below what's already been taken), and if that empties it, move
     // the line off PICKED.
-    let nextStatus = orderNumber && line.status === "PENDING" ? "ON_ORDER" : line.status;
+    // Industry builds step C: with Stock levels off, a supplier name alone
+    // (not only an order number) makes the line "Ordered".
+    const stockOn = stockTrackingOn(ctx);
+    let nextStatus = (orderNumber || (!stockOn && orderedFromSupplierId)) && line.status === "PENDING" ? "ON_ORDER" : line.status;
     let nextPicked: Prisma.Decimal | null = line.pickedQuantity ?? null;
     if (nextPicked && nextPicked.gt(0)) {
       const keep = Prisma.Decimal.max(new Prisma.Decimal(after.stockQty.toString()), alreadyIssued);
@@ -1537,7 +1548,10 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
     // holds plus the unreserved stock in all bins covers what is still
     // needed, otherwise Pending. The reservation reconcile above has already tried to hold the
     // units again.
-    if (line.status === "ON_ORDER" && !hasOrderInfo && line.partId && !(line.receivedQuantity && line.receivedQuantity.gt(0))) {
+    if (!stockOn && line.status === "ON_ORDER" && !hasOrderInfo && !(line.receivedQuantity && line.receivedQuantity.gt(0))) {
+      // No stock to check against: order details gone means it is still to be ordered.
+      await tx.jobPartLine.update({ where: { id: line.id }, data: { status: "PENDING" } });
+    } else if (line.status === "ON_ORDER" && !hasOrderInfo && line.partId && !(line.receivedQuantity && line.receivedQuantity.gt(0))) {
       const balances = await tx.stockBalance.findMany({ where: { companyId, partId: line.partId, quantityOnHand: { gt: 0 } }, select: { quantityOnHand: true, quantityReserved: true } });
       const unreserved = balances.reduce((sum, b) => sum.plus(Prisma.Decimal.max(b.quantityOnHand.minus(b.quantityReserved), new Prisma.Decimal(0))), new Prisma.Decimal(0));
       const held = await tx.stockReservation.findMany({ where: { companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" }, select: { quantity: true } });

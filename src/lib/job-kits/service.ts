@@ -484,8 +484,10 @@ export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId
       // kit-sourced line as plain "PENDING" with nothing reserved, unlike
       // every other way of adding a part to a job's parts list.
       const existing = await tx.jobPartLine.findFirst({ where: { companyId, jobId, partId: line.partId, status: { not: "RECEIVED" } } });
-      const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: line.partId }, _sum: { quantityOnHand: true } });
-      const onHand = balances._sum.quantityOnHand ?? new Prisma.Decimal(0);
+      // Industry builds step C: with Stock levels off nothing is checked against stock.
+      const stockOn = (ctx.moduleAccess.get("INVENTORY") ?? "DENIED") !== "DENIED";
+      const balances = stockOn ? await tx.stockBalance.aggregate({ where: { companyId, partId: line.partId }, _sum: { quantityOnHand: true } }) : null;
+      const onHand = balances?._sum.quantityOnHand ?? new Prisma.Decimal(0);
 
       if (existing) {
         // A line already in PARTIALLY_RECEIVED is mid-receiving, or

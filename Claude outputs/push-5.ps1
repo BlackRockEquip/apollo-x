@@ -1,17 +1,16 @@
 cd "C:\Projects\Apollo X Working"
-# Industry builds, step B. No database migration in this step.
+# Industry builds, step C. No database migration in this step.
 git add -A
 @'
-Industry builds, step B: menus, pages and actions follow the module switches
+Industry builds, step C: the job screen follows the module switches
 
-- Parts, Outwork and the RFQs tab now follow their own modules (Job parts & ordering, Outwork, RFQ & supplier quotes)
-  instead of the Jobs & WIP licence; the sidebar, pages and the actions behind them are all checked on the server.
-- Part-line, outwork, field-service, pick-slip, RFQ and parts-outstanding actions check their own module.
-  Creating a Field service or PEX job needs that module.
-- A module whose requirement is off is unavailable: RFQ needs Job parts & ordering; Pick slips need Job parts & ordering
-  and Stock levels. A requirement in licence grace (read-only) caps the dependent at read-only. Black Rock is unchanged.
-- Dashboard: Outstanding parts follows Job parts & ordering; Procurement / outwork shows when RFQ or Outwork is on.
-- Job screens (hiding sections and buttons, part-line wording) come in step C.
+- Parts list, Pick slips, RFQ buttons, Outwork and Field service on a job hide when their module is off.
+  If the job already holds records from that module they stay visible but read-only.
+- New job / job type dropdown only offers Field service and PEX types when those modules are on.
+- Stock levels off: part lines read "To be ordered" until a supplier name or order number is entered, then "Ordered".
+  No stock lookup, reservation, stock split or from-stock receiving for those lines.
+- Pick slips are not loaded when the Pick slips module is off. "Send to PEX Inventory" needs the PEX module.
+- Module access is now available to screens through the same context as the user's permissions.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent } from "react";
+import type { ModuleKey } from "@prisma/client";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Unlink, Upload, X } from "lucide-react";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -192,6 +193,17 @@ type JobDetail = Row & {
 };
 
 const JOB_TYPES = Object.entries(JOB_TYPE_LABELS);
+
+// 2026-10-16, industry builds step C: how a part line's status reads. With
+// Stock levels off there is no stock check, so a line is simply "To be
+// ordered" until a supplier or order number is entered, then "Ordered".
+function partStatusLabel(status: string, stockOn: boolean): string {
+  if (!stockOn) {
+    if (status === "PENDING") return "To be ordered";
+    if (status === "ON_ORDER") return "Ordered";
+  }
+  return status.replaceAll("_", " ");
+}
 // Form keys autosaved by runFieldReportAutosave (the field-service report fields).
 const FIELD_REPORT_KEYS = ["fieldTechnician", "fieldVehicle", "fieldReport", "fieldScheduledDate", "fieldHoursNormal", "fieldHoursOvertime", "fieldHoursTravelled", "fieldFindings", "fieldWorkDone", "fieldRecommendations", "fieldFollowUp", "fieldFollowUpDate"];
 // 2026-10-06 — field jobs: what an attachment (usually a photo) shows. Keys match attachmentUploadInput.tag.
@@ -360,7 +372,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // today for "can edit a job's other fields", so this names the role the
   // user actually described. See jobs/service.ts's requireNotMechanicRestricted
   // and updateJob for the matching server-side enforcement.
-  const { tenantRole, tenantPermissions } = useTenantPermissions();
+  const { tenantRole, tenantPermissions, moduleAccess } = useTenantPermissions();
+  // 2026-10-16, industry builds step C: which optional modules this company has. A module that is off
+  // hides its section (and its buttons); if the job already holds records from it they stay visible but
+  // read-only. The server refuses the writes either way.
+  const accessOf = (key: ModuleKey) => moduleAccess.get(key) ?? "DENIED";
+  const stockOn = accessOf("INVENTORY") !== "DENIED";
+  const partsAccess = accessOf("JOB_PARTS");
+  const pickSlipsAccess = accessOf("PICK_SLIPS");
+  const rfqAccess = accessOf("PROCUREMENT");
+  const outworkAccess = accessOf("OUTWORK");
+  const fieldAccess = accessOf("FIELD_SERVICE");
+  const pexAccess = accessOf("PEX_STOCK");
+  // Job types that belong to an optional module are only offered when that module is on (a job that already has such a type keeps it).
+  function jobTypeOptions(current: string) {
+    return JOB_TYPES.filter(([value]) => value === current || (value === "FIELD_SERVICE" ? fieldAccess === "FULL" : value === "PEX_SUPPLY" || value === "PEX_RETURN" ? pexAccess === "FULL" : true));
+  }
   const canViewCustomer = tenantPermissions.has("CUSTOMERS_VIEW");
   const mechanicFieldsLocked = tenantRole === "USER";
   // 2026-10-01, user request (system-wide): replaces every window.confirm()
@@ -373,7 +400,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-05 — "Send to PEX Inventory" is available at any status once the
   // unit has arrived (mirrors PEX_ALLOCATE_BLOCKED_STATUSES in pex/service.ts)
   // and only to holders of PEX_STOCK_TRANSFER_IN (Admin/Manager by default).
-  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && !!job && !["TO_BE_COLLECTED", "CANCELLED"].includes(String(job.status));
+  const canSendToPex = tenantPermissions.has("PEX_STOCK_TRANSFER_IN") && pexAccess === "FULL" && !!job && !["TO_BE_COLLECTED", "CANCELLED"].includes(String(job.status));
   // 2026-10-05 — true while this job is sitting in PEX Inventory by way of
   // "Send to PEX Inventory" (a return record with no supply job, not
   // scrapped): drives the header "Pex" pill and the undo button.
@@ -1790,7 +1817,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .map((line) => {
         const quantity = decimalText(line.quantity);
         const received = decimalText(line.receivedQuantity ?? 0);
-        const status = String(line.status || "").replaceAll("_", " ");
+        const status = partStatusLabel(String(line.status || ""), stockOn);
         return `<tr>
           <td>${esc(String(line.partNumber || ""))}</td>
           <td>${esc(String(line.description || ""))}</td>
@@ -1826,7 +1853,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // jobPickSlips' own comment above) — separate from load()/job's own GET
   // since PickSlip isn't part of the Job model's own nested includes.
   const loadJobPickSlips = useCallback(async () => {
-    if (!jobId) return;
+    if (!jobId || pickSlipsAccess === "DENIED") return;
     setJobPickSlipsLoading(true); setJobPickSlipsError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips?jobId=${jobId}&pageSize=50`, { cache: "no-store" });
@@ -1838,7 +1865,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     } finally {
       setJobPickSlipsLoading(false);
     }
-  }, [jobId]);
+  }, [jobId, pickSlipsAccess]);
   useEffect(() => { void loadJobPickSlips(); }, [loadJobPickSlips]);
 
   async function createJobPickSlip(overrideLineIds?: string[]) {
@@ -2831,7 +2858,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <td class="c">${escapeHtml(decimalText(line.receivedQuantity ?? 0))}</td>
         <td class="mono">${escapeHtml(String(line.orderNumber || "—"))}</td>
         <td>${escapeHtml(String(line.orderedFromSupplier?.name || "—"))}</td>
-        <td><span class="st">${escapeHtml(String(line.status || "").replaceAll("_", " "))}</span></td>
+        <td><span class="st">${escapeHtml(partStatusLabel(String(line.status || ""), stockOn))}</span></td>
       </tr>`).join("");
     const outworkRows = job.outworkItems.map((item) => `<tr>
         <td>${escapeHtml(String(item.description || ""))}</td>
@@ -3814,7 +3841,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {!isFieldForm && (
           <>
         <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
@@ -4004,7 +4031,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     number." Opens the new dedicated Compare quotes dialog
                     (see showQuoteComparePopup below) — disabled until at
                     least one supplier has actually been asked to quote. */}
-                {job.partLines.length > 0 && (
+                {job.partLines.length > 0 && (rfqAccess !== "DENIED" || job.rfqRequests.length > 0) && (
                   <button type="button" className="quiet-button" disabled={job.rfqRequests.length === 0} title={job.rfqRequests.length === 0 ? "Request a quote from at least one supplier first" : undefined} onClick={openQuoteCompare}><Columns3 size={14} /> Compare quotes</button>
                 )}
                 {job.partLines.length > 0 && (
@@ -4116,7 +4143,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 // 2026-10-05 — how the line splits between shelf stock and an
                 // outside supplier (see partLineQuantities).
                 const qtys = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity, pickedQuantity: line.pickedQuantity });
-                const isSplitLine = qtys.hasOrderInfo && qtys.ordered > 0 && qtys.stockQty > 0;
+                const isSplitLine = stockOn && qtys.hasOrderInfo && qtys.ordered > 0 && qtys.stockQty > 0;
                 const receiveStockPart = !line.part ? 0 : receiveSource === "STOCK" ? Number(receiveQty || 0) : receiveSource === "AUTO" ? Math.min(Number(receiveQty || 0), qtys.stockRemaining) : 0;
                 const statusTone = fullyReceived ? "" : line.status === "PICKED" ? "tone-blue" : "neutral";
                 const supplierPickerOpenHere = orderEditLineId === lineId;
@@ -4133,7 +4160,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
                     {receivingLineId === lineId && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
                       <input type="number" min={1} max={outstanding} value={receiveQty} onChange={(e) => setReceiveQty(e.target.value)} style={{ width: 80 }} />
-                      {qtys.stockRemaining > 0 && qtys.supplierOutstanding > 0 && qtys.hasOrderInfo && (
+                      {stockOn && qtys.stockRemaining > 0 && qtys.supplierOutstanding > 0 && qtys.hasOrderInfo && (
                         <select value={receiveSource} onChange={(e) => setReceiveSource(e.target.value as "AUTO" | "STOCK" | "ORDER")} aria-label="Where these units came from">
                           <option value="AUTO">Stock first</option>
                           <option value="STOCK">From stock</option>
@@ -4190,7 +4217,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         has an order number or supplier, so a part ordered from
                         somewhere else is never listed on a pick slip; lower it
                         to take the rest from stock. */}
-                    {qtys.hasOrderInfo && (
+                    {stockOn && qtys.hasOrderInfo && (
                       <label className="muted small-line" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                         Qty ordered
                         <input
@@ -4263,7 +4290,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && supplierDropPos && <div className="selector-results" style={{ position: "fixed", left: supplierDropPos.left, width: supplierDropPos.width, top: supplierDropPos.top ?? "auto", bottom: supplierDropPos.bottom ?? "auto", maxHeight: supplierDropPos.maxHeight, zIndex: 40 }}>{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td>
-                    <span className={`status-pill ${statusTone}`}>{text(line.status).replaceAll("_", " ")}</span>
+                    <span className={`status-pill ${statusTone}`}>{partStatusLabel(text(line.status), stockOn)}</span>
                     {/* 2026-09-29, user request: moved from under the part
                         number to here, under Status — see partStockOnHand's
                         own comment above for what this shows and why. */}
@@ -4309,7 +4336,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </tbody></table></div>
               );
             })()}
-            {job.partLines.length > 0 && (
+            {job.partLines.length > 0 && rfqAccess === "FULL" && (
               <div className="detail-actions" style={{ borderTop: "1px solid var(--ink-150)" }}>
                 <button type="button" className="section-action-button" onClick={() => setShowRfqPopup(true)}><Mail size={15} /> Request quotes from suppliers</button>
               </div>
@@ -4440,7 +4467,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           </section>
   ) : null;
 
-  const outworkSection = job ? (
+  const outworkSectionInner = job ? (
           <section className="detail-panel">
             <header>
               <div><h2>Outwork</h2><p>Components sent out to a supplier for outwork (machining, sandblasting, plating) — tracked until they come back.</p></div>
@@ -4619,7 +4646,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Work requested</h2><p>What the customer wants done, and the machine it is on.</p></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{JOB_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
         <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setShowMachineMakeOptions(false))}>
@@ -4642,10 +4669,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </section>
   ) : null;
 
+  // Industry builds step C: Outwork hides when its module is off and the job has none; otherwise read-only.
+  const outworkSection = job && (outworkAccess !== "DENIED" || job.outworkItems.length > 0) ? (
+    <fieldset disabled={outworkAccess !== "FULL"} className="unstyled-fieldset">{outworkSectionInner}</fieldset>
+  ) : null;
+
   const fieldServiceSection = job && fieldLayout ? (
     <section className="detail-panel">
       <header><div><h2>Field service</h2><p>Who is going, when, and what was done.</p></div></header>
-      <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
+      <fieldset disabled={mechanicFieldsLocked || fieldAccess !== "FULL"} className="unstyled-fieldset">
       <div className="drawer-fields">
         <label><span>Technician</span><input value={form.fieldTechnician} onChange={(e) => updateField("fieldTechnician", e.target.value)} /></label>
         <label><span>Vehicle</span><input value={form.fieldVehicle} onChange={(e) => updateField("fieldVehicle", e.target.value)} /></label>
@@ -4670,18 +4702,23 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // job type. Parts list / Pick slips / Follow-up are tabs of one card; Pick
   // slips only once parts are added; Follow-up only while ordered parts are
   // outstanding (same groups the Follow-up section itself lists).
-  const showPickSlipsTab = !!job && (job.partLines.length > 0 || jobPickSlips.length > 0);
-  const showFollowupTab = !!job && !mechanicFieldsLocked && partsFollowupGroups.length > 0;
+  const showPickSlipsTab = !!job && (pickSlipsAccess !== "DENIED" ? (job.partLines.length > 0 || jobPickSlips.length > 0) : jobPickSlips.length > 0);
+  const showFollowupTab = !!job && !mechanicFieldsLocked && partsAccess === "FULL" && partsFollowupGroups.length > 0;
   const activePartsTab = fieldPartsTab === "pickslips" && showPickSlipsTab ? "pickslips" : fieldPartsTab === "followup" && showFollowupTab ? "followup" : "parts";
-  const fieldPartsBlock = job ? (
+  // Industry builds step C: the whole Parts card is hidden when Job parts & ordering is off and the job has no
+  // parts; with parts already on it, it stays but read-only.
+  const partsReadOnly = partsAccess !== "FULL";
+  const showPartsBlock = !!job && (partsAccess !== "DENIED" || job.partLines.length > 0);
+  const fieldPartsBlock = job && showPartsBlock ? (
     <div className="field-parts-block">
+      {partsReadOnly && <p className="muted small-line" style={{ margin: "0 0 8px" }}>Job parts &amp; ordering is switched off for this company, so the parts already on this job are read-only.</p>}
       <div className="field-tabs" role="tablist" aria-label="Parts">
         <button type="button" role="tab" aria-selected={activePartsTab === "parts"} className={activePartsTab === "parts" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("parts")}>Parts list <span className="field-tab-count">{job.partLines.length}</span></button>
         {showPickSlipsTab && <button type="button" role="tab" aria-selected={activePartsTab === "pickslips"} className={activePartsTab === "pickslips" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("pickslips")}>Pick slips <span className="field-tab-count">{jobPickSlips.length}</span></button>}
         {showFollowupTab && <button type="button" role="tab" aria-selected={activePartsTab === "followup"} className={activePartsTab === "followup" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("followup")}>Follow-up <span className="field-tab-count">{partsFollowupGroups.length}</span></button>}
       </div>
-      {activePartsTab === "parts" && partsListSection}
-      {activePartsTab === "pickslips" && pickSlipsSection}
+      {activePartsTab === "parts" && <fieldset disabled={partsReadOnly} className="unstyled-fieldset">{partsListSection}</fieldset>}
+      {activePartsTab === "pickslips" && <fieldset disabled={pickSlipsAccess !== "FULL"} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
       {activePartsTab === "followup" && followUpSection}
     </div>
   ) : null;

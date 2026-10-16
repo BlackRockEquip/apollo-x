@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
+import type { ModuleAccessMode } from "@/lib/entitlements/policy";
 import type { TenantPermission } from "@/lib/auth/permissions";
 import { TENANT_ROLE_LABELS } from "@/lib/constants";
 import { LogoutButton } from "@/components/LogoutButton";
@@ -74,8 +75,9 @@ function bestNavMatchHref(items: NavItem[], pathname: string): string | null {
 // already serializes Map/Set natively (context.moduleAccess, a Map, is used
 // directly a few lines below), so context.tenantPermissions (a Set) needs
 // no extra serialization step here either.
-type PermissionsContextValue = { tenantRole: TenantRole | null; tenantPermissions: ReadonlySet<TenantPermission> };
-const PermissionsContext = createContext<PermissionsContextValue>({ tenantRole: null, tenantPermissions: new Set() });
+// 2026-10-16, industry builds step C: moduleAccess is passed down too, so a screen (the job screen, for one) can hide or lock a section whose module is off.
+type PermissionsContextValue = { tenantRole: TenantRole | null; tenantPermissions: ReadonlySet<TenantPermission>; moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode> };
+const PermissionsContext = createContext<PermissionsContextValue>({ tenantRole: null, tenantPermissions: new Set(), moduleAccess: new Map() });
 export function useTenantPermissions() {
   return useContext(PermissionsContext);
 }
@@ -190,7 +192,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
     a problem) rather than a plain Link straight to /support; see its own
     comment for why. */}
 <div className="topbar-user"><NotificationBell /><SupportRequestDialog /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
-        <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions }}>{children}</PermissionsContext.Provider></main>
+        <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions, moduleAccess: context.moduleAccess }}>{children}</PermissionsContext.Provider></main>
       </div>
     </div>
   );
