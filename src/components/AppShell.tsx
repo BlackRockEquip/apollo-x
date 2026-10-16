@@ -76,8 +76,9 @@ function bestNavMatchHref(items: NavItem[], pathname: string): string | null {
 // directly a few lines below), so context.tenantPermissions (a Set) needs
 // no extra serialization step here either.
 // 2026-10-16, industry builds step C: moduleAccess is passed down too, so a screen (the job screen, for one) can hide or lock a section whose module is off.
-type PermissionsContextValue = { tenantRole: TenantRole | null; tenantPermissions: ReadonlySet<TenantPermission>; moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode> };
-const PermissionsContext = createContext<PermissionsContextValue>({ tenantRole: null, tenantPermissions: new Set(), moduleAccess: new Map() });
+// 2026-10-16, Engineering Business: industryBuild is passed down too, so screens can show the build's own status flow and labels.
+type PermissionsContextValue = { tenantRole: TenantRole | null; tenantPermissions: ReadonlySet<TenantPermission>; moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode>; industryBuild: string | null };
+const PermissionsContext = createContext<PermissionsContextValue>({ tenantRole: null, tenantPermissions: new Set(), moduleAccess: new Map(), industryBuild: null });
 export function useTenantPermissions() {
   return useContext(PermissionsContext);
 }
@@ -192,7 +193,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
     a problem) rather than a plain Link straight to /support; see its own
     comment for why. */}
 <div className="topbar-user"><NotificationBell /><SupportRequestDialog /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
-        <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions, moduleAccess: context.moduleAccess }}>{children}</PermissionsContext.Provider></main>
+        <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions, moduleAccess: context.moduleAccess, industryBuild: context.industryBuild ?? null }}>{children}</PermissionsContext.Provider></main>
       </div>
     </div>
   );

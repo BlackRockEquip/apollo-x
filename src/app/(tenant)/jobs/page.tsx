@@ -14,7 +14,7 @@ import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
-import { JOB_TYPE_LABELS } from "@/lib/jobs/ui";
+import { JOB_TYPE_LABELS, jobTypeLabelsFor } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
 import { JOBS_WIP_COLUMNS, filterColumnsByPermission, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
@@ -45,8 +45,8 @@ function fmtEnum(value: string | null | undefined): string {
 // extra pills beside it (the old Status dropdown had both as entries). Kept
 // in step with the pill conditions in renderCell below.
 const FILTER_SEP = "|~|";
-function statusFilterValues(job: JobRow): string {
-  const values = [jobStatusLabel(job.status, job.returnedUnrepaired)];
+function statusFilterValues(job: JobRow, build?: string | null): string {
+  const values = [jobStatusLabel(job.status, job.returnedUnrepaired, build)];
   if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
   if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)) values.push("Pex");
   return values.join(FILTER_SEP);
@@ -71,7 +71,7 @@ function searchText(job: JobRow, canSearchCustomerName: boolean): string {
 // globals.css, which positions relative to the <tr> so it works from any
 // cell, not just the first one) since jobNumber is the one column that's
 // always shown (see JOBS_WIP_COLUMNS' `locked: true`).
-function renderCell(columnId: JobsWipColumnId, job: JobRow) {
+function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | null) {
   switch (columnId) {
     case "jobNumber":
       return <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>;
@@ -84,14 +84,14 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow) {
     case "customerPo":
       return job.customerPo || "—";
     case "type":
-      return JOB_TYPE_LABELS[job.type];
+      return jobTypeLabelsFor(build)[job.type];
     case "status":
       // 2026-10-01 — same "pill next to status, folded in once Completed"
       // treatment as the job detail header (JobWorkspace.tsx) — see
       // ReturnUnrepairedPill/jobStatusLabel's own comments in
       // StatusPill.tsx.
       return <>
-        <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />
+        <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={build} />
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
         {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId) && <> <PexAllocatedPill /></>}
       </>;
@@ -204,10 +204,11 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   // cards use these) just pre-ticks that value in the header filter instead of
   // filtering on the server.
   const include: Record<string, string[]> = {};
-  if (type) include[COLUMN_LABELS.type] = [JOB_TYPE_LABELS[type as keyof typeof JOB_TYPE_LABELS] ?? type];
+  const typeLabels = jobTypeLabelsFor(ctx.industryBuild);
+  if (type) include[COLUMN_LABELS.type] = [typeLabels[type as keyof typeof JOB_TYPE_LABELS] ?? type];
   if (pexAllocated) include[COLUMN_LABELS.status] = ["Pex"];
   else if (returnedUnrepaired) include[COLUMN_LABELS.status] = ["Return Unrepaired", jobStatusLabel("COMPLETE", true)];
-  else if (status) include[COLUMN_LABELS.status] = status === "COMPLETE" ? [jobStatusLabel("COMPLETE"), jobStatusLabel("COMPLETE", true)] : [jobStatusLabel(status)];
+  else if (status) include[COLUMN_LABELS.status] = status === "COMPLETE" ? [jobStatusLabel("COMPLETE", false, ctx.industryBuild), jobStatusLabel("COMPLETE", true)] : [jobStatusLabel(status, false, ctx.industryBuild)];
   // 2026-10-09, user report: "job wip search bar is very slow". The search now
   // runs in the browser over the loaded rows (LiveSearchInput + TableColumnFilters)
   // instead of asking the server on every keystroke, so the page loads every job
@@ -322,7 +323,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               {data.items.map((job) => (
                 <tr key={job.id} className="clickable-row" data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()}>
                   {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
-                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job) : undefined}>{renderCell(id, job)}</td>)}
+                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild)}</td>)}
                   <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
                 </tr>
               ))}

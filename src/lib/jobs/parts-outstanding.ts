@@ -47,6 +47,8 @@ export type PartsOutstandingRow = {
 export const OUTSTANDING_JOB_STATUSES = [
   "AWAIT_OUTWORK", "WAITING_FOR_PARTS", "ASSEMBLY", "TESTING", "TO_PAINT_WRAP", "TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "COMPLETE", "CLOSED",
   "IN_PROGRESS", "AWAIT_PAYMENT",
+  // 2026-10-16, Engineering flow: work under way or later.
+  "WORK_IN_PROGRESS", "QC_CONTROL",
 ] as const;
 
 export async function listPartsOutstanding(ctx: RequestContext): Promise<PartsOutstandingRow[]> {

@@ -1,4 +1,4 @@
-import { JOB_STATUS_LABELS } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, jobStatusLabelsFor } from "@/lib/jobs/ui";
 
 // Compared directly against ModApp's own equivalent (Badge.tsx's
 // JOB_STATUS_TONE) at the user's request ("make the status color coding
@@ -50,6 +50,9 @@ const JOB_STATUS_TONE: Record<string, string> = {
   AWAIT_PAYMENT: "purple",
   RECEIVED: "amber",
   INSPECTING: "purple",
+  AWAIT_ASSESSMENT: "amber",
+  WORK_IN_PROGRESS: "blue",
+  QC_CONTROL: "teal",
 };
 
 export function jobStatusTone(status: string) { return JOB_STATUS_TONE[status] ?? "neutral"; }
@@ -64,12 +67,13 @@ export function jobStatusTone(status: string) { return JOB_STATUS_TONE[status] ?
 // stored — same "Completed / X" convention CLOSED/CANCELLED already use
 // below in JOB_STATUS_LABELS, just computed instead of a fixed map entry
 // since it depends on two fields together.
-export function jobStatusLabel(status: string, returnedUnrepaired?: boolean): string {
+// 2026-10-16: `build` (the company's industry build) picks the build's own wording (Engineering).
+export function jobStatusLabel(status: string, returnedUnrepaired?: boolean, build?: string | null): string {
   if (status === "COMPLETE" && returnedUnrepaired) return "Completed / Unrepaired";
-  return JOB_STATUS_LABELS[status as keyof typeof JOB_STATUS_LABELS] ?? status;
+  return jobStatusLabelsFor(build)[status as keyof typeof JOB_STATUS_LABELS] ?? status;
 }
 
-export function StatusPill({ status, label, returnedUnrepaired }: { status: string; label?: string; returnedUnrepaired?: boolean }) { return <span className={`status-pill tone-${jobStatusTone(status)}`}>{label ?? jobStatusLabel(status, returnedUnrepaired)}</span>; }
+export function StatusPill({ status, label, returnedUnrepaired, build }: { status: string; label?: string; returnedUnrepaired?: boolean; build?: string | null }) { return <span className={`status-pill tone-${jobStatusTone(status)}`}>{label ?? jobStatusLabel(status, returnedUnrepaired, build)}</span>; }
 
 // Shown next to the main StatusPill while a flagged job hasn't reached
 // COMPLETE yet — once it has, the flag folds into StatusPill's own label

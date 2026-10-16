@@ -2,7 +2,7 @@ import { ModuleKey, Prisma, TicketStatus } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { JOB_STATUS_LABELS, MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor } from "@/lib/jobs/ui";
 import { listPartsOutstanding } from "@/lib/jobs/parts-outstanding";
 
 export type DashboardWidgetKey =
@@ -230,7 +230,7 @@ async function loadEtaCard(ctx: RequestContext, companyId: string, kind: "upcomi
         jobNumber: row.jobNumber ?? row.draftNumber ?? "—",
         customerName: showCustomer ? row.customer?.name ?? null : null,
         status: row.status,
-        label: JOB_STATUS_LABELS[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
+        label: jobStatusLabelsFor(ctx.industryBuild)[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
         etaDate: eta.toISOString().slice(0, 10),
         daysAway: Math.round((eta.getTime() - today.getTime()) / DAY_MS),
       };
@@ -241,7 +241,7 @@ async function loadEtaCard(ctx: RequestContext, companyId: string, kind: "upcomi
 // Open (non-terminal) statuses in pipeline order — same union the Jobs & WIP
 // list's own view=wip filter uses (WIP_STATUSES in lib/jobs/service.ts), kept
 // in pipeline order here so the status bars read top-to-bottom like the flow.
-const WIP_STATUS_ORDER = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
+const WIP_STATUS_ORDER = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS, ...ENGINEERING_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
 
 // Statuses where a job is legitimately waiting on the customer to pay, not on
 // the workshop — never flagged as "stuck" (they still show on the bars). Jobs
@@ -410,6 +410,10 @@ export async function getDashboardData(ctx: RequestContext) {
   );
 
   const nowMs = Date.now();
+  // Status wording for the company's industry build (Engineering has its own).
+  const statusLabels = jobStatusLabelsFor(ctx.industryBuild);
+  // Bars read top-to-bottom in the company's own flow order.
+  const statusOrder = ctx.industryBuild === "ENGINEERING" ? Array.from(new Set([...ENGINEERING_STATUS_STEPS.filter((status) => status !== "COMPLETE"), ...WIP_STATUS_ORDER])) : WIP_STATUS_ORDER;
   const jobsAccess = canUseJobs(ctx);
   const wantsStatusPanel = enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts");
 
@@ -436,9 +440,9 @@ export async function getDashboardData(ctx: RequestContext) {
   }
   stuckAll.sort((a, b) => b.days - a.days);
   const statusBreakdown = wantsStatusPanel
-    ? WIP_STATUS_ORDER.filter((status) => (statusCounts.get(status)?.count ?? 0) > 0).map((status) => ({
+    ? statusOrder.filter((status) => (statusCounts.get(status)?.count ?? 0) > 0).map((status) => ({
         status,
-        label: JOB_STATUS_LABELS[status],
+        label: statusLabels[status],
         count: statusCounts.get(status)!.count,
         stuck: statusCounts.get(status)!.stuck,
       }))
@@ -516,14 +520,14 @@ export async function getDashboardData(ctx: RequestContext) {
         jobNumber: jobInfo.get(row.id)?.jobNumber ?? jobInfo.get(row.id)?.draftNumber ?? "—",
         customerName: jobInfo.get(row.id)?.customer?.name ?? null,
         status: row.status,
-        label: JOB_STATUS_LABELS[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
+        label: statusLabels[row.status as keyof typeof JOB_STATUS_LABELS] ?? row.status,
         days: row.days,
       })),
       statusBreakdown,
       partsOutstandingJobs,
       partsOutstandingLineCount,
       completedThisMonth,
-      jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[JOB_STATUS_LABELS[row.status]] = row._count._all; return acc; }, {}),
+      jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[statusLabels[row.status]] = row._count._all; return acc; }, {}),
       recentJobs,
       procurementOpen,
       pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),

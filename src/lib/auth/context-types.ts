@@ -19,5 +19,7 @@ export type RequestContext = {
   backgroundColor?: string | null;
   hasCompanyLogo?: boolean;
   moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode>;
+  // 2026-10-16: the company's industry build ("WORKSHOP" / "ENGINEERING"), null for platform users with no company.
+  industryBuild?: string | null;
   correlationId: string;
 };

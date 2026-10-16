@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
-import { JOB_STATUS_LABELS, MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS } from "@/lib/jobs/ui";
+import { useTenantPermissions } from "@/components/AppShell";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor } from "@/lib/jobs/ui";
 
 // ---------------------------------------------------------------------------
 // Jobs & WIP list — bulk update. New 2026-10-06, user request: "create a bulk
@@ -36,10 +37,14 @@ type DialogKind = "status" | "close" | null;
 const ACTION_LABEL: Record<string, string> = { status: "Status change", close: "Close", cancel: "Cancel", pex: "Send to PEX" };
 
 const WORKSHOP_STEPS = MAIN_WORKSHOP_STATUS_STEPS;
-const FIELD_STEPS = FIELD_SERVICE_STATUS_STEPS.filter((s) => !WORKSHOP_STEPS.includes(s));
+const FIELD_STEPS = FIELD_SERVICE_STATUS_STEPS.filter((s) => !WORKSHOP_STEPS.includes(s) && !ENGINEERING_STATUS_STEPS.includes(s));
 
 export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; canEdit: boolean; canPex: boolean }) {
   const router = useRouter();
+  // 2026-10-16: an Engineering company's jobs follow the Engineering flow, so that is the list offered.
+  const { industryBuild } = useTenantPermissions();
+  const engineering = industryBuild === "ENGINEERING";
+  const JOB_STATUS_LABELS = jobStatusLabelsFor(industryBuild);
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectedRef = useRef(selected);
@@ -176,7 +181,9 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
             <label className="wide"><span>New status</span>
               <select value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">Select a status…</option>
-                <optgroup label="Workshop flow">{WORKSHOP_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
+                {engineering
+                  ? <optgroup label="Engineering flow">{ENGINEERING_STATUS_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
+                  : <optgroup label="Workshop flow">{WORKSHOP_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>}
                 <optgroup label="Field service flow">{FIELD_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
               </select>
             </label>

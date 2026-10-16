@@ -81,6 +81,10 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   AWAIT_PAYMENT: "Await payment",
   RECEIVED: "Received",
   INSPECTING: "Inspecting",
+  // 2026-10-16, Engineering Business flow (see ENGINEERING_STATUS_STEPS below).
+  AWAIT_ASSESSMENT: "Await assessment",
+  WORK_IN_PROGRESS: "Work in progress",
+  QC_CONTROL: "QC control",
 };
 
 export const JOB_TYPE_LABELS: Record<JobType, string> = {
@@ -112,11 +116,17 @@ export const JOB_TYPE_LABELS: Record<JobType, string> = {
 // (matching ModApp's separate PARTS_SUPPLY job type) can be added later
 // without another enum migration — Apollo X doesn't have that JobType yet,
 // so there's no third family wired up below until it does.
-export const JOB_FLOW_FAMILIES = ["MAIN_WORKSHOP", "FIELD_SERVICE"] as const;
+export const JOB_FLOW_FAMILIES = ["MAIN_WORKSHOP", "FIELD_SERVICE", "ENGINEERING"] as const;
 export type JobFlowFamily = (typeof JOB_FLOW_FAMILIES)[number];
 
-export function flowFamilyForJobType(type: JobType): JobFlowFamily {
-  return type === "FIELD_SERVICE" ? "FIELD_SERVICE" : "MAIN_WORKSHOP";
+// 2026-10-16, industry builds (Engineering Business): the stepper a job follows now also depends on
+// the company's industry build. An Engineering company's non-field jobs use the ENGINEERING flow.
+// `build` is the company's IndustryBuild ("WORKSHOP" / "ENGINEERING"); leaving it out means Workshop.
+export type BuildKey = string | null | undefined;
+
+export function flowFamilyForJobType(type: JobType, build?: BuildKey): JobFlowFamily {
+  if (type === "FIELD_SERVICE") return "FIELD_SERVICE";
+  return build === "ENGINEERING" ? "ENGINEERING" : "MAIN_WORKSHOP";
 }
 
 // Ordered stepper stages per flow family, CLOSED/CANCELLED excluded
@@ -168,8 +178,49 @@ export const FIELD_SERVICE_STATUS_STEPS: JobStatus[] = [
   "COMPLETE",
 ];
 
-export function statusStepsForJobType(type: JobType): JobStatus[] {
-  return flowFamilyForJobType(type) === "FIELD_SERVICE" ? FIELD_SERVICE_STATUS_STEPS : MAIN_WORKSHOP_STATUS_STEPS;
+// 2026-10-16, Engineering Business stepper (user's list): To be received/collected, Await assessment,
+// Quoting, Await go ahead, Await outwork, Work in progress, QC control, To be delivered,
+// Delivered / Await payment, Complete / Close. Several steps reuse existing statuses (the labels the
+// Engineering build shows for them are in ENGINEERING_STATUS_LABEL_OVERRIDES below); the other three are new.
+export const ENGINEERING_STATUS_STEPS: JobStatus[] = [
+  "TO_BE_RECEIVED",
+  "AWAIT_ASSESSMENT",
+  "QUOTE_IN_PROGRESS",
+  "AWAITING_GO_AHEAD",
+  "AWAIT_OUTWORK",
+  "WORK_IN_PROGRESS",
+  "QC_CONTROL",
+  "TO_BE_DELIVERED",
+  "DELIVERED_AWAITING_PAYMENT",
+  "COMPLETE",
+];
+
+export const ENGINEERING_STATUS_LABEL_OVERRIDES: Partial<Record<JobStatus, string>> = {
+  TO_BE_RECEIVED: "To be received/collected",
+  QUOTE_IN_PROGRESS: "Quoting",
+  AWAIT_OUTWORK: "Await outwork",
+  DELIVERED_AWAITING_PAYMENT: "Delivered / Await payment",
+  COMPLETE: "Complete / Close",
+};
+
+export function statusStepsForJobType(type: JobType, build?: BuildKey): JobStatus[] {
+  const family = flowFamilyForJobType(type, build);
+  return family === "FIELD_SERVICE" ? FIELD_SERVICE_STATUS_STEPS : family === "ENGINEERING" ? ENGINEERING_STATUS_STEPS : MAIN_WORKSHOP_STATUS_STEPS;
+}
+
+// Status wording for the company's build (Engineering shows its own wording for the shared statuses).
+export function jobStatusLabelsFor(build?: BuildKey): Record<JobStatus, string> {
+  return build === "ENGINEERING" ? { ...JOB_STATUS_LABELS, ...ENGINEERING_STATUS_LABEL_OVERRIDES } : JOB_STATUS_LABELS;
+}
+
+export function jobTypeLabelsFor(build?: BuildKey): Record<JobType, string> {
+  return build === "ENGINEERING" ? { ...JOB_TYPE_LABELS, WARRANTY: "Warranty repair" } : JOB_TYPE_LABELS;
+}
+
+// The two "who worked on it" job fields (stripMechanicId / buildMechanicId) are called Machinist
+// 'Assess' / Machinist 'Final' for Engineering.
+export function machinistFieldLabels(build?: BuildKey): { strip: string; build: string } {
+  return build === "ENGINEERING" ? { strip: "Machinist 'Assess'", build: "Machinist 'Final'" } : { strip: "Mechanic strip", build: "Mechanic assemble" };
 }
 
 // Statuses always selectable regardless of flow family, on top of that
@@ -182,8 +233,8 @@ export const UNIVERSAL_STATUSES: JobStatus[] = ["CANCELLED"];
 // field-service jobs. 2026-10-01 — no longer a status/reopen target (see
 // Job.returnedUnrepaired's own comment in schema.prisma); this gate is
 // unchanged, only what the action itself does once allowed has changed.
-export function canMarkReturnedUnrepaired(type: JobType): boolean {
-  return flowFamilyForJobType(type) === "MAIN_WORKSHOP";
+export function canMarkReturnedUnrepaired(type: JobType, build?: BuildKey): boolean {
+  return flowFamilyForJobType(type, build) !== "FIELD_SERVICE";
 }
 
 // 2026-10-01 — "returned-unrepaired" switched from `statuses` to its own
@@ -194,8 +245,8 @@ export function canMarkReturnedUnrepaired(type: JobType): boolean {
 // app/(tenant)/jobs/page.tsx.
 export const JOB_WIP_FILTERS: Array<{ key: string; label: string; statuses?: JobStatus[]; returnedUnrepaired?: boolean }> = [
   { key: "all", label: "All jobs" },
-  { key: "collection", label: "Collection / receipt", statuses: ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP"] },
-  { key: "workshop", label: "Workshop", statuses: ["STRIPPING", "AWAIT_OUTWORK", "ASSEMBLY", "TESTING", "TO_PAINT_WRAP"] },
+  { key: "collection", label: "Collection / receipt", statuses: ["TO_BE_COLLECTED", "TO_BE_RECEIVED", "TO_STRIP", "AWAIT_ASSESSMENT"] },
+  { key: "workshop", label: "Workshop", statuses: ["STRIPPING", "AWAIT_OUTWORK", "ASSEMBLY", "TESTING", "TO_PAINT_WRAP", "WORK_IN_PROGRESS", "QC_CONTROL"] },
   { key: "commercial", label: "Quote / approval", statuses: ["QUOTE_IN_PROGRESS", "AWAITING_GO_AHEAD"] },
   { key: "parts", label: "Waiting for parts", statuses: ["WAITING_FOR_PARTS"] },
   { key: "delivery", label: "Delivery", statuses: ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT"] },

@@ -46,6 +46,9 @@ export type JobDocLabels = {
   salesRepresentative: string;
   stripMechanic: string;
   buildMechanic: string;
+  /** Field names for the two staff fields (Engineering calls them Machinist 'Assess' / 'Final'). */
+  stripLabel?: string;
+  buildLabel?: string;
   /** Display label of the job's PEX status (e.g. "Awaiting core"), when it has a PEX record. */
   pexStatus?: string;
 };
@@ -235,7 +238,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
     type: "twoCol",
     left: [
       { type: "heading", text: "Workshop" },
-      { type: "kv", rows: [["ETA date", dateText(form.etaDate)], ["Mechanic ETA", dateText(form.mechanicEtaDate)], ["Mechanic strip", labels.stripMechanic], ["Mechanic assemble", labels.buildMechanic], ["Import tracking", form.importTrackingNumber]] },
+      { type: "kv", rows: [["ETA date", dateText(form.etaDate)], ["Mechanic ETA", dateText(form.mechanicEtaDate)], [labels.stripLabel ?? "Mechanic strip", labels.stripMechanic], [labels.buildLabel ?? "Mechanic assemble", labels.buildMechanic], ["Import tracking", form.importTrackingNumber]] },
     ],
     right: [
       { type: "heading", text: "Commercial & logistics" },

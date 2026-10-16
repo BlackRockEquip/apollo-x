@@ -45,7 +45,7 @@ export const TILES: Record<string, BuildTile> = {
   PEX: { id: "PEX", label: "PEX inventory", note: "PEX supply and return jobs, tracking", modules: ["PEX_STOCK", "PEX_TRACKING"] },
   OUTWORK: { id: "OUTWORK", label: "Outwork", note: "Jobs sent to other shops", modules: ["OUTWORK"] },
   FIELD_SERVICE: { id: "FIELD_SERVICE", label: "Field service", note: "Field service jobs and field report", modules: ["FIELD_SERVICE"] },
-  SPECIFICATIONS: { id: "SPECIFICATIONS", label: "Specifications", note: "Dimensions, tolerances and spec notes, with before-work and after-work report uploads", modules: ["SPECIFICATIONS"] },
+  SPECIFICATIONS: { id: "SPECIFICATIONS", label: "Specifications", note: "Dimensional size reports: sizes recorded when a job arrives and after machining, with a printable form", modules: ["SPECIFICATIONS"] },
 };
 
 export type BuildDefinition = {

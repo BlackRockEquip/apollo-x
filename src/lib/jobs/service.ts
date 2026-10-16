@@ -44,7 +44,7 @@ import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relin
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
-import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
@@ -53,7 +53,7 @@ type JobActivityType = Prisma.JobActivityGetPayload<{ select: { type: true } }>[
 // Every flow-family stepper stage except the terminal COMPLETE — kept in
 // sync with src/lib/jobs/ui.ts's per-family step lists rather than
 // duplicating status names here.
-const WIP_STATUSES: JobStatus[] = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
+const WIP_STATUSES: JobStatus[] = Array.from(new Set([...MAIN_WORKSHOP_STATUS_STEPS, ...FIELD_SERVICE_STATUS_STEPS, ...ENGINEERING_STATUS_STEPS])).filter((status) => status !== "COMPLETE");
 
 // Broadened for the Jobs & WIP list's customizable columns (see
 // src/lib/jobs/wip-columns.ts) — every scalar field any column in
@@ -625,7 +625,7 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
       data: {
         companyId,
         jobNumber,
-        status: options?.initialStatus ?? statusStepsForJobType(input.type as JobType)[0],
+        status: options?.initialStatus ?? statusStepsForJobType(input.type as JobType, ctx.industryBuild)[0],
         customerId: input.customerId,
         customerReference: input.customerReference,
         customerPo: input.customerPo,
@@ -864,7 +864,7 @@ export async function changeJobStatus(ctx: RequestContext, id: string, raw: unkn
   requireNotMechanicRestricted(ctx);
   const input = jobStatusChangeInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  const allowedStatuses = [...statusStepsForJobType(existing.type as JobType), ...UNIVERSAL_STATUSES];
+  const allowedStatuses = [...statusStepsForJobType(existing.type as JobType, ctx.industryBuild), ...UNIVERSAL_STATUSES];
   if (!allowedStatuses.includes(input.status as JobStatus)) {
     throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
   }
@@ -907,7 +907,7 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   if (!["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
     throw new Error("Only closed, cancelled or complete jobs can be reopened.");
   }
-  if (!statusStepsForJobType(existing.type as JobType).includes(input.status as JobStatus)) {
+  if (!statusStepsForJobType(existing.type as JobType, ctx.industryBuild).includes(input.status as JobStatus)) {
     throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
   }
   const updated = await prisma.$transaction(async (tx) => {
@@ -932,7 +932,7 @@ export async function markJobReturnedUnrepaired(ctx: RequestContext, id: string,
   requireNotMechanicRestricted(ctx);
   const input = jobMarkReturnedUnrepairedInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  if (!canMarkReturnedUnrepaired(existing.type as JobType)) {
+  if (!canMarkReturnedUnrepaired(existing.type as JobType, ctx.industryBuild)) {
     throw new Error(`${existing.type} jobs cannot be marked returned unrepaired — this action is only available for the main workshop flow.`);
   }
   if (["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {

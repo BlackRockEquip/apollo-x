@@ -277,6 +277,11 @@ enum JobStatus {
   // TO_BE_DELIVERED / DELIVERED_AWAITING_PAYMENT / COMPLETE above) ---
   RECEIVED
   INSPECTING
+
+  // --- Engineering Business flow only (2026-10-16) ---
+  AWAIT_ASSESSMENT
+  WORK_IN_PROGRESS
+  QC_CONTROL
 }
 
 enum JobActivityType {
@@ -611,6 +616,9 @@ model Company {
   mechanics         Mechanic[]
   salesRepresentatives SalesRepresentative[]
   jobKitLines       JobKitLine[]
+  jobDimensionReports JobDimensionReport[]
+  jobDimensionLines JobDimensionLine[]
+  specificationFormSettings SpecificationFormSettings?
   jobPartLines      JobPartLine[]
   outworkItems      OutworkItem[]
   pickSlips         PickSlip[]
@@ -1759,6 +1767,7 @@ model Job {
   pickSlips           PickSlip[]
   rfqRequests         JobRfqRequest[]
   attachments         JobAttachment[]
+  dimensionReports    JobDimensionReport[]
   noteEntries         JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
@@ -2835,4 +2844,79 @@ model JobPresence {
 
   @@unique([jobId, userId])
   @@index([companyId, jobId, lastSeenAt])
+}
+
+// 2026-10-16, Specifications module (Engineering Business): the Dimensional Size Report. One report is one
+// sheet (header + a "recorded when the job arrived" table + a "recorded after machining" table), and a job
+// can hold several (one per component / drawing).
+enum DimensionPhase {
+  ARRIVED
+  AFTER_MACHINING
+}
+
+model JobDimensionReport {
+  id            String   @id @default(cuid())
+  companyId     String
+  jobId         String
+  reportDate    DateTime? @db.Date
+  drawingNumber String?
+  machine       String?
+  component     String?
+  measuredBy    String?
+  operator      String?
+  // Gauge / instrument used and its calibration reference (ISO 9001 traceability).
+  instrument    String?
+  notes         String?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  lines         JobDimensionLine[]
+
+  @@unique([id, companyId])
+  @@index([companyId, jobId])
+}
+
+// One measured part row. Measured values are kept as typed text (a size, "N/A", a range...).
+// accepted: true = Yes, false = No, null = not decided yet.
+model JobDimensionLine {
+  id                String         @id @default(cuid())
+  companyId         String
+  reportId          String
+  phase             DimensionPhase
+  sortOrder         Int            @default(0)
+  partNumber        String?
+  description       String?
+  outerDiameter     String?
+  innerDiameter     String?
+  length            String?
+  tolerance         String?
+  additionalMeasured String?
+  accepted          Boolean?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  company           Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  report            JobDimensionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, phase, sortOrder])
+  @@index([companyId, reportId])
+}
+
+// The printed form's document-control block (e.g. "HI-GEAR-QD-007", issue date, revision) and its
+// standard line ("ISO 9001:2015 Quality Management System"). One row per company; all free text.
+model SpecificationFormSettings {
+  companyId      String   @id
+  standardText   String?
+  documentNumber String?
+  issueDate      String?
+  revision       String?
+  revisionDate   String?
+  updatedById    String?
+  updatedAt      DateTime @updatedAt
+
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }

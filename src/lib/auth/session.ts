@@ -133,6 +133,7 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     backgroundColor: company?.settings?.backgroundColor ?? null,
     hasCompanyLogo: Boolean(company?.settings?.logoMimeType),
     moduleAccess,
+    industryBuild: company?.industryBuild ?? null,
     correlationId: randomUUID(),
   };
 }

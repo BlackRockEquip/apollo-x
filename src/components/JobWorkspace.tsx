@@ -7,11 +7,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Unlink, Upload, X } from "lucide-react";
-import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
 import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
+import { JobDimensionReports } from "@/components/JobDimensionReports";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
@@ -372,7 +373,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // today for "can edit a job's other fields", so this names the role the
   // user actually described. See jobs/service.ts's requireNotMechanicRestricted
   // and updateJob for the matching server-side enforcement.
-  const { tenantRole, tenantPermissions, moduleAccess } = useTenantPermissions();
+  const { tenantRole, tenantPermissions, moduleAccess, industryBuild } = useTenantPermissions();
+  // 2026-10-16, Engineering Business: the build's own status wording, job type wording and staff-field names.
+  const statusLabels = jobStatusLabelsFor(industryBuild);
+  const typeLabels = jobTypeLabelsFor(industryBuild);
+  const machinist = machinistFieldLabels(industryBuild);
   // 2026-10-16, industry builds step C: which optional modules this company has. A module that is off
   // hides its section (and its buttons); if the job already holds records from it they stay visible but
   // read-only. The server refuses the writes either way.
@@ -386,7 +391,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const pexAccess = accessOf("PEX_STOCK");
   // Job types that belong to an optional module are only offered when that module is on (a job that already has such a type keeps it).
   function jobTypeOptions(current: string) {
-    return JOB_TYPES.filter(([value]) => value === current || (value === "FIELD_SERVICE" ? fieldAccess === "FULL" : value === "PEX_SUPPLY" || value === "PEX_RETURN" ? pexAccess === "FULL" : true));
+    const options = JOB_TYPES.map(([value]) => [value, typeLabels[value as keyof typeof typeLabels]] as [string, string]).filter(([value]) => value === current || (value === "FIELD_SERVICE" ? fieldAccess === "FULL" : value === "PEX_SUPPLY" || value === "PEX_RETURN" ? pexAccess === "FULL" : true));
+    // Engineering lists its job types in its own order: Outright sale, Standard repair, Partial repair, Warranty repair.
+    if (industryBuild === "ENGINEERING") {
+      const order = ["OUTRIGHT_SALE", "STANDARD_REPAIR", "PARTIAL_REPAIR", "WARRANTY"];
+      const rank = (value: string) => { const i = order.indexOf(value); return i === -1 ? order.length : i; };
+      return [...options].sort((a, b) => rank(a[0]) - rank(b[0]));
+    }
+    return options;
   }
   const canViewCustomer = tenantPermissions.has("CUSTOMERS_VIEW");
   const mechanicFieldsLocked = tenantRole === "USER";
@@ -962,7 +974,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         importTrackingNumber: body.importTrackingNumber || "",
         previousJobNumber: body.previousJobNumber || "",
         salesRepresentativeId: body.salesRepresentativeId || "",
-        reopenStatus: statusStepsForJobType(body.type)[0],
+        reopenStatus: statusStepsForJobType(body.type, industryBuild)[0],
         fieldSite: body.fieldServiceReport?.site ? String(body.fieldServiceReport.site) : "",
         fieldTechnician: body.fieldServiceReport?.technician ? String(body.fieldServiceReport.technician) : "",
         fieldVehicle: body.fieldServiceReport?.vehicle ? String(body.fieldServiceReport.vehicle) : "",
@@ -1715,7 +1727,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <div>
           <h2>Job details</h2>
           <table>${rows([
-            ["Job type", JOB_TYPE_LABELS[job.type]],
+            ["Job type", typeLabels[job.type]],
             ["Technician", form.fieldTechnician],
             ["Vehicle", form.fieldVehicle],
             ["Scheduled date", fmt(form.fieldScheduledDate)],
@@ -1751,8 +1763,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   const jobDocLabel = job ? job.jobNumber || job.draftNumber || "" : "";
   const jobDocLabels = () => ({
-    jobType: job ? String(JOB_TYPE_LABELS[job.type] || "") : "",
-    status: job ? String(JOB_STATUS_LABELS[job.status] || "") : "",
+    jobType: job ? String(typeLabels[job.type] || "") : "",
+    status: job ? String(statusLabels[job.status] || "") : "",
+    stripLabel: machinist.strip,
+    buildLabel: machinist.build,
     salesRepresentative: String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—"),
     stripMechanic: String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—"),
     buildMechanic: String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—"),
@@ -2962,8 +2976,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ${section("Workshop", `<div class="col">${kv([
           ["ETA date", fmt(form.etaDate)],
           ["Mechanic ETA", fmt(form.mechanicEtaDate)],
-          ["Mechanic strip", String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
-          ["Mechanic assemble", String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
+          [machinist.strip, String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
+          [machinist.build, String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
           ["Import tracking", form.importTrackingNumber],
         ])}</div>`)}
         ${section("Commercial & logistics", `<div class="col">${kv([
@@ -3853,13 +3867,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             here. Options come from the new JOBS_VIEW-gated
             /api/v1/jobs/mechanics list (see listMechanicOptions's own
             comment for why not /api/v1/users). */}
-        <label><span>Mechanic strip</span>
+        <label><span>{machinist.strip}</span>
           <select value={form.stripMechanicId} onChange={(e) => updateField("stripMechanicId", e.target.value)}>
             <option value="">—</option>
             {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </label>
-        <label><span>Mechanic assemble</span>
+        <label><span>{machinist.build}</span>
           <select value={form.buildMechanicId} onChange={(e) => updateField("buildMechanicId", e.target.value)}>
             <option value="">—</option>
             {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -4674,6 +4688,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     <fieldset disabled={outworkAccess !== "FULL"} className="unstyled-fieldset">{outworkSectionInner}</fieldset>
   ) : null;
 
+  // 2026-10-16, Specifications module (Engineering Business): the Dimensional Size Report. Hidden when the module is off.
+  const specificationsAccess = accessOf("SPECIFICATIONS");
+  const specificationsSection = job && specificationsAccess !== "DENIED" ? (
+    <JobDimensionReports
+      jobId={job.id}
+      jobLabel={String(job.jobNumber || job.draftNumber || "")}
+      defaultComponent={String(form.component || "")}
+      canEdit={specificationsAccess === "FULL" && tenantPermissions.has("JOBS_EDIT")}
+      canManageForm={specificationsAccess === "FULL" && tenantPermissions.has("COMPANY_SETTINGS_EDIT")}
+    />
+  ) : null;
+
   const fieldServiceSection = job && fieldLayout ? (
     <section className="detail-panel">
       <header><div><h2>Field service</h2><p>Who is going, when, and what was done.</p></div></header>
@@ -4767,7 +4793,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   COMPLETE, at which point it's folded into the main pill's
                   own label instead (jobStatusLabel in StatusPill.tsx) —
                   see ReturnUnrepairedPill's own comment there. */}
-              {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} />}
+              {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />}
               {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
               {pexInStock && <PexAllocatedPill />}
             </div>
@@ -4778,7 +4804,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <p className="header-customer-line"><Link href={`/customers/${job.customer.id}`}>{job.customer.name}</Link></p>
             )}
             <p>
-              {mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : JOB_TYPE_LABELS[(job?.type || "STANDARD_REPAIR") as keyof typeof JOB_TYPE_LABELS]}
+              {mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : typeLabels[(job?.type || "STANDARD_REPAIR") as keyof typeof typeLabels]}
               {/* 2026-10-01, user request — warranty status shown next to
                   the job type, only for Warranty-type jobs. job.warranty is
                   only set once a JobWarranty row exists (saved from the
@@ -4859,7 +4885,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <div className="job-header-stepper">
             {["CLOSED", "CANCELLED"].includes(job.status) ? (
               <p className="status-stepper-note">
-                This job isn&apos;t on the normal status flow right now ({JOB_STATUS_LABELS[job.status]}) — use Reopen above to bring it back onto the stepper.
+                This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}) — use Reopen above to bring it back onto the stepper.
               </p>
             ) : (
               <>
@@ -4883,13 +4909,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   // shows as the current stage on TO_BE_RECEIVED's node
                   // here, same mechanism as WAITING_FOR_PARTS/AWAIT_OUTWORK
                   // below.
-                  steps={statusStepsForJobType(job.type).filter((step) => step !== "TO_BE_COLLECTED")}
+                  steps={statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED")}
                   // Relabels only the merged node for this stepper — the
                   // shared JOB_STATUS_LABELS.TO_BE_RECEIVED entry itself is
                   // untouched, so every other place a TO_BE_RECEIVED job's
                   // status is shown (pill, Jobs list, prints) still just
                   // reads "To be received".
-                  labels={{ ...JOB_STATUS_LABELS, TO_BE_RECEIVED: "To be received/collected" }}
+                  labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" }}
                   // WAITING_FOR_PARTS was folded into the AWAIT_OUTWORK
                   // stepper stage on 2026-09-10, and TO_BE_COLLECTED folded
                   // into TO_BE_RECEIVED on 2026-09-29 (see the `steps`/
@@ -4946,7 +4972,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <aside className="form-drawer compact-dialog">
                 <header><div><p className="eyebrow">Jobs</p><h2>Reopen job</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
-                  <label><span>Reopen to status</span><select value={form.reopenStatus} onChange={(e) => updateField("reopenStatus", e.target.value)}>{statusStepsForJobType(job.type).map((value) => <option key={value} value={value}>{JOB_STATUS_LABELS[value as keyof typeof JOB_STATUS_LABELS]}</option>)}</select></label>
+                  <label><span>Reopen to status</span><select value={form.reopenStatus} onChange={(e) => updateField("reopenStatus", e.target.value)}>{statusStepsForJobType(job.type, industryBuild).map((value) => <option key={value} value={value}>{statusLabels[value as keyof typeof statusLabels]}</option>)}</select></label>
                   <label className="wide"><span>Reason (optional)</span><input value={form.reopenReason} onChange={(e) => updateField("reopenReason", e.target.value)} /></label>
                 </div>
                 <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving} onClick={() => { void postAction(`/api/v1/jobs/${job.id}/reopen`, { status: form.reopenStatus, reason: form.reopenReason || null }).then(() => setDialog(null)); }}>Reopen job</button></footer>
@@ -5466,6 +5492,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               — this is just the UI-level hide. */}
 
           {!fieldLayout && outworkSection}
+          {!fieldLayout && specificationsSection}
 
           {/* 2026-10-06 — user request: Attachments and Send to PEX side by
               side. The PEX panels (mutually exclusive: Send job to PEX / In PEX
