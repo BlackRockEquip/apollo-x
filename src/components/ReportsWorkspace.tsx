@@ -370,7 +370,7 @@ function MonthlyTab() {
 // ---------------------------------------------------------------------------
 // Ratios
 // ---------------------------------------------------------------------------
-type RatioStat = { key: string; label: string; format: "percent" | "days" | "currency" | "count"; value: number | null; detail: string; comingSoon?: string };
+type RatioStat = { key: string; label: string; format: "percent" | "days" | "currency" | "count"; value: number | null; detail: string };
 
 function formatRatioValue(stat: RatioStat): string {
   if (stat.value == null) return "—";
@@ -398,8 +398,7 @@ function RatiosTab({ months, onMonthsChange }: { months: number; onMonthsChange:
     return () => { cancelled = true; };
   }, [months]);
 
-  const live = ratios.filter((r) => !r.comingSoon);
-  const comingSoon = ratios.filter((r) => r.comingSoon);
+  const live = ratios;
 
   function exportRows() {
     downloadCsv(`ratios-${todayStamp()}.csv`, ["Metric", "Value", "Detail"], live.map((r) => [r.label, formatRatioValue(r), r.detail]));
@@ -422,20 +421,6 @@ function RatiosTab({ months, onMonthsChange }: { months: number; onMonthsChange:
             </article>
           ))}
         </section>
-        {comingSoon.length > 0 && (
-          <section className="detail-panel" style={{ marginTop: 14 }}>
-            <header><div><h2>Coming soon</h2><p>Real numbers for these need data this system doesn't track yet — shown here rather than faked.</p></div></header>
-            <div className="metric-grid compact">
-              {comingSoon.map((stat) => (
-                <article key={stat.key} className="metric-card compact report-coming-soon">
-                  <span>{stat.label}</span>
-                  <strong>—</strong>
-                  <span className="report-ratio-detail">{stat.comingSoon}</span>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
       </>}
     </div>
   );

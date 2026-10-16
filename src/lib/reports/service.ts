@@ -28,8 +28,8 @@ import { prisma } from "@/lib/prisma";
 // tracked labour cost anywhere (JobFieldServiceReport.hours exists for some
 // field-service jobs, but with no $ rate attached). Surfaced to the user via
 // AskUserQuestion; their answer ("Skip for now, flag as future") is why
-// RATIO_DEFS below only computes ratios backed by real stored data and
-// lists the other two as comingSoon stats instead of faking them.
+// RATIO_DEFS below only computes ratios backed by real stored data. (2026-10-16:
+// the two placeholder "coming soon" entries were removed from view entirely.)
 //
 // 2026-10-02 — customer click-through (user request: "let me be able to
 // click on a customer then it takes me into that customer for reports").
@@ -179,7 +179,6 @@ export type RatioStat = {
   format: "percent" | "days" | "currency" | "count";
   value: number | null;
   detail: string;
-  comingSoon?: string;
 };
 
 export async function getRatiosReport(ctx: RequestContext, params: { months?: number }): Promise<RatioStat[]> {
@@ -252,11 +251,5 @@ export async function getRatiosReport(ctx: RequestContext, params: { months?: nu
     { key: "job-rfq-response-rate", label: "Job RFQ quote-back rate", format: "percent", value: rfqJobs.length > 0 ? (jobRfqQuoted / rfqJobs.length) * 100 : null, detail: `${jobRfqQuoted} of ${rfqJobs.length} job RFQs came back quoted` },
     { key: "general-rfq-response-rate", label: "General RFQ response rate", format: "percent", value: rfqGeneral.length > 0 ? (generalRfqReceived / rfqGeneral.length) * 100 : null, detail: `${generalRfqReceived} of ${rfqGeneral.length} general RFQs received a quote` },
     { key: "avg-parts-cost-per-job", label: "Average parts cost per job", format: "currency", value: avgPartsCostPerJob, detail: `Across ${jobsWithPartsCost.length} job${jobsWithPartsCost.length === 1 ? "" : "s"} with parts issued against them` },
-    // Flagged, not faked — see this file's header comment and the user's
-    // own "skip for now, flag as future" answer. No value is computed; the
-    // UI renders these as a disabled card naming what's missing instead of
-    // a number.
-    { key: "quote-to-job-conversion", label: "Quote-to-job conversion", format: "percent", value: null, detail: "", comingSoon: "Needs a real Quotes module — Job.quoteNumber today is just a free-text field, not a linked record." },
-    { key: "parts-to-labour-cost", label: "Parts-to-labour cost ratio", format: "percent", value: null, detail: "", comingSoon: "Needs tracked labour cost — no hourly rate × hours is recorded against a job anywhere yet." },
   ];
 }
