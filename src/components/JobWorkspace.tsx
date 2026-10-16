@@ -3843,11 +3843,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label>
           <span>Payment date received</span>
           <div className="field-with-check">
-            {/* 2026-10-16, user request: ticking N/A makes the payment date
-                not editable. The date is cleared too, so a job can't be both
-                "payment N/A" and carry a payment date. */}
-            <input type="date" value={form.paymentNotApplicable === "true" ? "" : form.paymentDateReceived} disabled={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
-            <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => { if (e.target.checked) updateField("paymentDateReceived", ""); updateField("paymentNotApplicable", e.target.checked ? "true" : ""); }} /><span>N/A</span></label>
+            {/* 2026-10-16, user request: ticking N/A only locks the payment
+                date for editing. A date that is already filled in stays put
+                (shown greyed out) and is not cleared; unticking N/A makes it
+                editable again. */}
+            <input type="date" value={form.paymentDateReceived} disabled={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
+            <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentNotApplicable", e.target.checked ? "true" : "")} /><span>N/A</span></label>
           </div>
         </label>
         <span className="row-break" aria-hidden="true" />

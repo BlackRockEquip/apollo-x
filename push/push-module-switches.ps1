@@ -28,6 +28,7 @@ Settings > Users module switches; numbering fix; New customer pop-up; Specificat
 - Renamed the product from "Apollo X" to "Flo X Integrations" everywhere users see it: browser tab title, login and password-reset screens, sidebars
   (the "AX" badge is now "FX"), favicon, password-reset email, storage setup guides, platform screens, README. Internal identifiers (login cookie,
   saved-screen keys, database names) are unchanged so nobody is logged out and nothing saved is lost.
+- Job > Payment date received: ticking N/A now only locks the date field for editing; a date already filled in is kept (not cleared).
 - Reports > Ratios: the "Coming soon" section and its two placeholder ratios are removed, so only live ratios are shown.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
