@@ -32,23 +32,37 @@ export function PlatformCompaniesStrip() {
   const visible = companies.filter((company) => !broken.has(company.id));
   if (visible.length === 0) return null;
 
+  // 2026-10-16, user request: four logos side by side; with more than four the row becomes a slider that slides
+  // to the left on its own (the list is shown twice in a row so it loops without a jump; the copy is hidden from
+  // screen readers). With four or fewer the logos just sit still.
+  const MAX_STATIC = 4;
+  const sliding = visible.length > MAX_STATIC;
+  const group = (copy: boolean) => (
+    <div className="login-logos-group" aria-hidden={copy || undefined}>
+      {visible.map((company) => (
+        <Image
+          key={`${copy ? "b" : "a"}${company.id}`}
+          src={`/api/v1/public/companies/${company.id}/logo`}
+          alt={copy ? "" : company.name}
+          title={company.name}
+          width={120}
+          height={40}
+          unoptimized
+          className="login-company-logo"
+          onError={() => setBroken((current) => new Set(current).add(company.id))}
+        />
+      ))}
+    </div>
+  );
+
   return (
     <div className="login-companies-strip">
       <p className="login-companies-label">Trusted by teams at</p>
-      <div className="login-companies-logos">
-        {visible.map((company) => (
-          <Image
-            key={company.id}
-            src={`/api/v1/public/companies/${company.id}/logo`}
-            alt={company.name}
-            title={company.name}
-            width={120}
-            height={40}
-            unoptimized
-            className="login-company-logo"
-            onError={() => setBroken((current) => new Set(current).add(company.id))}
-          />
-        ))}
+      <div className={`login-companies-logos${sliding ? " is-sliding" : ""}`}>
+        <div className="login-logos-track" style={sliding ? { animationDuration: `${Math.max(12, visible.length * 4)}s` } : undefined}>
+          {group(false)}
+          {sliding ? group(true) : null}
+        </div>
       </div>
     </div>
   );
