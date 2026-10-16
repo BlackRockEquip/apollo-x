@@ -45,14 +45,19 @@ function notFound(): never {
   throw new Error("NOT_FOUND");
 }
 
-function requireJobsRead(ctx: RequestContext) {
+// 2026-10-16, industry builds step B: RFQs belong to the RFQ & supplier quotes
+// module (PROCUREMENT), outwork lists to Outwork — not just to Jobs & WIP. The
+// second argument is the module the caller needs on top of Jobs & WIP.
+function requireJobsRead(ctx: RequestContext, module: "PROCUREMENT" | "OUTWORK" = "PROCUREMENT") {
   requireModule(ctx, "JOBS_WIP", "READ");
+  requireModule(ctx, module, "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   return ctx.companyId!;
 }
 
 function requireJobsWrite(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "WRITE");
+  requireModule(ctx, "PROCUREMENT", "WRITE");
   requireTenantPermission(ctx, "JOBS_EDIT");
   return ctx.companyId!;
 }
@@ -65,12 +70,14 @@ function requireJobsWrite(ctx: RequestContext) {
 // way the Suppliers master-data screen itself is.
 function requireSuppliersRead(ctx: RequestContext) {
   requireModule(ctx, "SUPPLIERS", "READ");
+  requireModule(ctx, "PROCUREMENT", "READ");
   requireTenantPermission(ctx, "SUPPLIERS_VIEW");
   return ctx.companyId!;
 }
 
 function requireSuppliersWrite(ctx: RequestContext) {
   requireModule(ctx, "SUPPLIERS", "WRITE");
+  requireModule(ctx, "PROCUREMENT", "WRITE");
   requireTenantPermission(ctx, "SUPPLIERS_EDIT");
   return ctx.companyId!;
 }
@@ -639,7 +646,7 @@ function jobRfqReceivingStatus(status: string, decidedCount: number, totalPartLi
 // Outwork tab. Job-scoped data, so gated the same as the job's own outwork
 // actions (requireJobsRead), not the Suppliers module.
 export async function listAllOutworkItems(ctx: RequestContext) {
-  const companyId = requireJobsRead(ctx);
+  const companyId = requireJobsRead(ctx, "OUTWORK");
   // 2026-10-08, user request: "if outwork is received remove from table" —
   // the Outwork menu only lists items still out; received ones stay on the
   // job's own Outwork section.

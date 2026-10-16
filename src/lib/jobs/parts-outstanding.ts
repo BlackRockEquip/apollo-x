@@ -51,6 +51,7 @@ export const OUTSTANDING_JOB_STATUSES = [
 
 export async function listPartsOutstanding(ctx: RequestContext): Promise<PartsOutstandingRow[]> {
   requireModule(ctx, "JOBS_WIP", "READ");
+  requireModule(ctx, "JOB_PARTS", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   const companyId = ctx.companyId!;
 

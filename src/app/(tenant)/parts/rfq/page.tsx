@@ -16,6 +16,7 @@ import { RfqAllWorkspace } from "@/components/RfqAllWorkspace";
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireModule(ctx, "JOBS_WIP", "READ");
+  requireModule(ctx, "PROCUREMENT", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   requireNotMechanicPage(ctx);
   return <>

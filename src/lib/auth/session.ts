@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth/permissions";
 import { evaluateModuleAccess, type ModuleAccessMode } from "@/lib/entitlements/policy";
 import type { RequestContext } from "@/lib/auth/context-types";
+import { applyTileDependencies } from "@/lib/builds/definitions";
 
 export async function createSession(userId: string, membershipId: string | null, supportAccessId: string | null = null) {
   const user = await prisma.userIdentity.findUniqueOrThrow({ where: { id: userId }, select: { sessionVersion: true } });
@@ -108,6 +109,11 @@ export async function resolveSessionToken(token: string, database: SessionDataba
         readOnlyOverrideUntil: row?.readOnlyOverrideUntil,
       }, now));
     }
+    // 2026-10-16, industry builds step B: a module whose required module is
+    // off (e.g. RFQ without Job parts, Pick slips without Stock levels) is
+    // not available, whatever its own licence says. Black Rock is all FULL,
+    // so this never changes it.
+    applyTileDependencies(moduleAccess);
   }
 
   return {

@@ -16,6 +16,7 @@ import { OutworkAllWorkspace } from "@/components/OutworkAllWorkspace";
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireModule(ctx, "JOBS_WIP", "READ");
+  requireModule(ctx, "OUTWORK", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   requireNotMechanicPage(ctx);
   return <>

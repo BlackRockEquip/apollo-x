@@ -10,10 +10,11 @@ const TABS: Array<{ key: string; label: string; href: string }> = [
   { key: "rfq", label: "RFQs", href: "/parts/rfq" },
 ];
 
-export function PartsTabNav({ current }: { current: string }) {
+// 2026-10-16, industry builds: the RFQs tab only shows when the company has RFQ & supplier quotes.
+export function PartsTabNav({ current, showRfq = true }: { current: string; showRfq?: boolean }) {
   return (
     <nav className="settings-nav">
-      {TABS.map((tab) => (
+      {TABS.filter((tab) => showRfq || tab.key !== "rfq").map((tab) => (
         <Link key={tab.key} href={tab.href} className={tab.key === current ? "quiet-button active" : "quiet-button"}>
           {tab.label}
         </Link>

@@ -127,6 +127,15 @@ function requireJobs(ctx: RequestContext, permission: TenantPermission) {
   return ctx.companyId!;
 }
 
+// 2026-10-16, industry builds step B: parts, outwork, field service and the
+// PEX job types each belong to their own optional module, so a company that
+// doesn't have the module can't use them, even though Jobs & WIP itself is
+// always on. (Reading what is already on a job is handled on the job screen.)
+function requireJobTypeModule(ctx: RequestContext, type: string) {
+  if (type === "FIELD_SERVICE") requireModule(ctx, "FIELD_SERVICE", "WRITE");
+  else if (type === "PEX_SUPPLY" || type === "PEX_RETURN") requireModule(ctx, "PEX_STOCK", "WRITE");
+}
+
 function requireJobsRead(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
@@ -582,6 +591,7 @@ export async function listJobs(ctx: RequestContext, raw: unknown) {
 export async function createJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string; initialStatus?: JobStatus }) {
   const companyId = requireJobs(ctx, "JOBS_CREATE");
   const input = jobCreateInput.parse(raw);
+  requireJobTypeModule(ctx, input.type);
   await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
   const buildMechanicId = await getMechanicOrNull(companyId, input.buildMechanicId);
@@ -969,6 +979,7 @@ export async function undoJobReturnedUnrepaired(ctx: RequestContext, id: string)
 
 export async function upsertJobFieldService(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "FIELD_SERVICE", "WRITE");
   requireNotMechanicRestricted(ctx);
   const input = jobFieldServiceInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
@@ -1086,6 +1097,7 @@ export type AddPartLinesResult = { addedFromPaste: number; addedFromFile: number
 
 export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: unknown): Promise<AddPartLinesResult> {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineBulkAddInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
   const jobNumberLabel = job.jobNumber ?? job.draftNumber;
@@ -1312,6 +1324,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
 // nothing and says so in the job's activity.
 export async function markPartLineReceived(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineReceiveInput.parse(raw);
   const line = await getPartLineScoped(companyId, jobId, lineId);
 
@@ -1396,6 +1409,7 @@ export async function markPartLineReceived(ctx: RequestContext, jobId: string, l
 // at once rather than "undo the last click."
 export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string, lineId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const line = await getPartLineScoped(companyId, jobId, lineId);
   const jobRow = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } });
   const jobNumberLabel = jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId;
@@ -1433,6 +1447,7 @@ export async function unmarkPartLineReceived(ctx: RequestContext, jobId: string,
 // same order number) and cleared if the order number is removed.
 export async function updatePartLineOrder(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineOrderUpdateInput.parse(raw);
   const line = await getPartLineScoped(companyId, jobId, lineId);
 
@@ -1546,6 +1561,7 @@ export async function updatePartLineOrder(ctx: RequestContext, jobId: string, li
 // description exists, this refuses to touch it again.
 export async function updatePartLineDescription(ctx: RequestContext, jobId: string, lineId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineDescriptionUpdateInput.parse(raw);
   const line = await getPartLineScoped(companyId, jobId, lineId);
   if (line.description) throw new Error("PART_LINE_ALREADY_HAS_DESCRIPTION");
@@ -1560,6 +1576,7 @@ export async function updatePartLineDescription(ctx: RequestContext, jobId: stri
 // the supplier when it isn't sent along.
 export async function updatePartLineNotes(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineNotesUpdateInput.parse(raw);
   const line = await getPartLineScoped(companyId, jobId, input.lineId);
   const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { notes: input.notes, updatedById: ctx.userId } });
@@ -1601,6 +1618,7 @@ async function releaseJobPartReservationsTx(tx: Prisma.TransactionClient, ctx: R
 
 export async function removePartLine(ctx: RequestContext, jobId: string, lineId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   const line = await getPartLineScoped(companyId, jobId, lineId);
 
   await prisma.$transaction(async (tx) => {
@@ -1658,6 +1676,7 @@ export async function removePartLine(ctx: RequestContext, jobId: string, lineId:
 
 export async function addOutworkItems(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "OUTWORK", "WRITE");
   const input = outworkAddInput.parse(raw);
   await getJobScoped(companyId, jobId);
 
@@ -1700,6 +1719,7 @@ export async function addOutworkItems(ctx: RequestContext, jobId: string, raw: u
 // given (scoped to this job, even if a stray id from elsewhere was passed).
 export async function markOutworkItemsReceived(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "OUTWORK", "WRITE");
   const input = outworkReceiveInput.parse(raw);
   await getJobScoped(companyId, jobId);
 
@@ -1722,6 +1742,7 @@ export async function markOutworkItemsReceived(ctx: RequestContext, jobId: strin
 // an existing line in place; adding new lines goes through addOutworkItems.
 export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "OUTWORK", "WRITE");
   const input = outworkEditInput.parse(raw);
   const item = await getOutworkItemScoped(companyId, jobId, itemId);
 
@@ -1772,6 +1793,7 @@ export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId
 // only one place to return to.
 export async function unmarkOutworkItemReceived(ctx: RequestContext, jobId: string, itemId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "OUTWORK", "WRITE");
   const item = await getOutworkItemScoped(companyId, jobId, itemId);
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -1788,6 +1810,7 @@ export async function unmarkOutworkItemReceived(ctx: RequestContext, jobId: stri
 // references an OutworkItem by id.
 export async function deleteOutworkItem(ctx: RequestContext, jobId: string, itemId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "OUTWORK", "WRITE");
   const item = await getOutworkItemScoped(companyId, jobId, itemId);
 
   await prisma.$transaction(async (tx) => {

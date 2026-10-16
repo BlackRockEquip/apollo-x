@@ -24,12 +24,12 @@ type DashboardWidget = { key: DashboardWidgetKey; enabled: boolean; order: numbe
 // widget picker and from any already-saved per-user layout (normalizeWidgets
 // below silently drops a saved key that's no longer in this list — no
 // migration needed).
-export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: string; module: ModuleKey; permission: string }> = [
+export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: string; module: ModuleKey | ModuleKey[]; permission: string }> = [
   { key: "jobs-summary", label: "Jobs summary", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "wip-status-counts", label: "WIP status counts", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "recent-jobs", label: "Recent jobs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "pex-status", label: "PEX status", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW" },
-  { key: "outstanding-parts", label: "Outstanding parts", module: "INVENTORY", permission: "INVENTORY_VIEW" },
+  { key: "outstanding-parts", label: "Outstanding parts", module: "JOB_PARTS", permission: "INVENTORY_VIEW" },
   // 2026-09-18 — user asked "What is procurement summary on dashboard?"
   // while investigating it: it turned out to be a dead stub. Its gate
   // (module: "PROCUREMENT", permission: "REPORTS_VIEW") didn't match where
@@ -42,7 +42,7 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
   // WIDGET_HREF, so even on the rare account where it *did* show up it
   // wasn't clickable. Regated to match its real data source and wired up
   // below (procurementOpen) — see dashboard/page.tsx for the display side.
-  { key: "procurement-summary", label: "Procurement / outwork", module: "JOBS_WIP", permission: "JOBS_VIEW" },
+  { key: "procurement-summary", label: "Procurement / outwork", module: ["PROCUREMENT", "OUTWORK"], permission: "JOBS_VIEW" },
   { key: "support-tickets", label: "Support tickets", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
   { key: "notifications", label: "Notifications", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];
@@ -50,7 +50,9 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
 function canSeeWidget(ctx: RequestContext, key: DashboardWidgetKey) {
   const def = DASHBOARD_WIDGET_DEFS.find((row) => row.key === key);
   if (!def) return false;
-  if ((ctx.moduleAccess.get(def.module) ?? "DENIED") === "DENIED") return false;
+  // 2026-10-16, industry builds step B: a widget can list several modules (shown when any one is on).
+  const modules = Array.isArray(def.module) ? def.module : [def.module];
+  if (!modules.some((module) => (ctx.moduleAccess.get(module) ?? "DENIED") !== "DENIED")) return false;
   return ctx.tenantPermissions.has(def.permission as never);
 }
 
@@ -389,7 +391,7 @@ export async function getDashboardData(ctx: RequestContext) {
   let partsOutstandingJobs: Array<{ jobId: string; jobNumber: string; customerName: string | null; lines: number; days: number }> = [];
   let partsOutstandingLineCount = 0;
   let partsOverdue = { jobs: 0, oldestDays: 0 };
-  if (jobsAccess) {
+  if (jobsAccess && (ctx.moduleAccess.get("JOB_PARTS") ?? "DENIED") !== "DENIED") {
     const rows = await listPartsOutstanding(ctx);
     const byJob = new Map<string, { jobId: string; jobNumber: string; lines: number; since: string | null }>();
     for (const row of rows) {

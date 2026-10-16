@@ -443,6 +443,7 @@ async function reserveAcrossLocations(
 
 export async function applyJobKitToJob(ctx: RequestContext, jobId: string, kitId: string) {
   requireModule(ctx, "JOBS_WIP", "WRITE");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   requireTenantPermission(ctx, "JOBS_EDIT");
   requireModule(ctx, "JOB_KITS", "READ");
   requireTenantPermission(ctx, "JOB_KITS_VIEW");

@@ -19,6 +19,7 @@ type JobActivityType = Prisma.JobActivityGetPayload<{ select: { type: true } }>[
 
 function requireJobsWrite(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "WRITE");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
   requireTenantPermission(ctx, "JOBS_EDIT");
   return ctx.companyId!;
 }

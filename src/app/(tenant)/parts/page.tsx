@@ -11,11 +11,12 @@ import { PartsOutstandingWorkspace } from "@/components/PartsOutstandingWorkspac
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireModule(ctx, "JOBS_WIP", "READ");
+  requireModule(ctx, "JOB_PARTS", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   requireNotMechanicPage(ctx);
   return <>
     <header className="page-header compact"><div><p className="eyebrow">Jobs</p><h1>Parts</h1><p>Quote requests sent to suppliers, and the parts still outstanding on jobs.</p></div></header>
-    <PartsTabNav current="outstanding" />
+    <PartsTabNav current="outstanding" showRfq={(ctx.moduleAccess.get("PROCUREMENT") ?? "DENIED") !== "DENIED"} />
     <PartsOutstandingWorkspace />
   </>;
 }

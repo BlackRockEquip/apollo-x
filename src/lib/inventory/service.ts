@@ -288,6 +288,13 @@ function isUniqueIdempotencyError(error: unknown) {
 // UI mirrors these checks but never replaces them.
 // ============================================================
 
+// 2026-10-16, industry builds step B: pick slips are their own optional
+// module (which also needs Job parts & ordering and Stock levels — the
+// dependency is applied when the session is built, see applyTileDependencies).
+function requirePickSlipsModule(ctx: RequestContext, intent: "READ" | "WRITE") {
+  requireModule(ctx, "PICK_SLIPS", intent);
+}
+
 function requireInventory(ctx: RequestContext, permission: TenantPermission, intent: "READ" | "WRITE" = "WRITE"): asserts ctx is RequestContext & { companyId: string } {
   requireModule(ctx, "INVENTORY", intent);
   requireTenantPermission(ctx, permission);
@@ -1633,6 +1640,7 @@ async function supersededNumbersByPart(companyId: string, partIds: string[]) {
 
 export async function createPickSlip(ctx: RequestContext, input: z.infer<typeof pickSlipCreateInput>) {
   requireInventory(ctx, "INVENTORY_ISSUE");
+  requirePickSlipsModule(ctx, "WRITE");
 
   const job = await prisma.job.findFirst({ where: { id: input.jobId, companyId: ctx.companyId }, include: { customer: true } });
   if (!job) notFound();
@@ -2131,6 +2139,7 @@ export type PickSlipReservationConflict = {
 
 export async function previewPickSlipForJob(ctx: RequestContext, jobId: string): Promise<{ conflicts: PickSlipReservationConflict[] }> {
   requireInventory(ctx, "INVENTORY_ISSUE");
+  requirePickSlipsModule(ctx, "WRITE");
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, select: { id: true } });
   if (!job) notFound();
   const eligibleLines = await prisma.jobPartLine.findMany({
@@ -2463,6 +2472,7 @@ async function revertPickSlipOverridesTx(tx: Tx, ctx: RequestContext & { company
 
 export async function createPickSlipForJob(ctx: RequestContext, jobId: string, options?: { overrideLineIds?: string[] }) {
   requireInventory(ctx, "INVENTORY_ISSUE");
+  requirePickSlipsModule(ctx, "WRITE");
   // Part lines whose reservations held by other jobs the person chose to
   // override (see previewPickSlipForJob).
   const overrideLineIds = new Set(options?.overrideLineIds ?? []);
@@ -2757,6 +2767,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
 // behavior change, not a new capability.
 export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, input: z.infer<typeof pickSlipCancelInput>) {
   requireInventory(ctx, "INVENTORY_ISSUE");
+  requirePickSlipsModule(ctx, "WRITE");
 
   const pickSlip = await prisma.pickSlip.findFirst({
     where: { id: pickSlipId, companyId: ctx.companyId },
@@ -2876,6 +2887,7 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
 // active one, and hide its own "Cancel"/"Delete" action once it's gone.
 export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof pickSlipQuery>) {
   requireInventory(ctx, "INVENTORY_VIEW", "READ");
+  requirePickSlipsModule(ctx, "READ");
   const where = { companyId: ctx.companyId, ...(input.jobId ? { jobId: input.jobId } : {}) };
   const [slips, total] = await Promise.all([
     prisma.pickSlip.findMany({

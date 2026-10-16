@@ -1,4 +1,5 @@
 import type { ModuleKey } from "@prisma/client";
+import type { ModuleAccessMode } from "@/lib/entitlements/policy";
 
 // ---------------------------------------------------------------------------
 // 2026-10-16 — industry builds (see the "Industry builds — design decisions"
@@ -113,4 +114,34 @@ export function tileWorking(build: IndustryBuildId, tileId: string, on: (tileId:
   if (!tile || !BUILDS[build].tiles.includes(tileId)) return false;
   if (!tile.core && !on(tileId)) return false;
   return (tile.requires ?? []).every((id) => tileWorking(build, id, on, [...seen, tileId]));
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-16, step B — dependency enforcement. A tile that requires another
+// tile (RFQ needs Job parts & ordering; Pick slips needs Job parts & ordering
+// AND Stock levels) is only as available as the weakest tile it requires:
+// when a required tile is DENIED the dependent tile is DENIED, and when a
+// required tile is READ_ONLY (licence grace) the dependent can be at most
+// READ_ONLY. A tile's access is read from its primary (first) module key, the
+// same key the Industry build tab reads its licensing from. Core tiles and
+// tiles with no requirements are never changed. Mutates and returns the map.
+// ---------------------------------------------------------------------------
+const MODE_RANK: Record<ModuleAccessMode, number> = { DENIED: 0, READ_ONLY: 1, FULL: 2 };
+
+export function applyTileDependencies(access: Map<ModuleKey, ModuleAccessMode>): Map<ModuleKey, ModuleAccessMode> {
+  const base = new Map(access);
+  const tileMode = (tileId: string): ModuleAccessMode => base.get(TILES[tileId].modules[0]) ?? "DENIED";
+  for (const tile of Object.values(TILES)) {
+    if (tile.core || !tile.requires?.length) continue;
+    let allowed = tileMode(tile.id);
+    for (const requiredId of tile.requires) {
+      const required = tileMode(requiredId);
+      if (MODE_RANK[required] < MODE_RANK[allowed]) allowed = required;
+    }
+    for (const key of tile.modules) {
+      const current = base.get(key) ?? "DENIED";
+      if (MODE_RANK[allowed] < MODE_RANK[current]) access.set(key, allowed);
+    }
+  }
+  return access;
 }
