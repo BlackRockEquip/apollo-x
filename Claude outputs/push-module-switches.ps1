@@ -21,6 +21,7 @@ Settings > Users module switches; numbering fix; New customer pop-up; Specificat
 - Engineering > job > Specifications: Add report / Edit now open a window for the dimensional size report. Saved reports are listed in a table
   with View, Print report, Edit and Delete on the right. The original handwritten sheet (photo or PDF, up to 8 MB) can be uploaded, viewed,
   replaced or removed; it is also kept in the job's Attachments. New migration 20261016170000 (one nullable column).
+- Login screen: company logos now all sit in the same-sized white tile (168 x 88) and are scaled to fit, so they look consistent and are easier to see.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX
