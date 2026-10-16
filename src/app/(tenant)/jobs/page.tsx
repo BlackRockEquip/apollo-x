@@ -267,7 +267,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 CUSTOMERS_VIEW (see mapListWhere's own comment in
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
-            <LiveSearchInput tableId="jobs-wip-table" serverMode={serverSearch} name="q" placeholder={canSearchCustomerName ? "Search BRE, linked job #, customer, machine, component or reference" : "Search BRE, linked job #, machine, component or reference"} defaultValue={q} />
+            <LiveSearchInput tableId="jobs-wip-table" serverMode={serverSearch} name="q" placeholder={canSearchCustomerName ? "Search job #, linked job #, customer, machine, component or reference" : "Search job #, linked job #, machine, component or reference"} defaultValue={q} />
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}

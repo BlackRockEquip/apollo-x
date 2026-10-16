@@ -633,7 +633,7 @@ export function ImportExportWorkspace() {
               rowLabelHeader="Job #"
               fields={JOB_IMPORT_FIELDS}
               helperText={
-                '"Job number" is required and becomes that job\'s real number (e.g. "BRE001") — re-importing the same job number later updates that job instead of creating a duplicate, so the same file can be re-run safely. "Previous job number" is a different, optional field: a reference to another related job (ModApp\'s "Linked Job / Project" column), not this row\'s own number. A customer is linked when its name matches an existing customer (exactly, or closely enough to flag for a double-check) — a row whose customer name doesn\'t match anyone on file gets a new customer added for it automatically (name only; fill in its details afterward from the Customers screen).'
+                '"Job number" is required and becomes that job\'s real number (e.g. "J00001") — re-importing the same job number later updates that job instead of creating a duplicate, so the same file can be re-run safely. "Previous job number" is a different, optional field: a reference to another related job (ModApp\'s "Linked Job / Project" column), not this row\'s own number. A customer is linked when its name matches an existing customer (exactly, or closely enough to flag for a double-check) — a row whose customer name doesn\'t match anyone on file gets a new customer added for it automatically (name only; fill in its details afterward from the Customers screen).'
               }
             />
           </div>

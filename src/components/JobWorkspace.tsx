@@ -445,6 +445,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerAccountCode, setNewCustomerAccountCode] = useState("");
+  // Extra details asked for in the New customer pop-up (all optional).
+  const [newCustomerDetails, setNewCustomerDetails] = useState({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressLine1: "", city: "" });
+  const [newCustomerError, setNewCustomerError] = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);
   // Machine make autofill — suggests from the company's Manufacturers
   // master-data list (Inventory sidebar), same source used for supplier
@@ -1474,7 +1477,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   function openNewCustomerForm() {
     setNewCustomerName(customerQuery.trim());
     setNewCustomerAccountCode("");
-    setError("");
+    setNewCustomerDetails({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressLine1: "", city: "" });
+    setNewCustomerError("");
     setShowNewCustomerForm(true);
   }
 
@@ -1488,14 +1492,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   async function addNewCustomer() {
     const name = newCustomerName.trim();
     if (name.length < 2) {
-      setError("Customer name needs at least 2 characters.");
+      setNewCustomerError("Customer name needs at least 2 characters.");
+      return;
+    }
+    const d = newCustomerDetails;
+    if (d.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email.trim())) {
+      setNewCustomerError("That email address does not look right.");
       return;
     }
     setAddingCustomer(true);
-    setError("");
+    setNewCustomerError("");
     try {
       const payload: Record<string, unknown> = { name };
       if (newCustomerAccountCode.trim()) payload.accountCode = newCustomerAccountCode.trim();
+      if (d.tradingName.trim()) payload.tradingName = d.tradingName.trim();
+      if (d.telephone.trim()) payload.mainTelephone = d.telephone.trim();
+      if (d.email.trim()) payload.mainEmail = d.email.trim();
+      if (d.addressLine1.trim() || d.city.trim()) payload.address = { type: "BILLING", line1: d.addressLine1.trim(), city: d.city.trim() || null };
+      if (d.contactFirstName.trim()) payload.contacts = [{ firstName: d.contactFirstName.trim(), lastName: d.contactLastName.trim() || null, telephone: d.telephone.trim() || null, email: d.email.trim() || null, isPrimary: true }];
       const r = await fetch("/api/v1/master-data/customers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to add that customer.");
@@ -1508,7 +1522,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setNewCustomerName("");
       setNewCustomerAccountCode("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to add that customer.");
+      setNewCustomerError(e instanceof Error ? e.message : "Unable to add that customer.");
     } finally {
       setAddingCustomer(false);
     }
@@ -3910,27 +3924,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <button type="button" onClick={() => { setShowCustomerOptions(false); openNewCustomerForm(); }}><strong><Plus size={12} style={{ verticalAlign: "-1px" }} /> Add &quot;{customerQuery.trim()}&quot; as a new customer</strong></button>
                 </div>
               )}
-              {showNewCustomerForm && (
-                <div className="drawer-fields" style={{ marginTop: 4 }}>
-                  <label><span>Customer name</span><input value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} /></label>
-                  <label><span>Account code (optional)</span><input value={newCustomerAccountCode} onChange={(e) => setNewCustomerAccountCode(e.target.value)} /></label>
-                  <label>
-                    <span>&nbsp;</span>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <button type="button" className="quiet-button" disabled={addingCustomer} onClick={() => setShowNewCustomerForm(false)}>Cancel</button>
-                      <button type="button" className="gold-button" disabled={addingCustomer || newCustomerName.trim().length < 2} onClick={() => void addNewCustomer()}><Plus size={14} /> {addingCustomer ? "Adding…" : "Add customer"}</button>
-                    </div>
-                  </label>
-                </div>
-              )}
             </label>
             {/* Always available, not just when a search comes up empty — so
                 someone who wants to add a new customer without searching for
                 an existing one first still has an obvious way in. */}
             <label>
               <span>&nbsp;</span>
-              <button type="button" className="quiet-button" onClick={() => { if (showNewCustomerForm) setShowNewCustomerForm(false); else openNewCustomerForm(); }}>
-                <Plus size={15} /> {showNewCustomerForm ? "Cancel new customer" : "New customer"}
+              <button type="button" className="quiet-button" onClick={() => openNewCustomerForm()}>
+                <Plus size={15} /> New customer
               </button>
             </label>
             <label><span>Date in</span><input type="date" value={form.dateReceived} onChange={(e) => updateField("dateReceived", e.target.value)} /></label>
@@ -3960,6 +3961,29 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             )}
           </div>
           </fieldset>
+          {showNewCustomerForm && (
+            <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="New customer" onMouseDown={(e) => { if (e.target === e.currentTarget && !addingCustomer) setShowNewCustomerForm(false); }}>
+              <aside className="form-drawer compact-dialog">
+                <header><div><p className="eyebrow">Customers</p><h2>New customer</h2></div><button type="button" disabled={addingCustomer} onClick={() => setShowNewCustomerForm(false)} aria-label="Close dialog"><X size={18} /></button></header>
+                <div className="drawer-fields" onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") { e.preventDefault(); if (!addingCustomer) void addNewCustomer(); } }}>
+                  <label className="wide"><span>Customer name *</span><input autoFocus value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} /></label>
+                  <label><span>Account code</span><input value={newCustomerAccountCode} onChange={(e) => setNewCustomerAccountCode(e.target.value)} /></label>
+                  <label><span>Trading name</span><input value={newCustomerDetails.tradingName} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, tradingName: e.target.value }))} /></label>
+                  <label><span>Contact first name</span><input value={newCustomerDetails.contactFirstName} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, contactFirstName: e.target.value }))} /></label>
+                  <label><span>Contact last name</span><input value={newCustomerDetails.contactLastName} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, contactLastName: e.target.value }))} /></label>
+                  <label><span>Telephone</span><input value={newCustomerDetails.telephone} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, telephone: e.target.value }))} /></label>
+                  <label><span>Email</span><input type="email" value={newCustomerDetails.email} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, email: e.target.value }))} /></label>
+                  <label className="wide"><span>Address</span><input value={newCustomerDetails.addressLine1} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, addressLine1: e.target.value }))} /></label>
+                  <label><span>City</span><input value={newCustomerDetails.city} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, city: e.target.value }))} /></label>
+                </div>
+                {newCustomerError ? <p className="form-error" role="alert" style={{ margin: "0 18px 8px", color: "var(--danger, #b3261e)" }}>{newCustomerError}</p> : null}
+                <footer className="detail-actions">
+                  <button type="button" className="quiet-button" disabled={addingCustomer} onClick={() => setShowNewCustomerForm(false)}>Cancel</button>
+                  <button type="button" className="gold-button" disabled={addingCustomer || newCustomerName.trim().length < 2} onClick={() => void addNewCustomer()}><Plus size={14} /> {addingCustomer ? "Adding…" : "Add customer"}</button>
+                </footer>
+              </aside>
+            </div>
+          )}
         </section>
   ) : null;
 

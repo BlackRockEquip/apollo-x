@@ -58,7 +58,7 @@ export function DocumentTitlesSettings() {
   return (
     <div className="document-titles">
       <p className="muted small-line">
-        The title is printed at the top of each document and is the name it is saved under in the job&rsquo;s folder, for example <strong>BRE1152 - {titles.JOB_HISTORY || DEFAULT_DOCUMENT_TITLES.JOB_HISTORY}.pdf</strong>. Files that people attach to a job keep the name they gave them.
+        The title is printed at the top of each document and is the name it is saved under in the job&rsquo;s folder, for example <strong>J00123 - {titles.JOB_HISTORY || DEFAULT_DOCUMENT_TITLES.JOB_HISTORY}.pdf</strong>. Files that people attach to a job keep the name they gave them.
       </p>
       <div className="data-table-wrap">
         <table className="data-table">
@@ -114,7 +114,7 @@ export function DocumentTitlesSettings() {
                     {[60, 85, 45, 70, 55].map((width, index) => <div key={index} style={{ height: 8, width: `${width}%`, background: "#e3e6ea", borderRadius: 4 }} />)}
                   </div>
                 </div>
-                <p className="muted small-line wide">Saved as: <strong>{documentBaseName("BRE1152", title)}.pdf</strong> (the job number comes first, then the title).</p>
+                <p className="muted small-line wide">Saved as: <strong>{documentBaseName("J00123", title)}.pdf</strong> (the job number comes first, then the title).</p>
                 {DOCUMENT_TITLE_FORBIDDEN.test(titles[kind.key]) && <p className="form-error wide">This title contains a character that is not allowed in a file name.</p>}
               </div>
               <footer><button type="button" className="quiet-button" onClick={() => setPreviewKind(null)}>Close</button></footer>

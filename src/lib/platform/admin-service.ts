@@ -88,7 +88,7 @@ function requirePlatformCompaniesView(ctx: RequestContext) {
 }
 
 function summarizeEntitlements(rows: Array<{ module: ModuleKey; status: string }>) {
-  if (rows.length === 0) return "Black Rock full access or no entitlement rows";
+  if (rows.length === 0) return "Full access (internal company) or no entitlement rows";
   return rows
     .sort((a, b) => MODULE_LABELS[a.module].localeCompare(MODULE_LABELS[b.module]))
     .map((row) => `${MODULE_LABELS[row.module]}: ${row.status.replaceAll("_", " ")}`)
