@@ -1,9 +1,11 @@
 import { MasterDataRoute } from "@/components/MasterDataRoute";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 
 export default async function Page() {
-  requireTenantPageAccess(await requireRequestContext(), "CUSTOMERS_VIEW");
+  const ctx = await requireRequestContext();
+  requireTenantPageAccess(ctx, "CUSTOMERS_VIEW");
+  requireTenantModulePage(ctx, "CUSTOMERS");
   return <MasterDataRoute kind="customers" />;
 }
 

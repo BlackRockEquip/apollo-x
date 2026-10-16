@@ -1,7 +1,7 @@
 import { ArrowLeft, Eye } from "lucide-react";
 import Link from "next/link";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule } from "@/lib/auth/guards";
+import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { getInventoryDetail, listStockMovements } from "@/lib/inventory/service";
 import { movementQuery } from "@/lib/inventory/validation";
 
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // Phase 3 Part detail — separates Part Master (catalog) from Stock Position (ledger).
 export default async function PartDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireRequestContext();
-  requireModule(ctx, "INVENTORY", "READ");
+  requireTenantModulePage(ctx, "INVENTORY");
   const { id } = await params;
 
   const detail = await getInventoryDetail(ctx, id);

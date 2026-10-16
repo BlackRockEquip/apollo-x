@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleKey } from "@prisma/client";
+import type { ModuleAccessMode } from "@/lib/entitlements/policy";
 import type { TenantPermission } from "@/lib/auth/permissions";
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ import type { TenantPermission } from "@/lib/auth/permissions";
 export function requireTenantPageAccess(context: RequestContext | null, permission: TenantPermission): asserts context is RequestContext {
   if (!context) redirect("/login");
   if (!context.companyId) redirect("/platform");
-  if (!context.tenantPermissions.has(permission)) redirect(defaultTenantDestination(context.tenantPermissions));
+  if (!context.tenantPermissions.has(permission)) redirect(defaultTenantDestination(context.tenantPermissions, context.moduleAccess));
 }
 
 // 2026-10-01 — counterpart to requireTenantPageAccess for a page that
@@ -44,7 +45,7 @@ export function requireTenantPageAccess(context: RequestContext | null, permissi
 export function requireAnyTenantPageAccess(context: RequestContext | null, permissions: TenantPermission[]): asserts context is RequestContext {
   if (!context) redirect("/login");
   if (!context.companyId) redirect("/platform");
-  if (!permissions.some((p) => context.tenantPermissions.has(p))) redirect(defaultTenantDestination(context.tenantPermissions));
+  if (!permissions.some((p) => context.tenantPermissions.has(p))) redirect(defaultTenantDestination(context.tenantPermissions, context.moduleAccess));
 }
 
 // 2026-10-01 — role-based counterpart to requireTenantPageAccess above, for
@@ -59,29 +60,40 @@ export function requireAnyTenantPageAccess(context: RequestContext | null, permi
 // requireTenantPageAccess, as a second check — same redirect-not-throw
 // behavior, same reason (no error.tsx boundary in this app).
 export function requireNotMechanicPage(context: RequestContext): void {
-  if (context.tenantRole === "USER" || context.tenantRole === "WIP_VIEWER") redirect(defaultTenantDestination(context.tenantPermissions));
+  if (context.tenantRole === "USER" || context.tenantRole === "WIP_VIEWER") redirect(defaultTenantDestination(context.tenantPermissions, context.moduleAccess));
 }
 
 // 2026-10-16 — module-level counterpart: bounce a viewer away from a page
 // whose module is switched off for the company (for example Settings >
 // Templates when the RFQs module is off), so it is not reachable by URL
 // either, not just missing from the menu.
-export function requireTenantModulePage(context: RequestContext, module: ModuleKey): void {
-  if ((context.moduleAccess.get(module) ?? "DENIED") === "DENIED") redirect(defaultTenantDestination(context.tenantPermissions));
+export function requireTenantModulePage(context: RequestContext | null, module: ModuleKey | ModuleKey[], intent: "READ" | "WRITE" = "READ"): asserts context is RequestContext {
+  // 2026-10-16, user report: after a platform admin switched Outwork off for a company, refreshing a company page that
+  // needs a switched-off module showed a blank screen (the page threw, and this app has no error page). Call this instead
+  // of requireModule at the top of a tenant page: if the module is off (or, for WRITE, not fully on) the user is sent to
+  // the first page they do have - the Dashboard when it is on. `module` may be a list (any one of them is enough).
+  if (!context) redirect("/login");
+  if (!context.companyId) redirect("/platform");
+  const modules = Array.isArray(module) ? module : [module];
+  const ok = modules.some((m) => {
+    const access = context.moduleAccess.get(m) ?? "DENIED";
+    return access !== "DENIED" && (intent === "READ" || access === "FULL");
+  });
+  if (!ok) redirect(defaultTenantDestination(context.tenantPermissions, context.moduleAccess));
 }
 
-// Picks a safe landing page for a given permission set, in rough order of
-// "most users have this" — used both as the requireTenantPageAccess
-// fallback (bounce a now-unauthorized user somewhere real rather than a
-// dead end) and as the post-login destination (see auth/login/route.ts and
-// app/login/page.tsx), so a role like Mechanic — which lacks
-// DASHBOARD_VIEW — lands on Jobs & WIP instead of an empty/blocked
-// Dashboard.
-export function defaultTenantDestination(permissions: ReadonlySet<TenantPermission>): string {
-  if (permissions.has("DASHBOARD_VIEW")) return "/dashboard";
-  if (permissions.has("JOBS_VIEW")) return "/jobs";
-  if (permissions.has("JOB_KITS_VIEW")) return "/job-kits";
-  if (permissions.has("INVENTORY_VIEW")) return "/inventory";
-  if (permissions.has("SUPPLIERS_VIEW")) return "/suppliers";
-  return "/login";
+export function defaultTenantDestination(permissions: ReadonlySet<TenantPermission>, moduleAccess?: ReadonlyMap<ModuleKey, ModuleAccessMode>): string {
+  // 2026-10-16: when the company's module switches are known, only land on a page whose module is actually on, so a user
+  // is never sent to (or bounced between) pages that are switched off. The last resort is Notifications, which needs no
+  // module, so there is always somewhere to land.
+  const on = (module: ModuleKey) => !moduleAccess || (moduleAccess.get(module) ?? "DENIED") !== "DENIED";
+  if (permissions.has("DASHBOARD_VIEW") && on("DASHBOARD")) return "/dashboard";
+  if (permissions.has("JOBS_VIEW") && on("JOBS_WIP")) return "/jobs";
+  if (permissions.has("JOB_KITS_VIEW") && on("JOB_KITS")) return "/job-kits";
+  if (permissions.has("INVENTORY_VIEW") && on("INVENTORY")) return "/inventory";
+  if (permissions.has("SUPPLIERS_VIEW") && on("SUPPLIERS")) return "/suppliers";
+  if (!moduleAccess) return "/login";
+  if (permissions.has("CUSTOMERS_VIEW") && on("CUSTOMERS")) return "/customers";
+  if (permissions.has("REPORTS_VIEW") && on("REPORTS")) return "/reports";
+  return "/notifications";
 }

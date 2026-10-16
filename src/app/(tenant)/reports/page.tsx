@@ -1,5 +1,5 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { ReportsWorkspace } from "@/components/ReportsWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -12,5 +12,6 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireTenantPageAccess(ctx, "REPORTS_VIEW");
+  requireTenantModulePage(ctx, "REPORTS");
   return <ReportsWorkspace />;
 }

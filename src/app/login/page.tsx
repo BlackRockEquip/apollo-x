@@ -12,7 +12,7 @@ export default async function LoginPage() {
   // 2026-10-01 — was hardcoded "/dashboard"; context here is the fully
   // resolved RequestContext (role defaults + any per-user overrides), so
   // this picks the same landing page a Mechanic would actually keep.
-  if (context) redirect(context.companyId ? defaultTenantDestination(context.tenantPermissions) : "/platform");
+  if (context) redirect(context.companyId ? defaultTenantDestination(context.tenantPermissions, context.moduleAccess) : "/platform");
   return (
     <main className="login-page">
       <section className="login-story">

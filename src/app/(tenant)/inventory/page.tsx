@@ -1,6 +1,5 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule } from "@/lib/auth/guards";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { StockLevelsWorkspace } from "@/components/StockLevelsWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +21,7 @@ export default async function InventoryPage() {
   // write actions are being locked down below — same redirect-not-throw
   // guard as the rest, since this app still has no error.tsx boundary.
   requireTenantPageAccess(ctx, "INVENTORY_VIEW");
-  requireModule(ctx, "INVENTORY", "READ");
+  requireTenantModulePage(ctx, "INVENTORY");
   const hasManage = ["INVENTORY_RECEIVE", "INVENTORY_TRANSFER", "INVENTORY_ISSUE", "INVENTORY_ADJUST"].some((p) => ctx.tenantPermissions.has(p as never));
   return <StockLevelsWorkspace hasManage={hasManage} />;
 }

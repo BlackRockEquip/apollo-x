@@ -1,6 +1,6 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
-import { requireNotMechanicPage } from "@/lib/auth/page-guard";
+import { requireTenantPermission } from "@/lib/auth/guards";
+import { requireNotMechanicPage, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { PartsTabNav } from "@/components/PartsTabNav";
 import { PartsOutstandingWorkspace } from "@/components/PartsOutstandingWorkspace";
 
@@ -10,8 +10,8 @@ import { PartsOutstandingWorkspace } from "@/components/PartsOutstandingWorkspac
 // to the job's parts list.
 export default async function Page() {
   const ctx = await requireRequestContext();
-  requireModule(ctx, "JOBS_WIP", "READ");
-  requireModule(ctx, "JOB_PARTS", "READ");
+  requireTenantModulePage(ctx, "JOBS_WIP");
+  requireTenantModulePage(ctx, "JOB_PARTS");
   requireTenantPermission(ctx, "JOBS_VIEW");
   requireNotMechanicPage(ctx);
   return <>

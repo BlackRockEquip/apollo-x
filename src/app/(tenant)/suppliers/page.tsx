@@ -1,5 +1,5 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireTenantPageAccess, requireNotMechanicPage } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireNotMechanicPage, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { MasterDataRoute } from "@/components/MasterDataRoute";
 import { masterConfigs } from "@/lib/master-data/ui-config";
 
@@ -24,6 +24,7 @@ const config = masterConfigs["suppliers"];
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireTenantPageAccess(ctx, "SUPPLIERS_VIEW");
+  requireTenantModulePage(ctx, "SUPPLIERS");
   requireNotMechanicPage(ctx);
   return <>
     <header className="page-header compact"><div><p className="eyebrow">{config.eyebrow}</p><h1>{config.title}</h1><p>{config.description}</p></div></header>

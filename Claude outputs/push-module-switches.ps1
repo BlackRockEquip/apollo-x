@@ -22,6 +22,9 @@ Settings > Users module switches; numbering fix; New customer pop-up; Specificat
   with View, Print report, Edit and Delete on the right. The original handwritten sheet (photo or PDF, up to 8 MB) can be uploaded, viewed,
   replaced or removed; it is also kept in the job's Attachments. New migration 20261016170000 (one nullable column).
 - Login screen: company logos sit in equal-sized white tiles, four in a row; with more than four the row becomes a slider that slides left on its own and loops (pauses on hover).
+- Fix: when a module (e.g. Outwork) is switched off for a company, refreshing one of its pages no longer shows a blank screen. The user is sent to the
+  Dashboard (or, if that is off too, the first page they do have). Applies to every company page that depends on a module, plus a friendly
+  "This page could not be shown" screen with a Go to dashboard button as a safety net for any other page error.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01UwKrkxX8njJN9P2UvfUiGX

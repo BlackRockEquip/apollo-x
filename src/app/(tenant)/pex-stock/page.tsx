@@ -1,7 +1,6 @@
 import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule } from "@/lib/auth/guards";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { listPexInventory } from "@/lib/pex/service";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
@@ -26,7 +25,7 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
   // Mechanic, which no longer has PEX_STOCK_VIEW) is bounced to a real
   // page instead of a crash screen — see page-guard.ts.
   requireTenantPageAccess(ctx, "PEX_STOCK_VIEW");
-  requireModule(ctx, "PEX_STOCK", "READ");
+  requireTenantModulePage(ctx, "PEX_STOCK");
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";

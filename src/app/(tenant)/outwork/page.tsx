@@ -1,6 +1,6 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
-import { requireNotMechanicPage } from "@/lib/auth/page-guard";
+import { requireTenantPermission } from "@/lib/auth/guards";
+import { requireNotMechanicPage, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { OutworkAllWorkspace } from "@/components/OutworkAllWorkspace";
 
 // 2026-10-05, user request: Outwork moved out of the Suppliers tab bar to its
@@ -15,8 +15,8 @@ import { OutworkAllWorkspace } from "@/components/OutworkAllWorkspace";
 // job's own Outwork section.
 export default async function Page() {
   const ctx = await requireRequestContext();
-  requireModule(ctx, "JOBS_WIP", "READ");
-  requireModule(ctx, "OUTWORK", "READ");
+  requireTenantModulePage(ctx, "JOBS_WIP");
+  requireTenantModulePage(ctx, "OUTWORK");
   requireTenantPermission(ctx, "JOBS_VIEW");
   requireNotMechanicPage(ctx);
   return <>

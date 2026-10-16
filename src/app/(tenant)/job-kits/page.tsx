@@ -1,12 +1,13 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { requireTenantModulePage } from "@/lib/auth/page-guard";
+import { requireTenantPermission } from "@/lib/auth/guards";
 import { JobKitsWorkspace } from "@/components/JobKitsWorkspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function JobKitsPage() {
   const ctx = await requireRequestContext();
-  requireModule(ctx, "JOB_KITS", "READ");
+  requireTenantModulePage(ctx, "JOB_KITS");
   requireTenantPermission(ctx, "JOB_KITS_VIEW");
   return <JobKitsWorkspace />;
 }

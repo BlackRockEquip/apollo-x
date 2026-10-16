@@ -1,7 +1,6 @@
 import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule } from "@/lib/auth/guards";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { listPexTracking } from "@/lib/pex/service";
 import { PexTrackingWorkspace } from "@/components/PexTrackingWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
@@ -24,7 +23,7 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
   // redirect-based page guard so an unauthorized role is bounced to a real
   // page instead of hitting Next's generic error page.
   requireTenantPageAccess(ctx, "PEX_TRACKING_VIEW");
-  requireModule(ctx, "PEX_TRACKING", "READ");
+  requireTenantModulePage(ctx, "PEX_TRACKING");
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";

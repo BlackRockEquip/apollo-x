@@ -1,5 +1,5 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireTenantPageAccess } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { DashboardWorkspace } from "@/components/DashboardWorkspace";
 
 export const dynamic = "force-dynamic";
@@ -14,5 +14,6 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   const ctx = await requireRequestContext();
   requireTenantPageAccess(ctx, "DASHBOARD_VIEW");
+  requireTenantModulePage(ctx, "DASHBOARD");
   return <DashboardWorkspace />;
 }

@@ -12,7 +12,8 @@ import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
 import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
+import { requireTenantModulePage } from "@/lib/auth/page-guard";
+import { requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
 import { JOB_TYPE_LABELS, jobTypeLabelsFor } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
@@ -170,7 +171,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
 export default async function JobsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
   const COLUMN_LABELS = wipColumnLabelsFor(ctx.industryBuild);
-  requireModule(ctx, "JOBS_WIP", "READ");
+  requireTenantModulePage(ctx, "JOBS_WIP");
   requireTenantPermission(ctx, "JOBS_VIEW");
   const sp = await searchParams;
   const view = typeof sp.view === "string" ? sp.view : "all";

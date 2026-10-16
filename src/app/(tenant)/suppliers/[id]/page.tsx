@@ -1,5 +1,5 @@
 import { requireRequestContext } from "@/lib/auth/session";
-import { requireTenantPageAccess, requireNotMechanicPage } from "@/lib/auth/page-guard";
+import { requireTenantPageAccess, requireNotMechanicPage, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { PartyDetailWorkspace } from "@/components/PartyDetailWorkspace";
 
 // 2026-10-01 — a supplier's own detail page had no page-level guard at all
@@ -10,6 +10,7 @@ import { PartyDetailWorkspace } from "@/components/PartyDetailWorkspace";
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireRequestContext();
   requireTenantPageAccess(ctx, "SUPPLIERS_VIEW");
+  requireTenantModulePage(ctx, "SUPPLIERS");
   requireNotMechanicPage(ctx);
   return <PartyDetailWorkspace kind="suppliers" id={(await params).id} />;
 }
