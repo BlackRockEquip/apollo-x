@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { DEFAULT_TENANT_PERMISSIONS, TENANT_PERMISSIONS, mergePermissionOverrides } from "@/lib/auth/permissions";
-import { MODULE_LABELS, TENANT_ROLE_LABELS } from "@/lib/constants";
+import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
+import { buildTiles, isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definitions";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/security/passwords";
 
@@ -61,10 +62,15 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   SPECIFICATIONS: "Engineering",
 };
 
-async function companyEntitledModules(companyId: string) {
+export async function companyEntitledModules(companyId: string) {
   const company = await prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { internalCode: true, entitlements: { select: { module: true, status: true } } } });
   if (company.internalCode === "BLACK_ROCK_EQUIPMENT") return new Set(Object.values(ModuleKey));
   return new Set(company.entitlements.filter((row) => row.status === "ACTIVE" || row.status === "GRACE_READ_ONLY").map((row) => row.module));
+}
+
+async function companyIndustryBuild(companyId: string): Promise<IndustryBuildId> {
+  const company = await prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { industryBuild: true } });
+  return isIndustryBuildId(company.industryBuild) ? company.industryBuild : "WORKSHOP";
 }
 
 function modulePermissions(moduleKey: ModuleKey) {
@@ -157,11 +163,12 @@ function computeOverrides(role: TenantRole, allowedModules: ModuleKey[], explici
 export async function listTenantUsers(ctx: RequestContext) {
   const companyId = auth(ctx);
   const entitledModules = await companyEntitledModules(companyId);
+  const roleLabels = tenantRoleLabelsFor(await companyIndustryBuild(companyId));
   const memberships = await prisma.companyMembership.findMany({ where: { companyId }, include: { user: true, permissions: true }, orderBy: [{ role: "asc" }, { createdAt: "asc" }] });
   return memberships.map((membership) => {
     const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[membership.role], membership.permissions);
     const modules = Array.from(entitledModules).filter((moduleKey) => Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission as never)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW")));
-    return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: TENANT_ROLE_LABELS[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions };
+    return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: roleLabels[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions };
   });
 }
 
@@ -169,6 +176,15 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
   const companyId = auth(ctx);
   const entitled = Array.from(await companyEntitledModules(companyId)).sort();
   const availableModules = entitled.map((moduleKey) => ({ moduleKey, label: MODULE_LABELS[moduleKey], category: MODULE_CATEGORY[moduleKey] ?? "Other" }));
+  const build = await companyIndustryBuild(companyId);
+  const roleLabels = tenantRoleLabelsFor(build);
+  // 2026-10-16, user request: module access shown the same way as on the platform admin's Industry build tab (the build's
+  // module tiles). A tile is switched per user through the modules behind it that carry per-user permissions; a tile with
+  // none ("controllable" empty) follows the company licence for everyone and is shown locked.
+  const entitledSet = new Set(entitled);
+  const tiles = buildTiles(build)
+    .map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules.filter((key) => entitledSet.has(key)), controllable: tile.modules.filter((key) => entitledSet.has(key) && modulePermissions(key).size > 0) }))
+    .filter((tile) => tile.moduleKeys.length > 0);
   const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
   if (membershipId && !editor) throw new Error("NOT_FOUND");
   const selectedModuleKeys = editor
@@ -179,14 +195,23 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
     : ["DASHBOARD", "JOBS_WIP"].filter((moduleKey) => entitled.includes(moduleKey as ModuleKey));
   return {
     availableModules,
-    roles: Object.values(TenantRole).map((role) => ({ role, label: TENANT_ROLE_LABELS[role] })),
+    industryBuild: build,
+    tiles,
+    roles: (editor && !tenantRolesFor(build).includes(editor.role) ? [...tenantRolesFor(build), editor.role] : tenantRolesFor(build)).map((role) => ({ role, label: roleLabels[role] })),
     editor: editor ? { membershipId: editor.id, email: editor.user.email, displayName: editor.user.displayName, role: editor.role, active: editor.user.active, membershipStatus: editor.status, selectedModuleKeys } : null,
   };
 }
 
 export async function createTenantUser(ctx: RequestContext, raw: unknown) {
   const companyId = auth(ctx);
+  return createTenantUserCore(ctx, companyId, "API", raw);
+}
+
+// Shared by Settings > Users (above) and Platform > Companies > company > Add user (platform/admin-service.ts), so a
+// user added from the platform admin is created exactly like one added by the company's own admin.
+export async function createTenantUserCore(ctx: RequestContext, companyId: string, source: "API" | "PLATFORM", raw: unknown) {
   const input = userInput.parse(raw);
+  if (!tenantRolesFor(await companyIndustryBuild(companyId)).includes(input.role)) throw new Error("ROLE_NOT_ALLOWED");
   const entitled = await companyEntitledModules(companyId);
   if (input.moduleKeys.some((key) => !entitled.has(key))) throw new Error("UNLICENSED_MODULE_REQUESTED");
   return prisma.$transaction(async (tx) => {
@@ -201,7 +226,7 @@ export async function createTenantUser(ctx: RequestContext, raw: unknown) {
     const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId, role: input.role } });
     const overrides = computeOverrides(input.role, input.moduleKeys, input.permissionOverrides);
     if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId: membership.id, permission: row.permission, allowed: row.allowed })), skipDuplicates: true });
-    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membership.id, action: "TENANT_USER_CREATED", correlationId: ctx.correlationId, afterData: { email, role: input.role, moduleKeys: input.moduleKeys } } });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membership.id, action: "TENANT_USER_CREATED", correlationId: ctx.correlationId, afterData: { email, role: input.role, moduleKeys: input.moduleKeys } } });
     return membership;
   });
 }
@@ -214,6 +239,7 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
   return prisma.$transaction(async (tx) => {
     const before = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } });
     if (!before) throw new Error("NOT_FOUND");
+    if (input.role && input.role !== before.role && !tenantRolesFor(await companyIndustryBuild(companyId)).includes(input.role)) throw new Error("ROLE_NOT_ALLOWED");
     if (input.displayName || input.active !== undefined || input.password) {
       await tx.userIdentity.update({ where: { id: before.userId }, data: { ...(input.displayName ? { displayName: input.displayName } : {}), ...(input.active !== undefined ? { active: input.active } : {}), ...(input.password ? { passwordHash: await hashPassword(input.password), sessionVersion: { increment: 1 } } : {}) } });
     }

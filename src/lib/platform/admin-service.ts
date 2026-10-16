@@ -1,4 +1,4 @@
-import { EntitlementSource, EntitlementStatus, ModuleKey, PlatformRole, Prisma, Product, TenantStatus } from "@prisma/client";
+import { EntitlementSource, EntitlementStatus, ModuleKey, PlatformRole, Prisma, Product, TenantRole, TenantStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requirePlatformPermission } from "@/lib/auth/guards";
@@ -9,6 +9,8 @@ import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { DEFAULT_PLATFORM_PERMISSIONS, mergePermissionOverrides, type PlatformPermission } from "@/lib/auth/permissions";
 import { isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definitions";
 import { grantInitialModules } from "@/lib/platform/industry-build-service";
+import { ensureDefaultSequences } from "@/lib/master-data/default-sequences";
+import { companyEntitledModules, createTenantUserCore } from "@/lib/users/service";
 
 type CompanyListQuery = {
   q?: string;
@@ -26,6 +28,21 @@ type CompanySettingsInput = {
   defaultTaxJurisdiction?: string;
   documentHeaderText?: string;
   documentFooterText?: string;
+  // 2026-10-16: colours are plain "#RRGGBB" hex strings (the colour picker on
+  // the platform forms produces them); blank clears the colour.
+  accentColor?: string;
+  secondaryColor?: string;
+  backgroundColor?: string;
+};
+
+// 2026-10-16: the company's own letterhead address (a single PHYSICAL, primary
+// CompanyAddress row — same convention as Settings > Company).
+export type CompanyAddressInput = {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
 };
 
 type CompanyInput = {
@@ -37,9 +54,13 @@ type CompanyInput = {
   // Which industry build the company is created on (defaults to WORKSHOP).
   industryBuild?: IndustryBuildId;
   settings?: CompanySettingsInput;
+  address?: CompanyAddressInput;
 };
 
-type CompanyUpdateInput = Omit<CompanyInput, "internalCode" | "industryBuild">;
+// On update every field except the legal name is optional: a field that is
+// left out (undefined) is left exactly as it is stored, so a form that only
+// shows some fields can never wipe the others.
+type CompanyUpdateInput = Partial<Omit<CompanyInput, "internalCode" | "industryBuild" | "legalName">> & { legalName: string };
 
 type EntitlementInput = {
   // Optional, defaults to WORKSHOP below — every module built so far is a
@@ -87,25 +108,74 @@ function asDate(value?: string) {
   return date;
 }
 
+function normalizeColour(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error("INVALID_COLOUR");
+  return `#${hex.toUpperCase()}`;
+}
+
+function finiteInt(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : undefined;
+}
+
+// Settings as a patch: only the keys that were actually supplied appear in the
+// result. Create fills the gaps with defaults; update leaves them alone.
+function settingsPatch(input: CompanySettingsInput | undefined, currency: string | undefined) {
+  const s = input ?? {};
+  const patch: Record<string, string | number | null> = {};
+  const text = (key: string, value: string | undefined) => { if (value !== undefined) patch[key] = asNullable(value); };
+  text("mainTelephone", s.mainTelephone);
+  text("mainEmail", s.mainEmail);
+  text("website", s.website);
+  text("registrationNumber", s.registrationNumber);
+  text("vatNumber", s.vatNumber);
+  text("documentHeaderText", s.documentHeaderText);
+  text("documentFooterText", s.documentFooterText);
+  for (const key of ["themeColor", "accentColor", "secondaryColor", "backgroundColor"] as const) {
+    const colour = normalizeColour(s[key]);
+    if (colour !== undefined) patch[key] = colour;
+  }
+  const validity = finiteInt(s.quoteValidityDays);
+  if (validity !== undefined) patch.quoteValidityDays = validity;
+  const jurisdiction = s.defaultTaxJurisdiction?.trim();
+  if (jurisdiction) patch.defaultTaxJurisdiction = jurisdiction.toUpperCase();
+  // The company's currency also lives on its settings row (that is the one the
+  // app reads for documents) — keep both in step.
+  if (currency) patch.defaultCurrencyCode = currency;
+  return patch;
+}
+
 function normalizeCompanyInput(input: CompanyInput | CompanyUpdateInput) {
+  const currency = input.defaultCurrencyCode?.trim() ? input.defaultCurrencyCode.trim().toUpperCase() : undefined;
   return {
     legalName: input.legalName.trim(),
-    tradingName: asNullable(input.tradingName),
-    defaultCurrencyCode: (input.defaultCurrencyCode?.trim() || "ZAR").toUpperCase(),
-    defaultGracePeriodDays: Math.max(0, Number.isFinite(input.defaultGracePeriodDays) ? Math.floor(input.defaultGracePeriodDays as number) : 30),
-    settings: {
-      themeColor: asNullable(input.settings?.themeColor),
-      mainTelephone: asNullable(input.settings?.mainTelephone),
-      mainEmail: asNullable(input.settings?.mainEmail),
-      website: asNullable(input.settings?.website),
-      registrationNumber: asNullable(input.settings?.registrationNumber),
-      vatNumber: asNullable(input.settings?.vatNumber),
-      quoteValidityDays: Math.max(0, Number.isFinite(input.settings?.quoteValidityDays) ? Math.floor(input.settings!.quoteValidityDays!) : 30),
-      defaultTaxJurisdiction: (input.settings?.defaultTaxJurisdiction?.trim() || "ZA").toUpperCase(),
-      documentHeaderText: asNullable(input.settings?.documentHeaderText),
-      documentFooterText: asNullable(input.settings?.documentFooterText),
-    },
+    tradingName: input.tradingName === undefined ? undefined : asNullable(input.tradingName),
+    defaultCurrencyCode: currency,
+    defaultGracePeriodDays: finiteInt(input.defaultGracePeriodDays),
+    settings: settingsPatch(input.settings, currency),
   };
+}
+
+// Same rule as Settings > Company: a blank first line means "leave the stored
+// address alone" (CompanyAddress.line1 is required).
+async function applyCompanyAddress(tx: Prisma.TransactionClient, companyId: string, address: CompanyAddressInput | undefined) {
+  const line1 = address?.line1?.trim() ?? "";
+  if (!address || !line1) return;
+  const data = {
+    type: "PHYSICAL" as const,
+    line1,
+    line2: asNullable(address.line2),
+    city: asNullable(address.city),
+    province: asNullable(address.province),
+    postalCode: asNullable(address.postalCode),
+    isPrimary: true,
+  };
+  const existing = await tx.companyAddress.findFirst({ where: { companyId }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] });
+  if (existing) await tx.companyAddress.update({ where: { id: existing.id }, data });
+  else await tx.companyAddress.create({ data: { companyId, ...data } });
 }
 
 async function revokeCompanySessions(companyId: string, tx: Prisma.TransactionClient) {
@@ -207,6 +277,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           themeColor: true,
           accentColor: true,
           secondaryColor: true,
+          backgroundColor: true,
           logoMimeType: true,
           registrationNumber: true,
           vatNumber: true,
@@ -230,6 +301,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           storageConfiguredAt: true,
         },
       },
+      addresses: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1, select: { line1: true, line2: true, city: true, province: true, postalCode: true } },
       entitlements: {
         orderBy: [{ module: "asc" }],
         select: {
@@ -272,14 +344,18 @@ export async function createPlatformCompany(ctx: RequestContext, input: CompanyI
         industryBuild,
         legalName: normalized.legalName,
         tradingName: normalized.tradingName,
-        defaultCurrencyCode: normalized.defaultCurrencyCode,
-        defaultGracePeriodDays: normalized.defaultGracePeriodDays,
-        settings: { create: normalized.settings },
+        defaultCurrencyCode: normalized.defaultCurrencyCode ?? "ZAR",
+        defaultGracePeriodDays: normalized.defaultGracePeriodDays ?? 30,
+        settings: { create: { quoteValidityDays: 30, defaultTaxJurisdiction: "ZA", ...normalized.settings } },
       },
     }).catch((error: unknown) => {
       if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") throw new Error("DUPLICATE_INTERNAL_CODE");
       throw error;
     });
+    await applyCompanyAddress(tx, company.id, input.address);
+    // Every new company starts with the standard document numbering sequences
+    // (J, PEX, Q, SO, INV, PR, RFQ) so nothing has to be set up before use.
+    await ensureDefaultSequences(tx, company.id);
     await tx.auditEvent.create({
       data: {
         companyId: company.id,
@@ -314,9 +390,9 @@ export async function updatePlatformCompany(ctx: RequestContext, companyId: stri
       where: { id: companyId },
       data: {
         legalName: normalized.legalName,
-        tradingName: normalized.tradingName,
-        defaultCurrencyCode: normalized.defaultCurrencyCode,
-        defaultGracePeriodDays: normalized.defaultGracePeriodDays,
+        ...(normalized.tradingName !== undefined ? { tradingName: normalized.tradingName } : {}),
+        ...(normalized.defaultCurrencyCode ? { defaultCurrencyCode: normalized.defaultCurrencyCode } : {}),
+        ...(normalized.defaultGracePeriodDays !== undefined ? { defaultGracePeriodDays: normalized.defaultGracePeriodDays } : {}),
         settings: {
           upsert: {
             create: normalized.settings,
@@ -326,6 +402,7 @@ export async function updatePlatformCompany(ctx: RequestContext, companyId: stri
       },
       include: { settings: true },
     });
+    await applyCompanyAddress(tx, companyId, input.address);
     await tx.auditEvent.create({
       data: {
         companyId,
@@ -722,4 +799,121 @@ export async function updatePlatformUserProfile(ctx: RequestContext, userId: str
     });
     return updated;
   });
+}
+
+// 2026-10-16, user request: "in a company view, allow to add users from
+// platform admin without having to go through support system". Creates the
+// user exactly the way the company's own admin would (same service, same
+// role rules for the company's build), with access to every module the
+// company is licensed for; the company's admin can narrow that afterwards.
+export async function createPlatformCompanyUser(ctx: RequestContext, companyId: string, input: { email: string; displayName: string; password: string; role: TenantRole }) {
+  requirePlatformPermission(ctx, "PLATFORM_TENANT_ADMINS_MANAGE");
+  if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { id: true, status: true } });
+  if (!company) throw new Error("RESOURCE_NOT_FOUND");
+  if (company.status !== "ACTIVE") throw new Error("COMPANY_NOT_ACTIVE");
+  const entitled = await companyEntitledModules(companyId);
+  return createTenantUserCore(ctx, companyId, "PLATFORM", {
+    email: input.email,
+    displayName: input.displayName,
+    password: input.password,
+    role: input.role,
+    active: true,
+    moduleKeys: Array.from(entitled),
+  });
+}
+
+function quoteIdent(name: string) {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
+// 2026-10-16, user request: "add a delete company button next to the open
+// button on the table". PERMANENT: removes the company and everything it owns
+// (jobs, parts, customers, documents, users' memberships, audit trail...).
+// Guards: both company-edit and company-suspend platform permissions, Black
+// Rock can never be deleted, and the caller must type the company's internal
+// code. The tenant tables are discovered from the database itself (every table
+// with a "companyId" column) so a table added by a later migration is covered
+// without touching this function; they are emptied with savepoint-protected
+// retries so foreign-key ordering between them sorts itself out.
+// Logins that belonged only to this company are deactivated (not deleted, so
+// the audit trail of other companies that mention them stays intact).
+// Stored files (attachments/logos in object storage) are not removed here.
+export async function deletePlatformCompany(ctx: RequestContext, companyId: string, confirmCode: string) {
+  requirePlatformPermission(ctx, "PLATFORM_COMPANIES_EDIT");
+  requirePlatformPermission(ctx, "PLATFORM_COMPANIES_SUSPEND");
+  if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { id: true, internalCode: true, legalName: true, tradingName: true, industryBuild: true, _count: { select: { memberships: true, jobs: true, customers: true } } },
+  });
+  if (!company) throw new Error("RESOURCE_NOT_FOUND");
+  assertMutableCompany(company.internalCode);
+  if (confirmCode.trim().toUpperCase() !== company.internalCode.toUpperCase()) throw new Error("DELETE_CONFIRM_MISMATCH");
+
+  await prisma.$transaction(async (tx) => {
+    await revokeCompanySessions(companyId, tx);
+    const memberUserIds = (await tx.companyMembership.findMany({ where: { companyId }, select: { userId: true } })).map((row) => row.userId);
+
+    // The one tenant table without its own companyId column (and without
+    // cascade): pick-slip lines hang off pick slips.
+    await tx.$executeRawUnsafe(`DELETE FROM "PickSlipLine" WHERE "pickSlipId" IN (SELECT id FROM "PickSlip" WHERE "companyId" = $1)`, companyId);
+
+    const tableRows = await tx.$queryRaw<Array<{ table_name: string }>>`
+      SELECT c.table_name::text AS table_name FROM information_schema.columns c
+      JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
+      WHERE c.table_schema = current_schema() AND c.column_name::text = 'companyId' AND c.table_name::text <> 'Company'
+      ORDER BY c.table_name`;
+    let remaining = tableRows.map((row) => row.table_name);
+    let lastError = "";
+    while (remaining.length > 0) {
+      const failed: string[] = [];
+      for (const table of remaining) {
+        await tx.$executeRawUnsafe("SAVEPOINT company_delete_step");
+        try {
+          await tx.$executeRawUnsafe(`DELETE FROM ${quoteIdent(table)} WHERE "companyId" = $1`, companyId);
+          await tx.$executeRawUnsafe("RELEASE SAVEPOINT company_delete_step");
+        } catch (error) {
+          await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT company_delete_step");
+          lastError = `${table}: ${error instanceof Error ? error.message : String(error)}`;
+          failed.push(table);
+        }
+      }
+      if (failed.length === remaining.length) {
+        console.error("deletePlatformCompany blocked", lastError);
+        throw new Error("COMPANY_DELETE_BLOCKED");
+      }
+      remaining = failed;
+    }
+
+    await tx.company.delete({ where: { id: companyId } });
+
+    // Logins that only belonged to this company can no longer sign in anywhere.
+    for (const userId of memberUserIds) {
+      const [otherMemberships, platformRoles] = await Promise.all([
+        tx.companyMembership.count({ where: { userId } }),
+        tx.platformRoleAssignment.count({ where: { userId, active: true } }),
+      ]);
+      if (otherMemberships === 0 && platformRoles === 0) {
+        await tx.userIdentity.update({ where: { id: userId }, data: { active: false, sessionVersion: { increment: 1 } } });
+        await tx.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+      }
+    }
+
+    await tx.auditEvent.create({
+      data: {
+        companyId: null,
+        actorId: ctx.userId,
+        source: "PLATFORM",
+        module: "PLATFORM",
+        entityType: "Company",
+        entityId: companyId,
+        action: "PLATFORM_COMPANY_DELETED",
+        correlationId: ctx.correlationId,
+        beforeData: { internalCode: company.internalCode, legalName: company.legalName, tradingName: company.tradingName, industryBuild: company.industryBuild, users: company._count.memberships, jobs: company._count.jobs, customers: company._count.customers },
+      },
+    });
+  }, { timeout: 120000, maxWait: 15000 });
+
+  return { id: company.id, internalCode: company.internalCode, legalName: company.legalName };
 }

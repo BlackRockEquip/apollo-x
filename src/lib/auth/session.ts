@@ -121,7 +121,7 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     displayName: session.user.displayName,
     companyId: company?.id ?? null,
     companyInternalCode: company?.internalCode ?? null,
-    companyName: company ? (company.tradingName ?? company.legalName) : null,
+    companyName: company ? (company.tradingName?.trim() || company.legalName) : null,
     tenantRole: session.membership?.role ?? null,
     tenantPermissions,
     platformPermissions,

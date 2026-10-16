@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import type { RequestContext } from "@/lib/auth/context-types";
+import type { ModuleKey } from "@prisma/client";
 import type { TenantPermission } from "@/lib/auth/permissions";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,15 @@ export function requireAnyTenantPageAccess(context: RequestContext | null, permi
 // requireTenantPageAccess, as a second check — same redirect-not-throw
 // behavior, same reason (no error.tsx boundary in this app).
 export function requireNotMechanicPage(context: RequestContext): void {
-  if (context.tenantRole === "USER") redirect(defaultTenantDestination(context.tenantPermissions));
+  if (context.tenantRole === "USER" || context.tenantRole === "WIP_VIEWER") redirect(defaultTenantDestination(context.tenantPermissions));
+}
+
+// 2026-10-16 — module-level counterpart: bounce a viewer away from a page
+// whose module is switched off for the company (for example Settings >
+// Templates when the RFQs module is off), so it is not reachable by URL
+// either, not just missing from the menu.
+export function requireTenantModulePage(context: RequestContext, module: ModuleKey): void {
+  if ((context.moduleAccess.get(module) ?? "DENIED") === "DENIED") redirect(defaultTenantDestination(context.tenantPermissions));
 }
 
 // Picks a safe landing page for a given permission set, in rough order of

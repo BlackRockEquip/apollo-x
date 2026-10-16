@@ -6,7 +6,9 @@ import { getPlatformCompanyDetail } from "@/lib/platform/admin-service";
 import { getCompanyIndustryBuild } from "@/lib/platform/industry-build-service";
 import { PlatformIndustryBuild } from "@/components/PlatformIndustryBuild";
 import { SupportContextForm } from "@/components/SupportContextForm";
-import { setCompanyStatusAction, updateCompanyAction } from "@/app/platform/actions";
+import { addCompanyUserAction, setCompanyStatusAction, updateCompanyAction } from "@/app/platform/actions";
+import { CompanyColourFields } from "@/components/CompanyColourFields";
+import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { PlatformStorageForm } from "@/components/PlatformStorageForm";
 import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { countInlineFiles } from "@/lib/attachments/offload";
@@ -19,16 +21,36 @@ type Audit = CompanyDetail["auditEvents"][number];
 
 export const dynamic = "force-dynamic";
 
-export default async function PlatformCompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
+const ERROR_MESSAGES: Record<string, string> = {
+  INVALID_COLOUR: "One of the colours is not a valid hex colour (for example #155FCA). Nothing was saved.",
+  BLACK_ROCK_PROTECTED: "Black Rock is protected and cannot be changed here.",
+  NOT_ALLOWED: "You do not have permission to do that.",
+  RESOURCE_NOT_FOUND: "That company no longer exists.",
+  INVALID_USER_DETAILS: "Check the user details: a valid email, a name of at least 2 characters and a password of at least 8 characters.",
+  ROLE_NOT_ALLOWED: "That role is not available for this company's industry build.",
+  COMPANY_NOT_ACTIVE: "Users cannot be added while the company is deactivated.",
+  PASSWORD_REQUIRED: "A password is required for a new user.",
+  UNLICENSED_MODULE_REQUESTED: "The company has no licensed modules to give this user.",
+};
+
+export default async function PlatformCompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const context = await getRequestContext();
   if (!context) redirect("/login");
   if (context.companyId) redirect("/dashboard");
   const { id } = await params;
+  const sp = await searchParams;
+  const pick = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
+  const errorMessage = pick("error") ? (ERROR_MESSAGES[pick("error")] ?? "Unable to save the company.") : "";
+  const userErrorMessage = pick("userError") ? (ERROR_MESSAGES[pick("userError")] ?? "Unable to add the user.") : "";
   const company = await getPlatformCompanyDetail(context, id);
   const industryBuild = await getCompanyIndustryBuild(context, company.id);
   const storageSummary = await countCompanyStoredFiles(company.id);
   const inlineFiles = await countInlineFiles(company.id);
   const activeUsers = company.memberships.filter((membership: Membership) => membership.status === "ACTIVE" && membership.user.active);
+  const displayName = company.tradingName?.trim() || company.legalName;
+  const roleLabels = tenantRoleLabelsFor(company.industryBuild);
+  const allowedRoles = tenantRolesFor(company.industryBuild);
+  const address = company.addresses[0];
   const admins = activeUsers.filter((membership: Membership) => membership.role === "COMPANY_ADMIN");
 
   return (
@@ -45,10 +67,13 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
         <div>
           <Link href="/platform/companies" className="back-link"><ArrowLeft size={15} /> Back to companies</Link>
           <p className="eyebrow">Platform</p>
-          <h1>{company.tradingName ?? company.legalName}</h1>
+          <h1>{displayName}</h1>
           <p>{company.internalCode} · {company.status}</p>
         </div>
       </header>
+
+      {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
+      {pick("notice") === "saved" ? <div className="inline-success">Company saved.</div> : null}
 
       <section className="platform-grid">
         <article className="platform-card">
@@ -72,6 +97,8 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
                 <strong>{company.settings?.logoMimeType ? "Custom logo uploaded" : "Default branding"}</strong>
                 {company.settings?.themeColor ? <span>Primary {company.settings.themeColor}</span> : null}
                 {company.settings?.accentColor ? <span className="muted small-line">Accent {company.settings.accentColor}</span> : null}
+                {company.settings?.secondaryColor ? <span className="muted small-line">Sidebar {company.settings.secondaryColor}</span> : null}
+                {company.settings?.backgroundColor ? <span className="muted small-line">Background {company.settings.backgroundColor}</span> : null}
               </div>
             </article>
           </div>
@@ -84,10 +111,26 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
             <input type="hidden" name="companyId" value={company.id} />
             <label><span>Legal name</span><input name="legalName" defaultValue={company.legalName} disabled={company.blackRockIncluded} /></label>
             <label><span>Trading name</span><input name="tradingName" defaultValue={company.tradingName ?? ""} disabled={company.blackRockIncluded} /></label>
-            <label><span>Currency</span><input name="defaultCurrencyCode" defaultValue={company.defaultCurrencyCode} disabled={company.blackRockIncluded} /></label>
-            <label><span>Theme colour</span><input name="themeColor" defaultValue={company.settings?.themeColor ?? ""} disabled={company.blackRockIncluded} /></label>
-            <label><span>Accent colour</span><input name="accentColor" defaultValue={company.settings?.accentColor ?? ""} disabled={company.blackRockIncluded} /></label>
-            <label><span>Secondary colour</span><input name="secondaryColor" defaultValue={company.settings?.secondaryColor ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Currency</span><input name="defaultCurrencyCode" defaultValue={company.settings?.defaultCurrencyCode ?? company.defaultCurrencyCode} disabled={company.blackRockIncluded} /></label>
+            <label><span>Default tax jurisdiction</span><input name="defaultTaxJurisdiction" defaultValue={company.settings?.defaultTaxJurisdiction ?? "ZA"} disabled={company.blackRockIncluded} /></label>
+            <label><span>Main email</span><input name="mainEmail" type="email" defaultValue={company.settings?.mainEmail ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Main telephone</span><input name="mainTelephone" defaultValue={company.settings?.mainTelephone ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Website</span><input name="website" defaultValue={company.settings?.website ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Registration number</span><input name="registrationNumber" defaultValue={company.settings?.registrationNumber ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>VAT number</span><input name="vatNumber" defaultValue={company.settings?.vatNumber ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Quote validity (days)</span><input name="quoteValidityDays" type="number" min={0} defaultValue={company.settings?.quoteValidityDays ?? 30} disabled={company.blackRockIncluded} /></label>
+            <label className="wide"><span>Address line 1</span><input name="addressLine1" defaultValue={address?.line1 ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label className="wide"><span>Address line 2</span><input name="addressLine2" defaultValue={address?.line2 ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>City</span><input name="addressCity" defaultValue={address?.city ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Province</span><input name="addressProvince" defaultValue={address?.province ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label><span>Postal code</span><input name="addressPostalCode" defaultValue={address?.postalCode ?? ""} disabled={company.blackRockIncluded} /></label>
+            <CompanyColourFields
+              initial={{ themeColor: company.settings?.themeColor ?? "", accentColor: company.settings?.accentColor ?? "", secondaryColor: company.settings?.secondaryColor ?? "", backgroundColor: company.settings?.backgroundColor ?? "" }}
+              companyName={displayName}
+              disabled={company.blackRockIncluded}
+            />
+            <label className="wide"><span>Document header text</span><textarea name="documentHeaderText" rows={2} defaultValue={company.settings?.documentHeaderText ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label className="wide"><span>Document footer text</span><textarea name="documentFooterText" rows={2} defaultValue={company.settings?.documentFooterText ?? ""} disabled={company.blackRockIncluded} /></label>
             <div className="platform-form-actions"><button type="submit" className="primary-button" disabled={company.blackRockIncluded}>Save company</button></div>
           </form>
           {!company.blackRockIncluded && (
@@ -142,16 +185,32 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
                 <div className="record-icon">U</div>
                 <div>
                   <strong>{membership.user.displayName}</strong>
-                  <span>{membership.user.email} · {membership.role} · {membership.status}</span>
+                  <span>{membership.user.email} · {roleLabels[membership.role] ?? membership.role} · {membership.status}</span>
                 </div>
               </article>
             ))}
             {company.memberships.length === 0 && <div className="table-state compact-empty-state">No users on this company yet.</div>}
           </div>
+          {userErrorMessage ? <div className="inline-error">{userErrorMessage}</div> : null}
+          {pick("userAdded") ? <div className="inline-success">{pick("userAdded")} was added.</div> : null}
           {company.status === "ACTIVE" ? (
             <div className="compact-top-gap">
-              <p className="muted small-line">Add, edit or deactivate this company&rsquo;s users (name, email, password, role, module access) from its own Users screen, under an audited support session.</p>
-              <SupportContextForm companyId={company.id} companyName={company.tradingName ?? company.legalName} redirectTo="/users" defaultMode="READ_WRITE" actionLabel="Manage users" />
+              <h4>Add user</h4>
+              <p className="muted small-line">Creates a login for this company with access to every module it is licensed for. The company&rsquo;s own admin can narrow that later from Settings &gt; Users.</p>
+              <form action={addCompanyUserAction} className="platform-form-grid compact-top-gap" data-testid="add-user-form">
+                <input type="hidden" name="companyId" value={company.id} />
+                <label><span>Name</span><input name="displayName" required minLength={2} /></label>
+                <label><span>Email</span><input name="email" type="email" required /></label>
+                <label><span>Password</span><input name="password" type="password" required minLength={8} autoComplete="new-password" /></label>
+                <label><span>Role</span>
+                  <select name="role" defaultValue={allowedRoles.includes("COMPANY_ADMIN") ? "COMPANY_ADMIN" : allowedRoles[0]}>
+                    {allowedRoles.map((role) => <option key={role} value={role}>{roleLabels[role]}</option>)}
+                  </select>
+                </label>
+                <div className="platform-form-actions"><button type="submit" className="primary-button">Add user</button></div>
+              </form>
+              <p className="muted small-line">To edit or deactivate existing users, use the company&rsquo;s own Users screen under an audited support session.</p>
+              <SupportContextForm companyId={company.id} companyName={displayName} redirectTo="/users" defaultMode="READ_WRITE" actionLabel="Manage users" />
             </div>
           ) : (
             <p className="platform-inline-note">User management is unavailable while this company is deactivated.</p>
@@ -190,7 +249,7 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
 
         <article className="platform-card platform-card-span-2">
           <h3>Enter support mode</h3>
-          {company.status === "ACTIVE" ? <SupportContextForm companyId={company.id} companyName={company.tradingName ?? company.legalName} compact={false} /> : <p className="platform-inline-note">Support entry is unavailable while this company is deactivated.</p>}
+          {company.status === "ACTIVE" ? <SupportContextForm companyId={company.id} companyName={displayName} compact={false} /> : <p className="platform-inline-note">Support entry is unavailable while this company is deactivated.</p>}
         </article>
       </section>
     </>

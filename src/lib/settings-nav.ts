@@ -53,7 +53,11 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   // gate as Company / Branding, since it's the same
   // COMPANY_SETTINGS_VIEW/EDIT-permissioned settings area, just a separate
   // tab for message content instead of branding.
-  { key: "email-templates", label: "Templates", href: "/settings/templates", module: "DASHBOARD", permission: "COMPANY_SETTINGS_VIEW" },
+  // 2026-10-16, user request: "If RFQs module is disabled, then email setup
+  // should be hidden as well in settings. Templates tab under settings also
+  // to be hidden." The templates are the RFQ and parts follow-up emails to
+  // suppliers, so the tab now needs the RFQ module (PROCUREMENT) as well.
+  { key: "email-templates", label: "Templates", href: "/settings/templates", module: "PROCUREMENT", permission: "COMPANY_SETTINGS_VIEW" },
   { key: "settings-dashboard", label: "Dashboard", href: "/settings/dashboard", module: "DASHBOARD", permission: "SETTINGS_MANAGE" },
   { key: "users", label: "Users", href: "/users", module: "DASHBOARD", permission: "USERS_MANAGE" },
   // 2026-10-01 — user request: "Allow a Org Admin to send out a message to

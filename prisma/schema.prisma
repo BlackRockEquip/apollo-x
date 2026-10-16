@@ -26,6 +26,8 @@ enum TenantRole {
   STORE_CONTROLLER
   SALES
   FINANCE
+  // 2026-10-16: "WIP View (View Only)" - sees Jobs & WIP, cannot change anything.
+  WIP_VIEWER
 }
 
 enum PlatformRole {

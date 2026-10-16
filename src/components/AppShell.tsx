@@ -9,7 +9,7 @@ import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
 import type { TenantPermission } from "@/lib/auth/permissions";
-import { TENANT_ROLE_LABELS } from "@/lib/constants";
+import { tenantRoleLabelsFor } from "@/lib/constants";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
 import { SupportExitButton } from "@/components/SupportExitButton";
@@ -148,7 +148,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
   // was allowed to use it. Also drops any item flagged hiddenForMechanic
   // (see NavItem's own comment — Suppliers today) for a Mechanic
   // specifically, even though their tenantPermissions already includes it.
-  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => settingsNavModuleAllowed(context.moduleAccess, item.module) && settingsNavPermissionAllowed(context.tenantPermissions, item.permission) && !(item.hiddenForMechanic && context.tenantRole === "USER")) })), [context.moduleAccess, context.tenantPermissions, context.tenantRole]);
+  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => settingsNavModuleAllowed(context.moduleAccess, item.module) && settingsNavPermissionAllowed(context.tenantPermissions, item.permission) && !(item.hiddenForMechanic && (context.tenantRole === "USER" || context.tenantRole === "WIP_VIEWER"))) })), [context.moduleAccess, context.tenantPermissions, context.tenantRole]);
   const topGroups = groups.filter((group) => !group.footer && group.items.length > 0);
   const footerGroups = groups.filter((group) => group.footer && group.items.length > 0);
   const shellStyle = useMemo(() => ({ ["--tenant-theme" as string]: context.themeColor || undefined, ["--tenant-accent" as string]: context.accentColor || undefined, ["--tenant-secondary" as string]: context.secondaryColor || undefined, ["--tenant-canvas" as string]: context.backgroundColor || undefined }), [context.themeColor, context.accentColor, context.secondaryColor, context.backgroundColor]);
@@ -185,7 +185,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
             visible, at the top of every tenant page — so it reads as a
             popup regardless of which page the recipient happens to be on. */}
         <BroadcastBanner />
-        <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? TENANT_ROLE_LABELS[context.tenantRole] : "Platform support"}</span></div></div>{/* 2026-09-19, user request: bell icon next to the Support link, always
+        <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? tenantRoleLabelsFor(context.industryBuild)[context.tenantRole] : "Platform support"}</span></div></div>{/* 2026-09-19, user request: bell icon next to the Support link, always
     visible from every page — AppShell renders on every tenant page, so
     placing it here (rather than on any one page) is what makes it
     "always visible from every page". See NotificationBell.tsx.

@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { customerCreateInput, customerInput, inlineAddressInput, inlineContactInput, listQuery, locationInput, manufacturerInput, normalized, partAlternateNumberInput, partInput, sequenceInput, serviceInput, supplierCreateInput, supplierInput, taxInput, termInput } from "./validation";
 import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { z } from "zod";
+import { ensureDefaultSequences } from "./default-sequences";
+import { financialYearFor, formatDocumentNumber } from "./number-format";
 
 export type MasterKind = "customers" | "suppliers" | "parts" | "manufacturers" | "storage-locations" | "services" | "tax-codes" | "commercial-terms" | "numbering";
 const policy: Record<MasterKind, { module: ModuleKey; view: TenantPermission; create: TenantPermission; edit: TenantPermission }> = {
@@ -45,7 +47,7 @@ export async function listMaster(ctx: RequestContext, kind: MasterKind, raw: unk
     case "services": { const where: Prisma.ServiceItemWhereInput={companyId,...statusWhere(q.status),...(q.q&&{OR:[{code:contains},{description:contains},{category:contains}]})}; const [items,total]=await prisma.$transaction([prisma.serviceItem.findMany({where,include:{taxCode:{select:{code:true,rate:true}}},orderBy:{code:"asc"},skip,take:q.pageSize}),prisma.serviceItem.count({where})]); return {items,total,page:q.page,pageSize:q.pageSize}; }
     case "tax-codes": { const where: Prisma.TaxCodeWhereInput={companyId,...statusWhere(q.status),...(q.q&&{OR:[{code:contains},{description:contains}]})}; const [items,total]=await prisma.$transaction([prisma.taxCode.findMany({where,orderBy:[{code:"asc"},{effectiveFrom:"desc"}],skip,take:q.pageSize}),prisma.taxCode.count({where})]); return {items,total,page:q.page,pageSize:q.pageSize}; }
     case "commercial-terms": { const where: Prisma.CommercialTermWhereInput={companyId,...statusWhere(q.status),...(q.q&&{OR:[{code:contains},{label:contains},{termsText:contains}]})}; const [items,total]=await prisma.$transaction([prisma.commercialTerm.findMany({where,orderBy:[{type:"asc"},{label:"asc"}],skip,take:q.pageSize}),prisma.commercialTerm.count({where})]); return {items,total,page:q.page,pageSize:q.pageSize}; }
-    case "numbering": { const where: Prisma.DocumentNumberSequenceWhereInput={companyId,...statusWhere(q.status)}; const [items,total]=await prisma.$transaction([prisma.documentNumberSequence.findMany({where,orderBy:{type:"asc"},skip,take:q.pageSize}),prisma.documentNumberSequence.count({where})]); return {items:items.map(i=>({...i,nextValue:i.nextValue.toString()})),total,page:q.page,pageSize:q.pageSize}; }
+    case "numbering": { await ensureDefaultSequences(prisma, companyId); const where: Prisma.DocumentNumberSequenceWhereInput={companyId,...statusWhere(q.status)}; const [items,total]=await prisma.$transaction([prisma.documentNumberSequence.findMany({where,orderBy:{type:"asc"},skip,take:q.pageSize}),prisma.documentNumberSequence.count({where})]); return {items:items.map(i=>({...i,nextValue:i.nextValue.toString()})),total,page:q.page,pageSize:q.pageSize}; }
   }
 }
 
@@ -123,7 +125,7 @@ export async function createMaster(ctx: RequestContext, kind: MasterKind, raw: u
       case "services": { const v=serviceInput.parse(input); created=await tx.serviceItem.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,defaultCost:v.defaultCost==null?null:new Prisma.Decimal(v.defaultCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice)}}); break; }
       case "tax-codes": { const v=taxInput.parse(input); created=await tx.taxCode.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,rate:new Prisma.Decimal(v.rate)}}); break; }
       case "commercial-terms": { const v=termInput.parse(input); created=await tx.commercialTerm.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
-      case "numbering": { const v=sequenceInput.parse(input); created=await tx.documentNumberSequence.create({data:{...v,companyId}}) as unknown as Record<string,unknown>&{id:string}; break; }
+      case "numbering": { const v=sequenceInput.parse(input); if(await tx.documentNumberSequence.findFirst({where:{companyId,type:v.type},select:{id:true}})) throw new Error("SEQUENCE_TYPE_EXISTS"); created=await tx.documentNumberSequence.create({data:{...v,companyId}}) as unknown as Record<string,unknown>&{id:string}; break; }
     }
     await tx.auditEvent.create({data:audit(ctx,kind,created.id,"CREATE",undefined,JSON.parse(JSON.stringify(created,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return created;
   });
@@ -423,10 +425,14 @@ export async function allocateDocumentNumberTx(tx: Prisma.TransactionClient, ctx
   // genuinely broken sequence still fails loudly instead of hanging.
   for (let attempt = 0; attempt < 100; attempt++) {
     const rows=await tx.$queryRaw<Array<{id:string;prefix:string;padding:number;includeFinancialYear:boolean;financialYearStartMonth:number;allocated:bigint}>>`UPDATE "DocumentNumberSequence" SET "nextValue"="nextValue"+1,"updatedAt"=NOW() WHERE "companyId"=${companyId} AND "type"=CAST(${type} AS "DocumentSequenceType") AND active=true RETURNING id,prefix,padding,"includeFinancialYear","financialYearStartMonth","nextValue"-1 AS allocated`;
-    if(rows.length!==1) throw new Error("SEQUENCE_NOT_FOUND");
+    if(rows.length!==1){
+      // 2026-10-16: a company with no sequence of this type at all gets the default one created (see default-sequences.ts) and the allocation is retried; a sequence that exists but was switched off still fails.
+      if(attempt===0 && await ensureDefaultSequences(tx, companyId, [type as never])>0) continue;
+      throw new Error("SEQUENCE_NOT_FOUND");
+    }
     const r=rows[0];
-    const year=now.getUTCMonth()+1>=r.financialYearStartMonth?now.getUTCFullYear()+1:now.getUTCFullYear();
-    const number=`${r.prefix}${r.includeFinancialYear?`${year}/`:""}${r.allocated.toString().padStart(r.padding,"0")}`;
+    const year=financialYearFor(now,r.financialYearStartMonth);
+    const number=formatDocumentNumber(r,r.allocated,now);
     // "JOB"/"PEX_JOB" are the only sequence types a real row's own unique
     // field (Job.jobNumber) can be checked against today — a future
     // document type (quotes, invoices, ...) with its own numbered model

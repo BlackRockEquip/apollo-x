@@ -2,14 +2,25 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- async user loading intentionally mirrors existing workspace patterns */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { Check, KeyRound, Lock, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { useTenantPermissions } from "@/components/AppShell";
 
 type ModuleOption = { moduleKey: string; label: string; category: string };
 type UserRow = { id: string; email: string; displayName: string; active: boolean; membershipStatus: string; role: string; roleLabel: string; moduleLabels: string[]; moduleKeys?: string[] };
-type EditorPayload = { availableModules: ModuleOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
+// 2026-10-16: module access is shown as the same module tiles the platform admin sees for this company (see PlatformIndustryBuild.tsx).
+// controllable = the module keys behind the tile that carry per-user permissions; a tile with none follows the company licence and is shown locked.
+type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[] };
+type EditorPayload = { availableModules: ModuleOption[]; industryBuild?: string; tiles?: TileOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
+
+// A new user starts with every module the company has switched on; the user type's own permissions still decide what they can do.
+function defaultModuleKeys(seed: EditorPayload | null): string[] {
+  if (!seed) return [];
+  if (seed.tiles && seed.tiles.length > 0) return Array.from(new Set(seed.tiles.flatMap((tile) => tile.controllable)));
+  return seed.availableModules.slice(0, 2).map((m) => m.moduleKey);
+}
 
 // 2026-09-19 — user request: "under settings-users create tab headings:
 // Add System Users, User Setup... User Setup will be where an admin can
@@ -30,6 +41,10 @@ type SalesRepresentativeRow = { id: string; name: string; active: boolean };
 // this component. The "Add User" action that used to live in a page-header
 // is now its own small action bar at the top of this component instead.
 export function UsersWorkspace() {
+  // 2026-10-16, Engineering Business: the staff list is called "Machinists" (and feeds Machinist 'Assess' / Machinist 'Final').
+  const { industryBuild } = useTenantPermissions();
+  const engineering = industryBuild === "ENGINEERING";
+  const staff = engineering ? { one: "machinist", One: "Machinist", many: "machinists", Many: "Machinists", dropdowns: "Machinist 'Assess' / Machinist 'Final'" } : { one: "mechanic", One: "Mechanic", many: "mechanics", Many: "Mechanics", dropdowns: "Mechanic Strip / Mechanic Assemble" };
   const [users, setUsers] = useState<UserRow[]>([]);
   const [editorSeed, setEditorSeed] = useState<EditorPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,11 +74,11 @@ export function UsersWorkspace() {
     try {
       const response = await fetch("/api/v1/mechanics", { cache: "no-store" });
       const body: { mechanics: MechanicRow[] } = await response.json();
-      if (!response.ok) throw new Error((body as never as { error?: { message?: string } }).error?.message || "Unable to load mechanics.");
+      if (!response.ok) throw new Error((body as never as { error?: { message?: string } }).error?.message || `Unable to load ${staff.many}.`);
       setMechanics(body.mechanics);
-    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to load mechanics."); }
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : `Unable to load ${staff.many}.`); }
     finally { setMechanicsLoading(false); }
-  }, []);
+  }, [staff.many]);
 
   useEffect(() => { void loadMechanics(); }, [loadMechanics]);
 
@@ -85,25 +100,25 @@ export function UsersWorkspace() {
       const wasEditingId = editingMechanicId;
       const response = await fetch(wasEditingId ? `/api/v1/mechanics/${wasEditingId}` : "/api/v1/mechanics", { method: wasEditingId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(mechanicForm) });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message || "Unable to save mechanic.");
+      if (!response.ok) throw new Error(body.error?.message || `Unable to save ${staff.one}.`);
       resetMechanicForm();
-      setMechanicNotice(wasEditingId ? "Mechanic updated." : "Mechanic added.");
+      setMechanicNotice(wasEditingId ? `${staff.One} updated.` : `${staff.One} added.`);
       await loadMechanics();
-    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to save mechanic."); }
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : `Unable to save ${staff.one}.`); }
     finally { setMechanicSaving(false); }
   }
 
   async function removeMechanic(mechanic: MechanicRow) {
-    if (!(await confirm({ message: `Remove mechanic "${mechanic.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`, tone: "danger", confirmLabel: "Remove" }))) return;
+    if (!(await confirm({ message: `Remove ${staff.one} "${mechanic.name}"? Jobs currently assigned to them will keep their history but lose the assignment.`, tone: "danger", confirmLabel: "Remove" }))) return;
     setMechanicSaving(true); setMechanicError(""); setMechanicNotice("");
     try {
       const response = await fetch(`/api/v1/mechanics/${mechanic.id}`, { method: "DELETE" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message || "Unable to remove mechanic.");
+      if (!response.ok) throw new Error(body.error?.message || `Unable to remove ${staff.one}.`);
       if (editingMechanicId === mechanic.id) resetMechanicForm();
-      setMechanicNotice("Mechanic removed.");
+      setMechanicNotice(`${staff.One} removed.`);
       await loadMechanics();
-    } catch (e) { setMechanicError(e instanceof Error ? e.message : "Unable to remove mechanic."); }
+    } catch (e) { setMechanicError(e instanceof Error ? e.message : `Unable to remove ${staff.one}.`); }
     finally { setMechanicSaving(false); }
   }
 
@@ -179,7 +194,7 @@ export function UsersWorkspace() {
       if (!response.ok) throw new Error((body as never as { error?: { message?: string } }).error?.message || "Unable to load users.");
       setUsers(body.users);
       setEditorSeed(body.editor);
-      if (!editingId) setForm((current) => ({ ...current, selectedModuleKeys: body.editor.editor?.selectedModuleKeys ?? body.editor.availableModules.slice(0, 2).map((m) => m.moduleKey) }));
+      if (!editingId) setForm((current) => ({ ...current, selectedModuleKeys: body.editor.editor?.selectedModuleKeys ?? defaultModuleKeys(body.editor) }));
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to load users."); }
     finally { setLoading(false); }
   }, [editingId]);
@@ -202,7 +217,7 @@ export function UsersWorkspace() {
   function resetForm() {
     setEditingId(null);
     setNotice("");
-    setForm({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: editorSeed?.availableModules.slice(0, 2).map((m) => m.moduleKey) ?? [] });
+    setForm({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: defaultModuleKeys(editorSeed) });
   }
 
   // 2026-09-14 — "module selection keeps jumping around not staying on the
@@ -343,7 +358,40 @@ export function UsersWorkspace() {
                up front instead of letting people click around and get a
                confusing save failure. */}
         <header><div><h2>Module access</h2><p>Only entitled modules are available here.</p><p className="muted small-line">Add a user or edit an existing user above first — selections here apply to that user only and are saved together with it.</p></div></header>
-        {groupedModules.length === 0
+        {(editorSeed?.tiles?.length ?? 0) > 0
+          ? <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center", margin: "6px 0 10px" }}>
+              <span className="muted small-line">Click a module to give this user access to it or take it away. Locked modules follow the company licence.</span>
+              <span style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="quiet-button" onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: defaultModuleKeys(editorSeed) }))}>Select all</button>
+                <button type="button" className="quiet-button" onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: [] }))}>Clear all</button>
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10, alignItems: "start" }}>
+              {editorSeed!.tiles!.map((tile) => {
+                const controllable = tile.controllable.length > 0;
+                const on = controllable ? tile.controllable.some((key) => form.selectedModuleKeys.includes(key)) : true;
+                const tone = !controllable ? { border: "1px solid var(--ink-300)", bg: "var(--ink-100)", box: "var(--ink-500)" }
+                  : on ? { border: "2px solid var(--blue-700)", bg: "var(--blue-100)", box: "var(--blue-700)" }
+                  : { border: "1px dashed var(--ink-300)", bg: "var(--surface)", box: "var(--ink-300)" };
+                return (
+                  <div key={tile.id} style={{ border: tone.border, background: tone.bg, borderRadius: 8 }}>
+                    <button type="button" disabled={!controllable} aria-pressed={on} onClick={() => setForm((current) => { const next = new Set(current.selectedModuleKeys); const has = tile.controllable.some((key) => next.has(key)); for (const key of tile.controllable) { if (has) next.delete(key); else next.add(key); } return { ...current, selectedModuleKeys: Array.from(next) }; })} style={{ textAlign: "left", cursor: controllable ? "pointer" : "default", background: "transparent", border: 0, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start", color: "var(--ink-900)", width: "100%" }}>
+                      <span style={{ flex: "0 0 20px", width: 20, height: 20, borderRadius: 4, marginTop: 1, border: `2px solid ${tone.box}`, background: on || !controllable ? tone.box : "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>
+                        {!controllable ? <Lock size={11} /> : on ? <Check size={13} strokeWidth={3} /> : null}
+                      </span>
+                      <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                        <strong style={{ fontSize: 14, fontWeight: 600 }}>{tile.label}</strong>
+                        <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{tile.note}</span>
+                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : on ? "Access" : "No access"}</span>
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+          : groupedModules.length === 0
           ? <p className="table-state compact-empty-state">No modules are enabled for this company yet. Ask your Apollo X administrator to add module licensing before users can be granted access.</p>
           : <div className="module-picker-groups">{groupedModules.map(([category, items]) => <section key={category} className="module-picker-group"><h3>{category}</h3><div className="module-pill-grid">{items.map((item) => { const selected = form.selectedModuleKeys.includes(item.moduleKey); return <button key={item.moduleKey} type="button" className={selected ? "module-pill selected" : "module-pill"} onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: selected ? current.selectedModuleKeys.filter((key) => key !== item.moduleKey) : [...current.selectedModuleKeys, item.moduleKey] }))}><span>{selected ? "✓" : "○"}</span><strong>{item.label}</strong></button>; })}</div></section>)}</div>}
       </section>
@@ -354,7 +402,7 @@ export function UsersWorkspace() {
       <div className="platform-grid">
         <section className="detail-panel">
           <header>
-            <div><h2>{editingMechanicId ? "Edit mechanic" : "Add mechanic"}</h2><p className="muted small-line">Names added here populate the Mechanic Strip / Mechanic Assemble dropdowns on the Job view — no system login required.</p></div>
+            <div><h2>{editingMechanicId ? `Edit ${staff.one}` : `Add ${staff.one}`}</h2><p className="muted small-line">Names added here populate the {staff.dropdowns} dropdowns on the Job view — no system login required.</p></div>
             <div className="header-actions">
               {editingMechanicId ? <button type="button" className="quiet-button" onClick={resetMechanicForm}><X size={14} /> Cancel</button> : null}
               <button type="button" className="gold-button" disabled={mechanicSaving || mechanicForm.name.trim().length < 1} onClick={() => void saveMechanic()}><Save size={14} /> Save</button>
@@ -366,8 +414,8 @@ export function UsersWorkspace() {
           </div>
         </section>
         <section className="detail-panel">
-          <header><div><h2>Mechanic names</h2></div></header>
-          {mechanicsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{mechanics.map((mechanic) => <tr key={mechanic.id}><td><strong>{mechanic.name}</strong></td><td>{mechanic.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditMechanic(mechanic)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeMechanic(mechanic)}><Trash2 size={14} /> Remove</button></td></tr>)}{mechanics.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No mechanics set up yet.</td></tr>}</tbody></table></div>}
+          <header><div><h2>{staff.One} names</h2></div></header>
+          {mechanicsLoading ? <div className="table-state">Loading…</div> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Status</th><th></th></tr></thead><tbody>{mechanics.map((mechanic) => <tr key={mechanic.id}><td><strong>{mechanic.name}</strong></td><td>{mechanic.active ? "Active" : "Inactive"}</td><td className="actions"><button type="button" className="table-action" onClick={() => startEditMechanic(mechanic)}><Pencil size={14} /> Edit</button><button type="button" className="table-action" onClick={() => void removeMechanic(mechanic)}><Trash2 size={14} /> Remove</button></td></tr>)}{mechanics.length === 0 && <tr><td colSpan={3} className="table-state compact-empty-state">No {staff.many} set up yet.</td></tr>}</tbody></table></div>}
         </section>
       </div>
       {/* 2026-09-22, user request: "add Sales Representative same as

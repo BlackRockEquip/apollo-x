@@ -16,13 +16,12 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
 import { JOB_TYPE_LABELS, jobTypeLabelsFor } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
-import { JOBS_WIP_COLUMNS, filterColumnsByPermission, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
+import { JOBS_WIP_COLUMNS, filterColumnsByPermission, wipColumnLabelsFor, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
 export const dynamic = "force-dynamic";
 
 type JobRow = Awaited<ReturnType<typeof listJobs>>["items"][number];
 
-const COLUMN_LABELS: Record<JobsWipColumnId, string> = Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, c.label])) as Record<JobsWipColumnId, string>;
 const COLUMN_DEFAULT_WIDTHS: Record<JobsWipColumnId, number | undefined> = Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, c.defaultWidth])) as Record<JobsWipColumnId, number | undefined>;
 // Drag-to-resize (2026-09-14, user request) reads/writes this same
 // localStorage key regardless of which columns are currently visible —
@@ -170,6 +169,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
 
 export default async function JobsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
+  const COLUMN_LABELS = wipColumnLabelsFor(ctx.industryBuild);
   requireModule(ctx, "JOBS_WIP", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   const sp = await searchParams;
@@ -293,7 +293,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               wip-columns.ts, and getJobsWipColumns above (the real
               enforcement: that column is never in `columns` to begin
               with). */}
-          <JobsWipColumnPicker selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
+          <JobsWipColumnPicker build={ctx.industryBuild} selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
           <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />

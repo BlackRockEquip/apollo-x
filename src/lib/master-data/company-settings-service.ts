@@ -234,7 +234,8 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
     if (input.defaultTaxCodeId && !await tx.taxCode.findFirst({ where: { id: input.defaultTaxCodeId, companyId } })) throw new Error("NOT_FOUND");
     if (input.defaultPaymentTermId && !await tx.commercialTerm.findFirst({ where: { id: input.defaultPaymentTermId, companyId, type: "PAYMENT" } })) throw new Error("NOT_FOUND");
     const { legalName, tradingName, smtpPassword, addressLine1, addressLine2, addressCity, addressProvince, addressPostalCode, ...settings } = input;
-    await tx.company.update({ where: { id: companyId }, data: { legalName, tradingName } });
+    // 2026-10-16: a cleared Trading name is stored as null (not ""), so the sidebar falls back to the legal name.
+    await tx.company.update({ where: { id: companyId }, data: { legalName, tradingName: tradingName?.trim() || null } });
     // A single PHYSICAL, isPrimary address per company — no multi-address
     // UI here, unlike Customer/Supplier (which can have several branches);
     // this is just the tenant's own one office/workshop address for

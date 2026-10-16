@@ -104,17 +104,17 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
   { id: "customerPo", label: "Customer PO", defaultWidth: 130 },
   { id: "type", label: "Job type", defaultVisible: true, defaultWidth: 130 },
   { id: "status", label: "Status", defaultVisible: true, defaultWidth: 160 },
-  { id: "dateReceived", label: "Date received", defaultWidth: 110 },
+  { id: "dateReceived", label: "Date in", defaultWidth: 110 },
   { id: "machineMake", label: "Machine make", defaultWidth: 130 },
   { id: "machineModel", label: "Machine model", defaultVisible: true, defaultWidth: 140 },
   { id: "machineSerial", label: "Machine serial", defaultWidth: 130 },
   { id: "component", label: "Component", defaultVisible: true, defaultWidth: 140 },
   { id: "componentType", label: "Component type", defaultWidth: 130 },
   { id: "componentSerial", label: "Component serial", defaultWidth: 130 },
-  { id: "componentPartNumber", label: "Component part number", defaultWidth: 150 },
-  { id: "description", label: "Description", defaultWidth: 220 },
-  { id: "etaDate", label: "Client ETA", defaultWidth: 110 },
-  { id: "mechanicEtaDate", label: "Mechanic ETA", defaultWidth: 110 },
+  { id: "componentPartNumber", label: "Part number", defaultWidth: 150 },
+  { id: "description", label: "Job description", defaultWidth: 220 },
+  { id: "etaDate", label: "ETA date", defaultWidth: 110 },
+  { id: "mechanicEtaDate", label: "Mechanic ETA date", defaultWidth: 110 },
   { id: "relationshipNotes", label: "Notes", defaultWidth: 200 },
   { id: "quoteNumber", label: "Quote number", defaultWidth: 130 },
   { id: "quoteDate", label: "Quote date", defaultWidth: 110 },
@@ -126,7 +126,7 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
   { id: "purchaseOrderDate", label: "Purchase order date", defaultWidth: 130 },
   { id: "purchaseOrderStatus", label: "Purchase order status", defaultWidth: 140 },
   { id: "deliveryDate", label: "Delivery date", defaultWidth: 110 },
-  { id: "deliveryType", label: "Delivery transport", defaultWidth: 140 },
+  { id: "deliveryType", label: "Delivery type", defaultWidth: 140 },
   { id: "receivingTransport", label: "Receiving transport", defaultWidth: 140 },
   { id: "kmsTravelled", label: "Kms travelled", defaultWidth: 110 },
   { id: "paymentDateReceived", label: "Payment date received", defaultWidth: 150 },
@@ -139,6 +139,20 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
   { id: "createdAt", label: "Created", defaultWidth: 110 },
   { id: "updatedAt", label: "Updated", defaultVisible: true, defaultWidth: 140 },
 ];
+
+// 2026-10-16, user request (Engineering Business): "Job Wip table view, when selecting custom columns, correct all field
+// names listed." The column names now read exactly as the same fields are named on the job screen (Date in, Part number,
+// Job description, ETA date, Delivery type ...), and Engineering uses its own staff wording (Machinist ETA date).
+const ENGINEERING_COLUMN_LABELS: Partial<Record<JobsWipColumnId, string>> = { mechanicEtaDate: "Machinist ETA date" };
+
+export function wipColumnLabel(id: JobsWipColumnId, build?: string | null): string {
+  if (build === "ENGINEERING" && ENGINEERING_COLUMN_LABELS[id]) return ENGINEERING_COLUMN_LABELS[id]!;
+  return JOBS_WIP_COLUMNS.find((c) => c.id === id)?.label ?? id;
+}
+
+export function wipColumnLabelsFor(build?: string | null): Record<JobsWipColumnId, string> {
+  return Object.fromEntries(JOBS_WIP_COLUMNS.map((c) => [c.id, wipColumnLabel(c.id, build)])) as Record<JobsWipColumnId, string>;
+}
 
 // 2026-10-01 — user request ("on Job / WIP table, Column customer must be
 // hidden (not viewable by this user)" for the User/Mechanic role): which

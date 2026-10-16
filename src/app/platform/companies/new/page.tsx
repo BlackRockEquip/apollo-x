@@ -5,6 +5,7 @@ import { getRequestContext } from "@/lib/auth/session";
 import { requirePlatformPermission } from "@/lib/auth/guards";
 import { createCompanyAction } from "@/app/platform/actions";
 import { BUILDS, INDUSTRY_BUILD_IDS } from "@/lib/builds/definitions";
+import { CompanyColourFields } from "@/components/CompanyColourFields";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   LEGAL_NAME_REQUIRED: "Legal name is required.",
   INVALID_INDUSTRY_BUILD: "Pick one of the listed industry builds.",
   DUPLICATE_INTERNAL_CODE: "That internal code is already in use by another company — pick a different one.",
+  INVALID_COLOUR: "One of the colours is not a valid hex colour (for example #155FCA).",
 };
 
 export default async function NewPlatformCompanyPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -45,7 +47,7 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
           <Link href="/platform/companies" className="back-link"><ArrowLeft size={15} /> Back to companies</Link>
           <p className="eyebrow">Platform</p>
           <h1>Add Company</h1>
-          <p>Creates the company record. Branding, storage location and module entitlements are configured next, on the company&apos;s own page.</p>
+          <p>Everything you fill in here is copied into the company&apos;s own settings (contact details, VAT number, address, colours). Storage location and module entitlements are configured next, on the company&apos;s own page.</p>
         </div>
       </header>
 
@@ -73,6 +75,12 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
           <label><span>Registration number</span><input name="registrationNumber" /></label>
           <label><span>VAT number</span><input name="vatNumber" /></label>
           <label><span>Quote validity (days)</span><input name="quoteValidityDays" type="number" min={0} defaultValue={30} /></label>
+          <label className="wide"><span>Address line 1</span><input name="addressLine1" /></label>
+          <label className="wide"><span>Address line 2</span><input name="addressLine2" /></label>
+          <label><span>City</span><input name="addressCity" /></label>
+          <label><span>Province</span><input name="addressProvince" /></label>
+          <label><span>Postal code</span><input name="addressPostalCode" /></label>
+          <CompanyColourFields initial={{}} companyName="" />
           <label className="wide"><span>Document header text</span><textarea name="documentHeaderText" rows={2} /></label>
           <label className="wide"><span>Document footer text</span><textarea name="documentFooterText" rows={2} /></label>
           <div className="platform-form-actions wide"><button type="submit" className="primary-button">Create company</button></div>

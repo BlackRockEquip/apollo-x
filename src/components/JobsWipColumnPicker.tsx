@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { SlidersHorizontal, X } from "lucide-react";
-import { JOBS_WIP_COLUMNS, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
+import { JOBS_WIP_COLUMNS, wipColumnLabel, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
 // ---------------------------------------------------------------------------
 // Jobs & WIP list — the "Columns" button + picker dialog for the
@@ -35,7 +35,7 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
 // "Customer" is dropped before it ever reaches this component for a
 // viewer lacking CUSTOMERS_VIEW. Defaults to every column so every other
 // existing caller keeps working unchanged.
-export function JobsWipColumnPicker({ selected, available }: { selected: JobsWipColumnId[]; available?: JobsWipColumnId[] }) {
+export function JobsWipColumnPicker({ selected, available, build }: { selected: JobsWipColumnId[]; available?: JobsWipColumnId[]; build?: string | null }) {
   const router = useRouter();
   const availableSet = available ? new Set(available) : null;
   const pickableColumns = availableSet ? JOBS_WIP_COLUMNS.filter((col) => availableSet.has(col.id)) : JOBS_WIP_COLUMNS;
@@ -130,7 +130,7 @@ export function JobsWipColumnPicker({ selected, available }: { selected: JobsWip
                       disabled={col.locked || saving}
                       onChange={() => toggle(col.id)}
                     />
-                    {col.label}
+                    {wipColumnLabel(col.id, build)}
                     {col.locked && <em style={{ fontStyle: "normal", fontSize: 10 }}> (always shown)</em>}
                   </label>
                 ))}

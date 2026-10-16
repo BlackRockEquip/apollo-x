@@ -401,7 +401,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return options;
   }
   const canViewCustomer = tenantPermissions.has("CUSTOMERS_VIEW");
-  const mechanicFieldsLocked = tenantRole === "USER";
+  // 2026-10-16: "WIP View (View Only)" users see the whole job but every field, the stepper, parts, notes and outwork are locked (the server refuses writes as well).
+  const viewOnly = tenantRole === "WIP_VIEWER";
+  const mechanicFieldsLocked = tenantRole === "USER" || viewOnly;
   // 2026-10-01, user request (system-wide): replaces every window.confirm()
   // in this file with the shared coloured confirm dialog — see
   // ConfirmDialog.tsx's own header comment. `dialog` is rendered once near
@@ -3827,8 +3829,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label>
           <span>Payment date received</span>
           <div className="field-with-check">
-            <input type="date" value={form.paymentDateReceived} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
-            <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentNotApplicable", e.target.checked ? "true" : "")} /><span>N/A</span></label>
+            {/* 2026-10-16, user request: ticking N/A makes the payment date
+                not editable. The date is cleared too, so a job can't be both
+                "payment N/A" and carry a payment date. */}
+            <input type="date" value={form.paymentNotApplicable === "true" ? "" : form.paymentDateReceived} disabled={form.paymentNotApplicable === "true"} onChange={(e) => updateField("paymentDateReceived", e.target.value)} />
+            <label className="inline-check"><input type="checkbox" checked={form.paymentNotApplicable === "true"} onChange={(e) => { if (e.target.checked) updateField("paymentDateReceived", ""); updateField("paymentNotApplicable", e.target.checked ? "true" : ""); }} /><span>N/A</span></label>
           </div>
         </label>
         <span className="row-break" aria-hidden="true" />
@@ -3980,7 +3985,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 as a normal 2-of-4-column wide-panel, same as before this
                 request, so nothing below it moves). */}
             <header><div><h2>Notes</h2><p>Business-facing notes stay with the job and appear in history.</p></div></header>
-            <div className="drawer-fields"><label className="wide"><span>Notes</span><textarea rows={4} value={form.notes} onChange={(e) => updateField("notes", e.target.value)} /></label></div>
+            <div className="drawer-fields"><label className="wide"><span>Notes</span><textarea rows={4} value={form.notes} disabled={viewOnly} onChange={(e) => updateField("notes", e.target.value)} /></label></div>
           </section>
   ) : null;
 
@@ -4685,7 +4690,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // Industry builds step C: Outwork hides when its module is off and the job has none; otherwise read-only.
   const outworkSection = job && (outworkAccess !== "DENIED" || job.outworkItems.length > 0) ? (
-    <fieldset disabled={outworkAccess !== "FULL"} className="unstyled-fieldset">{outworkSectionInner}</fieldset>
+    <fieldset disabled={outworkAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{outworkSectionInner}</fieldset>
   ) : null;
 
   // 2026-10-16, Specifications module (Engineering Business): the Dimensional Size Report. Hidden when the module is off.
@@ -4733,7 +4738,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const activePartsTab = fieldPartsTab === "pickslips" && showPickSlipsTab ? "pickslips" : fieldPartsTab === "followup" && showFollowupTab ? "followup" : "parts";
   // Industry builds step C: the whole Parts card is hidden when Job parts & ordering is off and the job has no
   // parts; with parts already on it, it stays but read-only.
-  const partsReadOnly = partsAccess !== "FULL";
+  const partsReadOnly = partsAccess !== "FULL" || viewOnly;
   const showPartsBlock = !!job && (partsAccess !== "DENIED" || job.partLines.length > 0);
   const fieldPartsBlock = job && showPartsBlock ? (
     <div className="field-parts-block">
@@ -4744,7 +4749,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         {showFollowupTab && <button type="button" role="tab" aria-selected={activePartsTab === "followup"} className={activePartsTab === "followup" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("followup")}>Follow-up <span className="field-tab-count">{partsFollowupGroups.length}</span></button>}
       </div>
       {activePartsTab === "parts" && <fieldset disabled={partsReadOnly} className="unstyled-fieldset">{partsListSection}</fieldset>}
-      {activePartsTab === "pickslips" && <fieldset disabled={pickSlipsAccess !== "FULL"} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
+      {activePartsTab === "pickslips" && <fieldset disabled={pickSlipsAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
       {activePartsTab === "followup" && followUpSection}
     </div>
   ) : null;

@@ -87,6 +87,9 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "PART_LINE_ALREADY_FULLY_RECEIVED") return NextResponse.json({ error: { code: "PART_LINE_ALREADY_FULLY_RECEIVED", message: "This part line is already fully received." } }, { status: 409 });
   if (error instanceof Error && error.message === "PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING") return NextResponse.json({ error: { code: "PART_LINE_RECEIVE_EXCEEDS_OUTSTANDING", message: "That is more than is still outstanding on this part line." } }, { status: 409 });
   if (error instanceof Error && error.message === "PART_LINE_ALREADY_HAS_DESCRIPTION") return NextResponse.json({ error: { code: "PART_LINE_ALREADY_HAS_DESCRIPTION", message: "This part line already has a description." } }, { status: 409 });
+  // 2026-10-16 — Document numbering + Settings > Users (master-data/service.ts, users/service.ts).
+  if (error instanceof Error && error.message === "SEQUENCE_TYPE_EXISTS") return NextResponse.json({ error: { code: "SEQUENCE_TYPE_EXISTS", message: "A numbering sequence for that document type already exists. Edit the existing one instead." } }, { status: 409 });
+  if (error instanceof Error && error.message === "ROLE_NOT_ALLOWED") return NextResponse.json({ error: { code: "ROLE_NOT_ALLOWED", message: "That user type is not available for this company." } }, { status: 400 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }
