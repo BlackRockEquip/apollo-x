@@ -7,6 +7,8 @@ import { encryptSecret } from "@/lib/storage/secret-crypto";
 import { buildStorageProfile, storageProfileChanged, type StorageProfileInput } from "@/lib/storage/profile";
 import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { DEFAULT_PLATFORM_PERMISSIONS, mergePermissionOverrides, type PlatformPermission } from "@/lib/auth/permissions";
+import { isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definitions";
+import { grantInitialModules } from "@/lib/platform/industry-build-service";
 
 type CompanyListQuery = {
   q?: string;
@@ -32,10 +34,12 @@ type CompanyInput = {
   tradingName?: string;
   defaultCurrencyCode?: string;
   defaultGracePeriodDays?: number;
+  // Which industry build the company is created on (defaults to WORKSHOP).
+  industryBuild?: IndustryBuildId;
   settings?: CompanySettingsInput;
 };
 
-type CompanyUpdateInput = Omit<CompanyInput, "internalCode">;
+type CompanyUpdateInput = Omit<CompanyInput, "internalCode" | "industryBuild">;
 
 type EntitlementInput = {
   // Optional, defaults to WORKSHOP below — every module built so far is a
@@ -115,15 +119,11 @@ function assertMutableCompany(code: string) {
 }
 
 // 2026-09-22, user request: "When adding a company, the default modules
-// should automatically be added to the company." This is the starter
-// package granted to every ordinary new company at creation time (Black
-// Rock is excluded below — it gets its modules through its own immutable
-// INTERNAL_FREE policy, not this list). Source is "BUNDLE" rather than
-// "INTERNAL_FREE" (reserved for Black Rock, see BLACK_ROCK_ENTITLEMENT_PROTECTED
-// below) or "TRIAL"/"PLATFORM_OVERRIDE" (neither fits a standing default) —
-// a platform admin can still add/remove modules afterwards from the
-// company's own Modules/Licensing panel.
-const DEFAULT_MODULE_KEYS: ModuleKey[] = ["DASHBOARD", "CUSTOMERS", "JOBS_WIP", "WARRANTY", "FIELD_SERVICE", "IMPORT_EXPORT"];
+// should automatically be added to the company." Since 2026-10-16 the starter
+// set comes from the company's industry build (src/lib/builds/definitions.ts
+// via grantInitialModules): the build's core modules plus its default optional
+// ones, as "BUNDLE" entitlements. Black Rock is excluded below — it gets its
+// modules through its own immutable INTERNAL_FREE policy.
 
 function effectivePlatformPermissions(role: PlatformRole, rows: ReadonlyArray<{ permission: string; allowed: boolean }>) {
   return Array.from(mergePermissionOverrides<PlatformPermission>(DEFAULT_PLATFORM_PERMISSIONS[role], rows)).sort();
@@ -201,6 +201,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
       updatedAt: true,
       defaultCurrencyCode: true,
       defaultGracePeriodDays: true,
+      industryBuild: true,
       settings: {
         select: {
           themeColor: true,
@@ -262,10 +263,13 @@ export async function createPlatformCompany(ctx: RequestContext, input: CompanyI
   if (!internalCode) throw new Error("INTERNAL_CODE_REQUIRED");
   if (!input.legalName.trim()) throw new Error("LEGAL_NAME_REQUIRED");
   const normalized = normalizeCompanyInput(input);
+  const industryBuild: IndustryBuildId = input.industryBuild ?? "WORKSHOP";
+  if (!isIndustryBuildId(industryBuild)) throw new Error("INVALID_INDUSTRY_BUILD");
   return prisma.$transaction(async (tx) => {
     const company = await tx.company.create({
       data: {
         internalCode,
+        industryBuild,
         legalName: normalized.legalName,
         tradingName: normalized.tradingName,
         defaultCurrencyCode: normalized.defaultCurrencyCode,
@@ -286,46 +290,14 @@ export async function createPlatformCompany(ctx: RequestContext, input: CompanyI
         entityId: company.id,
         action: "PLATFORM_COMPANY_CREATED",
         correlationId: ctx.correlationId,
-        afterData: { internalCode, legalName: normalized.legalName, tradingName: normalized.tradingName },
+        afterData: { internalCode, legalName: normalized.legalName, tradingName: normalized.tradingName, industryBuild },
       },
     });
     // Black Rock gets every module through its own immutable INTERNAL_FREE
     // policy (see updatePlatformEntitlement's BLACK_ROCK_ENTITLEMENT_PROTECTED
     // check) — granting the BUNDLE starter set here too would just create
     // redundant/conflicting entitlement rows for it, so skip.
-    if (internalCode !== BLACK_ROCK_INTERNAL_CODE) {
-      const effectiveFrom = new Date();
-      await tx.companyModuleEntitlement.createMany({
-        data: DEFAULT_MODULE_KEYS.map((module) => ({
-          companyId: company.id,
-          product: "WORKSHOP" as Product,
-          module,
-          status: "ACTIVE" as EntitlementStatus,
-          source: "BUNDLE" as EntitlementSource,
-          effectiveFrom,
-          expiresAt: null,
-          gracePeriodDays: null,
-        })),
-      });
-      // EntitlementHistory doesn't FK to the entitlement row itself (see its
-      // schema comment / updatePlatformEntitlement's own usage), so this
-      // loop needn't wait on createMany returning IDs — same audit trail
-      // every other entitlement change leaves.
-      await tx.entitlementHistory.createMany({
-        data: DEFAULT_MODULE_KEYS.map((module) => ({
-          companyId: company.id,
-          product: "WORKSHOP" as Product,
-          module,
-          previousStatus: null,
-          newStatus: "ACTIVE" as EntitlementStatus,
-          source: "BUNDLE" as EntitlementSource,
-          effectiveAt: effectiveFrom,
-          expiresAt: null,
-          reason: "Default module bundle granted on company creation",
-          changedById: ctx.userId,
-        })),
-      });
-    }
+    if (internalCode !== BLACK_ROCK_INTERNAL_CODE) await grantInitialModules(tx, ctx, company.id, industryBuild);
     return company;
   });
 }

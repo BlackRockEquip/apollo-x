@@ -56,6 +56,9 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   REPORTS: "Reporting",
   ATTACHMENTS: "Core",
   IMPORT_EXPORT: "Core",
+  JOB_PARTS: "Workshop",
+  PICK_SLIPS: "Workshop",
+  SPECIFICATIONS: "Engineering",
 };
 
 async function companyEntitledModules(companyId: string) {
@@ -98,6 +101,9 @@ function modulePermissions(moduleKey: ModuleKey) {
     REPORTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("REPORTS_") || p.startsWith("AUDIT_")),
     ATTACHMENTS: [],
     IMPORT_EXPORT: TENANT_PERMISSIONS.filter((p) => p.endsWith("_EXPORT")),
+    JOB_PARTS: [],
+    PICK_SLIPS: [],
+    SPECIFICATIONS: [],
   };
   return new Set(prefixMap[moduleKey] ?? []);
 }

@@ -63,6 +63,12 @@ enum ModuleKey {
   REPORTS
   ATTACHMENTS
   IMPORT_EXPORT
+  // 2026-10-16 — industry builds. JOB_PARTS (parts list on a job + ordering),
+  // PICK_SLIPS and SPECIFICATIONS are switched per company on the Industry
+  // build tab; src/lib/builds/definitions.ts maps these to the tabs' tiles.
+  JOB_PARTS
+  PICK_SLIPS
+  SPECIFICATIONS
 }
 
 // The platform hosts more than one product line under one shared
@@ -75,6 +81,14 @@ enum ModuleKey {
 enum Product {
   WORKSHOP
   SPORTS_LEAGUE
+}
+
+// 2026-10-16 — industry builds. A company is created on a build; the build
+// decides which module tiles it is offered (src/lib/builds/definitions.ts).
+// Black Rock and every existing company are WORKSHOP.
+enum IndustryBuild {
+  WORKSHOP
+  ENGINEERING
 }
 
 enum EntitlementSource {
@@ -558,6 +572,7 @@ model Company {
   status                 TenantStatus @default(ACTIVE)
   defaultCurrencyCode    String       @default("ZAR")
   defaultGracePeriodDays Int          @default(30)
+  industryBuild          IndustryBuild @default(WORKSHOP)
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 

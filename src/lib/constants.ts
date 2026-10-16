@@ -27,6 +27,9 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   REPORTS: "Reports",
   ATTACHMENTS: "Attachments",
   IMPORT_EXPORT: "Import & Export",
+  JOB_PARTS: "Job Parts & Ordering",
+  PICK_SLIPS: "Pick Slips",
+  SPECIFICATIONS: "Specifications",
 };
 
 export const TENANT_ROLE_LABELS: Record<TenantRole, string> = {

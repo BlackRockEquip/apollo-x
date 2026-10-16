@@ -3,18 +3,17 @@ import { redirect } from "next/navigation";
 import { ArrowLeft, Building2, ShieldCheck } from "lucide-react";
 import { getRequestContext } from "@/lib/auth/session";
 import { getPlatformCompanyDetail } from "@/lib/platform/admin-service";
-import { MODULE_LABELS } from "@/lib/constants";
+import { getCompanyIndustryBuild } from "@/lib/platform/industry-build-service";
+import { PlatformIndustryBuild } from "@/components/PlatformIndustryBuild";
 import { SupportContextForm } from "@/components/SupportContextForm";
-import { setCompanyStatusAction, updateCompanyAction, updateEntitlementAction } from "@/app/platform/actions";
+import { setCompanyStatusAction, updateCompanyAction } from "@/app/platform/actions";
 import { PlatformStorageForm } from "@/components/PlatformStorageForm";
 import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { countInlineFiles } from "@/lib/attachments/offload";
 import { accountIdFromR2Endpoint } from "@/lib/storage/profile";
-import { EntitlementSource, EntitlementStatus, ModuleKey } from "@prisma/client";
 
 type CompanyDetail = Awaited<ReturnType<typeof getPlatformCompanyDetail>>;
 type Membership = CompanyDetail["memberships"][number];
-type Entitlement = CompanyDetail["entitlements"][number];
 type Ticket = CompanyDetail["supportTickets"][number];
 type Audit = CompanyDetail["auditEvents"][number];
 
@@ -26,6 +25,7 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
   if (context.companyId) redirect("/dashboard");
   const { id } = await params;
   const company = await getPlatformCompanyDetail(context, id);
+  const industryBuild = await getCompanyIndustryBuild(context, company.id);
   const storageSummary = await countCompanyStoredFiles(company.id);
   const inlineFiles = await countInlineFiles(company.id);
   const activeUsers = company.memberships.filter((membership: Membership) => membership.status === "ACTIVE" && membership.user.active);
@@ -129,34 +129,9 @@ export default async function PlatformCompanyDetailPage({ params }: { params: Pr
         </article>
 
         <article className="platform-card platform-card-span-2">
-          <h3>Modules / Licensing</h3>
-          <p className="muted small-line">{company.blackRockIncluded ? "Black Rock receives all modules through immutable internal policy. Manual entitlement rows are informational only and normal UI edits are blocked." : company.entitlementSummary}</p>
-          <div className="data-table-wrap">
-            <table className="data-table">
-              <thead><tr><th>Module</th><th>Status</th><th>Source</th><th>Effective</th><th>Expires</th></tr></thead>
-              <tbody>
-                {company.entitlements.map((row: Entitlement) => (
-                  <tr key={row.module}>
-                    <td>{MODULE_LABELS[row.module]}</td>
-                    <td>{row.status}</td>
-                    <td>{row.source}</td>
-                    <td>{new Date(row.effectiveFrom).toLocaleDateString("en-ZA")}</td>
-                    <td>{row.expiresAt ? new Date(row.expiresAt).toLocaleDateString("en-ZA") : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <form action={updateEntitlementAction} className="platform-form-grid compact-top-gap">
-            <input type="hidden" name="companyId" value={company.id} />
-            <label><span>Module</span><select name="module" defaultValue={ModuleKey.DASHBOARD} disabled={company.blackRockIncluded}>{Object.values(ModuleKey).map((module) => <option key={module} value={module}>{MODULE_LABELS[module]}</option>)}</select></label>
-            <label><span>Entitlement state</span><select name="status" defaultValue={EntitlementStatus.ACTIVE} disabled={company.blackRockIncluded}>{Object.values(EntitlementStatus).map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label>
-            <label><span>Source</span><select name="source" defaultValue={EntitlementSource.MODULE} disabled={company.blackRockIncluded}>{Object.values(EntitlementSource).map((source) => <option key={source} value={source}>{source.replaceAll("_", " ")}</option>)}</select></label>
-            <label><span>Effective from</span><input name="effectiveFrom" type="date" required /></label>
-            <label><span>Expires</span><input name="expiresAt" type="date" /></label>
-            <label className="wide"><span>Reason</span><textarea name="reason" rows={3} required minLength={6} /></label>
-            <div className="platform-form-actions wide"><button type="submit" className="primary-button" disabled={company.blackRockIncluded}>Save entitlement</button></div>
-          </form>
+          <h3>Industry build</h3>
+          <p className="muted small-line">{company.blackRockIncluded ? "Black Rock receives all Workshop modules through immutable internal policy, so this section is read-only." : company.entitlementSummary}</p>
+          <PlatformIndustryBuild initial={industryBuild} />
         </article>
 
         <article className="platform-card">

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { getRequestContext } from "@/lib/auth/session";
 import { requirePlatformPermission } from "@/lib/auth/guards";
 import { createCompanyAction } from "@/app/platform/actions";
+import { BUILDS, INDUSTRY_BUILD_IDS } from "@/lib/builds/definitions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,7 @@ export const dynamic = "force-dynamic";
 const ERROR_MESSAGES: Record<string, string> = {
   INTERNAL_CODE_REQUIRED: "Internal code is required.",
   LEGAL_NAME_REQUIRED: "Legal name is required.",
+  INVALID_INDUSTRY_BUILD: "Pick one of the listed industry builds.",
   DUPLICATE_INTERNAL_CODE: "That internal code is already in use by another company — pick a different one.",
 };
 
@@ -52,6 +54,13 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
       <section className="detail-panel">
         <header><div><h2>New company</h2></div></header>
         <form action={createCompanyAction} className="platform-form-grid compact-top-gap">
+          <label className="wide">
+            <span>Industry build</span>
+            <select name="industryBuild" defaultValue="WORKSHOP">
+              {INDUSTRY_BUILD_IDS.map((id) => <option key={id} value={id}>{BUILDS[id].label}</option>)}
+            </select>
+            <small className="muted small-line">Decides which modules the company starts with. You can change the build and switch individual modules on or off afterwards, on the company&apos;s Industry build section.</small>
+          </label>
           <label><span>Internal code</span><input name="internalCode" required minLength={2} placeholder="e.g. ACME" /></label>
           <label><span>Legal name</span><input name="legalName" required /></label>
           <label><span>Trading name</span><input name="tradingName" placeholder="Defaults to legal name if left blank" /></label>

@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
 import { STORAGE_ERROR_MESSAGES, type StorageProfileInput } from "@/lib/storage/profile";
 import { testPlatformCompanyStorage, type StorageTestStep } from "@/lib/platform/storage-admin-service";
-import { createPlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile, updatePlatformEntitlement } from "@/lib/platform/admin-service";
+import { createPlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile } from "@/lib/platform/admin-service";
+import { isIndustryBuildId } from "@/lib/builds/definitions";
 
 // 2026-09-22, user report: "when clicking add a company, it takes me to the
 // overview menu, fix." Root cause: the "Add Company" button
@@ -29,6 +30,7 @@ export async function createCompanyAction(formData: FormData) {
     tradingName: String(formData.get("tradingName") ?? ""),
     defaultCurrencyCode: String(formData.get("defaultCurrencyCode") ?? "ZAR"),
     defaultGracePeriodDays: Number(formData.get("defaultGracePeriodDays") ?? 30),
+    industryBuild: isIndustryBuildId(formData.get("industryBuild")) ? (formData.get("industryBuild") as "WORKSHOP" | "ENGINEERING") : ("WORKSHOP" as const),
     settings: {
       themeColor: String(formData.get("themeColor") ?? ""),
       mainTelephone: String(formData.get("mainTelephone") ?? ""),
@@ -124,24 +126,6 @@ export async function testCompanyStorageAction(companyId: string, input: Storage
   } catch (error) {
     return { ok: false, error: storageErrorMessage(error) };
   }
-}
-
-export async function updateEntitlementAction(formData: FormData) {
-  const context = await getRequestContext();
-  if (!context) redirect("/login");
-  const companyId = String(formData.get("companyId") ?? "");
-  await updatePlatformEntitlement(context, companyId, {
-    module: String(formData.get("module") ?? "") as never,
-    status: String(formData.get("status") ?? "") as never,
-    source: String(formData.get("source") ?? "") as never,
-    effectiveFrom: String(formData.get("effectiveFrom") ?? ""),
-    expiresAt: String(formData.get("expiresAt") ?? ""),
-    gracePeriodDays: String(formData.get("gracePeriodDays") ?? ""),
-    readOnlyOverrideUntil: String(formData.get("readOnlyOverrideUntil") ?? ""),
-    reason: String(formData.get("reason") ?? ""),
-  });
-  revalidatePath("/platform");
-  revalidatePath(`/platform/companies/${companyId}`);
 }
 
 // 2026-09-22 — createPlatformAuthorityAction/updatePlatformAuthorityAction
