@@ -2,9 +2,9 @@ import { ModuleKey, Prisma, TenantRole } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
-import { DEFAULT_TENANT_PERMISSIONS, TENANT_PERMISSIONS, mergePermissionOverrides } from "@/lib/auth/permissions";
+import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, mergePermissionOverrides, userDisabledModules } from "@/lib/auth/permissions";
 import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
-import { buildTiles, isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definitions";
+import { buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/security/passwords";
 
@@ -160,6 +160,40 @@ function computeOverrides(role: TenantRole, allowedModules: ModuleKey[], explici
   return [...rows, ...autoRevocations];
 }
 
+// 2026-10-16, user request: every module can be switched on or off per user, whatever the company licence. A module is "on"
+// for a user when it has not been switched off for them and, for modules that carry permissions, at least one of those
+// permissions is in effect. Modules without permissions (RFQs, Outwork, Pick slips, Specifications...) are controlled only by
+// the MODULE_OFF marker (see permissions.ts).
+function moduleIsOn(moduleKey: ModuleKey, effective: ReadonlySet<string>, off: ReadonlySet<string>) {
+  if (off.has(moduleKey)) return false;
+  const permissions = modulePermissions(moduleKey);
+  if (permissions.size === 0) return moduleKey === "DASHBOARD" ? effective.has("DASHBOARD_VIEW") : true;
+  return Array.from(permissions).some((permission) => effective.has(permission)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW"));
+}
+
+// 2026-10-16, user request: "only modules enabled on platform admin should be visible to an org admin". The Users screen
+// shows only the tiles the platform admin has switched on for the company (licensed, and with whatever they require also on);
+// every module behind a shown tile can then be switched on or off per user.
+function visibleTiles(build: IndustryBuildId, entitled: ReadonlySet<ModuleKey>) {
+  const licensed = (tileId: string) => buildTiles(build).some((tile) => tile.id === tileId && tile.modules.some((key) => entitled.has(key)));
+  return buildTiles(build).filter((tile) => licensed(tile.id) && tileWorking(build, tile.id, licensed));
+}
+
+function switchableModuleKeys(build: IndustryBuildId, entitled: ReadonlySet<ModuleKey>): ModuleKey[] {
+  return Array.from(new Set(visibleTiles(build, entitled).flatMap((tile) => tile.modules)));
+}
+
+// The permission override rows to store for a save, plus a MODULE_OFF marker for every switchable module that is off.
+// Modules that are not on the screen (their tile is not enabled for the company) are left as they are: never revoked, and
+// any switch already stored for them is kept.
+function overridesWithModuleSwitches(role: TenantRole, switchable: ModuleKey[], moduleKeys: ModuleKey[], explicit: Array<{ permission: string; allowed: boolean }>, existingOff: ReadonlySet<string> = new Set()) {
+  const allowedForPermissions = [...moduleKeys, ...Object.values(ModuleKey).filter((key) => !switchable.includes(key))];
+  const rows = computeOverrides(role, allowedForPermissions, explicit.filter((row) => !row.permission.startsWith(MODULE_OFF_PREFIX)));
+  const off = new Set<string>(switchable.filter((key) => !moduleKeys.includes(key)));
+  for (const key of existingOff) if (!switchable.includes(key as ModuleKey)) off.add(key);
+  return [...rows, ...Array.from(off).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
+}
+
 export async function listTenantUsers(ctx: RequestContext) {
   const companyId = auth(ctx);
   const entitledModules = await companyEntitledModules(companyId);
@@ -167,8 +201,9 @@ export async function listTenantUsers(ctx: RequestContext) {
   const memberships = await prisma.companyMembership.findMany({ where: { companyId }, include: { user: true, permissions: true }, orderBy: [{ role: "asc" }, { createdAt: "asc" }] });
   return memberships.map((membership) => {
     const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[membership.role], membership.permissions);
-    const modules = Array.from(entitledModules).filter((moduleKey) => Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission as never)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW")));
-    return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: roleLabels[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions };
+    const off = userDisabledModules(membership.permissions);
+    const modules = Array.from(entitledModules).filter((moduleKey) => moduleIsOn(moduleKey, effective, off));
+    return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: roleLabels[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions.filter((row) => !row.permission.startsWith(MODULE_OFF_PREFIX)) };
   });
 }
 
@@ -182,16 +217,13 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
   // module tiles). A tile is switched per user through the modules behind it that carry per-user permissions; a tile with
   // none ("controllable" empty) follows the company licence for everyone and is shown locked.
   const entitledSet = new Set(entitled);
-  const tiles = buildTiles(build)
-    .map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules.filter((key) => entitledSet.has(key)), controllable: tile.modules.filter((key) => entitledSet.has(key) && modulePermissions(key).size > 0) }))
-    .filter((tile) => tile.moduleKeys.length > 0);
+  const shownTiles = visibleTiles(build, entitledSet);
+  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, licensed: true }));
+  const switchable = switchableModuleKeys(build, entitledSet);
   const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
   if (membershipId && !editor) throw new Error("NOT_FOUND");
   const selectedModuleKeys = editor
-    ? entitled.filter((moduleKey) => {
-        const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[editor.role], editor.permissions);
-        return Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission as never)) || (moduleKey === "DASHBOARD" && effective.has("DASHBOARD_VIEW"));
-      })
+    ? switchable.filter((moduleKey) => moduleIsOn(moduleKey, mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[editor.role], editor.permissions), userDisabledModules(editor.permissions)))
     : ["DASHBOARD", "JOBS_WIP"].filter((moduleKey) => entitled.includes(moduleKey as ModuleKey));
   return {
     availableModules,
@@ -212,8 +244,10 @@ export async function createTenantUser(ctx: RequestContext, raw: unknown) {
 export async function createTenantUserCore(ctx: RequestContext, companyId: string, source: "API" | "PLATFORM", raw: unknown) {
   const input = userInput.parse(raw);
   if (!tenantRolesFor(await companyIndustryBuild(companyId)).includes(input.role)) throw new Error("ROLE_NOT_ALLOWED");
-  const entitled = await companyEntitledModules(companyId);
-  if (input.moduleKeys.some((key) => !entitled.has(key))) throw new Error("UNLICENSED_MODULE_REQUESTED");
+  // 2026-10-16: any module can be switched on or off for a user, licensed or not. Access still needs the company licence at
+  // run time (session.ts), so switching on an unlicensed module takes effect only once the company is licensed for it.
+  const build = await companyIndustryBuild(companyId);
+  const switchable = switchableModuleKeys(build, await companyEntitledModules(companyId));
   return prisma.$transaction(async (tx) => {
     const email = input.email.toLowerCase();
     let user = await tx.userIdentity.findUnique({ where: { email } });
@@ -224,7 +258,7 @@ export async function createTenantUserCore(ctx: RequestContext, companyId: strin
       user = await tx.userIdentity.update({ where: { id: user.id }, data: { displayName: input.displayName, active: input.active } });
     }
     const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId, role: input.role } });
-    const overrides = computeOverrides(input.role, input.moduleKeys, input.permissionOverrides);
+    const overrides = overridesWithModuleSwitches(input.role, switchable, input.moduleKeys, input.permissionOverrides);
     if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId: membership.id, permission: row.permission, allowed: row.allowed })), skipDuplicates: true });
     await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membership.id, action: "TENANT_USER_CREATED", correlationId: ctx.correlationId, afterData: { email, role: input.role, moduleKeys: input.moduleKeys } } });
     return membership;
@@ -234,8 +268,8 @@ export async function createTenantUserCore(ctx: RequestContext, companyId: strin
 export async function updateTenantUser(ctx: RequestContext, membershipId: string, raw: unknown) {
   const companyId = auth(ctx);
   const input = userInput.partial({ email: true, displayName: true, role: true, password: true }).parse(raw);
-  const entitled = await companyEntitledModules(companyId);
-  if (input.moduleKeys && input.moduleKeys.some((key) => !entitled.has(key))) throw new Error("UNLICENSED_MODULE_REQUESTED");
+  const build = await companyIndustryBuild(companyId);
+  const switchable = switchableModuleKeys(build, await companyEntitledModules(companyId));
   return prisma.$transaction(async (tx) => {
     const before = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } });
     if (!before) throw new Error("NOT_FOUND");
@@ -246,7 +280,11 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
     const membership = await tx.companyMembership.update({ where: { id: membershipId }, data: { ...(input.role ? { role: input.role } : {}), ...(raw && typeof raw === "object" && "membershipStatus" in (raw as Record<string, unknown>) ? { status: String((raw as Record<string, unknown>).membershipStatus) as never } : {}) } });
     if (input.moduleKeys || input.permissionOverrides) {
       await tx.membershipPermission.deleteMany({ where: { membershipId } });
-      const overrides = computeOverrides(input.role ?? before.role, input.moduleKeys ?? [], input.permissionOverrides ?? []);
+      // Only the module switches that were sent are changed; when just permission overrides are sent, the user's existing
+      // module switches are kept as they are.
+      const overrides = input.moduleKeys
+        ? overridesWithModuleSwitches(input.role ?? before.role, switchable, input.moduleKeys, input.permissionOverrides ?? [], userDisabledModules(before.permissions))
+        : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
       if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
     }
     await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify(before)) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });

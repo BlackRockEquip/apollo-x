@@ -112,6 +112,19 @@ export const DEFAULT_PLATFORM_PERMISSIONS: Record<PlatformRole, ReadonlySet<Plat
   SECURITY_AUDITOR: new Set(["PLATFORM_COMPANIES_VIEW", "PLATFORM_AUDIT_VIEW", "PLATFORM_SUPPORT_READ"]),
 };
 
+// 2026-10-16, user request: "when editing users in settings users, all modules should be able to enable or disable per user,
+// no matter company license". A module switched off for one user is stored as a MembershipPermission row
+// { permission: "MODULE_OFF:<ModuleKey>", allowed: false }. It is a deny-only marker: it never adds a permission (so
+// mergePermissionOverrides ignores it), and session.ts turns it into DENIED module access for that user only. It can only
+// narrow what the company licence allows, never widen it.
+export const MODULE_OFF_PREFIX = "MODULE_OFF:";
+
+export function userDisabledModules(rows: ReadonlyArray<{ permission: string; allowed: boolean }>): Set<string> {
+  const off = new Set<string>();
+  for (const row of rows) if (!row.allowed && row.permission.startsWith(MODULE_OFF_PREFIX)) off.add(row.permission.slice(MODULE_OFF_PREFIX.length));
+  return off;
+}
+
 export function mergePermissionOverrides<T extends string>(defaults: ReadonlySet<T>, rows: ReadonlyArray<{ permission: string; allowed: boolean }>) {
   const effective = new Set(defaults);
   for (const row of rows) {

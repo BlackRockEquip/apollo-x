@@ -9,8 +9,9 @@ import { useTenantPermissions } from "@/components/AppShell";
 type ModuleOption = { moduleKey: string; label: string; category: string };
 type UserRow = { id: string; email: string; displayName: string; active: boolean; membershipStatus: string; role: string; roleLabel: string; moduleLabels: string[]; moduleKeys?: string[] };
 // 2026-10-16: module access is shown as the same module tiles the platform admin sees for this company (see PlatformIndustryBuild.tsx).
-// controllable = the module keys behind the tile that carry per-user permissions; a tile with none follows the company licence and is shown locked.
-type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[] };
+// controllable = the module keys behind the tile that can be switched for a user (all of them - licensed or not).
+// Only tiles enabled for the company by the platform admin are sent at all.
+type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean };
 type EditorPayload = { availableModules: ModuleOption[]; industryBuild?: string; tiles?: TileOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
@@ -361,7 +362,7 @@ export function UsersWorkspace() {
         {(editorSeed?.tiles?.length ?? 0) > 0
           ? <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center", margin: "6px 0 10px" }}>
-              <span className="muted small-line">Click a module to give this user access to it or take it away. Locked modules follow the company licence.</span>
+              <span className="muted small-line">Click a module to give this user access to it or take it away. Only modules enabled for your company are listed.</span>
               <span style={{ display: "flex", gap: 8 }}>
                 <button type="button" className="quiet-button" onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: defaultModuleKeys(editorSeed) }))}>Select all</button>
                 <button type="button" className="quiet-button" onClick={() => setForm((current) => ({ ...current, selectedModuleKeys: [] }))}>Clear all</button>
@@ -383,7 +384,7 @@ export function UsersWorkspace() {
                       <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                         <strong style={{ fontSize: 14, fontWeight: 600 }}>{tile.label}</strong>
                         <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{tile.note}</span>
-                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : on ? "Access" : "No access"}</span>
+                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : `${on ? "Access" : "No access"}${tile.licensed === false ? " · not in company licence" : ""}`}</span>
                       </span>
                     </button>
                   </div>

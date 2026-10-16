@@ -8,6 +8,7 @@ import {
   DEFAULT_PLATFORM_PERMISSIONS,
   DEFAULT_TENANT_PERMISSIONS,
   mergePermissionOverrides,
+  userDisabledModules,
   SUPPORT_READ_TENANT_PERMISSIONS,
   SUPPORT_WRITE_TENANT_PERMISSIONS,
   type PlatformPermission,
@@ -113,6 +114,13 @@ export async function resolveSessionToken(token: string, database: SessionDataba
     // off (e.g. RFQ without Job parts, Pick slips without Stock levels) is
     // not available, whatever its own licence says. Black Rock is all FULL,
     // so this never changes it.
+    // 2026-10-16: modules switched off for this one user (Settings > Users) are denied for them whatever the company licence
+    // says, before the dependency rule so RFQ / Pick slips follow a user's Job parts / Stock levels switch too.
+    if (session.membership && !support) {
+      for (const key of userDisabledModules(session.membership.permissions)) {
+        if (moduleAccess.has(key as ModuleKey)) moduleAccess.set(key as ModuleKey, "DENIED");
+      }
+    }
     applyTileDependencies(moduleAccess);
   }
 

@@ -196,7 +196,7 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
           {company.status === "ACTIVE" ? (
             <div className="compact-top-gap">
               <h4>Add user</h4>
-              <p className="muted small-line">Creates a login for this company with access to every module it is licensed for. The company&rsquo;s own admin can narrow that later from Settings &gt; Users.</p>
+              <p className="muted small-line">Creates a login for this company with every module switched on (the company licence still decides what can be used). The company&rsquo;s own admin can narrow that later from Settings &gt; Users.</p>
               <form action={addCompanyUserAction} className="platform-form-grid compact-top-gap" data-testid="add-user-form">
                 <input type="hidden" name="companyId" value={company.id} />
                 <label><span>Name</span><input name="displayName" required minLength={2} /></label>

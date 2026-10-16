@@ -10,7 +10,7 @@ import { DEFAULT_PLATFORM_PERMISSIONS, mergePermissionOverrides, type PlatformPe
 import { isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definitions";
 import { grantInitialModules } from "@/lib/platform/industry-build-service";
 import { ensureDefaultSequences } from "@/lib/master-data/default-sequences";
-import { companyEntitledModules, createTenantUserCore } from "@/lib/users/service";
+import { createTenantUserCore } from "@/lib/users/service";
 
 type CompanyListQuery = {
   q?: string;
@@ -804,22 +804,21 @@ export async function updatePlatformUserProfile(ctx: RequestContext, userId: str
 // 2026-10-16, user request: "in a company view, allow to add users from
 // platform admin without having to go through support system". Creates the
 // user exactly the way the company's own admin would (same service, same
-// role rules for the company's build), with access to every module the
-// company is licensed for; the company's admin can narrow that afterwards.
+// role rules for the company's build), with every module switched on (what they can use is still limited by the company's
+// licence); the company's admin can narrow that afterwards.
 export async function createPlatformCompanyUser(ctx: RequestContext, companyId: string, input: { email: string; displayName: string; password: string; role: TenantRole }) {
   requirePlatformPermission(ctx, "PLATFORM_TENANT_ADMINS_MANAGE");
   if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { id: true, status: true } });
   if (!company) throw new Error("RESOURCE_NOT_FOUND");
   if (company.status !== "ACTIVE") throw new Error("COMPANY_NOT_ACTIVE");
-  const entitled = await companyEntitledModules(companyId);
   return createTenantUserCore(ctx, companyId, "PLATFORM", {
     email: input.email,
     displayName: input.displayName,
     password: input.password,
     role: input.role,
     active: true,
-    moduleKeys: Array.from(entitled),
+    moduleKeys: Object.values(ModuleKey),
   });
 }
 

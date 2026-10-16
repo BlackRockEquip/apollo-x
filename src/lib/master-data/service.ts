@@ -127,8 +127,15 @@ export async function createMaster(ctx: RequestContext, kind: MasterKind, raw: u
       case "commercial-terms": { const v=termInput.parse(input); created=await tx.commercialTerm.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
       case "numbering": { const v=sequenceInput.parse(input); if(await tx.documentNumberSequence.findFirst({where:{companyId,type:v.type},select:{id:true}})) throw new Error("SEQUENCE_TYPE_EXISTS"); created=await tx.documentNumberSequence.create({data:{...v,companyId}}) as unknown as Record<string,unknown>&{id:string}; break; }
     }
-    await tx.auditEvent.create({data:audit(ctx,kind,created.id,"CREATE",undefined,JSON.parse(JSON.stringify(created,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return created;
+    await tx.auditEvent.create({data:audit(ctx,kind,created.id,"CREATE",undefined,JSON.parse(JSON.stringify(created,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return jsonSafeRow(created);
   });
+}
+
+// 2026-10-16, user report: saving a Document numbering edit said "The request could not be completed" although the change had
+// been saved (it showed after a refresh). The sequence row's nextValue is a BigInt, which the API cannot turn into JSON - so the
+// response failed after the save. Numbering rows go back with nextValue as text, the same as the list does.
+function jsonSafeRow<T extends Record<string, unknown>>(row: T): T {
+  return typeof row.nextValue === "bigint" ? { ...row, nextValue: row.nextValue.toString() } : row;
 }
 
 export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: string, raw: unknown) {
@@ -195,7 +202,7 @@ export async function updateMaster(ctx: RequestContext, kind: MasterKind, id: st
     // that does, so `input.manufacturerIds` below type-checks without an
     // unsafe cast standing in for it.
     if(kind==="suppliers"&&"manufacturerIds" in (raw as Record<string,unknown>)&&"manufacturerIds" in input){ await tx.supplierManufacturer.deleteMany({where:{companyId,supplierId:id}}); await tx.supplierManufacturer.createMany({data:input.manufacturerIds.map(manufacturerId=>({companyId,supplierId:id,manufacturerId})),skipDuplicates:true}); }
-    await tx.auditEvent.create({data:audit(ctx,kind,id,"UPDATE",JSON.parse(JSON.stringify(before,(_,x)=>typeof x==="bigint"?x.toString():x)),JSON.parse(JSON.stringify(updated,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return updated;
+    await tx.auditEvent.create({data:audit(ctx,kind,id,"UPDATE",JSON.parse(JSON.stringify(before,(_,x)=>typeof x==="bigint"?x.toString():x)),JSON.parse(JSON.stringify(updated,(_,x)=>typeof x==="bigint"?x.toString():x)))}); return jsonSafeRow(updated);
   });
 }
 
