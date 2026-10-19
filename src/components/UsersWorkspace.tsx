@@ -11,7 +11,7 @@ type UserRow = { id: string; email: string; displayName: string; active: boolean
 // 2026-10-16: module access is shown as the same module tiles the platform admin sees for this company (see PlatformIndustryBuild.tsx).
 // controllable = the module keys behind the tile that can be switched for a user (all of them - licensed or not).
 // Only tiles enabled for the company by the platform admin are sent at all.
-type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean };
+type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean; roleHas?: boolean; permissionedKeys?: string[] };
 type EditorPayload = { availableModules: ModuleOption[]; industryBuild?: string; tiles?: TileOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
@@ -371,13 +371,15 @@ export function UsersWorkspace() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10, alignItems: "start" }}>
               {editorSeed!.tiles!.map((tile) => {
                 const controllable = tile.controllable.length > 0;
-                const on = controllable ? tile.controllable.some((key) => form.selectedModuleKeys.includes(key)) : true;
+                const roleHas = tile.roleHas !== false;
+                const gateKeys = roleHas ? tile.controllable : (tile.permissionedKeys ?? tile.controllable);
+                const on = controllable ? gateKeys.some((key) => form.selectedModuleKeys.includes(key)) : true;
                 const tone = !controllable ? { border: "1px solid var(--ink-300)", bg: "var(--ink-100)", box: "var(--ink-500)" }
                   : on ? { border: "2px solid var(--blue-700)", bg: "var(--blue-100)", box: "var(--blue-700)" }
                   : { border: "1px dashed var(--ink-300)", bg: "var(--surface)", box: "var(--ink-300)" };
                 return (
                   <div key={tile.id} style={{ border: tone.border, background: tone.bg, borderRadius: 8 }}>
-                    <button type="button" disabled={!controllable} aria-pressed={on} onClick={() => setForm((current) => { const next = new Set(current.selectedModuleKeys); const has = tile.controllable.some((key) => next.has(key)); for (const key of tile.controllable) { if (has) next.delete(key); else next.add(key); } return { ...current, selectedModuleKeys: Array.from(next) }; })} style={{ textAlign: "left", cursor: controllable ? "pointer" : "default", background: "transparent", border: 0, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start", color: "var(--ink-900)", width: "100%" }}>
+                    <button type="button" disabled={!controllable} aria-pressed={on} onClick={() => setForm((current) => { const next = new Set(current.selectedModuleKeys); const has = gateKeys.some((key) => next.has(key)); for (const key of tile.controllable) { if (has) next.delete(key); else next.add(key); } return { ...current, selectedModuleKeys: Array.from(next) }; })} style={{ textAlign: "left", cursor: controllable ? "pointer" : "default", background: "transparent", border: 0, borderRadius: 8, padding: "10px 12px", display: "flex", gap: 10, alignItems: "flex-start", color: "var(--ink-900)", width: "100%" }}>
                       <span style={{ flex: "0 0 20px", width: 20, height: 20, borderRadius: 4, marginTop: 1, border: `2px solid ${tone.box}`, background: on || !controllable ? tone.box : "var(--surface)", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>
                         {!controllable ? <Lock size={11} /> : on ? <Check size={13} strokeWidth={3} /> : null}
                       </span>

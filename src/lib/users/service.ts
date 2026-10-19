@@ -2,7 +2,7 @@ import { ModuleKey, Prisma, TenantRole } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
-import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, mergePermissionOverrides, userDisabledModules } from "@/lib/auth/permissions";
+import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, mergePermissionOverrides, userDisabledModules, type TenantPermission } from "@/lib/auth/permissions";
 import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
 import { prisma } from "@/lib/prisma";
@@ -194,6 +194,31 @@ function overridesWithModuleSwitches(role: TenantRole, switchable: ModuleKey[], 
   return [...rows, ...Array.from(off).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
 }
 
+// 2026-10-19, user report: "when enabling and disabling other modules nothing happens, e.g. Job WIP" (Store Controller). A module
+// switch could only narrow what the user's role allows; switching Jobs & WIP on for a Store Controller changed nothing because the
+// role holds no Jobs permissions. Switching a module on for a user (Settings > Users > Edit) now also gives that user the
+// Manager-level view/edit permissions of that module when their role lacks them. Only modules that were not already working for
+// the user are granted, so a normal save never widens anyone's access, and permissions granted earlier are kept on later saves.
+function grantsForNewModules(role: TenantRole, newlyOn: ModuleKey[]) {
+  if (role === "COMPANY_ADMIN") return [];
+  const base = DEFAULT_TENANT_PERMISSIONS[role];
+  const manager = DEFAULT_TENANT_PERMISSIONS.MANAGER;
+  const grants = new Map<string, { permission: string; allowed: boolean }>();
+  for (const moduleKey of newlyOn) {
+    for (const permission of modulePermissions(moduleKey)) {
+      if (manager.has(permission as TenantPermission) && !base.has(permission as TenantPermission)) grants.set(permission, { permission, allowed: true });
+    }
+  }
+  return Array.from(grants.values());
+}
+
+// Does the user's role (plus anything granted to them) include at least one screen permission of this tile? A tile whose modules
+// carry no permissions of their own (Pick slips, Outwork...) always follows the module switch alone.
+function tileRoleHas(tileModules: ModuleKey[], effective: ReadonlySet<string>) {
+  const permissioned = tileModules.filter((moduleKey) => modulePermissions(moduleKey).size > 0);
+  return permissioned.length === 0 || permissioned.some((moduleKey) => Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission)));
+}
+
 export async function listTenantUsers(ctx: RequestContext) {
   const companyId = auth(ctx);
   const entitledModules = await companyEntitledModules(companyId);
@@ -218,7 +243,11 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
   // none ("controllable" empty) follows the company licence for everyone and is shown locked.
   const entitledSet = new Set(entitled);
   const shownTiles = visibleTiles(build, entitledSet);
-  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, licensed: true }));
+  const editorMembership = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { permissions: true } }) : null;
+  const editorEffective = editorMembership ? mergePermissionOverrides<TenantPermission>(DEFAULT_TENANT_PERMISSIONS[editorMembership.role], editorMembership.permissions) : null;
+  // roleHas: false means the tile is shown as on only because its modules carry no permissions of their own; the user's role has
+  // no screen in it, so the Users screen treats a click as "switch on" (which grants access when saved), not "switch off".
+  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, licensed: true, roleHas: editorEffective ? tileRoleHas(tile.modules, editorEffective) : true, permissionedKeys: tile.modules.filter((moduleKey) => modulePermissions(moduleKey).size > 0) }));
   const switchable = switchableModuleKeys(build, entitledSet);
   const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
   if (membershipId && !editor) throw new Error("NOT_FOUND");
@@ -301,8 +330,23 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
       await tx.membershipPermission.deleteMany({ where: { membershipId } });
       // Only the module switches that were sent are changed; when just permission overrides are sent, the user's existing
       // module switches are kept as they are.
+      const roleAfter = input.role ?? before.role;
+      const beforeOff = userDisabledModules(before.permissions);
+      const beforeEffective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[before.role], before.permissions);
+      const wasOn = new Set(switchable.filter((moduleKey) => moduleIsOn(moduleKey, beforeEffective, beforeOff)));
+      // Only a tile's main module grants access (Jobs & WIP, Stock levels, PEX Stock...); the extra modules behind a tile, such as
+      // Job kits under "Job parts & ordering" (which Pick slips needs), are never granted on their own.
+      const mainModules = new Set(buildTiles(build).map((tile) => tile.modules[0]));
+      const newlyOn = input.moduleKeys.filter((moduleKey) => switchable.includes(moduleKey) && mainModules.has(moduleKey) && !wasOn.has(moduleKey));
+      // Earlier grants are kept (the screen never sends them back); grants for modules just switched on are added.
+      const explicit = new Map<string, { permission: string; allowed: boolean }>();
+      // A tile switched off takes the access that was granted through it away again.
+      const switchedOffGrants = new Set(Array.from(mainModules).filter((moduleKey) => switchable.includes(moduleKey) && !input.moduleKeys.includes(moduleKey)).flatMap((moduleKey) => Array.from(modulePermissions(moduleKey))));
+      for (const row of before.permissions) if (row.allowed && !row.permission.startsWith(MODULE_OFF_PREFIX) && !switchedOffGrants.has(row.permission)) explicit.set(row.permission, { permission: row.permission, allowed: true });
+      for (const row of grantsForNewModules(roleAfter, newlyOn)) explicit.set(row.permission, row);
+      for (const row of input.permissionOverrides ?? []) explicit.set(row.permission, row);
       const overrides = input.moduleKeys
-        ? overridesWithModuleSwitches(input.role ?? before.role, switchable, input.moduleKeys, input.permissionOverrides ?? [], userDisabledModules(before.permissions))
+        ? overridesWithModuleSwitches(roleAfter, switchable, input.moduleKeys, Array.from(explicit.values()), beforeOff)
         : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
       if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
     }
