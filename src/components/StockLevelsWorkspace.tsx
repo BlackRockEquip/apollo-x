@@ -266,7 +266,13 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // server-side PARTS_CREATE/PARTS_EDIT/PARTS_DEACTIVATE, none of which
   // USER holds) so those are gated directly off `mechanicReadOnly`
   // instead, below.
-  const { tenantRole, tenantPermissions } = useTenantPermissions();
+  const { tenantRole, tenantPermissions, moduleAccess } = useTenantPermissions();
+  // 2026-10-19, user report: with the Pick slips module switched off for a user, the Picking Slip History tab and the Pick column
+  // were still shown (and said "module is not licensed"). They now follow the module: the history tab shows while it is on, the
+  // Pick column (making a new slip) only while it is fully on.
+  const pickSlipsAccess = moduleAccess.get("PICK_SLIPS") ?? "DENIED";
+  const pickSlipsOn = pickSlipsAccess !== "DENIED";
+  const pickSlipsWrite = pickSlipsAccess === "FULL";
   const mechanicReadOnly = tenantRole === "USER";
   const canManage = hasManage && !mechanicReadOnly;
   // 2026-10-02 — new Stock Take tab (user request: "Create a tab for Stock
@@ -293,7 +299,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // lands on the same filtered page; the table's scroll position is restored
   // by <ScrollRestore> further down.
   const saved = useState(() => readListState("stock-levels", { tab: "stock", q: "", stockState: "ALL" }))[0];
-  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">(saved.tab === "pickslips" ? "pickslips" : "stock");
+  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">(saved.tab === "pickslips" && pickSlipsOn ? "pickslips" : "stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
   const [q, setQ] = useState(saved.q);
@@ -916,7 +922,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       {!mechanicReadOnly && (
         <div className="tab-strip">
           <button type="button" className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>Stock</button>
-          <button type="button" className={tab === "pickslips" ? "active" : ""} onClick={() => setTab("pickslips")}>Picking Slip History</button>
+          {pickSlipsOn && <button type="button" className={tab === "pickslips" ? "active" : ""} onClick={() => setTab("pickslips")}>Picking Slip History</button>}
           {/* 2026-10-02 — Stock Take (user request: "Admins / Store
               Controller only"). Gated by canStockTake (INVENTORY_RECONCILE)
               on top of the existing !mechanicReadOnly wrapper — a Manager or
@@ -958,7 +964,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             <table id="stock-levels-table" className="data-table">
               <thead>
                 <tr>
-                  <th className="no-print">Pick</th>
+                  {pickSlipsWrite && <th className="no-print">Pick</th>}
                   <th>Part</th>
                   <th>Description</th>
                   <th>Manufacturer</th>
@@ -978,15 +984,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={data.canViewCost ? 12 : 10} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (pickSlipsWrite ? 0 : 1)} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : data.items.length === 0 ? (
-                  <tr><td colSpan={data.canViewCost ? 12 : 10} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
+                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (pickSlipsWrite ? 0 : 1)} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
                 ) : data.items.map((row) => {
                   const available = Number(row.quantityAvailable) || 0;
                   const pickEntry = pick.get(row.id);
                   return (
                     <tr key={row.id} className={row.active ? "" : "inactive"}>
-                      <td>
+                      {pickSlipsWrite && <td>
                         <div className="pick-cell">
                           <input
                             type="checkbox"
@@ -1005,7 +1011,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                             />
                           )}
                         </div>
-                      </td>
+                      </td>}
                       <td className="mono" data-filter-values={row.partNumber} data-print-text={[row.partNumber, ...row.alternateNumbers.map((a) => `${ALT_KIND_LABEL[a.kind]}: ${a.number}`)].join(" · ")}>
                         {row.partNumber}
                         {/* 2026-09-29 — user request: "how can we add
