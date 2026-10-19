@@ -8,6 +8,7 @@ import { readStoredBlob, storeBlob } from "@/lib/attachments/blob-store";
 import { verifySmtpConnection } from "@/lib/email";
 import { SmtpTestError } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/audit/service";
+import { decryptSecret, encryptSecret } from "@/lib/storage/secret-crypto";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -278,7 +279,7 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
         backgroundColor: normalizeColor(settings.backgroundColor),
         mainEmail: settings.mainEmail || null,
         smtpFromAddress: settings.smtpFromAddress || null,
-        ...(smtpPassword ? { smtpPassword } : {}),
+        ...(smtpPassword ? { smtpPassword: encryptSecret(smtpPassword) } : {}),
         ...(willBeConfigured && !wasConfigured ? { smtpConfiguredAt: new Date() } : {}),
       },
     });
@@ -298,7 +299,7 @@ export async function updateCompanySettings(ctx: RequestContext, raw: unknown) {
 export async function testCompanySmtpConnection(ctx: RequestContext, raw: unknown) {
   const companyId = auth(ctx, "WRITE");
   const input = smtpTestInput.parse(raw);
-  const password = input.smtpPassword || (await prisma.companySettings.findUnique({ where: { companyId }, select: { smtpPassword: true } }))?.smtpPassword;
+  const password = input.smtpPassword || decryptSecret((await prisma.companySettings.findUnique({ where: { companyId }, select: { smtpPassword: true } }))?.smtpPassword);
   if (!password) throw new Error("SMTP_PASSWORD_REQUIRED");
   try {
     await verifySmtpConnection({ host: input.smtpHost, port: input.smtpPort ?? 587, secure: input.smtpSecure ?? true, username: input.smtpUsername, password });

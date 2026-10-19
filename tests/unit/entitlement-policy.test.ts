@@ -9,6 +9,11 @@ describe("module entitlement policy", () => {
     expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: true, module: "INVOICES", status: "EXPIRED", effectiveFrom: new Date("2020-01-01") }, now)).toBe("FULL");
   });
 
+  it("keeps Black Rock (a Workshop company) off modules that only another build offers", () => {
+    expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: true, module: "SPECIFICATIONS" }, now)).toBe("DENIED");
+    expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: true, module: "PICK_SLIPS" }, now)).toBe("FULL");
+  });
+
   it("does not bypass a suspended company", () => {
     expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: false, module: "INVENTORY" }, now)).toBe("DENIED");
   });

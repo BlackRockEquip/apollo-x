@@ -46,6 +46,9 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "STORAGE_NOT_CONFIGURED") return NextResponse.json({ error: { code: "STORAGE_NOT_CONFIGURED", message: "File storage is not configured for this environment yet." } }, { status: 503 });
   // 2026-09-22 — self-service "change my password" and "forgot password"
   // (src/lib/account/service.ts, src/lib/auth/password-reset-service.ts).
+  // 2026-10-19, security review: a login can be shared across companies / the platform (users/service.ts).
+  if (error instanceof Error && error.message === "EMAIL_UNAVAILABLE") return NextResponse.json({ error: { code: "EMAIL_UNAVAILABLE", message: "That email address can't be added from here. If this person already has a login for another company, ask a platform administrator to add them." } }, { status: 409 });
+  if (error instanceof Error && error.message === "SHARED_IDENTITY_PROTECTED") return NextResponse.json({ error: { code: "SHARED_IDENTITY_PROTECTED", message: "This person's login is also used for another company (or the platform), so only a platform administrator can change their name, password or sign-in status. You can still change their role and module access here." } }, { status: 409 });
   if (error instanceof Error && error.message === "INVALID_CURRENT_PASSWORD") return NextResponse.json({ error: { code: "INVALID_CURRENT_PASSWORD", message: "Current password is incorrect." } }, { status: 400 });
   if (error instanceof Error && error.message === "INVALID_RESET_TOKEN") return NextResponse.json({ error: { code: "INVALID_RESET_TOKEN", message: "This reset link is invalid or has expired. Request a new one." } }, { status: 400 });
   // 2026-09-22 — Platform Admin: Modules delete safeguard

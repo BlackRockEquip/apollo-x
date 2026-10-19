@@ -255,6 +255,17 @@ export async function createTenantUserCore(ctx: RequestContext, companyId: strin
       if (!input.password) throw new Error("PASSWORD_REQUIRED");
       user = await tx.userIdentity.create({ data: { email, displayName: input.displayName, passwordHash: await hashPassword(input.password), active: input.active } });
     } else {
+      // 2026-10-19, security review: a login (UserIdentity) is shared by every company the person belongs to, and by the
+      // platform if they hold a platform role. A company admin typing in an email that already has a login must NOT be able
+      // to rename, switch off or (via Edit) set the password of that shared login - that would let one company's admin lock
+      // out, or take over, someone else's account (including a platform administrator's). From a company's own Users screen
+      // an existing login is therefore refused when it is shared; a platform administrator adding the person from the
+      // platform side (source PLATFORM) still can.
+      if (source === "API") {
+        const platformRoles = await tx.platformRoleAssignment.count({ where: { userId: user.id } });
+        const otherMemberships = await tx.companyMembership.count({ where: { userId: user.id, companyId: { not: companyId } } });
+        if (platformRoles > 0 || otherMemberships > 0) throw new Error("EMAIL_UNAVAILABLE");
+      }
       user = await tx.userIdentity.update({ where: { id: user.id }, data: { displayName: input.displayName, active: input.active } });
     }
     const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId, role: input.role } });
@@ -274,10 +285,18 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
     const before = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } });
     if (!before) throw new Error("NOT_FOUND");
     if (input.role && input.role !== before.role && !tenantRolesFor(await companyIndustryBuild(companyId)).includes(input.role)) throw new Error("ROLE_NOT_ALLOWED");
+    // 2026-10-19, security review: name, sign-in status and password belong to the login, which other companies (or the
+    // platform) may share. A company admin may only change them for a login that is used by this company alone.
+    const platformRoles = await tx.platformRoleAssignment.count({ where: { userId: before.userId } });
+    const otherMemberships = await tx.companyMembership.count({ where: { userId: before.userId, companyId: { not: companyId } } });
+    const sharedLogin = platformRoles > 0 || otherMemberships > 0;
+    if (sharedLogin && (Boolean(input.password) || (input.active !== undefined && input.active !== before.user.active) || (input.displayName !== undefined && input.displayName !== before.user.displayName))) {
+      throw new Error("SHARED_IDENTITY_PROTECTED");
+    }
     if (input.displayName || input.active !== undefined || input.password) {
       await tx.userIdentity.update({ where: { id: before.userId }, data: { ...(input.displayName ? { displayName: input.displayName } : {}), ...(input.active !== undefined ? { active: input.active } : {}), ...(input.password ? { passwordHash: await hashPassword(input.password), sessionVersion: { increment: 1 } } : {}) } });
     }
-    const membership = await tx.companyMembership.update({ where: { id: membershipId }, data: { ...(input.role ? { role: input.role } : {}), ...(raw && typeof raw === "object" && "membershipStatus" in (raw as Record<string, unknown>) ? { status: String((raw as Record<string, unknown>).membershipStatus) as never } : {}) } });
+    const membership = await tx.companyMembership.update({ where: { id: membershipId }, data: { ...(input.role ? { role: input.role } : {}), ...(raw && typeof raw === "object" && "membershipStatus" in (raw as Record<string, unknown>) ? { status: z.enum(["ACTIVE", "SUSPENDED", "ENDED"]).parse((raw as Record<string, unknown>).membershipStatus) } : {}) } });
     if (input.moduleKeys || input.permissionOverrides) {
       await tx.membershipPermission.deleteMany({ where: { membershipId } });
       // Only the module switches that were sent are changed; when just permission overrides are sent, the user's existing
@@ -287,7 +306,7 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
         : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
       if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
     }
-    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify(before)) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify({ ...before, user: { id: before.user.id, email: before.user.email, displayName: before.user.displayName, active: before.user.active } })) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
     return membership;
   });
 }
@@ -297,7 +316,11 @@ export async function resetTenantUserSessions(ctx: RequestContext, membershipId:
   return prisma.$transaction(async (tx) => {
     const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId } });
     if (!membership) throw new Error("NOT_FOUND");
-    await tx.userIdentity.update({ where: { id: membership.userId }, data: { sessionVersion: { increment: 1 } } });
+    // Signing someone out of EVERY company (the shared login's sessionVersion) is only done for a login this company
+    // alone uses; for a shared login only this company's sessions are ended.
+    const platformRoles = await tx.platformRoleAssignment.count({ where: { userId: membership.userId } });
+    const otherMemberships = await tx.companyMembership.count({ where: { userId: membership.userId, companyId: { not: companyId } } });
+    if (platformRoles === 0 && otherMemberships === 0) await tx.userIdentity.update({ where: { id: membership.userId }, data: { sessionVersion: { increment: 1 } } });
     await tx.userSession.updateMany({ where: { membershipId, revokedAt: null }, data: { revokedAt: new Date() } });
     await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_SESSIONS_RESET", correlationId: ctx.correlationId } });
     return { ok: true };

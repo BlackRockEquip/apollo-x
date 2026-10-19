@@ -77,7 +77,21 @@ export function requestIp(request: NextRequest) {
 // "protocol://host" with no forced :443/:80 suffix — publicOrigin()'s own
 // port-normalization exists only to make same-origin equality comparisons
 // exact, which isn't a concern for a link a person will actually click.
+// 2026-10-19, security review: password-reset poisoning. The reset link used to be built from the request's own
+// X-Forwarded-Host / Host headers. Anyone can send those headers by hand, so an attacker could ask for a reset for
+// someone else's email while claiming their own domain as the host, and the emailed link would point at the attacker's
+// site (which then reads the token). The origin for emailed links now comes from configuration: APP_BASE_URL if set,
+// else Render's own RENDER_EXTERNAL_URL. Only when neither exists (local development, or a host that sets neither) does it
+// fall back to the request headers; set APP_BASE_URL in production on any host that is not Render.
 export function publicOriginForLinks(request: NextRequest): string {
+  const configured = (process.env.APP_BASE_URL || process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      // fall through to the request-derived origin
+    }
+  }
   const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const protocol = forwardedProto || request.nextUrl.protocol.replace(":", "");

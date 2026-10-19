@@ -1,0 +1,283 @@
+﻿
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mC:/Projects/Apollo X Working[39m
+
+[90mstdout[2m | tests/integration/final-completion-pass.test.ts[2m > [22m[2mfinal completion pass[2m > [22m[2menforces support attachment visibility and tenant/platform isolation
+[22m[39mprisma:error 
+Invalid `prisma.supportTicket.findFirstOrThrow()` invocation in
+C:/Projects/Apollo X Working/src/lib/support/service.ts:111:45
+
+  108 
+  109 export async function getTenantSupportTicket(ctx: RequestContext, id: string) {
+  110   if (!canViewTenantTickets(ctx)) throw new Error("FORBIDDEN");
+ΓåÆ 111   const ticket = await prisma.supportTicket.findFirstOrThrow(
+An operation failed because it depends on one or more records that were required but not found. Expected a record, found none.
+
+ [31mΓ¥»[39m tests/integration/final-completion-pass.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 2125[2mms[22m[39m
+[31m     [31m├ù[31m loads entitled module picker data and persists edits while rejecting unlicensed modules[39m[32m 141[2mms[22m[39m
+     [32mΓ£ô[39m keeps dashboard config per-user within tenant isolation[32m 13[2mms[22m[39m
+     [33m[2mΓ£ô[22m[39m enforces support attachment visibility and tenant/platform isolation [33m 1744[2mms[22m[39m
+     [32mΓ£ô[39m supports platform reply/internal note/assignment/priority/status lifecycle while tenant users cannot see internal notes[32m 37[2mms[22m[39m
+[90mstdout[2m | tests/integration/phase5-platform-admin.test.ts[2m > [22m[2mPhase 5 Platform Admin first pass[2m > [22m[2mcreates a company and rejects duplicate immutable company codes
+[22m[39mprisma:error 
+Invalid `tx.company.create()` invocation in
+C:/Projects/Apollo X Working/src/lib/platform/admin-service.ts:351:38
+
+  348 const industryBuild: IndustryBuildId = input.industryBuild ?? "WORKSHOP";
+  349 if (!isIndustryBuildId(industryBuild)) throw new Error("INVALID_INDUSTRY_BUILD");
+  350 return prisma.$transaction(async (tx) => {
+ΓåÆ 351   const company = await tx.company.create(
+Unique constraint failed on the fields: (`internalCode`)
+
+ [31mΓ¥»[39m tests/integration/phase5-platform-admin.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 515[2mms[22m[39m
+     [32mΓ£ô[39m platform user listing requires platform authority and tenant users cannot access it[32m 42[2mms[22m[39m
+     [32mΓ£ô[39m grants platform authority without creating tenant membership and authority alone cannot access tenant operational data[32m 24[2mms[22m[39m
+     [32mΓ£ô[39m revoke and role changes are reflected, audited, and stale authority is invalidated[32m 28[2mms[22m[39m
+     [32mΓ£ô[39m explicit support context remains required and support read/write distinction stays enforced[32m 38[2mms[22m[39m
+     [32mΓ£ô[39m protects the last usable platform administrator[32m 65[2mms[22m[39m
+     [32mΓ£ô[39m creates a company and rejects duplicate immutable company codes[32m 34[2mms[22m[39m
+     [32mΓ£ô[39m does not allow immutable company code changes and allows editing safe fields[32m 14[2mms[22m[39m
+     [32mΓ£ô[39m deactivates and reactivates non-destructively while revoking active sessions[32m 20[2mms[22m[39m
+     [32mΓ£ô[39m platform admin can access platform company list while normal tenant users cannot[32m 9[2mms[22m[39m
+     [32mΓ£ô[39m company detail exposes safe metadata and entitlement summary only[32m 20[2mms[22m[39m
+     [32mΓ£ô[39m duplicate PlatformShell cleanup does not break platform pages[32m 18[2mms[22m[39m
+     [32mΓ£ô[39m support read-only entry resolves tenant context but keeps mutation blocked[32m 12[2mms[22m[39m
+     [32mΓ£ô[39m support read-write entry resolves tenant context and support exit ends it[32m 13[2mms[22m[39m
+     [32mΓ£ô[39m cross-tenant access without explicit support context is rejected and support context is audited[32m 6[2mms[22m[39m
+     [32mΓ£ô[39m normal tenant user cannot perform platform management[32m 3[2mms[22m[39m
+     [32mΓ£ô[39m updates module entitlement, records entitlement history, and records platform audit[32m 12[2mms[22m[39m
+     [32mΓ£ô[39m Black Rock entitlement does not create platform authority[32m 5[2mms[22m[39m
+     [32mΓ£ô[39m Black Rock internal free-module behavior cannot be disabled through normal entitlement management and does not bypass tenant permissions[32m 10[2mms[22m[39m
+ [31mΓ¥»[39m tests/integration/phase2-master-data.test.ts [2m([22m[2m6 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 572[2mms[22m[39m
+     [32mΓ£ô[39m scopes customer search and direct IDs to the tenant[32m 161[2mms[22m[39m
+     [32mΓ£ô[39m enforces child-contact isolation at service level[32m 8[2mms[22m[39m
+[31m     [31m├ù[31m keeps duplicate part numbers tenant-aware and money decimal[39m[32m 17[2mms[22m[39m
+     [32mΓ£ô[39m isolates all core Phase 2 catalogues[32m 30[2mms[22m[39m
+     [32mΓ£ô[39m allocates unique numbers concurrently and audits each allocation[32m 157[2mms[22m[39m
+     [32mΓ£ô[39m enforces permissions, entitlements, and read-only support writes[32m 0[2mms[22m[39m
+ [31mΓ¥»[39m tests/integration/phase1-security.test.ts [2m([22m[2m19 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 344[2mms[22m[39m
+     [32mΓ£ô[39m returns only the authenticated company and settings[32m 9[2mms[22m[39m
+     [32mΓ£ô[39m does not disclose a Tenant B membership or audit ID to Tenant A[32m 5[2mms[22m[39m
+     [32mΓ£ô[39m rejects a Tenant B child mutation without revealing whether it exists[32m 3[2mms[22m[39m
+     [32mΓ£ô[39m reads only the authenticated tenant entitlement[32m 5[2mms[22m[39m
+     [32mΓ£ô[39m rejects a normal tenant user and tenant administrator entering another tenant[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m does not grant tenant scope from platform authority alone[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m requires explicit unexpired support access and blocks writes in read-only mode[32m 12[2mms[22m[39m
+     [32mΓ£ô[39m allows authorized writes in read-write mode and preserves operator/support identity in audit[32m 9[2mms[22m[39m
+     [32mΓ£ô[39m rejects expired support context and audits entry plus exit[32m 13[2mms[22m[39m
+[31m     [31m├ù[31m grants all modules without subscription rows and survives display-name changes[39m[32m 7[2mms[22m[39m
+     [32mΓ£ô[39m does not bypass user permission or tenant isolation[32m 8[2mms[22m[39m
+     [32mΓ£ô[39m does not grant free access from another tenant's display name[32m 2[2mms[22m[39m
+     [32mΓ£ô[39m rejects changes to the protected internal tenant identifier[32m 6[2mms[22m[39m
+     [32mΓ£ô[39m keeps resolved navigation state and backend module guards aligned[32m 4[2mms[22m[39m
+     [32mΓ£ô[39m enforces full, grace read-only, grace expiry and suspension[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m allows reads/exports but rejects manipulated write requests in grace[32m 1[2mms[22m[39m
+     [32mΓ£ô[39m invalidates sessions after user deactivation, version change, membership suspension and company suspension[32m 21[2mms[22m[39m
+     [32mΓ£ô[39m applies permission changes on the next request[32m 11[2mms[22m[39m
+     [32mΓ£ô[39m locks after repeated login failures and clears after reset[32m 18[2mms[22m[39m
+ [31mΓ¥»[39m tests/integration/phase4a-step3a-schema.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 51[2mms[22m[39m
+[31m     [31m├ù[31m enforces return disposition by allocation movement kind[39m[32m 10[2mms[22m[39m
+[31m     [31m├ù[31m creates tenant lineage constraints for job part allocation tables[39m[32m 3[2mms[22m[39m
+[90mstdout[2m | tests/integration/phase3-inventory.test.ts[2m > [22m[2mPhase 3 inventory business rules[2m > [22m[2mrejects receipt with zero or negative quantity
+[22m[39mprisma:error 
+Invalid `tx.stockMovement.create()` invocation in
+C:/Projects/Apollo X Working/src/lib/inventory/service.ts:339:45
+
+  336 const balance = await lockBalance(tx, ctx.companyId, part.id, location.id, { createIfMissing: true });
+  337 if (!balance) notFound();
+  338 const nextOnHand = balance.onHand.plus(qty);
+ΓåÆ 339 const movement = await tx.stockMovement.create(
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \"StockMovement\" violates check constraint \"StockMovement_nonzero_qty_chk\"", severity: "ERROR", detail: Some("Failing row contains (cmvf4wd0500eixf7zia0mh4o6, cmvf4wch60002xf7zfn38kltr, cmvf4wcib0008xf7zjyb4iq17, RECEIPT, 0.0000, null, cmvf4wcil000dxf7z1dmb5qgo, RECEIPT, null, null, null, null, null, cmvf4wchc0004xf7zgiwrwu1w, null, 99.0000, null, null, p3_1792407082735_3c7g18kvvi9, 2026-10-19 10:51:23.478)."), column: None, hint: None }), transient: false })
+
+ [32mΓ£ô[39m tests/integration/phase3-inventory.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 949[2mms[22m[39m
+ [32mΓ£ô[39m tests/integration/phase21-master-data.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 369[2mms[22m[39m
+ [2m[90mΓåô[39m[22m tests/integration/phase4a-jobs-core.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+ [2m[90mΓåô[39m[22m tests/integration/phase4b-job-kits.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+ [2m[90mΓåô[39m[22m tests/integration/phase4b-step2-pex.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+node.exe : 
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[39m[1m[41m Failed Suites 2 [49m[22m[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[39m
+
+[41m[1m FAIL [22m[49m tests/integration/final-completion-pass.test.ts[2m [ tests/integration/final-completion-pass.test.ts ][22m
+[31m[1mPrismaClientUnknownRequestError[22m: 
+Invalid `db.company.deleteMany()` invocation in
+C:/Projects/Apollo X Working/tests/integration/final-completion-pass.test.ts:46:20
+
+  43 await db.userIdentity.deleteMany({ where: { id: { in: [fixture.userA, fixture.userB, fixture.platformUser] } } });
+  44 await db.companyModuleEntitlement.deleteMany({ where: { companyId: { in: [fixture.companyA, fixture.companyB] } } });
+  45 await db.companySettings.deleteMany({ where: { companyId: { in: [fixture.companyA, fixture.companyB] } } });
+ΓåÆ 46 await db.company.deleteMany(
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23001", message: "update or delete on table 
+\"Company\" violates RESTRICT setting of foreign key constraint \"Attachment_companyId_fkey\" on table \"Attachment\"", severity: "ERROR", 
+detail: Some("Key (id)=(cmvf4w8kv00008ry9xeqxo9dl) is referenced from table \"Attachment\"."), column: None, hint: None }), transient: false 
+})[39m
+[90m [2mΓ¥»[22m $n.handleRequestError node_modules/@prisma/client/runtime/library.js:[2m121:7505[22m[39m
+[90m [2mΓ¥»[22m $n.handleAndLogRequestError node_modules/@prisma/client/runtime/library.js:[2m121:6623[22m[39m
+[90m [2mΓ¥»[22m $n.request node_modules/@prisma/client/runtime/library.js:[2m121:6307[22m[39m
+[90m [2mΓ¥»[22m l node_modules/@prisma/client/runtime/library.js:[2m130:9633[22m[39m
+[36m [2mΓ¥»[22m tests/integration/final-completion-pass.test.ts:[2m46:3[22m[39m
+    [90m 44|[39m   await db.companyModuleEntitlement.deleteMany({ where: { companyId: {ΓÇª
+    [90m 45|[39m   await db.companySettings.deleteMany({ where: { companyId: { in: [fixΓÇª
+    [90m 46|[39m   await db.company.deleteMany({ where: { id: { in: [fixture.companyA, ΓÇª
+    [90m   |[39m   [31m^[39m
+    [90m 47|[39m   [35mawait[39m db[33m.[39m[34m$disconnect[39m()[33m;[39m
+    [90m 48|[39m })[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/7]ΓÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/phase5-platform-admin.test.ts[2m [ tests/integration/phase5-platform-admin.test.ts ][22m
+[31m[1mPrismaClientUnknownRequestError[22m: 
+Invalid `database.company.deleteMany()` invocation in
+C:/Projects/Apollo X Working/tests/integration/phase5-platform-admin.test.ts:110:53
+
+  107 if (fixture.extraPlatformUser) await database.platformRoleAssignment.deleteMany({ where: { userId: fixture.extraPlatformUser } });
+  108 if (membershipIds.length > 0) await database.companyMembership.deleteMany({ where: { id: { in: membershipIds } } });
+  109 if (userIds.length > 0) await database.userIdentity.deleteMany({ where: { id: { in: userIds } } });
+ΓåÆ 110 if (companyIds.length > 0) await database.company.deleteMany(
+Error occurred during query execution:
+ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23001", message: "update or delete on table 
+\"Company\" violates RESTRICT setting of foreign key constraint \"DocumentNumberSequence_companyId_fkey\" on table 
+\"DocumentNumberSequence\"", severity: "ERROR", detail: Some("Key (id)=(cmvf4waq5002f9v93xzljoc7k) is referenced from table 
+\"DocumentNumberSequence\"."), column: None, hint: None }), transient: false })[39m
+[90m [2mΓ¥»[22m $n.handleRequestError node_modules/@prisma/client/runtime/library.js:[2m121:7505[22m[39m
+[90m [2mΓ¥»[22m $n.handleAndLogRequestError node_modules/@prisma/client/runtime/library.js:[2m121:6623[22m[39m
+[90m [2mΓ¥»[22m $n.request node_modules/@prisma/client/runtime/library.js:[2m121:6307[22m[39m
+[90m [2mΓ¥»[22m l node_modules/@prisma/client/runtime/library.js:[2m130:9633[22m[39m
+[36m [2mΓ¥»[22m tests/integration/phase5-platform-admin.test.ts:[2m110:30[22m[39m
+    [90m108|[39m   if (membershipIds.length > 0) await database.companyMembership.deletΓÇª
+    [90m109|[39m   if (userIds.length > 0) await database.userIdentity.deleteMany({ wheΓÇª
+    [90m110|[39m   if (companyIds.length > 0) await database.company.deleteMany({ whereΓÇª
+    [90m   |[39m                              [31m^[39m
+    [90m111|[39m   [35mawait[39m database[33m.[39m[34m$disconnect[39m()[33m;[39m
+    [90m112|[39m })[33m;[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/7]ΓÄ»[22m[39m
+
+
+[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[39m[1m[41m Failed Tests 5 [49m[22m[31mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[39m
+
+[41m[1m FAIL [22m[49m tests/integration/final-completion-pass.test.ts[2m > [22mfinal completion pass[2m > [22mloads entitled module 
+picker data and persists edits while rejecting unlicensed modules
+[31m[1mAssertionError[22m: promise resolved "{ ΓÇª(7) }" instead of rejecting[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- Error {[39m
+[32m-   "message": "rejected promise",[39m
+[31m+ {[39m
+[31m+   "companyId": "cmvf4w8kv00008ry9xeqxo9dl",[39m
+[31m+   "createdAt": 2026-10-19T10:51:17.888Z,[39m
+[31m+   "id": "cmvf4w8ow000k8ry9w60rfxes",[39m
+[31m+   "role": "USER",[39m
+[31m+   "status": "ACTIVE",[39m
+[31m+   "updatedAt": 2026-10-19T10:51:17.888Z,[39m
+[31m+   "userId": "cmvf4w8ou000i8ry9pj4oywl0",[39m
+[2m  }[22m
+
+[36m [2mΓ¥»[22m tests/integration/final-completion-pass.test.ts:[2m60:83[22m[39m
+    [90m 58|[39m     const updated = await db.companyMembership.findUniqueOrThrow({ wheΓÇª
+    [90m 59|[39m     [34mexpect[39m(updated[33m.[39muser[33m.[39mdisplayName)[33m.[39m[34mtoBe[39m([32m"Updated 
+User"[39m)[33m;[39m
+    [90m 60|[39m     await expect(updateTenantUser(ctx, created.id, { moduleKeys: ["PEXΓÇª
+    [90m   |[39m                                                                                   [31m^[39m
+    [90m 61|[39m   })[33m;[39m
+    [90m 62|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/7]ΓÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/phase1-security.test.ts[2m > [22mBlack Rock protected entitlement[2m > [22mgrants all modules 
+without subscription rows and survives display-name changes
+[31m[1mAssertionError[22m: expected 'DENIED' to be 'FULL' // Object.is equality[39m
+
+Expected: [32m"FULL"[39m
+Received: [31m"DENIED"[39m
+
+[36m [2mΓ¥»[22m tests/integration/phase1-security.test.ts:[2m181:139[22m[39m
+    [90m179|[39m     expect(await database.companyModuleEntitlement.count({ where: { coΓÇª
+    [90m180|[39m     [35mfor[39m ([35mconst[39m moduleKey [35mof[39m 
+[33mObject[39m[33m.[39m[34mvalues[39m([33mModuleKey[39m)) {
+    [90m181|[39m       expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INΓÇª
+    [90m   |[39m                                                                                                                            
+               [31m^[39m
+    [90m182|[39m     }
+    [90m183|[39m     await database.company.update({ where: { id: fixture.blackRock }, ΓÇª
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/7]ΓÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/phase2-master-data.test.ts[2m > [22mPhase 2 master data[2m > [22mkeeps duplicate part numbers 
+tenant-aware and money decimal
+[31m[1mAssertionError[22m: expected Error: PART_NUMBER_ALREADY_IN_USE to match object { code: 'P2002' }[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- {[39m
+[32m-   "code": "P2002",[39m
+[31m+ Error {[39m
+[31m+   "message": "PART_NUMBER_ALREADY_IN_USE",[39m
+[2m  }[22m
+
+[36m [2mΓ¥»[22m tests/integration/phase2-master-data.test.ts:[2m8:340[22m[39m
+
+
+[2m Test Files [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[2m | [22m[33m3 skipped[39m[90m (10)[39m
+[2m      Tests [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m84 passed[39m[22m[2m | [22m[33m3 skipped[39m[90m (92)[39m
+[2m   Start at [22m 12:51:17
+[2m   Duration [22m 7.47s[2m (transform 424ms, setup 65ms, import 1.17s, tests 4.92s, environment 1ms)[22m
+
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/7]ΓÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/phase4a-step3a-schema.test.ts[2m > [22mPhase 4A Step 3A schema integrity[2m > [22menforces 
+return disposition by allocation movement kind
+[31m[1mAssertionError[22m: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2mΓ¥»[22m tests/integration/phase4a-step3a-schema.test.ts:[2m23:24[22m[39m
+    [90m 21|[39m       WHERE conname = 'JobPartAllocationMovement_kind_return_dispositiΓÇª
+    [90m 22|[39m     `[39m)[33m;[39m
+    [90m 23|[39m     [34mexpect[39m(issueCheck)[33m.[39m[34mtoHaveLength[39m([34m1[39m)[33m;[39m
+    [90m   |[39m                        [31m^[39m
+    [90m 24|[39m   })[33m;[39m
+    [90m 25|[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/7]ΓÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/phase4a-step3a-schema.test.ts[2m > [22mPhase 4A Step 3A schema integrity[2m > [22mcreates 
+tenant lineage constraints for job part allocation tables
+[31m[1mAssertionError[22m: expected [] to deeply equal [ ΓÇª(4) ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [[39m
+[32m-   "JobPartAllocationMovement_allocation_tenant_fkey",[39m
+[32m-   "JobPartAllocationMovement_stockMovement_tenant_fkey",[39m
+[32m-   "JobPartAllocation_requirement_lineage_fkey",[39m
+[32m-   "JobPartAllocation_reservation_tenant_lineage_fkey",[39m
+[32m- ][39m
+[31m+ [][39m
+
+[36m [2mΓ¥»[22m tests/integration/phase4a-step3a-schema.test.ts:[2m38:47[22m[39m
+    [90m 36|[39m       ORDER BY conname ASC
+    [90m 37|[39m     `[39m)[33m;[39m
+    [90m 38|[39m     [34mexpect[39m(constraints[33m.[39m[34mmap[39m((x) [33m=>[39m 
+x[33m.[39mconname))[33m.[39m[34mtoEqual[39m([
+    [90m   |[39m                                               [31m^[39m
+    [90m 39|[39m       [32m'JobPartAllocationMovement_allocation_tenant_fkey'[39m[33m,[39m
+    [90m 40|[39m       [32m'JobPartAllocationMovement_stockMovement_tenant_fkey'[39m[33m,[39m
+
+[31m[2mΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[7/7]ΓÄ»[22m[39m
+

@@ -1,5 +1,8 @@
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/prisma";
+import { decryptSecret } from "@/lib/storage/secret-crypto";
+// 2026-10-19, security review: SMTP passwords are stored encrypted (same AES-256-GCM helper as the storage secret). A password saved
+// before this change is plain text; decryptSecret passes it through, and it is encrypted the next time the settings are saved.
 
 // Per-company outbound email — added 2026-09-09 to send real RFQ-request
 // and Parts-follow-up emails, mirroring ModApp's per-company SMTP settings
@@ -55,7 +58,7 @@ export async function sendEmail(companyId: string, input: { to: string; subject:
     host: settings.smtpHost,
     port: settings.smtpPort ?? 587,
     secure: settings.smtpSecure,
-    auth: { user: settings.smtpUsername, pass: settings.smtpPassword },
+    auth: { user: settings.smtpUsername, pass: decryptSecret(settings.smtpPassword) ?? "" },
   });
 
   await transporter.sendMail({
@@ -137,7 +140,7 @@ export async function sendPlatformEmail(input: { to: string; subject: string; te
     host: settings.smtpHost,
     port: settings.smtpPort ?? 587,
     secure: settings.smtpSecure,
-    auth: { user: settings.smtpUsername, pass: settings.smtpPassword },
+    auth: { user: settings.smtpUsername, pass: decryptSecret(settings.smtpPassword) ?? "" },
   });
 
   await transporter.sendMail({

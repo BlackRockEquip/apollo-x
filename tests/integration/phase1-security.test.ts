@@ -177,8 +177,9 @@ describe("explicit platform support context", () => {
 describe("Black Rock protected entitlement", () => {
   it("grants all modules without subscription rows and survives display-name changes", async () => {
     expect(await database.companyModuleEntitlement.count({ where: { companyId: fixture.blackRock } })).toBe(0);
+    // Black Rock is a Workshop company: every module its Workshop build offers is FULL; Specifications (Engineering-only) is not.
     for (const moduleKey of Object.values(ModuleKey)) {
-      expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: true, module: moduleKey }, new Date())).toBe("FULL");
+      expect(evaluateModuleAccess({ companyInternalCode: BLACK_ROCK_INTERNAL_CODE, companyActive: true, module: moduleKey }, new Date())).toBe(moduleKey === "SPECIFICATIONS" ? "DENIED" : "FULL");
     }
     await database.company.update({ where: { id: fixture.blackRock }, data: { tradingName: "Renamed Internal Tenant" } });
     const company = await database.company.findUniqueOrThrow({ where: { id: fixture.blackRock } });

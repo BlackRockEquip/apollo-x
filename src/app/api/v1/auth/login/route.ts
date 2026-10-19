@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { verifyPassword } from "@/lib/security/passwords";
+import { hashPassword, verifyPassword } from "@/lib/security/passwords";
 import { createSession, setSessionCookie } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { clearLoginFailures, isLoginBlocked, recordLoginFailure } from "@/lib/security/login-throttle";
@@ -14,6 +14,15 @@ const schema = z.object({
   password: z.string().min(1).max(512),
   companyCode: z.string().trim().min(1).optional(),
 });
+
+// 2026-10-19, security review: an unknown or switched-off email used to return at once, while a real one spent ~100ms
+// checking the password, so the response time told an attacker which emails have accounts. A throwaway hash is now
+// checked in the unknown case so both paths take about the same time.
+let dummyHash: Promise<string> | null = null;
+async function burnVerifyTime(password: string) {
+  dummyHash ??= hashPassword("not-a-real-password-just-to-burn-time");
+  await verifyPassword(await dummyHash, password).catch(() => false);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,6 +38,7 @@ export async function POST(request: NextRequest) {
       },
     });
     const invalid = () => NextResponse.json({ error: { code: "INVALID_CREDENTIALS", message: "Incorrect email or password." } }, { status: 401 });
+    if (!user?.active) await burnVerifyTime(input.password);
     if (!user?.active || !(await verifyPassword(user.passwordHash, input.password))) {
       await recordLoginFailure(input.email, ip);
       return invalid();

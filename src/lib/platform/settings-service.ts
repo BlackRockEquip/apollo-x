@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requirePlatformPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
+import { encryptSecret } from "@/lib/storage/secret-crypto";
 
 // 2026-09-22 — platform-wide SMTP config, used only for password-reset
 // emails (see lib/email.ts's sendPlatformEmail and auth/password-reset-
@@ -45,7 +46,7 @@ export async function updatePlatformSmtpSettings(ctx: RequestContext, raw: unkno
   const input = platformSmtpInput.parse(raw);
   const before = await prisma.platformSettings.findUnique({ where: { id: "platform" } });
   const { smtpPassword, ...rest } = input;
-  const data = { ...rest, smtpFromAddress: rest.smtpFromAddress || null, ...(smtpPassword ? { smtpPassword } : {}) };
+  const data = { ...rest, smtpFromAddress: rest.smtpFromAddress || null, ...(smtpPassword ? { smtpPassword: encryptSecret(smtpPassword) } : {}) };
   const updated = await prisma.platformSettings.upsert({
     where: { id: "platform" },
     create: { id: "platform", ...data },
