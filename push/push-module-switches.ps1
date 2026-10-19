@@ -29,6 +29,7 @@ Settings > Users module switches; numbering fix; New customer pop-up; Specificat
   (the "AX" badge is now "FX"), favicon, password-reset email, storage setup guides, platform screens, README. Internal identifiers (login cookie,
   saved-screen keys, database names) are unchanged so nobody is logged out and nothing saved is lost.
 - Job > Payment date received: ticking N/A now only locks the date field for editing; a date already filled in is kept (not cleared).
+- Fix: Black Rock (a Workshop company) no longer shows the Specifications module. It always had every module; it now gets every module its Workshop build offers, so Specifications stays Engineering-only.
 - Reports > Ratios: the "Coming soon" section and its two placeholder ratios are removed, so only live ratios are shown.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
