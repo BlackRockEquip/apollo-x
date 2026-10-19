@@ -132,7 +132,7 @@ export async function verifySmtpConnection(settings: { host: string; port: numbe
 // handle it (the forgot-password flow deliberately swallows it, since a
 // reset request must never reveal, via a 500 vs. a silent success, whether
 // email delivery is even configured).
-export async function sendPlatformEmail(input: { to: string; subject: string; text: string; html?: string }): Promise<void> {
+export async function sendPlatformEmail(input: { to: string; subject: string; text: string; html?: string; replyTo?: string }): Promise<void> {
   const settings = await getPlatformSmtpSettings();
   if (!isConfigured(settings)) throw new Error("EMAIL_NOT_CONFIGURED");
 
@@ -149,5 +149,6 @@ export async function sendPlatformEmail(input: { to: string; subject: string; te
     subject: input.subject,
     text: input.text,
     html: input.html,
+    replyTo: input.replyTo, // 2026-10-19: demo-request emails reply straight to the visitor
   });
 }
