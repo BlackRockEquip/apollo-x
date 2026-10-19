@@ -11,7 +11,7 @@ type UserRow = { id: string; email: string; displayName: string; active: boolean
 // 2026-10-16: module access is shown as the same module tiles the platform admin sees for this company (see PlatformIndustryBuild.tsx).
 // controllable = the module keys behind the tile that can be switched for a user (all of them - licensed or not).
 // Only tiles enabled for the company by the platform admin are sent at all.
-type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean; roleHas?: boolean; permissionedKeys?: string[] };
+type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean; roleHas?: boolean; permissionedKeys?: string[]; requires?: string[]; state?: { working: boolean; reason: string } | null };
 type EditorPayload = { availableModules: ModuleOption[]; industryBuild?: string; tiles?: TileOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
@@ -372,7 +372,12 @@ export function UsersWorkspace() {
               {editorSeed!.tiles!.map((tile) => {
                 const controllable = tile.controllable.length > 0;
                 const roleHas = tile.roleHas !== false;
-                const gateKeys = roleHas ? tile.controllable : (tile.permissionedKeys ?? tile.controllable);
+                const keysOf = (t: TileOption) => (t.roleHas !== false ? t.controllable : (t.permissionedKeys ?? t.controllable));
+                const tileOn = (t: TileOption) => keysOf(t).length === 0 || keysOf(t).some((key) => form.selectedModuleKeys.includes(key));
+                // A tile can depend on others (Pick slips needs Job parts & ordering and Stock levels): when one of them is off for this
+                // user the tile does not work, whatever its own switch says.
+                const missing = (tile.requires ?? []).map((id) => editorSeed!.tiles!.find((t) => t.id === id)).filter((t): t is TileOption => Boolean(t) && !tileOn(t as TileOption));
+                const gateKeys = keysOf(tile);
                 const on = controllable ? gateKeys.some((key) => form.selectedModuleKeys.includes(key)) : true;
                 const tone = !controllable ? { border: "1px solid var(--ink-300)", bg: "var(--ink-100)", box: "var(--ink-500)" }
                   : on ? { border: "2px solid var(--blue-700)", bg: "var(--blue-100)", box: "var(--blue-700)" }
@@ -386,7 +391,9 @@ export function UsersWorkspace() {
                       <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                         <strong style={{ fontSize: 14, fontWeight: 600 }}>{tile.label}</strong>
                         <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{tile.note}</span>
-                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : `${on ? "Access" : "No access"}${tile.licensed === false ? " · not in company licence" : ""}`}</span>
+                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : `${on ? (missing.length > 0 ? "Switched on, but not working" : "Access") : "No access"}${tile.licensed === false ? " · not in company licence" : ""}`}</span>
+                        {tile.state && <span style={{ fontSize: 11, color: tile.state.working ? "var(--ink-500)" : "var(--amber-700, #92400e)" }}>Saved for this user: {tile.state.working ? "working" : `not working - ${tile.state.reason}`}</span>}
+                        {on && controllable && missing.length > 0 && <span style={{ fontSize: 12, color: "var(--amber-700, #92400e)" }}>Needs {missing.map((t) => t.label).join(" and ")} switched on as well.</span>}
                       </span>
                     </button>
                   </div>

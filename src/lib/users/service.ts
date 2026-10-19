@@ -4,7 +4,7 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, mergePermissionOverrides, userDisabledModules, type TenantPermission } from "@/lib/auth/permissions";
 import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
-import { buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
+import { applyTileDependencies, buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/security/passwords";
 
@@ -215,8 +215,10 @@ function grantsForNewModules(role: TenantRole, newlyOn: ModuleKey[]) {
 // Does the user's role (plus anything granted to them) include at least one screen permission of this tile? A tile whose modules
 // carry no permissions of their own (Pick slips, Outwork...) always follows the module switch alone.
 function tileRoleHas(tileModules: ModuleKey[], effective: ReadonlySet<string>) {
-  const permissioned = tileModules.filter((moduleKey) => modulePermissions(moduleKey).size > 0);
-  return permissioned.length === 0 || permissioned.some((moduleKey) => Array.from(modulePermissions(moduleKey)).some((permission) => effective.has(permission)));
+  // Judged by the tile's main module only: "Job parts & ordering" has no permissions on its main module (its Job kits side module
+  // does), and it must still read as working for a role without Job kits, because Pick slips depends on it.
+  const main = tileModules[0];
+  return !main || modulePermissions(main).size === 0 || Array.from(modulePermissions(main)).some((permission) => effective.has(permission));
 }
 
 export async function listTenantUsers(ctx: RequestContext) {
@@ -247,7 +249,21 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
   const editorEffective = editorMembership ? mergePermissionOverrides<TenantPermission>(DEFAULT_TENANT_PERMISSIONS[editorMembership.role], editorMembership.permissions) : null;
   // roleHas: false means the tile is shown as on only because its modules carry no permissions of their own; the user's role has
   // no screen in it, so the Users screen treats a click as "switch on" (which grants access when saved), not "switch off".
-  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, licensed: true, roleHas: editorEffective ? tileRoleHas(tile.modules, editorEffective) : true, permissionedKeys: tile.modules.filter((moduleKey) => modulePermissions(moduleKey).size > 0) }));
+  // What actually happens for this user right now, worked out the same way the session does it: company licence, then this user's
+  // module switches, then the tile dependencies. Shown under each tile so "switched on but nothing appears" can be explained.
+  const effectiveAccess = new Map<ModuleKey, "FULL" | "READ_ONLY" | "DENIED">(Object.values(ModuleKey).map((key) => [key, entitledSet.has(key) ? "FULL" : "DENIED"]));
+  const userOff = editorMembership ? userDisabledModules(editorMembership.permissions) : new Set<string>();
+  for (const key of userOff) effectiveAccess.set(key as ModuleKey, "DENIED");
+  applyTileDependencies(effectiveAccess);
+  const tileState = (tile: (typeof shownTiles)[number]): { working: boolean; reason: string } => {
+    const main = tile.modules[0];
+    if ((effectiveAccess.get(main) ?? "DENIED") !== "DENIED") return { working: true, reason: "" };
+    if (!entitledSet.has(main)) return { working: false, reason: "not licensed for this company" };
+    if (userOff.has(main)) return { working: false, reason: "switched off for this user" };
+    const missingTiles = (tile.requires ?? []).map((id) => shownTiles.find((t) => t.id === id)).filter((t) => !t || (effectiveAccess.get(t.modules[0]) ?? "DENIED") === "DENIED").map((t) => t?.label ?? "a required module");
+    return { working: false, reason: missingTiles.length > 0 ? `needs ${missingTiles.join(" and ")}` : "turned off" };
+  };
+  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, requires: tile.requires ?? [], state: editorMembership ? tileState(tile) : null, licensed: true, roleHas: editorEffective ? tileRoleHas(tile.modules, editorEffective) : true, permissionedKeys: tile.modules.filter((moduleKey) => modulePermissions(moduleKey).size > 0) }));
   const switchable = switchableModuleKeys(build, entitledSet);
   const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
   if (membershipId && !editor) throw new Error("NOT_FOUND");
