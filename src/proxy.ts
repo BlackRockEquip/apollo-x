@@ -43,6 +43,9 @@ const PUBLIC_PATHS = [
   "/api/v1/health",
   "/api/v1/company-settings/favicon",
   "/api/v1/public/companies",
+  // 2026-10-19: landing page "Request a demo" form (floxintegrations.co.za). Signed-out visitors call it from another website, so it must
+  // not be redirected to /login (that also breaks the browser's CORS pre-check). The route itself checks the origin and rate-limits.
+  "/api/v1/public/demo-request",
   // Signed, short-lived file links from the "Local folder" storage option
   // (the token itself is the credential, like an S3 presigned URL) — an <img>
   // for a logo on the login page has no session cookie.
