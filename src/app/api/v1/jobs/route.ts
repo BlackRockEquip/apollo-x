@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
 import { requireSameOrigin } from "@/lib/security/request";
-import { createJob, listJobs } from "@/lib/jobs/service";
+import { createJob, listJobs, listJobsForPickSlip } from "@/lib/jobs/service";
 
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireRequestContext();
-    return NextResponse.json(await listJobs(ctx, Object.fromEntries(request.nextUrl.searchParams)));
+    const params = Object.fromEntries(request.nextUrl.searchParams);
+    // forPickSlip=1: the job picker in the pick slip window (see listJobsForPickSlip).
+    return NextResponse.json(params.forPickSlip === "1" ? await listJobsForPickSlip(ctx, params) : await listJobs(ctx, params));
   } catch (error) {
     return apiError(error);
   }
@@ -21,4 +23,4 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return apiError(error);
   }
-}
+}

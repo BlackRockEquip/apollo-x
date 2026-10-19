@@ -62,17 +62,23 @@ export const SUPPORT_READ_TENANT_PERMISSIONS = new Set<TenantPermission>(
   TENANT_PERMISSIONS.filter((permission) => permission.endsWith("_VIEW") || permission.endsWith("_EXPORT") || permission === "DASHBOARD_VIEW" || permission === "AUDIT_VIEW"),
 );
 export const SUPPORT_WRITE_TENANT_PERMISSIONS = ALL_TENANT;
-const MANAGER = new Set<TenantPermission>([
-  "DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT",
-  "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_BRANCH_DEACTIVATE", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_CONTACT_DEACTIVATE", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "CUSTOMER_ADDRESS_DEACTIVATE",
-  "SUPPLIERS_VIEW", "SUPPLIERS_CREATE", "SUPPLIERS_EDIT",
-  "SUPPLIER_CONTACT_CREATE", "SUPPLIER_CONTACT_EDIT", "SUPPLIER_CONTACT_DEACTIVATE", "SUPPLIER_ADDRESS_CREATE", "SUPPLIER_ADDRESS_EDIT", "SUPPLIER_ADDRESS_DEACTIVATE", "SUPPLIER_BRANDS_MANAGE",
-  "JOBS_VIEW", "JOBS_CREATE", "JOBS_EDIT", "JOB_KITS_VIEW", "JOB_KITS_CREATE", "JOB_KITS_EDIT", "INVENTORY_VIEW", "INVENTORY_ISSUE",
-  "PEX_VIEW", "PEX_CREATE", "PEX_EDIT", "PEX_STOCK_TRANSFER_IN", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT",
-  "QUOTES_EDIT_PRICE", "QUOTES_SEND", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE",
-  "SALES_ORDERS_EDIT_DRAFT", "SALES_ORDERS_LINK_JOBS", "SALES_ORDERS_LINK_PEX",
-  "REPORTS_VIEW", "REPORTS_EXPORT", "AUDIT_VIEW",
+// 2026-10-19, user request: "Managers should be able to view/edit all options except settings." A Manager now holds every
+// permission except the ones that belong to the Settings menu (company/branding, users, numbering, tax codes, commercial
+// terms, dashboard/import-export settings), and except the deactivate/delete actions, which stay with company admins - apart
+// from the branch/contact/address deactivations a Manager already had. What a given Manager actually sees is still narrowed
+// by the modules switched on for that user and for the company.
+const MANAGER_SETTINGS_PERMISSIONS = new Set<TenantPermission>([
+  "SETTINGS_MANAGE", "USERS_MANAGE", "COMPANY_SETTINGS_VIEW", "COMPANY_SETTINGS_EDIT", "NUMBERING_VIEW", "NUMBERING_EDIT",
+  "TAX_CODES_VIEW", "TAX_CODES_CREATE", "TAX_CODES_EDIT", "COMMERCIAL_TERMS_VIEW", "COMMERCIAL_TERMS_CREATE", "COMMERCIAL_TERMS_EDIT",
 ]);
+const MANAGER_KEPT_DEACTIVATIONS = new Set<TenantPermission>([
+  "CUSTOMER_BRANCH_DEACTIVATE", "CUSTOMER_CONTACT_DEACTIVATE", "CUSTOMER_ADDRESS_DEACTIVATE", "SUPPLIER_CONTACT_DEACTIVATE", "SUPPLIER_ADDRESS_DEACTIVATE",
+]);
+const MANAGER = new Set<TenantPermission>(TENANT_PERMISSIONS.filter((permission) => {
+  if (MANAGER_SETTINGS_PERMISSIONS.has(permission)) return false;
+  if (permission.endsWith("_DEACTIVATE") || permission.endsWith("_DELETE")) return MANAGER_KEPT_DEACTIVATIONS.has(permission);
+  return true;
+}));
 // 2026-10-01 — user request ("User type: User/Mechanic — Only modules
 // allowed to view are: Jobs/WIP, Job Kits, Inventory (Stock Levels),
 // Suppliers (view only, also able to select for outwork)"): tightened from
@@ -90,7 +96,20 @@ const USER = new Set<TenantPermission>(["JOBS_VIEW", "JOBS_EDIT", "JOB_KITS_VIEW
 // 2026-10-16, user request: "WIP View (View Only)" user type (Engineering Business). Sees the Jobs & WIP list and
 // opens a job, nothing else and nothing editable: no create/edit, no dashboard, customers, stock or settings.
 const WIP_VIEWER = new Set<TenantPermission>(["JOBS_VIEW"]);
-const STORES = new Set<TenantPermission>(["DASHBOARD_VIEW", "JOBS_VIEW", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_RECEIVE", "INVENTORY_ISSUE", "INVENTORY_TRANSFER", "INVENTORY_ADJUST", "INVENTORY_RETURN", "INVENTORY_RESERVE", "INVENTORY_RELEASE_RESERVATION", "INVENTORY_RECONCILE", "INVENTORY_EXPORT", "STOCK_MOVEMENTS_VIEW", "PEX_VIEW", "REPORTS_VIEW"]);
+// 2026-10-19, user request: "Store controllers should be able to view/edit only these sidebar menus: Stock Levels, PickSlips and
+// PEX Inventory." Stock Levels covers the Inventory menu (Stock Levels, Storage Locations/bins and Manufacturers) and lets the
+// store controller check, add, update and remove stock; Pick slips need only INVENTORY_ISSUE (the job picker has its own
+// endpoint, so no Jobs access is needed); PEX Inventory is view-only (PEX Stock and PEX Tracking). No dashboard, jobs, job
+// kits, reports, customers, suppliers, finance or settings. Deactivating/deleting parts, manufacturers and bins stays with
+// company admins. What a store controller actually sees is still narrowed by the modules switched on for that user.
+const STORES = new Set<TenantPermission>([
+  "INVENTORY_VIEW", "INVENTORY_RECEIVE", "INVENTORY_ISSUE", "INVENTORY_TRANSFER", "INVENTORY_ADJUST", "INVENTORY_RETURN",
+  "INVENTORY_RESERVE", "INVENTORY_RELEASE_RESERVATION", "INVENTORY_RECONCILE", "INVENTORY_EXPORT", "STOCK_MOVEMENTS_VIEW",
+  "PARTS_VIEW", "PARTS_CREATE", "PARTS_EDIT",
+  "MANUFACTURERS_VIEW", "MANUFACTURERS_CREATE", "MANUFACTURERS_EDIT",
+  "STORAGE_LOCATIONS_VIEW", "STORAGE_LOCATIONS_CREATE", "STORAGE_LOCATIONS_EDIT",
+  "PEX_VIEW", "PEX_STOCK_VIEW", "PEX_TRACKING_VIEW",
+]);
 const SALES = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT", "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "SUPPLIERS_VIEW", "JOBS_VIEW", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT", "QUOTES_EDIT_PRICE", "QUOTES_APPLY_DISCOUNT", "QUOTES_SEND", "QUOTES_REVISE", "QUOTES_EXPORT", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE", "SALES_ORDERS_EDIT_DRAFT"]);
 const FINANCE = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "INVENTORY_VIEW", "INVENTORY_VIEW_COST", "STOCK_MOVEMENTS_VIEW", "QUOTES_VIEW","QUOTES_VIEW_COST", "QUOTES_VIEW_MARGIN", "SALES_ORDERS_VIEW", "SALES_ORDERS_VIEW_COST", "SALES_ORDERS_CREATE_INVOICE", "INVOICES_VIEW", "INVOICES_CREATE", "INVOICES_CREATE_FROM_JOB", "INVOICES_CREATE_FROM_SALES_ORDER", "INVOICES_EDIT_DRAFT", "INVOICES_VIEW_COST_MARGIN", "INVOICES_APPROVE", "INVOICES_ISSUE", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT", "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT", "REPORTS_VIEW"]);
 

@@ -568,7 +568,19 @@ function jobNumberSortValue(jobNumber: string | null): number {
 }
 
 export async function listJobs(ctx: RequestContext, raw: unknown) {
-  const companyId = requireJobsRead(ctx);
+  return listJobsForCompany(ctx, requireJobsRead(ctx), raw);
+}
+
+// 2026-10-19, user request: a Store Controller has Stock Levels, Pick slips and PEX Inventory but not Jobs & WIP. The pick slip
+// window still has to list jobs to choose from, so this gives that one list to anyone who may create pick slips (the Pick slips
+// module plus INVENTORY_ISSUE), without opening the Jobs screens to them.
+export async function listJobsForPickSlip(ctx: RequestContext, raw: unknown) {
+  requireModule(ctx, "PICK_SLIPS", "WRITE");
+  requireTenantPermission(ctx, "INVENTORY_ISSUE");
+  return listJobsForCompany(ctx, ctx.companyId!, raw);
+}
+
+async function listJobsForCompany(ctx: RequestContext, companyId: string, raw: unknown) {
   const query = jobsListQuery.parse(raw);
   const scopeWhere = mapListScopeWhere(companyId, query);
   // No DB-level orderBy/skip/take anywhere below — see jobNumberSortValue

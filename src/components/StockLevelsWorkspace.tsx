@@ -780,7 +780,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   async function loadJobs(query: string) {
     setJobsLoading(true);
     try {
-      const params = new URLSearchParams({ view: "wip", pageSize: "50" });
+      const params = new URLSearchParams({ view: "wip", pageSize: "50", forPickSlip: "1" });
       if (query) params.set("q", query);
       const r = await fetch(`/api/v1/jobs?${params}`, { cache: "no-store" });
       const body = await r.json();
