@@ -39,6 +39,12 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
   const sp = await searchParams;
   const errorCode = typeof sp.error === "string" ? sp.error : "";
   const errorMessage = errorCode ? (ERROR_MESSAGES[errorCode] ?? "Unable to create company.") : "";
+  // 2026-10-19: a duplicate-code error names the company that already holds the code and links to it.
+  const pick = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
+  const typedCode = pick("code");
+  const holderId = errorCode === "DUPLICATE_INTERNAL_CODE" ? pick("holder") : "";
+  const holderName = pick("holderName");
+  const holderStatus = pick("holderStatus");
 
   return (
     <>
@@ -51,7 +57,7 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
         </div>
       </header>
 
-      {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
+      {errorMessage ? <div className="inline-error">{errorMessage}{holderId ? <> The code <strong>{typedCode}</strong> belongs to <Link href={`/platform/companies/${holderId}`}><strong>{holderName}</strong></Link>{holderStatus === "SUSPENDED" ? " (inactive)" : ""}.</> : null}</div> : null}
 
       <section className="detail-panel">
         <header><div><h2>New company</h2></div></header>
@@ -63,7 +69,7 @@ export default async function NewPlatformCompanyPage({ searchParams }: { searchP
             </select>
             <small className="muted small-line">Decides which modules the company starts with. You can change the build and switch individual modules on or off afterwards, on the company&apos;s Industry build section.</small>
           </label>
-          <label><span>Internal code</span><input name="internalCode" required minLength={2} placeholder="e.g. ACME" /></label>
+          <label><span>Internal code</span><input name="internalCode" required minLength={2} placeholder="e.g. ACME" defaultValue={typedCode} /></label>
           <label><span>Legal name</span><input name="legalName" required /></label>
           <label><span>Trading name</span><input name="tradingName" placeholder="Defaults to legal name if left blank" /></label>
           <label><span>Currency</span><input name="defaultCurrencyCode" defaultValue="ZAR" /></label>

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
 import { STORAGE_ERROR_MESSAGES, type StorageProfileInput } from "@/lib/storage/profile";
 import { testPlatformCompanyStorage, type StorageTestStep } from "@/lib/platform/storage-admin-service";
-import { createPlatformCompany, createPlatformCompanyUser, deletePlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile } from "@/lib/platform/admin-service";
+import { createPlatformCompany, createPlatformCompanyUser, findCompanyByInternalCode, deletePlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile } from "@/lib/platform/admin-service";
 import { TenantRole } from "@prisma/client";
 import { isIndustryBuildId } from "@/lib/builds/definitions";
 
@@ -94,7 +94,14 @@ export async function createCompanyAction(formData: FormData) {
     company = await createPlatformCompany(context, input);
   } catch (error) {
     const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
-    redirect(`/platform/companies/new?error=${encodeURIComponent(message)}`);
+    let extra = "";
+    if (message === "DUPLICATE_INTERNAL_CODE") {
+      // Tell the form which company already holds the code (and give it back what was typed).
+      const holder = await findCompanyByInternalCode(context, input.internalCode).catch(() => null);
+      extra = `&code=${encodeURIComponent(input.internalCode.trim().toUpperCase())}`;
+      if (holder) extra += `&holder=${encodeURIComponent(holder.id)}&holderName=${encodeURIComponent(holder.tradingName?.trim() || holder.legalName)}&holderStatus=${encodeURIComponent(holder.status)}`;
+    }
+    redirect(`/platform/companies/new?error=${encodeURIComponent(message)}${extra}`);
   }
   revalidatePath("/platform");
   redirect(`/platform/companies/${company.id}`);

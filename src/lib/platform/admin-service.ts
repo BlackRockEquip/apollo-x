@@ -328,6 +328,16 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
   };
 }
 
+// 2026-10-19, user report: adding "Leo Technologies" said the internal code was already in use. The error did not say
+// WHICH company holds the code, so there was nothing to act on. This looks the holder up (codes are stored upper-case)
+// so the Add Company form can name it.
+export async function findCompanyByInternalCode(ctx: RequestContext, rawCode: string) {
+  requirePlatformPermission(ctx, "PLATFORM_COMPANIES_CREATE");
+  const internalCode = rawCode.trim().toUpperCase();
+  if (!internalCode) return null;
+  return prisma.company.findUnique({ where: { internalCode }, select: { id: true, internalCode: true, legalName: true, tradingName: true, status: true } });
+}
+
 export async function createPlatformCompany(ctx: RequestContext, input: CompanyInput) {
   requirePlatformPermission(ctx, "PLATFORM_COMPANIES_CREATE");
   if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
