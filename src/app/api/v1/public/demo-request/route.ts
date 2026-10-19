@@ -8,7 +8,7 @@ import { demoRequestSchema, isAllowedOrigin, isDemoRequestThrottled, sendDemoReq
 // It is the only route that is callable without signing in and from another website, so it checks the Origin header
 // against the landing page's own addresses, answers the browser's CORS pre-check, and rate-limits.
 
-function corsHeaders(origin: string | null) {
+function corsHeaders(origin: string | null): Record<string, string> {
   return origin && isAllowedOrigin(origin)
     ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "86400", Vary: "Origin" }
     : { Vary: "Origin" };
