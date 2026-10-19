@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Headset, LayoutDashboard, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, Headset, Inbox, LayoutDashboard, Settings, ShieldCheck, Users } from "lucide-react";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
@@ -24,6 +24,8 @@ const NAV = [
   { href: "/platform/companies", label: "Companies", icon: Building2 },
   { href: "/platform/users", label: "Platform Users", icon: Users },
   { href: "/platform/support", label: "Support", icon: Headset },
+  // 2026-10-19: enquiries from the landing page's "Request a demo" form (New / History).
+  { href: "/platform/demo-requests", label: "Demo Requests", icon: Inbox },
   // 2026-09-22 — this used to point at "/platform" (the same href as
   // Overview above) because the real page didn't exist yet. Now it does
   // (platform/settings/page.tsx — platform-wide SMTP, used only for
@@ -31,9 +33,9 @@ const NAV = [
   { href: "/platform/settings", label: "Platform Settings", icon: Settings },
 ] as const;
 
-export function PlatformShell({ context, title, subtitle, children }: { context: RequestContext; title: string; subtitle?: string; children: React.ReactNode }) {
+export function PlatformShell({ context, title, subtitle, demoNewCount = 0, children }: { context: RequestContext; title: string; subtitle?: string; demoNewCount?: number; children: React.ReactNode }) {
   const pathname = usePathname();
-  return <div className="platform-shell"><aside className="platform-sidebar"><div className="platform-sidebar-brand"><span className="brand-mark small">FX</span><div><p className="eyebrow">Flo X Integrations Platform</p><strong>Admin</strong></div></div><nav className="platform-nav">{NAV.map((item) => { const Icon = item.icon; const active = item.href === "/platform" ? pathname === "/platform" : pathname === item.href || pathname.startsWith(`${item.href}/`); return <Link key={`${item.href}:${item.label}`} href={item.href} className={active ? "platform-nav-item active" : "platform-nav-item"}><Icon size={16} /><span>{item.label}</span></Link>; })}</nav><div className="platform-side-note"><ShieldCheck size={15} /><span>Platform authority never bypasses explicit support context.</span></div></aside><div className="platform-workspace"><header className="platform-header compact-shell"><div><p className="eyebrow">Flo X Integrations Platform</p><h1>{title}</h1>{subtitle ? <p className="muted small-line">{subtitle}</p> : null}</div>{/* 2026-10-01, user request: "if Org Admins click support then it
+  return <div className="platform-shell"><aside className="platform-sidebar"><div className="platform-sidebar-brand"><span className="brand-mark small">FX</span><div><p className="eyebrow">Flo X Integrations Platform</p><strong>Admin</strong></div></div><nav className="platform-nav">{NAV.map((item) => { const Icon = item.icon; const active = item.href === "/platform" ? pathname === "/platform" : pathname === item.href || pathname.startsWith(`${item.href}/`); return <Link key={`${item.href}:${item.label}`} href={item.href} className={active ? "platform-nav-item active" : "platform-nav-item"}><Icon size={16} /><span>{item.label}</span>{item.href === "/platform/demo-requests" && demoNewCount > 0 ? <span className="state-badge" style={{ marginLeft: "auto", background: "var(--danger, #b3261e)", color: "#fff" }}>{demoNewCount}</span> : null}</Link>; })}</nav><div className="platform-side-note"><ShieldCheck size={15} /><span>Platform authority never bypasses explicit support context.</span></div></aside><div className="platform-workspace"><header className="platform-header compact-shell"><div><p className="eyebrow">Flo X Integrations Platform</p><h1>{title}</h1>{subtitle ? <p className="muted small-line">{subtitle}</p> : null}</div>{/* 2026-10-01, user request: "if Org Admins click support then it
     should go to System Admin, a proper system flow" — platform staff's
     own bell for those escalations. See PlatformNotificationBell.tsx. */}
 <div className="topbar-user"><PlatformNotificationBell /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header><main className="platform-page">{children}</main></div></div>;

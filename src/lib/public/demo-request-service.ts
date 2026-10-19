@@ -4,8 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { sendPlatformEmail } from "@/lib/email";
 
 // 2026-10-19 — landing page (floxintegrations.co.za). The "Request a demo" form on the public marketing site posts to
-// /api/v1/public/demo-request, and this service turns it into an email to the Flo X admin mailbox, sent through the
-// platform email settings (the same SMTP the forgot-password email uses). Nothing is stored; no database change.
+// /api/v1/public/demo-request. This service saves the request (shown to platform staff under Platform > Demo Requests)
+// and emails it to the Flo X admin mailbox through the platform email settings (the same SMTP the forgot-password email
+// uses). Either one succeeding counts as received, so a mail problem never loses a request.
 //
 // This is the one endpoint in the app that anyone on the internet can call, so it is deliberately narrow:
 //   - fixed fields with length limits, plain-text email only (visitor text is never put into HTML),
@@ -91,6 +92,20 @@ async function overLimit(rawKey: string, max: number, now: Date) {
 export async function isDemoRequestThrottled(ip: string, email: string, now = new Date()) {
   const results = await Promise.all([overLimit(`ip|${ip}`, LIMITS.ip, now), overLimit(`email|${email}`, LIMITS.email, now), overLimit("overall", LIMITS.overall, now)]);
   return results.some(Boolean);
+}
+
+export async function saveDemoRequest(input: DemoRequest) {
+  return prisma.demoRequest.create({
+    data: { name: input.name, email: input.email, company: input.company || null, phone: input.phone || null, businessType: input.business_type, message: input.message || null },
+    select: { id: true },
+  });
+}
+
+// Saves, then emails. Resolves to what worked; the caller treats "neither" as a failure.
+export async function receiveDemoRequest(input: DemoRequest, env: NodeJS.ProcessEnv = process.env) {
+  const saved = await saveDemoRequest(input).then(() => true, (error: unknown) => { console.error("demo-request save failed:", error instanceof Error ? error.message : "unknown"); return false; });
+  const emailed = await sendDemoRequestEmail(input, env).then(() => true, (error: unknown) => { console.error("demo-request email failed:", error instanceof Error ? error.message : "unknown"); return false; });
+  return { saved, emailed };
 }
 
 export async function sendDemoRequestEmail(input: DemoRequest, env: NodeJS.ProcessEnv = process.env) {

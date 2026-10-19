@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { requestIp } from "@/lib/security/request";
 import { apiError } from "@/lib/http/errors";
-import { demoRequestSchema, isAllowedOrigin, isDemoRequestThrottled, sendDemoRequestEmail, DEFAULT_DEMO_RECIPIENT } from "@/lib/public/demo-request-service";
+import { demoRequestSchema, isAllowedOrigin, isDemoRequestThrottled, receiveDemoRequest, DEFAULT_DEMO_RECIPIENT } from "@/lib/public/demo-request-service";
 
 // Public endpoint for the landing page's "Request a demo" form (see src/lib/public/demo-request-service.ts).
 // It is the only route that is callable without signing in and from another website, so it checks the Origin header
@@ -41,10 +41,9 @@ export async function POST(request: NextRequest) {
       return json({ error: { code: "TOO_MANY_REQUESTS", message: "Too many requests. Please try again later." } }, 429, origin);
     }
 
-    try {
-      await sendDemoRequestEmail(input);
-    } catch (error) {
-      console.error("demo-request email failed:", error instanceof Error ? error.message : "unknown");
+    // Saved for the Demo Requests screen and emailed. If neither worked, say so; if at least one did, the request is not lost.
+    const { saved, emailed } = await receiveDemoRequest(input);
+    if (!saved && !emailed) {
       return json({ error: { code: "EMAIL_UNAVAILABLE", message: `We could not send your request just now. Please email ${DEFAULT_DEMO_RECIPIENT} directly.` } }, 503, origin);
     }
     return json({ ok: true }, 200, origin);

@@ -2924,3 +2924,27 @@ model SpecificationFormSettings {
 
   company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
+
+// 2026-10-19 — "Request a demo" form on the public landing page (floxintegrations.co.za). Each submission is saved here and
+// emailed to the Flo X admin mailbox; platform staff see them under Platform > Demo Requests (New / History).
+// No company: these are enquiries from people who are not customers yet.
+enum DemoRequestStatus {
+  NEW
+  HISTORY
+}
+
+model DemoRequest {
+  id               String            @id @default(cuid())
+  name             String
+  email            String
+  company          String?
+  phone            String?
+  businessType     String?
+  message          String?
+  status           DemoRequestStatus @default(NEW)
+  createdAt        DateTime          @default(now())
+  movedToHistoryAt DateTime?
+  movedToHistoryBy String?
+
+  @@index([status, createdAt])
+}
