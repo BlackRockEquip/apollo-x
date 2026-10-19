@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TENANT_PERMISSIONS, TENANT_PERMISSIONS, type TenantPermission } from "@/lib/auth/permissions";
+import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, userDisabledModules, type TenantPermission } from "@/lib/auth/permissions";
 
 describe("store controller default permissions", () => {
   const stores = DEFAULT_TENANT_PERMISSIONS.STORE_CONTROLLER;
@@ -51,5 +51,19 @@ describe("manager default permissions", () => {
   });
   it("company admin still holds every permission", () => {
     for (const permission of TENANT_PERMISSIONS) expect(DEFAULT_TENANT_PERMISSIONS.COMPANY_ADMIN.has(permission)).toBe(true);
+  });
+});
+
+describe("per-user module switches are read a whole tile at a time", () => {
+  const marker = (key: string) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false });
+  it("a half-off Stock levels tile (Storage marked off, Inventory not) leaves Storage on", () => {
+    expect(userDisabledModules([marker("STORAGE")]).has("STORAGE")).toBe(false);
+  });
+  it("a half-off PEX tile (PEX Stock marked off, PEX Tracking not) leaves PEX Stock on", () => {
+    expect(userDisabledModules([marker("PEX_STOCK")]).has("PEX_STOCK")).toBe(false);
+  });
+  it("a fully switched-off tile stays off", () => {
+    const off = userDisabledModules([marker("INVENTORY"), marker("STORAGE"), marker("PEX_STOCK"), marker("PEX_TRACKING")]);
+    for (const key of ["INVENTORY", "STORAGE", "PEX_STOCK", "PEX_TRACKING"]) expect(off.has(key)).toBe(true);
   });
 });

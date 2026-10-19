@@ -1,4 +1,6 @@
 import { PlatformRole, TenantRole } from "@prisma/client";
+import type { ModuleKey } from "@prisma/client";
+import { TILES } from "@/lib/builds/definitions";
 
 export const TENANT_PERMISSIONS = [
   "DASHBOARD_VIEW",
@@ -138,9 +140,20 @@ export const DEFAULT_PLATFORM_PERMISSIONS: Record<PlatformRole, ReadonlySet<Plat
 // narrow what the company licence allows, never widen it.
 export const MODULE_OFF_PREFIX = "MODULE_OFF:";
 
+// 2026-10-19, user report: a Store Controller with Stock Levels and PEX switched on could not see Storage Locations or PEX Stock.
+// The Users screen switches a whole tile at a time (Stock levels = Inventory + Storage, PEX = PEX Stock + PEX Tracking) and shows
+// a tile as "on" when any of its modules is on. Before the role was fixed, Storage and PEX Stock had no permission in effect, so
+// they read as "off", the tile still looked on, and the next save stored a switch-off marker for just those modules. A marker now
+// counts only when every module of the tile (or tiles) it belongs to is switched off, which matches what the screen shows and
+// repairs users saved that way without anyone re-saving them.
 export function userDisabledModules(rows: ReadonlyArray<{ permission: string; allowed: boolean }>): Set<string> {
+  const marked = new Set<string>();
+  for (const row of rows) if (!row.allowed && row.permission.startsWith(MODULE_OFF_PREFIX)) marked.add(row.permission.slice(MODULE_OFF_PREFIX.length));
   const off = new Set<string>();
-  for (const row of rows) if (!row.allowed && row.permission.startsWith(MODULE_OFF_PREFIX)) off.add(row.permission.slice(MODULE_OFF_PREFIX.length));
+  for (const key of marked) {
+    const tiles = Object.values(TILES).filter((tile) => tile.modules.includes(key as ModuleKey));
+    if (tiles.every((tile) => tile.modules.every((module) => marked.has(module)))) off.add(key);
+  }
   return off;
 }
 
