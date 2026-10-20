@@ -448,7 +448,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerAccountCode, setNewCustomerAccountCode] = useState("");
   // Extra details asked for in the New customer pop-up (all optional).
-  const [newCustomerDetails, setNewCustomerDetails] = useState({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressLine1: "", city: "" });
+  const [newCustomerDetails, setNewCustomerDetails] = useState({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressType: "BILLING", addressLine1: "", addressLine2: "", city: "", province: "", postalCode: "" });
   const [newCustomerError, setNewCustomerError] = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);
   // Machine make autofill — suggests from the company's Manufacturers
@@ -1479,7 +1479,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   function openNewCustomerForm() {
     setNewCustomerName(customerQuery.trim());
     setNewCustomerAccountCode("");
-    setNewCustomerDetails({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressLine1: "", city: "" });
+    setNewCustomerDetails({ tradingName: "", telephone: "", email: "", contactFirstName: "", contactLastName: "", addressType: "BILLING", addressLine1: "", addressLine2: "", city: "", province: "", postalCode: "" });
     setNewCustomerError("");
     setShowNewCustomerForm(true);
   }
@@ -1510,7 +1510,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (d.tradingName.trim()) payload.tradingName = d.tradingName.trim();
       if (d.telephone.trim()) payload.mainTelephone = d.telephone.trim();
       if (d.email.trim()) payload.mainEmail = d.email.trim();
-      if (d.addressLine1.trim() || d.city.trim()) payload.address = { type: "BILLING", line1: d.addressLine1.trim(), city: d.city.trim() || null };
+      if (d.addressLine1.trim() || d.addressLine2.trim() || d.city.trim() || d.province.trim() || d.postalCode.trim()) {
+        payload.address = { type: d.addressType, line1: d.addressLine1.trim(), line2: d.addressLine2.trim() || null, city: d.city.trim() || null, province: d.province.trim() || null, postalCode: d.postalCode.trim() || null, countryCode: "ZA" };
+      }
       if (d.contactFirstName.trim()) payload.contacts = [{ firstName: d.contactFirstName.trim(), lastName: d.contactLastName.trim() || null, telephone: d.telephone.trim() || null, email: d.email.trim() || null, isPrimary: true }];
       const r = await fetch("/api/v1/master-data/customers", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const b = await r.json();
@@ -3977,8 +3979,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <label><span>Contact last name</span><input value={newCustomerDetails.contactLastName} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, contactLastName: e.target.value }))} /></label>
                   <label><span>Telephone</span><input value={newCustomerDetails.telephone} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, telephone: e.target.value }))} /></label>
                   <label><span>Email</span><input type="email" value={newCustomerDetails.email} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, email: e.target.value }))} /></label>
-                  <label className="wide"><span>Address</span><input value={newCustomerDetails.addressLine1} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, addressLine1: e.target.value }))} /></label>
+                  <label><span>Address type</span><select value={newCustomerDetails.addressType} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, addressType: e.target.value }))}>{["BILLING", "DELIVERY", "PHYSICAL", "POSTAL"].map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+                  <label><span>Address line 1</span><input value={newCustomerDetails.addressLine1} placeholder="Street address" onChange={(e) => setNewCustomerDetails((p) => ({ ...p, addressLine1: e.target.value }))} /></label>
+                  <label><span>Address line 2</span><input value={newCustomerDetails.addressLine2} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, addressLine2: e.target.value }))} /></label>
                   <label><span>City</span><input value={newCustomerDetails.city} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, city: e.target.value }))} /></label>
+                  <label><span>Province</span><input value={newCustomerDetails.province} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, province: e.target.value }))} /></label>
+                  <label><span>Postal code</span><input value={newCustomerDetails.postalCode} onChange={(e) => setNewCustomerDetails((p) => ({ ...p, postalCode: e.target.value }))} /></label>
                 </div>
                 {newCustomerError ? <p className="form-error" role="alert" style={{ margin: "0 18px 8px", color: "var(--danger, #b3261e)" }}>{newCustomerError}</p> : null}
                 <footer className="detail-actions">
