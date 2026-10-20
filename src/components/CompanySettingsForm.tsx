@@ -6,7 +6,6 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ImagePlus, Loader2, RotateCcw, Save, Upload, Wifi, X } from "lucide-react";
-import { useTenantPermissions } from "@/components/AppShell";
 
 type SettingsData = {
   internalCode: string;
@@ -30,9 +29,8 @@ function normalizeColor(value: string) {
 
 export function CompanySettingsForm() {
   const router = useRouter();
-  // 2026-10-16: Email / SMTP only exists to send RFQ and follow-up emails, so it is hidden when the RFQs module is off.
-  const { moduleAccess } = useTenantPermissions();
-  const rfqEnabled = (moduleAccess.get("PROCUREMENT") ?? "DENIED") !== "DENIED";
+  // 2026-10-20, user request: the Email / SMTP section is shown for every company, whether or not the RFQs module is on (more
+  // email features are being added, so it is no longer tied to RFQs).
   const [data, setData] = useState<SettingsData | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState("");
@@ -334,7 +332,7 @@ export function CompanySettingsForm() {
         </div>
       </section>
 
-      {rfqEnabled && <section className="detail-panel">
+      <section className="detail-panel">
         <header>
           <div><h2>Email / SMTP</h2><p>Used to send real RFQ request and parts follow-up emails to suppliers. Nothing is sent until this is filled in.</p></div>
           <div className="header-actions">
@@ -357,7 +355,7 @@ export function CompanySettingsForm() {
           <label><span>&quot;From&quot; email address</span><input value={form.smtpFromAddress} onChange={(e) => setForm((current) => current ? { ...current, smtpFromAddress: e.target.value } : current)} /></label>
           <label><span>&quot;From&quot; display name</span><input value={form.smtpFromName} placeholder={form.tradingName || form.legalName} onChange={(e) => setForm((current) => current ? { ...current, smtpFromName: e.target.value } : current)} /></label>
         </div>
-      </section>}
+      </section>
     </div>
   );
 }
