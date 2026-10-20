@@ -143,7 +143,12 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
 // 2026-10-16, user request (Engineering Business): "Job Wip table view, when selecting custom columns, correct all field
 // names listed." The column names now read exactly as the same fields are named on the job screen (Date in, Part number,
 // Job description, ETA date, Delivery type ...), and Engineering uses its own staff wording (Machinist ETA date).
-const ENGINEERING_COLUMN_LABELS: Partial<Record<JobsWipColumnId, string>> = { mechanicEtaDate: "Machinist ETA date" };
+// 2026-10-20, user request: the field reads "Machinist ETA" for Engineering, on the job screen as well as in this table.
+const ENGINEERING_COLUMN_LABELS: Partial<Record<JobsWipColumnId, string>> = { mechanicEtaDate: "Machinist ETA" };
+
+// 2026-10-20, user request (Engineering Business, user type "WIP View"): this user sees only the Jobs & WIP table, with exactly these
+// columns (Job #, Job type, Status, Machine model, Component, Machinist ETA) and no custom columns. Fixed here and applied on the server (wip-columns-service.ts), not just hidden in the picker.
+export const WIP_VIEWER_COLUMNS: JobsWipColumnId[] = ["jobNumber", "type", "status", "machineModel", "component", "mechanicEtaDate"];
 
 export function wipColumnLabel(id: JobsWipColumnId, build?: string | null): string {
   if (build === "ENGINEERING" && ENGINEERING_COLUMN_LABELS[id]) return ENGINEERING_COLUMN_LABELS[id]!;

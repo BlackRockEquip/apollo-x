@@ -37,6 +37,7 @@ import {
   attachmentUploadInput,
   jobAttachmentNotesUpdateInput,
   jobMarkReturnedUnrepairedInput,
+  jobBreakdownInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
@@ -72,6 +73,7 @@ const jobListSelect = {
   // ReturnUnrepairedPill in StatusPill.tsx and this column's own render in
   // app/(tenant)/jobs/page.tsx.
   returnedUnrepaired: true,
+  breakdown: true,
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
   // (user request) for jobs directly allocated to PEX Inventory: a return
   // record that's not scrapped and not yet redeployed (consumedByJobId null)
@@ -143,10 +145,17 @@ function stockTrackingOn(ctx: RequestContext) {
   return (ctx.moduleAccess.get("INVENTORY") ?? "DENIED") !== "DENIED";
 }
 
-function requireJobsRead(ctx: RequestContext) {
+// 2026-10-20, user request (Engineering Business, user type "WIP View"): that user sees only the Jobs & WIP table - no job screen, no
+// attachments, no option lists. Only the table's own list (requireJobsList) is open to them.
+function requireJobsList(ctx: RequestContext) {
   requireModule(ctx, "JOBS_WIP", "READ");
   requireTenantPermission(ctx, "JOBS_VIEW");
   return ctx.companyId!;
+}
+
+function requireJobsRead(ctx: RequestContext) {
+  if (ctx.tenantRole === "WIP_VIEWER") throw new AuthorizationError();
+  return requireJobsList(ctx);
 }
 
 // 2026-10-01 — user request ("User type: User/Mechanic — Users are not
@@ -568,7 +577,7 @@ function jobNumberSortValue(jobNumber: string | null): number {
 }
 
 export async function listJobs(ctx: RequestContext, raw: unknown) {
-  return listJobsForCompany(ctx, requireJobsRead(ctx), raw);
+  return listJobsForCompany(ctx, requireJobsList(ctx), raw);
 }
 
 // 2026-10-19, user request: a Store Controller has Stock Levels, Pick slips and PEX Inventory but not Jobs & WIP. The pick slip
@@ -582,6 +591,8 @@ export async function listJobsForPickSlip(ctx: RequestContext, raw: unknown) {
 
 async function listJobsForCompany(ctx: RequestContext, companyId: string, raw: unknown) {
   const query = jobsListQuery.parse(raw);
+  // The WIP View user type never sees completed jobs: whatever view or status they ask for, the list is the work in progress.
+  if (ctx.tenantRole === "WIP_VIEWER") query.view = "wip";
   const scopeWhere = mapListScopeWhere(companyId, query);
   // No DB-level orderBy/skip/take anywhere below — see jobNumberSortValue
   // above for why job number can't be sorted correctly as a plain string
@@ -982,6 +993,27 @@ export async function undoJobReturnedUnrepaired(ctx: RequestContext, id: string)
     return cleared;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: "RETURNED_UNREPAIRED_UNDONE" });
+  return updated;
+}
+
+// 2026-10-20, user request: "Add a button above the status stepper on the right which adds a status pill 'Breakdown' in red to the
+// status." Switches Job.breakdown on or off. Like the returned-unrepaired flag it never touches the job's status, so the job keeps its
+// place on the stepper. Same rules as the other status actions: needs edit access and is not offered to a Mechanic.
+export async function setJobBreakdown(ctx: RequestContext, id: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireNotMechanicRestricted(ctx);
+  const input = jobBreakdownInput.parse(raw);
+  const existing = await getJobScoped(companyId, id);
+  if (input.active && ["CLOSED", "CANCELLED", "COMPLETE"].includes(existing.status)) {
+    throw new Error(`A job with status ${existing.status} cannot be flagged as a breakdown.`);
+  }
+  if (existing.breakdown === input.active) return existing;
+  const updated = await prisma.$transaction(async (tx) => {
+    const changed = await tx.job.update({ where: { id: existing.id }, data: { breakdown: input.active, breakdownAt: input.active ? new Date() : null, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", input.active ? "Job flagged as a breakdown." : "Breakdown flag cleared.", { breakdown: input.active });
+    return changed;
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "Job", entityId: updated.id, action: input.active ? "BREAKDOWN_SET" : "BREAKDOWN_CLEARED" });
   return updated;
 }
 

@@ -10,7 +10,7 @@ import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Mini
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
-import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill } from "@/components/StatusPill";
+import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
@@ -169,6 +169,8 @@ type JobDetail = Row & {
   returnedUnrepaired?: boolean;
   returnedUnrepairedReason?: string | null;
   returnedUnrepairedAt?: string | null;
+  // 2026-10-20 - see Job.breakdown in schema.prisma: the red "Breakdown" pill switched on by the button above the status stepper.
+  breakdown?: boolean;
   type: keyof typeof JOB_TYPE_LABELS;
   customerId: string;
   customer: CustomerSelection & { contacts?: Row[]; addresses?: Row[]; branches?: Row[] };
@@ -1782,6 +1784,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     jobType: job ? String(typeLabels[job.type] || "") : "",
     status: job ? String(statusLabels[job.status] || "") : "",
     stripLabel: machinist.strip,
+    etaLabel: machinist.etaShort,
     buildLabel: machinist.build,
     salesRepresentative: String(salesRepresentatives.find((s) => s.id === form.salesRepresentativeId)?.label || "—"),
     stripMechanic: String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—"),
@@ -2991,7 +2994,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div class="cols">
         ${section("Workshop", `<div class="col">${kv([
           ["ETA date", fmt(form.etaDate)],
-          ["Mechanic ETA", fmt(form.mechanicEtaDate)],
+          [machinist.etaShort, fmt(form.mechanicEtaDate)],
           [machinist.strip, String(mechanics.find((m) => m.id === form.stripMechanicId)?.label || "—")],
           [machinist.build, String(mechanics.find((m) => m.id === form.buildMechanicId)?.label || "—")],
           ["Import tracking", form.importTrackingNumber],
@@ -3879,7 +3882,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         {!isFieldForm && (
           <>
         <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
-        <label><span>Mechanic ETA date</span><input type="date" value={form.mechanicEtaDate} onChange={(e) => updateField("mechanicEtaDate", e.target.value)} /></label>
+        <label><span>{machinist.eta}</span><input type="date" value={form.mechanicEtaDate} onChange={(e) => updateField("mechanicEtaDate", e.target.value)} /></label>
         {/* 2026-09-19, user request: "add under job details sections 2
             fields, 'Mechanic Strip' and 'Mechanic Assemble'."
             Job.stripMechanicId/buildMechanicId were already fully wired
@@ -4825,6 +4828,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   see ReturnUnrepairedPill's own comment there. */}
               {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />}
               {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
+              {job && job.breakdown && <BreakdownPill />}
               {pexInStock && <PexAllocatedPill />}
             </div>
             {/* 2026-10-01 — gated by canViewCustomer alongside the
@@ -4913,6 +4917,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
         {job && (
           <div className="job-header-stepper">
+            {/* 2026-10-20, user request: a Breakdown button above the status stepper, on the right, which adds a red "Breakdown" pill
+                to the job's status (Job.breakdown). Press it again to clear. Not offered to a Mechanic or the view-only user, same as
+                the other status actions, and only while the job is still open (it can always be cleared). */}
+            {!mechanicFieldsLocked && !viewOnly && (job.breakdown || !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status)) && (
+              <div className="job-header-stepper-top">
+                <button type="button" className={job.breakdown ? "table-action" : "table-action danger"} disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/breakdown`, { active: !job.breakdown })}>{job.breakdown ? "Clear breakdown" : "Breakdown"}</button>
+              </div>
+            )}
             {["CLOSED", "CANCELLED"].includes(job.status) ? (
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}) — use Reopen above to bring it back onto the stepper.

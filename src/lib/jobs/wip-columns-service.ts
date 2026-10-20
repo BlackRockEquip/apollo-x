@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-import { JOBS_WIP_TABLE_KEY, JOBS_WIP_DEFAULT_COLUMNS, normalizeJobsWipColumns, filterColumnsByPermission, type JobsWipColumnId } from "./wip-columns";
+import { JOBS_WIP_TABLE_KEY, JOBS_WIP_DEFAULT_COLUMNS, WIP_VIEWER_COLUMNS, normalizeJobsWipColumns, filterColumnsByPermission, type JobsWipColumnId } from "./wip-columns";
 
 // ---------------------------------------------------------------------------
 // Jobs & WIP list — persistence for the customizable-columns feature (see
@@ -34,6 +34,8 @@ function authorize(ctx: RequestContext) {
 // picker hiding a checkbox.
 export async function getJobsWipColumns(ctx: RequestContext): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
+  // The WIP View user type always gets its own fixed columns, whatever was saved before.
+  if (ctx.tenantRole === "WIP_VIEWER") return WIP_VIEWER_COLUMNS;
   const row = await prisma.userTableColumns.findUnique({
     where: { userId_companyId_tableKey: { userId: ctx.userId, companyId, tableKey: JOBS_WIP_TABLE_KEY } },
   });
@@ -43,6 +45,7 @@ export async function getJobsWipColumns(ctx: RequestContext): Promise<JobsWipCol
 
 export async function saveJobsWipColumns(ctx: RequestContext, raw: unknown): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
+  if (ctx.tenantRole === "WIP_VIEWER") return WIP_VIEWER_COLUMNS; // no custom columns for this user type
   requireModule(ctx, "JOBS_WIP", "WRITE");
   // filterColumnsByPermission here stops a crafted PUT request from saving
   // a column selection the viewer isn't entitled to — defense in depth
@@ -78,6 +81,7 @@ export async function saveJobsWipColumns(ctx: RequestContext, raw: unknown): Pro
 // for reading is enough.
 export async function resetJobsWipColumns(ctx: RequestContext): Promise<JobsWipColumnId[]> {
   const companyId = authorize(ctx);
+  if (ctx.tenantRole === "WIP_VIEWER") return WIP_VIEWER_COLUMNS;
   await prisma.userTableColumns.deleteMany({ where: { userId: ctx.userId, companyId, tableKey: JOBS_WIP_TABLE_KEY } });
   return filterColumnsByPermission(JOBS_WIP_DEFAULT_COLUMNS, ctx.tenantPermissions);
 }

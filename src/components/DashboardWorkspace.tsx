@@ -6,6 +6,8 @@ import Link from "next/link";
 import { Activity, ArrowUpRight, ChevronRight, CircleCheck, Clock, FlaskConical, MessageSquare, Package, RefreshCw, ShoppingCart, Truck, TriangleAlert } from "lucide-react";
 import { CombinedAnalyticsChart, type AnalyticsSeriesPoint } from "@/components/AnalyticsLineChart";
 import { StatusPill, pexStatusLabel } from "@/components/StatusPill";
+import { useTenantPermissions } from "@/components/AppShell";
+import { machinistFieldLabels } from "@/lib/jobs/ui";
 
 type Widget = { key: string; enabled: boolean; order: number };
 type RecentJob = { id: string; jobNumber: string | null; status: string; customer: { name: string } | null };
@@ -134,12 +136,14 @@ function etaDateLabel(iso: string) {
 // 2026-10-16: Upcoming / Overdue ETA cards — every build gets them (core Jobs & WIP).
 function EtaPanel({ kind, card, windowDays }: { kind: "upcoming" | "overdue"; card: EtaCardData; windowDays: number }) {
   const overdue = kind === "overdue";
+  // 2026-10-20, user request: Engineering companies call this "Machinist ETA" (Workshop keeps "Mechanic ETA").
+  const etaName = machinistFieldLabels(useTenantPermissions().industryBuild).etaShort;
   return (
     <section className="dash-card dash-panel">
       <header className="dash-panel-head">
         <div>
           <h2>{overdue ? "Overdue ETAs" : "Upcoming ETAs"}{card.count > 0 ? ` (${card.count})` : ""}</h2>
-          <p>{overdue ? "Mechanic ETA has passed and the job is not finished" : `Mechanic ETA in the next ${windowDays} days`}</p>
+          <p>{overdue ? `${etaName} has passed and the job is not finished` : `${etaName} in the next ${windowDays} days`}</p>
         </div>
         <Link href="/jobs?view=wip" className="dash-link">View jobs <ChevronRight size={12} /></Link>
       </header>
@@ -157,7 +161,7 @@ function EtaPanel({ kind, card, windowDays }: { kind: "upcoming" | "overdue"; ca
           </Link>
         );
       })}
-      {card.count > card.jobs.length && <div className="dash-empty">+ {card.count - card.jobs.length} more — open Jobs &amp; WIP and sort by Mechanic ETA.</div>}
+      {card.count > card.jobs.length && <div className="dash-empty">+ {card.count - card.jobs.length} more — open Jobs &amp; WIP and sort by {etaName}.</div>}
     </section>
   );
 }

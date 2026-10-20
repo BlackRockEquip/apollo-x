@@ -135,6 +135,11 @@ export const jobMarkReturnedUnrepairedInput = z.object({
   reason: z.string().trim().min(2).max(500),
 });
 
+// 2026-10-20 — switch the red "Breakdown" pill on a job on or off (see Job.breakdown in schema.prisma).
+export const jobBreakdownInput = z.object({
+  active: z.boolean(),
+});
+
 // 2026-09-16 — jobNoteCreateInput/jobNoteUpdateInput/jobNoteDeleteInput
 // (for the old add/edit/delete JobNote list) removed here — Notes is now
 // the plain `notes` field on jobCreateInput/jobUpdateInput above,

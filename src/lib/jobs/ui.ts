@@ -219,8 +219,12 @@ export function jobTypeLabelsFor(build?: BuildKey): Record<JobType, string> {
 
 // The two "who worked on it" job fields (stripMechanicId / buildMechanicId) are called Machinist
 // 'Assess' / Machinist 'Final' for Engineering.
-export function machinistFieldLabels(build?: BuildKey): { strip: string; build: string } {
-  return build === "ENGINEERING" ? { strip: "Machinist 'Assess'", build: "Machinist 'Final'" } : { strip: "Mechanic strip", build: "Mechanic assemble" };
+// 2026-10-20, user request: the "Mechanic ETA date" field reads "Machinist ETA" for Engineering (eta = the field label on the job
+// screen, etaShort = the line on the printed job card).
+export function machinistFieldLabels(build?: BuildKey): { strip: string; build: string; eta: string; etaShort: string } {
+  return build === "ENGINEERING"
+    ? { strip: "Machinist 'Assess'", build: "Machinist 'Final'", eta: "Machinist ETA", etaShort: "Machinist ETA" }
+    : { strip: "Mechanic strip", build: "Mechanic assemble", eta: "Mechanic ETA date", etaShort: "Mechanic ETA" };
 }
 
 // Statuses always selectable regardless of flow family, on top of that

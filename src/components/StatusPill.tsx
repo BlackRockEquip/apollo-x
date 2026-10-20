@@ -82,6 +82,10 @@ export function StatusPill({ status, label, returnedUnrepaired, build }: { statu
 // header and the Jobs & WIP table's status column in app/(tenant)/jobs/page.tsx.
 export function ReturnUnrepairedPill() { return <span className="status-pill tone-red">Return Unrepaired</span>; }
 
+// 2026-10-20, user request: the red "Breakdown" pill added beside a job's status by the Breakdown button above the status stepper
+// (Job.breakdown). Shown on the job header and in the Jobs & WIP status column.
+export function BreakdownPill() { return <span className="status-pill tone-red">Breakdown</span>; }
+
 // 2026-10-05, user request: "If a job is allocated to pex, add a status
 // pill next to current status the status 'Pex'." Shown in the job header
 // beside the normal status pill while the job is directly allocated to PEX

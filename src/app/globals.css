@@ -758,6 +758,7 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .job-header-stepper { border: 1px solid var(--ink-150); border-radius: 9px; background: white; box-shadow: 0 2px 7px rgba(15,23,42,.035); padding: 10px 15px 20px; }
 .job-header-stepper .status-stepper { padding: 4px 0 6px; margin: 0; }
 .job-header-stepper .status-stepper-note { padding: 0; }
+.job-header-stepper-top { display: flex; justify-content: flex-end; margin: 0 0 4px; }
 .job-header-stepper-hint { margin: 0 0 6px; color: var(--ink-500); font-size: 11.5px; }
 
 /* Compact bento-style layout for the inline job-edit form (JobWorkspace.tsx

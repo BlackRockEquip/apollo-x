@@ -1735,6 +1735,12 @@ model Job {
   returnedUnrepairedReason String?
   returnedUnrepairedAt     DateTime?
 
+  // 2026-10-20, user request: a "Breakdown" button above the status stepper adds a red "Breakdown" pill beside the job's status. Like
+  // returnedUnrepaired it is an independent flag layered on the real status - the job keeps its place on the stepper - and it can be
+  // switched off again. breakdownAt records when it was last switched on.
+  breakdown                Boolean   @default(false)
+  breakdownAt              DateTime?
+
   // 2026-09-14 — WIP Excel auto-sync's per-field conflict protection ("if
   // changes on the system have been made, spreadsheet must not overwrite
   // them"). One flat JSON object, keyed by Job column name, holding the

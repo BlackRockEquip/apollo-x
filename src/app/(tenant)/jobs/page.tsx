@@ -1,6 +1,6 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
-import { StatusPill, ReturnUnrepairedPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
+import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { RememberListUrl } from "@/components/RememberListUrl";
@@ -48,6 +48,7 @@ const FILTER_SEP = "|~|";
 function statusFilterValues(job: JobRow, build?: string | null): string {
   const values = [jobStatusLabel(job.status, job.returnedUnrepaired, build)];
   if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
+  if (job.breakdown) values.push("Breakdown");
   if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)) values.push("Pex");
   return values.join(FILTER_SEP);
 }
@@ -71,10 +72,10 @@ function searchText(job: JobRow, canSearchCustomerName: boolean): string {
 // globals.css, which positions relative to the <tr> so it works from any
 // cell, not just the first one) since jobNumber is the one column that's
 // always shown (see JOBS_WIP_COLUMNS' `locked: true`).
-function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | null) {
+function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | null, viewOnlyRows = false) {
   switch (columnId) {
     case "jobNumber":
-      return <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>;
+      return viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>;
     case "customerName":
       return job.customer.name;
     case "customerTradingName":
@@ -93,6 +94,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
       return <>
         <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={build} />
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
+        {job.breakdown && <> <BreakdownPill /></>}
         {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId) && <> <PexAllocatedPill /></>}
       </>;
     case "dateReceived":
@@ -174,7 +176,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   requireTenantModulePage(ctx, "JOBS_WIP");
   requireTenantPermission(ctx, "JOBS_VIEW");
   const sp = await searchParams;
-  const view = typeof sp.view === "string" ? sp.view : "all";
+  // 2026-10-20: the WIP View user type sees the work in progress only (the server enforces it too), in a fixed set of columns.
+  const wipViewOnly = ctx.tenantRole === "WIP_VIEWER";
+  const view = wipViewOnly ? "wip" : typeof sp.view === "string" ? sp.view : "all";
   const q = typeof sp.q === "string" ? sp.q : "";
   // "" (the unselected-option value on both <select>s below) means "no
   // filter", same as the param being absent entirely — without this,
@@ -272,7 +276,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}
-            {view !== "all" && !rawStatus && <input type="hidden" name="view" value={view} />}
+            {!wipViewOnly && view !== "all" && !rawStatus && <input type="hidden" name="view" value={view} />}
           </form>
           {/* 2026-10-09 — Job type / Status dropdowns removed: both now live in the table headers (Excel-style filters). */}
           {/* 2026-09-14 — "Move the custom column button selctor and apply
@@ -285,7 +289,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           {/* Shows (and lets you clear) the WIP / Completed view a dashboard
               link or the old chips can set — otherwise the list is narrower
               than the dropdowns say. */}
-          {view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
+          {!wipViewOnly && view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
           {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
               viewer's role is entitled to) now travels down alongside
@@ -294,7 +298,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               wip-columns.ts, and getJobsWipColumns above (the real
               enforcement: that column is never in `columns` to begin
               with). */}
-          <JobsWipColumnPicker build={ctx.industryBuild} selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />
+          {!wipViewOnly && <JobsWipColumnPicker build={ctx.industryBuild} selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />}
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
           <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
@@ -317,18 +321,18 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             <colgroup>
               {showSelect && <col data-col-id="__select" style={{ width: "34px" }} />}
               {columns.map((id) => <col key={id} data-col-id={id} style={{ width: `${COLUMN_DEFAULT_WIDTHS[id] ?? 140}px` }} />)}
-              <col data-col-id="__actions" style={{ width: "70px" }} />
+              {!wipViewOnly && <col data-col-id="__actions" style={{ width: "70px" }} />}
             </colgroup>
-            <thead><tr>{showSelect && <th className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select-all" aria-label="Select all jobs shown" /></th>}{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}<th className="jobs-no-print"></th></tr></thead>
+            <thead><tr>{showSelect && <th className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select-all" aria-label="Select all jobs shown" /></th>}{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}{!wipViewOnly && <th className="jobs-no-print"></th>}</tr></thead>
             <tbody>
               {data.items.map((job) => (
-                <tr key={job.id} className="clickable-row" data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()}>
+                <tr key={job.id} className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()}>
                   {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
-                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild)}</td>)}
-                  <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>
+                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
+                  {!wipViewOnly && <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>}
                 </tr>
               ))}
-              {data.items.length === 0 && <tr><td colSpan={columns.length + 1 + (showSelect ? 1 : 0)} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
+              {data.items.length === 0 && <tr><td colSpan={columns.length + (wipViewOnly ? 0 : 1) + (showSelect ? 1 : 0)} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
             </tbody>
           </table>
           {showSelect && <JobsWipBulkBar tableId="jobs-wip-table" canEdit={canBulkEdit} canPex={canBulkPex} />}
