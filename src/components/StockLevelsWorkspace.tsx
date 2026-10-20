@@ -16,6 +16,7 @@ import { ScrollRestore } from "@/components/ScrollRestore";
 import { FitToViewportBottom } from "@/components/FitToViewportBottom";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { TablePrintButton } from "@/components/TablePrintButton";
+import { withPoweredBy } from "@/lib/documents/powered-by";
 
 // 2026-09-10 — Parts Catalog merged into Stock Levels at the user's request
 // ("combine parts catalog to Stock levels... One page, Stock Levels only").
@@ -198,7 +199,7 @@ function printPickSlip(ps: PickSlipData) {
       <div class="field"><div class="line"></div><p class="label">Date</p></div>
     </div>
   </body></html>`;
-  w.document.write(html);
+  w.document.write(withPoweredBy(html));
   w.document.close();
   const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
   w.onload = doPrint;
@@ -239,7 +240,7 @@ function printStockTakeSheet(locationLabel: string, rows: StockTakeRow[]) {
       <div class="field"><div class="line"></div><p class="label">Date</p></div>
     </div>
   </body></html>`;
-  w.document.write(html);
+  w.document.write(withPoweredBy(html));
   w.document.close();
   const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
   w.onload = doPrint;

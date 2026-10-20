@@ -20,7 +20,11 @@ export type DemoRequestRow = {
   createdAt: string;
   movedToHistoryAt: string | null;
   movedToHistoryBy: string | null;
+  /** Proposals made from this request (newest first). */
+  proposals: { id: string; number: string; status: string }[];
 };
+
+const PROPOSALS_INCLUDE = { proposals: { select: { id: true, number: true, status: true }, orderBy: { createdAt: "desc" as const } } };
 
 const statusSchema = z.object({ status: z.enum(["NEW", "HISTORY"]) });
 
@@ -28,14 +32,14 @@ function requirePlatformContext(ctx: RequestContext) {
   if (ctx.companyId) throw new Error("PLATFORM_CONTEXT_REQUIRED");
 }
 
-function toRow(r: { id: string; name: string; email: string; company: string | null; phone: string | null; businessType: string | null; message: string | null; status: "NEW" | "HISTORY"; createdAt: Date; movedToHistoryAt: Date | null; movedToHistoryBy: string | null }): DemoRequestRow {
+function toRow(r: { id: string; name: string; email: string; company: string | null; phone: string | null; businessType: string | null; message: string | null; status: "NEW" | "HISTORY"; createdAt: Date; movedToHistoryAt: Date | null; movedToHistoryBy: string | null; proposals: { id: string; number: string; status: string }[] }): DemoRequestRow {
   return { ...r, createdAt: r.createdAt.toISOString(), movedToHistoryAt: r.movedToHistoryAt ? r.movedToHistoryAt.toISOString() : null };
 }
 
 export async function listDemoRequests(ctx: RequestContext, view: DemoRequestView): Promise<DemoRequestRow[]> {
   requirePlatformPermission(ctx, "PLATFORM_SUPPORT_READ");
   requirePlatformContext(ctx);
-  const rows = await prisma.demoRequest.findMany({ where: { status: view }, orderBy: view === "NEW" ? { createdAt: "desc" } : { movedToHistoryAt: "desc" }, take: 500 });
+  const rows = await prisma.demoRequest.findMany({ where: { status: view }, orderBy: view === "NEW" ? { createdAt: "desc" } : { movedToHistoryAt: "desc" }, take: 500, include: PROPOSALS_INCLUDE });
   return rows.map(toRow);
 }
 
@@ -65,6 +69,7 @@ export async function setDemoRequestStatus(ctx: RequestContext, id: string, inpu
   const updated = await prisma.demoRequest.update({
     where: { id },
     data: status === "HISTORY" ? { status, movedToHistoryAt: new Date(), movedToHistoryBy: ctx.displayName } : { status, movedToHistoryAt: null, movedToHistoryBy: null },
+    include: PROPOSALS_INCLUDE,
   });
   return toRow(updated);
 }

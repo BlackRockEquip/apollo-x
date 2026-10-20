@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 
-type PublicCompany = { id: string; name: string };
+type PublicCompany = { id: string; name: string; website?: string | null };
 
 // 2026-09-22, user request: "Add below the words at the bottom a section
 // that displays all companies that use the platform, use the
@@ -39,19 +39,27 @@ export function PlatformCompaniesStrip() {
   const sliding = visible.length > MAX_STATIC;
   const group = (copy: boolean) => (
     <div className="login-logos-group" aria-hidden={copy || undefined}>
-      {visible.map((company) => (
-        <Image
-          key={`${copy ? "b" : "a"}${company.id}`}
-          src={`/api/v1/public/companies/${company.id}/logo`}
-          alt={copy ? "" : company.name}
-          title={company.name}
-          width={120}
-          height={40}
-          unoptimized
-          className="login-company-logo"
-          onError={() => setBroken((current) => new Set(current).add(company.id))}
-        />
-      ))}
+      {visible.map((company) => {
+        const logo = (
+          <Image
+            src={`/api/v1/public/companies/${company.id}/logo`}
+            alt={copy ? "" : company.name}
+            title={company.website ? `${company.name} - visit website` : company.name}
+            width={120}
+            height={40}
+            unoptimized
+            className="login-company-logo"
+            onError={() => setBroken((current) => new Set(current).add(company.id))}
+          />
+        );
+        const key = `${copy ? "b" : "a"}${company.id}`;
+        // 2026-10-20, user request: a logo links to the client's website when one is filled in (opens in a new tab).
+        return company.website ? (
+          <a key={key} href={company.website} target="_blank" rel="noopener noreferrer" aria-label={copy ? undefined : `${company.name} website`} tabIndex={copy ? -1 : undefined} style={{ display: "inline-flex", alignItems: "center", cursor: "pointer" }}>{logo}</a>
+        ) : (
+          <span key={key} style={{ display: "inline-flex", alignItems: "center" }}>{logo}</span>
+        );
+      })}
     </div>
   );
 

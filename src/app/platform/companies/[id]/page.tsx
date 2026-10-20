@@ -140,6 +140,11 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             />
             <label className="wide"><span>Document header text</span><textarea name="documentHeaderText" rows={2} defaultValue={company.settings?.documentHeaderText ?? ""} disabled={company.blackRockIncluded} /></label>
             <label className="wide"><span>Document footer text</span><textarea name="documentFooterText" rows={2} defaultValue={company.settings?.documentFooterText ?? ""} disabled={company.blackRockIncluded} /></label>
+            <label className="wide" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="hidden" name="hidePoweredByField" value="1" />
+              <input type="checkbox" name="hidePoweredBy" defaultChecked={!!company.settings?.hidePoweredBy} disabled={company.blackRockIncluded} style={{ width: "auto" }} />
+              <span>Hide &ldquo;Powered by Flo X Integrations&rdquo; on this company&rsquo;s printed documents and PDFs</span>
+            </label>
             <div className="platform-form-actions"><button type="submit" className="primary-button" disabled={company.blackRockIncluded}>Save company</button></div>
           </form>
           {!company.blackRockIncluded && (

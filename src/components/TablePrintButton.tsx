@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Printer } from "lucide-react";
+import { withPoweredBy } from "@/lib/documents/powered-by";
 
 // ---------------------------------------------------------------------------
 // "Print" button for any table (Jobs & WIP, Parts, RFQs, Outwork, PEX, Job
@@ -68,7 +69,7 @@ export function TablePrintButton({ tableId, title, noun = "row", filterSummary =
     const printed = new Date().toLocaleString("en-ZA");
     const plural = (n: number) => `${n} ${noun}${n === 1 ? "" : "s"}`;
     const scope = ticked.length > 0 ? `${plural(rows.length)} selected` : plural(rows.length);
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title><style>
       @page{size:A4 landscape;margin:10mm}
       *{box-sizing:border-box}
       body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#111;font-size:${fontSize}px}
@@ -94,7 +95,7 @@ export function TablePrintButton({ tableId, title, noun = "row", filterSummary =
       </div>
       ${rows.length === 0 ? `<div class="empty">Nothing to print — no ${escapeHtml(noun)}s match the current filters.</div>` : `<table><thead><tr>${headCells.map((c) => `<th>${escapeHtml(c.label)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table>`}
       <script>window.onload = function () { window.print(); };</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
   }
 

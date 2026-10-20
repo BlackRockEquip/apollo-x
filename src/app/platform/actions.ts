@@ -53,6 +53,8 @@ function settingsFromForm(formData: FormData) {
     defaultTaxJurisdiction: opt(formData, "defaultTaxJurisdiction"),
     documentHeaderText: opt(formData, "documentHeaderText"),
     documentFooterText: opt(formData, "documentFooterText"),
+    // Unticked checkboxes are absent from FormData, so the hidden marker says the field was on the form.
+    hidePoweredBy: formData.has("hidePoweredByField") ? formData.get("hidePoweredBy") === "on" : undefined,
   };
 }
 

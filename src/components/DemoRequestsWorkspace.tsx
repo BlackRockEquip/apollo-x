@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Archive, Eye, Inbox, RotateCcw, X } from "lucide-react";
+import { Archive, Eye, FilePlus, Inbox, RotateCcw, X } from "lucide-react";
 import type { DemoRequestRow, DemoRequestView } from "@/lib/platform/demo-requests-service";
 
 // 2026-10-19 — list + view window for Platform > Demo Requests (see platform/demo-requests/page.tsx).
@@ -54,6 +55,7 @@ export function DemoRequestsWorkspace({ view, items, canEdit }: { view: DemoRequ
                 {view === "HISTORY" && <td>{item.movedToHistoryAt ? `${when(item.movedToHistoryAt)}${item.movedToHistoryBy ? ` · ${item.movedToHistoryBy}` : ""}` : "—"}</td>}
                 <td>
                   <button type="button" className="table-action" onClick={() => setOpenId(item.id)}><Eye size={13} /> View</button>
+                  {canEdit && <Link className="table-action" href={`/platform/proposals/new?demoRequestId=${item.id}`}><FilePlus size={13} /> Create proposal</Link>}
                   {canEdit && <button type="button" className="table-action" disabled={busyId === item.id} onClick={() => void move(item.id)}><MoveIcon size={13} /> {moveLabel}</button>}
                 </td>
               </tr>
@@ -74,10 +76,12 @@ export function DemoRequestsWorkspace({ view, items, canEdit }: { view: DemoRequ
               <div><dt>Phone</dt><dd>{open.phone ? <a href={`tel:${open.phone}`}>{open.phone}</a> : "—"}</dd></div>
               <div><dt>Business type</dt><dd>{open.businessType || "—"}</dd></div>
               <div><dt>Message</dt><dd style={{ whiteSpace: "pre-wrap" }}>{open.message || "—"}</dd></div>
+              <div><dt>Proposals</dt><dd>{open.proposals.length ? open.proposals.map((p, i) => <span key={p.id}>{i > 0 ? ", " : ""}<Link href={`/platform/proposals/${p.id}`}>{p.number}</Link> ({p.status.toLowerCase()})</span>) : "None yet"}</dd></div>
               {open.status === "HISTORY" && <div><dt>Moved to history</dt><dd>{open.movedToHistoryAt ? `${when(open.movedToHistoryAt)}${open.movedToHistoryBy ? ` by ${open.movedToHistoryBy}` : ""}` : "—"}</dd></div>}
             </dl>
             <footer className="detail-actions">
               <a className="quiet-button" href={`mailto:${open.email}?subject=${encodeURIComponent("Your Flo X demo request")}`}>Reply by email</a>
+              {canEdit && <Link className="quiet-button" href={`/platform/proposals/new?demoRequestId=${open.id}`}>Create proposal</Link>}
               {canEdit && <button type="button" className="gold-button" disabled={busyId === open.id} onClick={() => void move(open.id)}>{moveLabel}</button>}
               <button type="button" className="quiet-button" onClick={() => setOpenId(null)}>Close</button>
             </footer>

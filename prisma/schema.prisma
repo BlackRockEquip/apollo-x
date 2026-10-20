@@ -806,6 +806,9 @@ model PlatformSettings {
   smtpPassword    String?
   smtpFromAddress String?
   smtpFromName    String?
+  // 2026-10-21: Flo X's editable proposal price list (products, modules, set-up fees, platform/user prices, default letter and
+  // terms) as one JSON document - see lib/proposals/model.ts. Null = built-in sample prices.
+  proposalPriceList Json?
   updatedAt       DateTime @updatedAt
 }
 
@@ -916,6 +919,8 @@ model CompanySettings {
   // 2026-10-20: template for the email sent by the Email button on the Jobs & WIP table (null = default text in email-templates.ts).
   wipEmailSubject        String?
   wipEmailBody           String?
+  // 2026-10-21: platform admins can switch off the "Powered by Flo X Integrations" line printed in the footer of documents (Platform > Companies > company).
+  hidePoweredBy          Boolean @default(false)
 
   // Per-company file-storage override — added 2026-09-14, Super Admin
   // (Platform > Companies > [company]) setting only, not editable by the
@@ -2954,6 +2959,42 @@ model DemoRequest {
   createdAt        DateTime          @default(now())
   movedToHistoryAt DateTime?
   movedToHistoryBy String?
+  proposals        Proposal[]
 
   @@index([status, createdAt])
+}
+
+// 2026-10-21: Platform > Proposals - Flo X's own sales proposals / quotations (no company). `data` is the whole proposal
+// (client, quote details, chosen products and modules with their prices, services, letter, terms - lib/proposals/model.ts);
+// the columns beside it are copies used for the list and for searching. The totals include VAT.
+enum ProposalStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+}
+
+model Proposal {
+  id             String         @id @default(cuid())
+  number         String         @unique
+  status         ProposalStatus @default(DRAFT)
+  demoRequestId  String?
+  demoRequest    DemoRequest?   @relation(fields: [demoRequestId], references: [id], onDelete: SetNull)
+  clientCompany  String
+  contactName    String?
+  clientEmail    String?
+  clientPhone    String?
+  clientAddress  String?
+  data           Json
+  onceOffTotal   Decimal        @db.Decimal(14, 2)
+  monthlyTotal   Decimal        @db.Decimal(14, 2)
+  createdById    String?
+  createdByName  String?
+  sentAt         DateTime?
+  decidedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([status, createdAt])
+  @@index([demoRequestId])
 }

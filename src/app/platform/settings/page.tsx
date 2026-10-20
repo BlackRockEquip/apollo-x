@@ -3,6 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- async platform settings loading intentionally mirrors existing workspace patterns */
 import { useEffect, useState } from "react";
 import { Save } from "lucide-react";
+import { ProposalPriceListEditor } from "@/components/ProposalPriceListEditor";
 
 // 2026-09-22 — new page behind the "Platform Settings" nav item, which
 // previously pointed nowhere real (see PlatformShell.tsx's own comment).
@@ -76,6 +77,8 @@ export default function PlatformSettingsPage() {
           <button type="button" className="gold-button" disabled={saving} onClick={() => void save()}><Save size={14} /> {saving ? "Saving…" : "Save"}</button>
         </div>
       </section>
+      {/* 2026-10-21: the standing prices and wording new proposals start from (Platform > Proposals). */}
+      <ProposalPriceListEditor canEdit />
     </div>
   );
 }

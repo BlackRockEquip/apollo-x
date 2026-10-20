@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
+import { POWERED_BY_TEXT } from "@/lib/documents/powered-by";
 
 // Generic, dependency-light PDF renderer for the documents saved into a job's
 // folder (Job Card, Job History, Delivery Note, Pick Slip, Parts List …).
@@ -37,6 +38,8 @@ export type DocLetterhead = {
   contact?: string | null;
   email?: string | null;
   logo?: { bytes: Uint8Array; mimeType: string } | null;
+  /** True when the platform admin has switched off the "Powered by Flo X Integrations" footer for this company. */
+  hidePoweredBy?: boolean;
 };
 
 const PORTRAIT_W = 595.28;
@@ -326,6 +329,11 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
   pages.forEach((p, i) => {
     p.drawText(safe(`Page ${i + 1} of ${pages.length}`), { x: PAGE_W - MARGIN - 60, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
     p.drawText(safe(`Saved ${stamp} UTC`), { x: MARGIN, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
+    // 2026-10-20: "Powered by Flo X Integrations", centred on the footer line of every page.
+    if (!letterhead?.hidePoweredBy) {
+      const poweredWidth = regular.widthOfTextAtSize(POWERED_BY_TEXT, 8);
+      p.drawText(POWERED_BY_TEXT, { x: (p.getWidth() - poweredWidth) / 2, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
+    }
   });
 
   return Buffer.from(await doc.save());

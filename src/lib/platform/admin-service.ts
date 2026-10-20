@@ -33,6 +33,9 @@ type CompanySettingsInput = {
   accentColor?: string;
   secondaryColor?: string;
   backgroundColor?: string;
+  // 2026-10-21: tick box on the company page — true hides the "Powered by Flo X Integrations" footer on this
+  // company's printed documents and PDFs. Undefined = leave as stored.
+  hidePoweredBy?: boolean;
 };
 
 // 2026-10-16: the company's own letterhead address (a single PHYSICAL, primary
@@ -125,7 +128,7 @@ function finiteInt(value: number | undefined) {
 // result. Create fills the gaps with defaults; update leaves them alone.
 function settingsPatch(input: CompanySettingsInput | undefined, currency: string | undefined) {
   const s = input ?? {};
-  const patch: Record<string, string | number | null> = {};
+  const patch: Record<string, string | number | boolean | null> = {};
   const text = (key: string, value: string | undefined) => { if (value !== undefined) patch[key] = asNullable(value); };
   text("mainTelephone", s.mainTelephone);
   text("mainEmail", s.mainEmail);
@@ -138,6 +141,7 @@ function settingsPatch(input: CompanySettingsInput | undefined, currency: string
     const colour = normalizeColour(s[key]);
     if (colour !== undefined) patch[key] = colour;
   }
+  if (typeof s.hidePoweredBy === "boolean") patch.hidePoweredBy = s.hidePoweredBy;
   const validity = finiteInt(s.quoteValidityDays);
   if (validity !== undefined) patch.quoteValidityDays = validity;
   const jurisdiction = s.defaultTaxJurisdiction?.trim();
@@ -289,6 +293,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           defaultTaxJurisdiction: true,
           documentHeaderText: true,
           documentFooterText: true,
+          hidePoweredBy: true,
           // Storage location (Super Admin setting) — never select
           // storageSecretAccessKey here, same write-only convention as
           // smtpPassword.

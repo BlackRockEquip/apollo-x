@@ -18,6 +18,7 @@ import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
 import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
+import { withPoweredBy } from "@/lib/documents/powered-by";
 
 type Row = Record<string, unknown> & { id: string };
 type CustomerSelection = Row & { name: string; tradingName?: string | null; accountCode?: string | null };
@@ -1680,7 +1681,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       </div>` : "";
     const rows = (pairs: Array<[string, string]>) => pairs.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value || "—")}</td></tr>`).join("");
     const block = (label: string, value: string) => `<h2>${escapeHtml(label)}</h2><div class="box">${escapeHtml(value || "—")}</div>`;
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.FIELD_REPORT}`)}</title><meta charset="utf-8" /><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.FIELD_REPORT}`)}</title><meta charset="utf-8" /><style>
       @page{size:A4;margin:12mm}
       body{font-family:Arial,Helvetica,sans-serif;padding:0;margin:0 auto;max-width:780px;color:#111;font-size:11px}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:10px}
@@ -1775,7 +1776,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         ["Follow-up date", form.fieldFollowUp === "true" ? fmt(form.fieldFollowUpDate) : ""],
       ])}</table>
       <script>window.onload = function () { window.print(); };</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
     win.focus();
     return true;
@@ -1828,7 +1829,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <table><thead><tr><th>Part number</th><th>Superseded no.</th><th>Description</th><th>Qty</th><th>Qty picked</th><th>Bin location</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="sign-row"><div>Picked by</div><div class="narrow">Date</div><div>Signature</div></div>
     </body></html>`;
-    w.document.write(html);
+    w.document.write(withPoweredBy(html));
     w.document.close();
     const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
     w.onload = doPrint;
@@ -1876,7 +1877,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <h1>${esc(documentTitles.PARTS_LIST)} — Job ${esc(jobLabel)}</h1>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
-    w.document.write(html);
+    w.document.write(withPoweredBy(html));
     w.document.close();
     const doPrint = () => { try { w.focus(); w.print(); } catch { /* window may already be closed */ } };
     w.onload = doPrint;
@@ -2636,7 +2637,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     // (this print view never writes a file itself — see the comment on
     // printDeliveryNote's neighbour, printJobCard, below).
     const noteTitle = `${deliveryNote.jobNumber} - ${documentTitles.OUTWORK_DELIVERY_NOTE} - ${deliveryNote.supplierName}`;
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(noteTitle)}</title><meta charset="utf-8" /><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(noteTitle)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
@@ -2694,7 +2695,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </div>
       </div>
       <script>window.onload = function () { window.print(); };</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
     win.focus();
     return true;
@@ -2742,7 +2743,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
     const extraHtml = layout.extra ? `<div class="block"><div class="sec"><b>${escapeHtml(layout.extra.title)}</b><i></i></div><div class="cols"><div class="col">${kv(layout.extra.rows)}</div><div class="col"></div></div></div>` : "";
     const findingsHtml = layout.findingsHeading ? `<div class="block grow"><div class="sec"><b>${escapeHtml(layout.findingsHeading)}</b><i></i><span class="hint">${escapeHtml(layout.findingsHint)}</span></div><div class="lined"></div></div>` : "";
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
       @page{size:A4;margin:0}
       *{box-sizing:border-box}
       body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
@@ -2817,7 +2818,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <div class="line" style="width:150px">Date<span></span></div>
         <div class="stamp mono">${escapeHtml(jobLabel)} &middot; Printed ${escapeHtml(new Date().toLocaleDateString("en-ZA"))}</div>
       </div>
-    </div><script>window.onload = function () { window.print(); };</script></body></html>`);
+    </div><script>window.onload = function () { window.print(); };</script></body></html>`));
     win.document.close();
     win.focus();
     return true;
@@ -2904,7 +2905,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <td><span class="st">${escapeHtml(String(item.status || "").replaceAll("_", " "))}</span></td>
       </tr>`).join("");
     const extrasHtml = layout.extras.map((extra) => section(extra.title, `<div class="cols"><div class="col">${kv(extra.rows)}</div></div>`)).join("");
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_HISTORY}`)}</title><meta charset="utf-8" /><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_HISTORY}`)}</title><meta charset="utf-8" /><style>
       @page{size:A4;margin:0}
       *{box-sizing:border-box}
       body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -3028,7 +3029,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div class="foot"><div class="mono">${escapeHtml(jobLabel)} &middot; Printed ${escapeHtml(printed)}</div><div>Page 2</div></div>
     </div>
     <script>window.onload = function () { window.print(); };</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
     win.focus();
     return true;
@@ -3117,7 +3118,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .filter((item) => item.description.trim() || item.quantity.trim())
       .map((item) => `<tr><td>${escapeHtml(item.description)}</td><td class="qty-col">${escapeHtml(item.quantity)}</td></tr>`)
       .join("");
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_DELIVERY_NOTE}`)}</title><meta charset="utf-8" /><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_DELIVERY_NOTE}`)}</title><meta charset="utf-8" /><style>
       body{font-family:Arial,Helvetica,sans-serif;padding:32px;color:#111}
       .note-head{display:flex;justify-content:space-between;align-items:flex-start}
       h1{font-size:18px;margin:0 0 12px}
@@ -3195,7 +3196,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <div class="field">Date</div>
         </div>
       </div>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
     win.focus();
     return true;

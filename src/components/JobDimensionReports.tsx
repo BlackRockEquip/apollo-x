@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, FileText, Pencil, Plus, Printer, Trash2, Upload, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { withPoweredBy } from "@/lib/documents/powered-by";
 
 // 2026-10-16, Specifications module (Engineering Business): the Dimensional Size Report on a job. Mirrors the
 // paper form — a header (date, drawing number, machine, measured by, component, operator), a table of the
@@ -273,7 +274,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
       <tfoot><tr><td colspan="9" class="total"><b>Total:</b> ${t.measured} measured &middot; ${t.accepted} accepted &middot; ${t.rejected} rejected</td></tr></tfoot></table>`;
     };
     const standardLines = (settings.standardText || "").split("\n").map((line) => line.trim()).filter(Boolean);
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(`${jobLabel} - Dimensional size report`)}</title><style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(`${jobLabel} - Dimensional size report`)}</title><style>
       @page{size:A4 landscape;margin:10mm}
       *{box-sizing:border-box}
       body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111;font-size:11px}
@@ -330,7 +331,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
       ${report.instrument ? `<div class="gauge"><b>Gauge / instrument used:</b> ${escapeHtml(report.instrument)}</div>` : ""}
       ${report.notes ? `<div class="notes"><b>Notes:</b> ${escapeHtml(report.notes)}</div>` : ""}
       <script>window.onload=function(){setTimeout(function(){window.print()},300)}</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
   }
 

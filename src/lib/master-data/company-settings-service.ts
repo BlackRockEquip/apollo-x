@@ -9,6 +9,7 @@ import { verifySmtpConnection } from "@/lib/email";
 import { SmtpTestError } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/audit/service";
 import { decryptSecret, encryptSecret } from "@/lib/storage/secret-crypto";
+import { normalizeWebsiteUrl } from "@/lib/master-data/website-url";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -182,10 +183,11 @@ export async function resolveCompanyLogoSource(ctx: RequestContext): Promise<Com
 export async function listPublicCompanyLogos() {
   const companies = await prisma.company.findMany({
     where: { status: "ACTIVE", settings: { logoMimeType: { not: null } } },
-    select: { id: true, legalName: true, tradingName: true },
+    select: { id: true, legalName: true, tradingName: true, settings: { select: { website: true } } },
     orderBy: { legalName: "asc" },
   });
-  return companies.map((company) => ({ id: company.id, name: company.tradingName || company.legalName }));
+  // 2026-10-20: the company's website (cleaned to a safe http/https link, or null) so the login-page logo can link to it.
+  return companies.map((company) => ({ id: company.id, name: company.tradingName || company.legalName, website: normalizeWebsiteUrl(company.settings?.website) }));
 }
 
 export async function resolvePublicCompanyLogoSource(companyId: string): Promise<CompanyLogoSource> {
@@ -211,7 +213,7 @@ export async function getCompanyPrintDetails(ctx: RequestContext) {
     select: {
       legalName: true,
       tradingName: true,
-      settings: { select: { registrationNumber: true, vatNumber: true, mainTelephone: true, mainEmail: true } },
+      settings: { select: { registrationNumber: true, vatNumber: true, mainTelephone: true, mainEmail: true, hidePoweredBy: true } },
       addresses: { orderBy: [{ isPrimary: "desc" }, { type: "asc" }], take: 1 },
     },
   });
@@ -226,6 +228,8 @@ export async function getCompanyPrintDetails(ctx: RequestContext) {
     vatNumber: company.settings?.vatNumber ?? null,
     contact: company.settings?.mainTelephone ?? null,
     email: company.settings?.mainEmail ?? null,
+    // 2026-10-21: server-made PDFs leave out "Powered by Flo X Integrations" when the platform admin has switched it off.
+    hidePoweredBy: company.settings?.hidePoweredBy ?? false,
   };
 }
 

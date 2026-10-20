@@ -7,6 +7,7 @@ import { CombinedAnalyticsChart, type AnalyticsSeries } from "@/components/Analy
 import { useTenantPermissions } from "@/components/AppShell";
 import { readListState, writeListState } from "@/components/list-state";
 import { jobStatusLabelsFor, jobTypeLabelsFor } from "@/lib/jobs/ui";
+import { withPoweredBy } from "@/lib/documents/powered-by";
 
 // ---------------------------------------------------------------------------
 // 2026-10-02 — new "Reports" sidebar section (user request: "Create a
@@ -661,7 +662,7 @@ function PrintTabButton({ title, subtitle }: { title: string; subtitle: string }
     } catch { /* print without the company name */ }
     const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style')).map((n) => n.outerHTML).join("");
     const printed = new Date().toLocaleString("en-ZA");
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><base href="${window.location.origin}/" /><title>${escapeHtml(title)}</title>${styles}<style>
+    win.document.write(withPoweredBy(`<!doctype html><html><head><meta charset="utf-8" /><base href="${window.location.origin}/" /><title>${escapeHtml(title)}</title>${styles}<style>
       body{background:#fff;color:#111;margin:0;padding:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .report-print-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #111}
       .report-print-head h1{margin:0;font-size:18px}
@@ -676,7 +677,7 @@ function PrintTabButton({ title, subtitle }: { title: string; subtitle: string }
       <div class="report-print-head"><div><p class="org">${escapeHtml(org)}</p><h1>${escapeHtml(title)}</h1>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}</div><div><p>Printed ${escapeHtml(printed)}</p></div></div>
       ${area.innerHTML}
       <script>window.onload = function () { setTimeout(function () { window.print(); }, 300); };</script>
-    </body></html>`);
+    </body></html>`));
     win.document.close();
   }
 
