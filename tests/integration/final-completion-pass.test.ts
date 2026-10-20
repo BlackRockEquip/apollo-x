@@ -49,7 +49,8 @@ afterAll(async () => {
 
 describe("final completion pass", () => {
   it("loads entitled module picker data and persists edits while rejecting unlicensed modules", async () => {
-    const ctx = tenantContext(fixture.companyA, fixture.userA, fixture.codeA);
+    // Users are managed by Flo X platform support only, so changes are made from a read-write support context.
+    const ctx = { ...tenantContext(fixture.companyA, fixture.userA, fixture.codeA), supportMode: "READ_WRITE" as const };
     const editor = await getTenantUserEditorData(ctx);
     expect(editor.availableModules.map((m) => m.moduleKey)).toEqual(expect.arrayContaining(["JOBS_WIP", "INVENTORY", "NOTIFICATIONS"]));
     expect(editor.availableModules.map((m) => m.moduleKey)).not.toContain("PEX_STOCK");

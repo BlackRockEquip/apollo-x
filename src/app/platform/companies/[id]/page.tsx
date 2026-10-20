@@ -196,7 +196,7 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
           {company.status === "ACTIVE" ? (
             <div className="compact-top-gap">
               <h4>Add user</h4>
-              <p className="muted small-line">Creates a login for this company with every module switched on (the company licence still decides what can be used). The company&rsquo;s own admin can narrow that later from Settings &gt; Users.</p>
+              <p className="muted small-line">Creates a login for this company with every module switched on (the company licence still decides what can be used). Company admins cannot add or change users themselves - they contact Flo X, and users are managed here (use Manage users below to switch modules on or off for a user).</p>
               <form action={addCompanyUserAction} className="platform-form-grid compact-top-gap" data-testid="add-user-form">
                 <input type="hidden" name="companyId" value={company.id} />
                 <label><span>Name</span><input name="displayName" required minLength={2} /></label>
@@ -209,7 +209,7 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
                 </label>
                 <div className="platform-form-actions"><button type="submit" className="primary-button">Add user</button></div>
               </form>
-              <p className="muted small-line">To edit or deactivate existing users, use the company&rsquo;s own Users screen under an audited support session.</p>
+              <p className="muted small-line">To edit, reset or remove existing users, open the company&rsquo;s Users screen under an audited read-write support session.</p>
               <SupportContextForm companyId={company.id} companyName={displayName} redirectTo="/users" defaultMode="READ_WRITE" actionLabel="Manage users" />
             </div>
           ) : (

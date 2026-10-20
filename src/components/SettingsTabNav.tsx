@@ -19,7 +19,7 @@ import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavPermissionAllo
 // role lacking e.g. USERS_MANAGE would still see a "Users" tab here that
 // immediately redirected them away the moment they clicked it.
 export function SettingsTabNav({ ctx, current }: { ctx: RequestContext; current: string }) {
-  const items = SETTINGS_NAV_ITEMS.filter((item) => settingsNavModuleAllowed(ctx.moduleAccess, item.module) && settingsNavPermissionAllowed(ctx.tenantPermissions, item.permission));
+  const items = SETTINGS_NAV_ITEMS.filter((item) => settingsNavModuleAllowed(ctx.moduleAccess, item.module) && settingsNavPermissionAllowed(ctx.tenantPermissions, item.permission) && (!item.supportWriteOnly || ctx.supportMode === "READ_WRITE"));
   return (
     <nav className="settings-nav">
       {items.map((item) => (

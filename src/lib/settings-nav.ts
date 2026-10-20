@@ -9,7 +9,9 @@ import type { ModuleAccessMode } from "@/lib/entitlements/policy";
 // means "any one of these is enough to see the item" — the combined page
 // itself then shows only the individual tabs the viewer actually holds the
 // permission for (see src/app/(tenant)/configuration/page.tsx).
-export type SettingsNavItem = { key: string; label: string; href: string; module: ModuleKey | ModuleKey[]; permission: TenantPermission | TenantPermission[] };
+// 2026-10-20: `supportWriteOnly` marks an item that is shown only inside a Flo X platform support session with read-write access
+// (the Users screen: companies no longer manage their own users, Flo X does it for them).
+export type SettingsNavItem = { key: string; label: string; href: string; module: ModuleKey | ModuleKey[]; permission: TenantPermission | TenantPermission[]; supportWriteOnly?: boolean };
 
 export function settingsNavModuleAllowed(moduleAccess: ReadonlyMap<ModuleKey, ModuleAccessMode>, module: ModuleKey | ModuleKey[]): boolean {
   const modules = Array.isArray(module) ? module : [module];
@@ -59,7 +61,10 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   // suppliers, so the tab now needs the RFQ module (PROCUREMENT) as well.
   { key: "email-templates", label: "Templates", href: "/settings/templates", module: "PROCUREMENT", permission: "COMPANY_SETTINGS_VIEW" },
   { key: "settings-dashboard", label: "Dashboard", href: "/settings/dashboard", module: "DASHBOARD", permission: "SETTINGS_MANAGE" },
-  { key: "users", label: "Users", href: "/users", module: "DASHBOARD", permission: "USERS_MANAGE" },
+  // 2026-10-20, user request: "remove add System Users tab and allow only Platform admins to create users for any company, so only
+  // platform admins can manage users, a company would basically need to contact us at Flo X to add a user". The tab is therefore
+  // hidden from company admins and appears only while a Flo X platform admin is inside the company in a read-write support session.
+  { key: "users", label: "Users", href: "/users", module: "DASHBOARD", permission: "USERS_MANAGE", supportWriteOnly: true },
   // 2026-10-01 — user request: "Allow a Org Admin to send out a message to
   // all users... (Notification banner that popsup)." Originally a third tab
   // inside UsersWorkspace.tsx; moved to its own Settings destination per a

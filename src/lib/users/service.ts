@@ -1,7 +1,8 @@
 import { ModuleKey, Prisma, TenantRole } from "@prisma/client";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
-import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
+import { AuthorizationError, requireTenant, requireTenantPermission } from "@/lib/auth/guards";
+import { canManageCompanyUsers } from "@/lib/users/access";
 import { DEFAULT_TENANT_PERMISSIONS, MODULE_OFF_PREFIX, TENANT_PERMISSIONS, mergePermissionOverrides, userDisabledModules, type TenantPermission } from "@/lib/auth/permissions";
 import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { applyTileDependencies, buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
@@ -32,6 +33,15 @@ function auth(ctx: RequestContext) {
   requireTenant(ctx);
   requireTenantPermission(ctx, "USERS_MANAGE");
   return ctx.companyId;
+}
+
+// 2026-10-20, user request: only Flo X platform admins create and manage users; a company contacts Flo X to add one. Reading the
+// user list stays with the company admin (the Broadcast screen needs it), but every change below requires a read-write platform
+// support session for that company.
+function adminAuth(ctx: RequestContext) {
+  const companyId = auth(ctx);
+  if (!canManageCompanyUsers(ctx)) throw new AuthorizationError("Users are managed by Flo X. Please contact Flo X to add or change a user.");
+  return companyId;
 }
 
 const MODULE_CATEGORY: Record<ModuleKey, string> = {
@@ -280,7 +290,7 @@ export async function getTenantUserEditorData(ctx: RequestContext, membershipId?
 }
 
 export async function createTenantUser(ctx: RequestContext, raw: unknown) {
-  const companyId = auth(ctx);
+  const companyId = adminAuth(ctx);
   return createTenantUserCore(ctx, companyId, "API", raw);
 }
 
@@ -322,7 +332,7 @@ export async function createTenantUserCore(ctx: RequestContext, companyId: strin
 }
 
 export async function updateTenantUser(ctx: RequestContext, membershipId: string, raw: unknown) {
-  const companyId = auth(ctx);
+  const companyId = adminAuth(ctx);
   const input = userInput.partial({ email: true, displayName: true, role: true, password: true }).parse(raw);
   const build = await companyIndustryBuild(companyId);
   const switchable = switchableModuleKeys(build, await companyEntitledModules(companyId));
@@ -372,7 +382,7 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
 }
 
 export async function resetTenantUserSessions(ctx: RequestContext, membershipId: string) {
-  const companyId = auth(ctx);
+  const companyId = adminAuth(ctx);
   return prisma.$transaction(async (tx) => {
     const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId } });
     if (!membership) throw new Error("NOT_FOUND");
@@ -397,7 +407,7 @@ export async function resetTenantUserSessions(ctx: RequestContext, membershipId:
 // Guarded: you can't delete yourself, and the last active Company Admin can't
 // be deleted (the company would be locked out of its own user list).
 export async function deleteTenantUser(ctx: RequestContext, membershipId: string) {
-  const companyId = auth(ctx);
+  const companyId = adminAuth(ctx);
   return prisma.$transaction(async (tx) => {
     const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true } });
     if (!membership) throw new Error("NOT_FOUND");
