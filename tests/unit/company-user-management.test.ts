@@ -9,8 +9,9 @@ describe("company user management is for Flo X platform admins only", () => {
     expect(canManageCompanyUsers({ supportMode: null })).toBe(false);
   });
 
-  it("hides the Users settings tab unless in a read-write support session", () => {
+  it("keeps the User Setup settings tab for company admins", () => {
     const users = SETTINGS_NAV_ITEMS.find((item) => item.key === "users");
-    expect(users?.supportWriteOnly).toBe(true);
+    expect(users?.label).toBe("User Setup");
+    expect(users?.supportWriteOnly).toBeUndefined();
   });
 });

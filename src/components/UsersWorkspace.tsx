@@ -41,7 +41,9 @@ type SalesRepresentativeRow = { id: string; name: string; active: boolean };
 // page.tsx is a thin async server wrapper that renders the tab bar above
 // this component. The "Add User" action that used to live in a page-header
 // is now its own small action bar at the top of this component instead.
-export function UsersWorkspace() {
+// canManageUsers: only a Flo X platform admin (read-write support session) may add/edit/remove system users; a company admin gets the
+// User Setup tab only (their own mechanics/machinists and sales representatives).
+export function UsersWorkspace({ canManageUsers = true }: { canManageUsers?: boolean } = {}) {
   // 2026-10-16, Engineering Business: the staff list is called "Machinists" (and feeds Machinist 'Assess' / Machinist 'Final').
   const { industryBuild } = useTenantPermissions();
   const engineering = industryBuild === "ENGINEERING";
@@ -61,7 +63,7 @@ export function UsersWorkspace() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", displayName: "", role: "USER", password: "", active: true, membershipStatus: "ACTIVE", selectedModuleKeys: [] as string[] });
 
-  const [tab, setTab] = useState<"add" | "setup">("add");
+  const [tab, setTab] = useState<"add" | "setup">(canManageUsers ? "add" : "setup");
   const [mechanics, setMechanics] = useState<MechanicRow[]>([]);
   const [mechanicsLoading, setMechanicsLoading] = useState(true);
   const [mechanicSaving, setMechanicSaving] = useState(false);
@@ -310,11 +312,11 @@ export function UsersWorkspace() {
   // every other control in this app ("the add user fields... are way to
   // big").
   return <div>
-    <div className="tab-strip">
+    {canManageUsers ? <div className="tab-strip">
       <button type="button" className={tab === "add" ? "active" : ""} onClick={() => setTab("add")}>Add System Users</button>
       <button type="button" className={tab === "setup" ? "active" : ""} onClick={() => setTab("setup")}>User Setup</button>
-    </div>
-    {tab === "add" ? <>
+    </div> : null}
+    {tab === "add" && canManageUsers ? <>
       <div className="header-actions" style={{ marginBottom: 12 }}><button type="button" className="gold-button" onClick={resetForm}><Plus size={14} /> Add User</button></div>
       {error ? <div className="inline-error">{error}</div> : null}
       {notice ? <div className="inline-success">{notice}</div> : null}
