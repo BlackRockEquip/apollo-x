@@ -8,6 +8,7 @@ import { testPlatformCompanyStorage, type StorageTestStep } from "@/lib/platform
 import { createPlatformCompany, createPlatformCompanyUser, findCompanyByInternalCode, deletePlatformCompany, setPlatformCompanyStatus, updatePlatformCompany, updatePlatformCompanyStorageProfile } from "@/lib/platform/admin-service";
 import { TenantRole } from "@prisma/client";
 import { isIndustryBuildId } from "@/lib/builds/definitions";
+import { clonePlatformCompany, resetPlatformCompany } from "@/lib/platform/company-lifecycle-service";
 
 // 2026-09-22, user report: "when clicking add a company, it takes me to the
 // overview menu, fix." Root cause: the "Add Company" button
@@ -167,6 +168,46 @@ export async function deleteCompanyAction(formData: FormData) {
   revalidatePath("/platform");
   revalidatePath("/platform/companies");
   redirect(`/platform/companies?deleted=${encodeURIComponent(name)}`);
+}
+
+// 2026-10-20, user request: "Add a reset company button which requires the user to
+// type "Reset Company" ... once confirmed it resets/deletes all data". Keeps the
+// company's setup and logins; see company-lifecycle-service.ts. `back` says which
+// screen to return to (the companies table or the company's own page).
+export async function resetCompanyAction(formData: FormData) {
+  const context = await getRequestContext();
+  if (!context) redirect("/login");
+  const companyId = String(formData.get("companyId") ?? "");
+  const back = String(formData.get("back") ?? "list") === "detail" ? `/platform/companies/${companyId}` : "/platform/companies";
+  let name = "";
+  try {
+    const done = await resetPlatformCompany(context, companyId, String(formData.get("confirmText") ?? ""));
+    name = done.legalName;
+  } catch (error) {
+    redirect(`${back}?lifecycleError=${encodeURIComponent(errorCode(error))}`);
+  }
+  revalidatePath("/platform");
+  revalidatePath("/platform/companies");
+  revalidatePath(`/platform/companies/${companyId}`);
+  redirect(`${back}?reset=${encodeURIComponent(name)}`);
+}
+
+// 2026-10-20, user request: "Add a clone button as well which creates a copy of the
+// company and adds the words "- copy" to the end of the company name."
+export async function cloneCompanyAction(formData: FormData) {
+  const context = await getRequestContext();
+  if (!context) redirect("/login");
+  const companyId = String(formData.get("companyId") ?? "");
+  const back = String(formData.get("back") ?? "list") === "detail" ? `/platform/companies/${companyId}` : "/platform/companies";
+  let created: Awaited<ReturnType<typeof clonePlatformCompany>>;
+  try {
+    created = await clonePlatformCompany(context, companyId);
+  } catch (error) {
+    redirect(`${back}?lifecycleError=${encodeURIComponent(errorCode(error))}`);
+  }
+  revalidatePath("/platform");
+  revalidatePath("/platform/companies");
+  redirect(`/platform/companies/${created.id}?cloned=1`);
 }
 
 export async function setCompanyStatusAction(formData: FormData) {

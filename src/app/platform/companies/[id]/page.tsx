@@ -10,6 +10,8 @@ import { addCompanyUserAction, setCompanyStatusAction, updateCompanyAction } fro
 import { CompanyColourFields } from "@/components/CompanyColourFields";
 import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { PlatformStorageForm } from "@/components/PlatformStorageForm";
+import { ResetCompanyButton } from "@/components/ResetCompanyButton";
+import { CloneCompanyButton } from "@/components/CloneCompanyButton";
 import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { countInlineFiles } from "@/lib/attachments/offload";
 import { accountIdFromR2Endpoint } from "@/lib/storage/profile";
@@ -31,6 +33,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   COMPANY_NOT_ACTIVE: "Users cannot be added while the company is deactivated.",
   PASSWORD_REQUIRED: "A password is required for a new user.",
   UNLICENSED_MODULE_REQUESTED: "The company has no licensed modules to give this user.",
+  RESET_CONFIRM_MISMATCH: "The confirmation text did not match, so nothing was reset.",
+  COMPANY_RESET_BLOCKED: "The company could not be reset because some of its records are still linked elsewhere. Nothing was changed.",
+  DUPLICATE_INTERNAL_CODE: "A company with the copy's code already exists. Try again.",
 };
 
 export default async function PlatformCompanyDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -42,6 +47,7 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
   const pick = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
   const errorMessage = pick("error") ? (ERROR_MESSAGES[pick("error")] ?? "Unable to save the company.") : "";
   const userErrorMessage = pick("userError") ? (ERROR_MESSAGES[pick("userError")] ?? "Unable to add the user.") : "";
+  const lifecycleErrorMessage = pick("lifecycleError") ? (ERROR_MESSAGES[pick("lifecycleError")] ?? "That could not be completed.") : "";
   const company = await getPlatformCompanyDetail(context, id);
   const industryBuild = await getCompanyIndustryBuild(context, company.id);
   const storageSummary = await countCompanyStoredFiles(company.id);
@@ -74,6 +80,9 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
 
       {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
       {pick("notice") === "saved" ? <div className="inline-success">Company saved.</div> : null}
+      {pick("reset") ? <div className="inline-success">{pick("reset")} was reset. Its data is cleared; its setup and users are unchanged.</div> : null}
+      {pick("cloned") ? <div className="inline-success">Company copied. This is the new company; it has the same setup but no users or data yet.</div> : null}
+      {lifecycleErrorMessage ? <div className="inline-error">{lifecycleErrorMessage}</div> : null}
 
       <section className="platform-grid">
         <article className="platform-card">
@@ -246,6 +255,17 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             ))}
           </div>
         </article>
+
+        {!company.blackRockIncluded && (
+          <article className="platform-card platform-card-span-2">
+            <h3>Reset and clone</h3>
+            <p className="muted small-line">Clone makes a new company called &ldquo;{displayName} - copy&rdquo; with the same build, modules, branding and settings, but no users or data. Reset deletes all of this company&rsquo;s data and puts it back to a fresh start; its users and setup stay.</p>
+            <div className="platform-form-actions">
+              <CloneCompanyButton companyId={company.id} companyName={displayName} back="detail" variant="page" />
+              <ResetCompanyButton companyId={company.id} companyName={displayName} back="detail" variant="page" />
+            </div>
+          </article>
+        )}
 
         <article className="platform-card platform-card-span-2">
           <h3>Enter support mode</h3>
