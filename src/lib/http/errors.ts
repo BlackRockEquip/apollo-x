@@ -93,6 +93,9 @@ export function apiError(error: unknown) {
   // 2026-10-16 — Document numbering + Settings > Users (master-data/service.ts, users/service.ts).
   if (error instanceof Error && error.message === "SEQUENCE_TYPE_EXISTS") return NextResponse.json({ error: { code: "SEQUENCE_TYPE_EXISTS", message: "A numbering sequence for that document type already exists. Edit the existing one instead." } }, { status: 409 });
   if (error instanceof Error && error.message === "ROLE_NOT_ALLOWED") return NextResponse.json({ error: { code: "ROLE_NOT_ALLOWED", message: "That user type is not available for this company." } }, { status: 400 });
+  // 2026-10-20 - Email button on the Jobs & WIP table (jobs/wip-email.ts).
+  if (error instanceof Error && error.message === "INVALID_RECIPIENTS") return NextResponse.json({ error: { code: "INVALID_RECIPIENTS", message: "Enter a valid email address (up to 5, separated by commas)." } }, { status: 400 });
+  if (error instanceof Error && error.message === "EMAIL_SEND_FAILED") return NextResponse.json({ error: { code: "EMAIL_SEND_FAILED", message: "The email could not be sent - check the email settings under Settings > Company / Branding." } }, { status: 502 });
   console.error("Unhandled API error", error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: "The request could not be completed." } }, { status: 500 });
 }

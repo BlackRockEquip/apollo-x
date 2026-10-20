@@ -57,6 +57,8 @@ const emailTemplatesInput = z.object({
   rfqEmailBody: z.string().trim().max(5000).optional().nullable(),
   followupEmailSubject: text,
   followupEmailBody: z.string().trim().max(5000).optional().nullable(),
+  wipEmailSubject: text,
+  wipEmailBody: z.string().trim().max(5000).optional().nullable(),
   emailSignature: z.string().trim().max(2000).optional().nullable(),
 });
 function normalizeColor(value?: string | null) { const trimmed = value?.trim(); if (!trimmed) return null; return trimmed.startsWith("#") ? trimmed.toUpperCase() : `#${trimmed.toUpperCase()}`; }
@@ -319,12 +321,14 @@ export async function testCompanySmtpConnection(ctx: RequestContext, raw: unknow
 export async function updateCompanyEmailTemplates(ctx: RequestContext, raw: unknown) {
   const companyId = auth(ctx, "WRITE");
   const input = emailTemplatesInput.parse(raw);
-  const before = await prisma.companySettings.findUnique({ where: { companyId }, select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, emailSignature: true } });
+  const before = await prisma.companySettings.findUnique({ where: { companyId }, select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, wipEmailSubject: true, wipEmailBody: true, emailSignature: true } });
   const data = {
     rfqEmailSubject: input.rfqEmailSubject || null,
     rfqEmailBody: input.rfqEmailBody || null,
     followupEmailSubject: input.followupEmailSubject || null,
     followupEmailBody: input.followupEmailBody || null,
+    wipEmailSubject: input.wipEmailSubject || null,
+    wipEmailBody: input.wipEmailBody || null,
     emailSignature: input.emailSignature || null,
   };
   const updated = await prisma.companySettings.update({ where: { companyId }, data });

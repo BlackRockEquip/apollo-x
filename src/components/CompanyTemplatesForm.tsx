@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { RotateCcw, Save } from "lucide-react";
+import { useTenantPermissions } from "@/components/AppShell";
 
 // 2026-09-29 — user request: "Create a template tab under settings which
 // allows me to edit the message/email sent to suppliers, add/edit a
@@ -22,6 +23,8 @@ type FormState = {
   rfqEmailBody: string;
   followupEmailSubject: string;
   followupEmailBody: string;
+  wipEmailSubject: string;
+  wipEmailBody: string;
   emailSignature: string;
 };
 
@@ -45,9 +48,20 @@ const DEFAULT_FOLLOWUP_BODY = [
   "",
   "Please could you let us know an updated ETA for these?",
 ].join("\n");
+const DEFAULT_WIP_SUBJECT = "{{title}} - {{company}} - {{date}}";
+const DEFAULT_WIP_BODY = [
+  "Hi,",
+  "",
+  "Please find attached the {{title}} list ({{count}}).",
+  "",
+  "{{filters}}",
+].join("\n");
 const DEFAULT_SIGNATURE = "Thank you.";
 
 export function CompanyTemplatesForm() {
+  // 2026-10-20: the supplier (RFQ / follow-up) templates only matter when RFQs is on; the Jobs & WIP table email is always available.
+  const { moduleAccess } = useTenantPermissions();
+  const rfqEnabled = (moduleAccess.get("PROCUREMENT") ?? "DENIED") !== "DENIED";
   const [form, setForm] = useState<FormState | null>(null);
   const [fromAddress, setFromAddress] = useState("");
   const [fromName, setFromName] = useState("");
@@ -65,6 +79,8 @@ export function CompanyTemplatesForm() {
       rfqEmailBody: String(s.rfqEmailBody || ""),
       followupEmailSubject: String(s.followupEmailSubject || ""),
       followupEmailBody: String(s.followupEmailBody || ""),
+      wipEmailSubject: String(s.wipEmailSubject || ""),
+      wipEmailBody: String(s.wipEmailBody || ""),
       emailSignature: String(s.emailSignature || ""),
     });
     setFromAddress(String(s.smtpFromAddress || ""));
@@ -95,7 +111,7 @@ export function CompanyTemplatesForm() {
     <div style={{ display: "grid", gap: 14, padding: 20 }}>
       <section className="detail-panel">
         <header>
-          <div><h2>Supplier emails</h2><p>Customize the RFQ request and parts follow-up emails sent to suppliers. Leave a field blank to use the default text shown as its placeholder.</p></div>
+          <div><h2>Email templates</h2><p>{rfqEnabled ? "Customize the emails the system sends - to suppliers (RFQ request, parts follow-up) and the Jobs & WIP table email." : "Customize the emails the system sends, such as the Jobs & WIP table email."} Leave a field blank to use the default text shown as its placeholder.</p></div>
           <div className="header-actions"><button type="button" className="quiet-button" onClick={() => void load()}><RotateCcw size={14} /> Reset</button><button type="button" className="gold-button" disabled={saving} onClick={() => void onSave()}><Save size={14} /> {saving ? "Saving…" : "Save"}</button></div>
         </header>
         {error ? <div className="inline-error">{error}</div> : null}
@@ -105,6 +121,7 @@ export function CompanyTemplatesForm() {
         </div>
       </section>
 
+      {rfqEnabled && <>
       <section className="detail-panel">
         <header><div><h2>Quote request (RFQ)</h2><p>Sent when a part is sent to a supplier for a quote, or resent via Retry. Placeholders: <code>{"{{supplierName}}"}</code>, <code>{"{{jobNumber}}"}</code>, <code>{"{{machine}}"}</code>, <code>{"{{partsList}}"}</code>.</p></div></header>
         <div className="drawer-fields">
@@ -120,9 +137,18 @@ export function CompanyTemplatesForm() {
           <label className="wide"><span>Message</span><textarea rows={9} value={form.followupEmailBody} placeholder={DEFAULT_FOLLOWUP_BODY} onChange={(e) => setForm((current) => current ? { ...current, followupEmailBody: e.target.value } : current)} /></label>
         </div>
       </section>
+      </>}
 
       <section className="detail-panel">
-        <header><div><h2>Signature</h2><p>Appended to the end of both emails above, after a blank line.</p></div></header>
+        <header><div><h2>Jobs &amp; WIP table email</h2><p>Sent by the Email button on the Jobs &amp; WIP table, with the table attached as a PDF. Placeholders: <code>{"{{title}}"}</code>, <code>{"{{company}}"}</code>, <code>{"{{date}}"}</code>, <code>{"{{count}}"}</code> (e.g. 12 jobs), <code>{"{{filters}}"}</code> (the filters applied to the table). Leave a field blank to use the default text.</p></div></header>
+        <div className="drawer-fields">
+          <label className="wide"><span>Subject</span><input value={form.wipEmailSubject} placeholder={DEFAULT_WIP_SUBJECT} onChange={(e) => setForm((current) => current ? { ...current, wipEmailSubject: e.target.value } : current)} /></label>
+          <label className="wide"><span>Message</span><textarea rows={7} value={form.wipEmailBody} placeholder={DEFAULT_WIP_BODY} onChange={(e) => setForm((current) => current ? { ...current, wipEmailBody: e.target.value } : current)} /></label>
+        </div>
+      </section>
+
+      <section className="detail-panel">
+        <header><div><h2>Signature</h2><p>Appended to the end of each email above, after a blank line.</p></div></header>
         <div className="drawer-fields">
           <label className="wide"><span>Signature</span><textarea rows={4} value={form.emailSignature} placeholder={DEFAULT_SIGNATURE} onChange={(e) => setForm((current) => current ? { ...current, emailSignature: e.target.value } : current)} /></label>
         </div>

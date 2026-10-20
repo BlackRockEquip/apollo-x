@@ -29,6 +29,8 @@ export type CompanyEmailTemplates = {
   rfqBody: string | null;
   followupSubject: string | null;
   followupBody: string | null;
+  wipSubject: string | null;
+  wipBody: string | null;
   signature: string | null;
 };
 
@@ -56,6 +58,17 @@ export const DEFAULT_FOLLOWUP_BODY = [
 ].join("\n");
 export const FOLLOWUP_PLACEHOLDERS = ["supplierName", "jobNumber", "partsList"] as const;
 
+// 2026-10-20: the email sent by the Email button on the Jobs & WIP table (the table view attached as a PDF).
+export const DEFAULT_WIP_SUBJECT = "{{title}} - {{company}} - {{date}}";
+export const DEFAULT_WIP_BODY = [
+  "Hi,",
+  "",
+  "Please find attached the {{title}} list ({{count}}).",
+  "",
+  "{{filters}}",
+].join("\n");
+export const WIP_PLACEHOLDERS = ["title", "company", "date", "count", "filters"] as const;
+
 export const DEFAULT_SIGNATURE = "Thank you.";
 
 export function renderTemplate(template: string, vars: EmailTemplateVars): string {
@@ -65,13 +78,15 @@ export function renderTemplate(template: string, vars: EmailTemplateVars): strin
 export async function getCompanyEmailTemplates(companyId: string): Promise<CompanyEmailTemplates> {
   const settings = await prisma.companySettings.findUnique({
     where: { companyId },
-    select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, emailSignature: true },
+    select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, wipEmailSubject: true, wipEmailBody: true, emailSignature: true },
   });
   return {
     rfqSubject: settings?.rfqEmailSubject ?? null,
     rfqBody: settings?.rfqEmailBody ?? null,
     followupSubject: settings?.followupEmailSubject ?? null,
     followupBody: settings?.followupEmailBody ?? null,
+    wipSubject: settings?.wipEmailSubject ?? null,
+    wipBody: settings?.wipEmailBody ?? null,
     signature: settings?.emailSignature ?? null,
   };
 }
@@ -95,5 +110,14 @@ export function buildFollowupEmailMessage(templates: CompanyEmailTemplates, vars
   const subject = renderTemplate(templates.followupSubject || DEFAULT_FOLLOWUP_SUBJECT, vars);
   const body = renderTemplate(templates.followupBody || DEFAULT_FOLLOWUP_BODY, vars);
   const text = [body, "", templates.signature || DEFAULT_SIGNATURE].join("\n");
+  return { subject, text };
+}
+
+// vars needs title, company, date, count, filters (see WIP_PLACEHOLDERS). `note` is the optional line the sender types in the Email
+// window; it goes between the message and the signature.
+export function buildWipTableEmailMessage(templates: CompanyEmailTemplates, vars: EmailTemplateVars, note = "") {
+  const subject = renderTemplate(templates.wipSubject || DEFAULT_WIP_SUBJECT, vars).replace(/\s+/g, " ").trim();
+  const body = renderTemplate(templates.wipBody || DEFAULT_WIP_BODY, vars).replace(/\n{3,}/g, "\n\n").trim();
+  const text = [body, ...(note.trim() ? ["", note.trim()] : []), "", templates.signature || DEFAULT_SIGNATURE].join("\n");
   return { subject, text };
 }

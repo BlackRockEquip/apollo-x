@@ -12,7 +12,7 @@ export type DocBlock =
   | { type: "paragraph"; text: string }
   | { type: "lines"; lines: string[]; /** Small bold text (8.5pt) instead of the normal 9pt regular. */ bold?: boolean }
   | { type: "kv"; rows: [string, string][] }
-  | { type: "table"; headers: string[]; rows: string[][]; widths?: number[]; center?: number[] }
+  | { type: "table"; headers: string[]; rows: string[][]; widths?: number[]; center?: number[]; /** Text size in points (default 8.5); smaller for wide tables. */ size?: number }
   | { type: "twoCol"; left: DocBlock[]; right: DocBlock[] }
   | { type: "signatures"; labels: string[]; fields: string[] }
   /** Empty ruled lines to write on (e.g. the mechanic's notes on the Job Card). */
@@ -25,6 +25,8 @@ export type DocSpec = {
   /** Lines shown top-right under the letterhead, e.g. "Job BRE1152", "Delivery date: 05/10/2026". */
   rightLines?: string[];
   blocks: DocBlock[];
+  /** A4 landscape instead of portrait (wide tables). */
+  landscape?: boolean;
 };
 
 export type DocLetterhead = {
@@ -37,10 +39,9 @@ export type DocLetterhead = {
   logo?: { bytes: Uint8Array; mimeType: string } | null;
 };
 
-const PAGE_W = 595.28;
-const PAGE_H = 841.89;
+const PORTRAIT_W = 595.28;
+const PORTRAIT_H = 841.89;
 const MARGIN = 36;
-const CONTENT_W = PAGE_W - MARGIN * 2;
 const INK = rgb(0.07, 0.09, 0.11);
 const MUTED = rgb(0.33, 0.35, 0.38);
 const RULE = rgb(0.8, 0.8, 0.8);
@@ -48,6 +49,9 @@ const HEAD_FILL = rgb(0.965, 0.965, 0.965);
 const ACCENT = rgb(0.478, 0.361, 0.078);
 
 export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead | null): Promise<Buffer> {
+  const PAGE_W = spec.landscape ? PORTRAIT_H : PORTRAIT_W;
+  const PAGE_H = spec.landscape ? PORTRAIT_W : PORTRAIT_H;
+  const CONTENT_W = PAGE_W - MARGIN * 2;
   const doc = await PDFDocument.create();
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -227,9 +231,10 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
         const xs = widths.reduce<number[]>((acc, w, i) => { acc.push(i === 0 ? c.x : acc[i - 1] + widths[i - 1]); return acc; }, []);
         const drawRow = (cells: string[], header: boolean, repeating = false) => {
           const font = header ? bold : regular;
-          const size = header ? 8.5 : 8.5;
+          const size = block.size ?? 8.5;
+          const lh = size * 1.235;
           const wrapped = cells.map((cell, i) => wrap(cell, font, size, widths[i] - 8));
-          const rowH = Math.max(1, ...wrapped.map((l) => l.length)) * 10.5 + 7;
+          const rowH = Math.max(1, ...wrapped.map((l) => l.length)) * lh + 7;
           // A row that does not fit starts a new page, and the header row is repeated there.
           if (c.draw && !header && !repeating && y - rowH < bottom) { newPage(); drawRow(block.headers, true, true); }
           if (c.draw) ensure(rowH);
@@ -239,7 +244,7 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
               wrapped[i].forEach((line, k) => {
                 const centered = !header && block.center?.includes(i);
                 const dx = centered ? (widths[i] - font.widthOfTextAtSize(line, size)) / 2 : 4;
-                page.drawText(line, { x: xs[i] + Math.max(2, dx), y: y - 11 - k * 10.5, size, font, color: INK });
+                page.drawText(line, { x: xs[i] + Math.max(2, dx), y: y - size - 2.5 - k * lh, size, font, color: INK });
               });
             });
           }

@@ -342,3 +342,15 @@ export const jobsListQuery = z.object({
 
 export type JobsListQuery = z.infer<typeof jobsListQuery>;
 export type OutworkAddInput = z.infer<typeof outworkAddInput>;
+
+// 2026-10-20, user request: an "Email" button on the Jobs & WIP table that emails the current table view as a PDF. The browser sends what
+// is on screen (the headers and the visible rows, after the user's filters and saved columns), the server builds the PDF and sends it.
+export const emailTableInput = z.object({
+  to: z.string().trim().min(5).max(500),
+  title: z.string().trim().min(1).max(120),
+  filters: z.string().trim().max(1000).optional().default(""),
+  note: z.string().trim().max(2000).optional().default(""),
+  headers: z.array(z.string().max(120)).min(1).max(30),
+  rows: z.array(z.array(z.string().max(1000)).max(30)).max(3000),
+});
+export type EmailTableInput = z.infer<typeof emailTableInput>;

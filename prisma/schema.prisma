@@ -913,6 +913,9 @@ model CompanySettings {
   followupEmailSubject   String?
   followupEmailBody      String?
   emailSignature         String?
+  // 2026-10-20: template for the email sent by the Email button on the Jobs & WIP table (null = default text in email-templates.ts).
+  wipEmailSubject        String?
+  wipEmailBody           String?
 
   // Per-company file-storage override — added 2026-09-14, Super Admin
   // (Platform > Companies > [company]) setting only, not editable by the

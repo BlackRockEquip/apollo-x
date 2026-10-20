@@ -11,6 +11,7 @@ import { JobsWipColumnPicker } from "@/components/JobsWipColumnPicker";
 import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
 import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
+import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
@@ -302,6 +303,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
           <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
+          {/* 2026-10-20, user request: an Email button next to Print that emails the current table view as a PDF. Not for the view-only WIP View user. */}
+          {!wipViewOnly && <JobsWipEmailButton tableId="jobs-wip-table" filterSummary={filterSummary} />}
           <TableColumnFilters tableId="jobs-wip-table" storageKey="jobs-wip" noun="job" initialSearch={serverSearch ? "" : q} initialInclude={include} stripParams={["type", "status", "returnedUnrepaired"]} />
         </div>
 
