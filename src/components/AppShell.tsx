@@ -29,7 +29,7 @@ import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavModuleReadOnly
 // used throughout JobWorkspace.tsx's own mechanic lockdown
 // (mechanicFieldsLocked) rather than inventing a second, narrower
 // permission nothing else would use.
-type NavItem = { key: string; label: string; href: string; module: ModuleKey | ModuleKey[]; permission: TenantPermission | TenantPermission[]; icon: typeof LayoutDashboard; hiddenForMechanic?: boolean };
+type NavItem = { key: string; label: string; href: string; module: ModuleKey | ModuleKey[]; permission: TenantPermission | TenantPermission[]; icon: typeof LayoutDashboard; hiddenForMechanic?: boolean; supportWriteOnly?: boolean };
 type NavGroup = { key: string; label: string; icon: typeof LayoutDashboard; items: NavItem[]; footer?: boolean };
 
 const DASHBOARD_ITEM: NavItem = { key: "dashboard", label: "Dashboard", href: "/dashboard", module: "DASHBOARD", permission: "DASHBOARD_VIEW", icon: LayoutDashboard };
