@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenantPermissions } from "@/components/AppShell";
-import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor } from "@/lib/jobs/ui";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 
 // ---------------------------------------------------------------------------
 // Jobs & WIP list — bulk update. New 2026-10-06, user request: "create a bulk
@@ -190,7 +190,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
             <p className="muted small-line wide">Each job only accepts statuses from its own flow. Jobs the status doesn't suit are left unchanged and listed afterwards.</p>
             {error && <div className="inline-error wide">{error}</div>}
           </div>
-          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || !status} onClick={() => void run({ action: "status", status })}>{busy ? "Updating…" : "Update status"}</button></footer>
+          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || !status} onClick={() => void (async () => { if (needsDocumentCheck(industryBuild, status) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await run({ action: "status", status }); })()}>{busy ? "Updating…" : "Update status"}</button></footer>
         </aside>
       </div>
     )}
@@ -205,7 +205,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
             <p className="muted small-line wide">The same outcome and note are recorded on every selected job.</p>
             {error && <div className="inline-error wide">{error}</div>}
           </div>
-          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || outcome.trim().length < 2 || closingNote.trim().length < 2} onClick={() => void run({ action: "close", outcome, closingNote })}>{busy ? "Closing…" : "Close jobs"}</button></footer>
+          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || outcome.trim().length < 2 || closingNote.trim().length < 2} onClick={() => void (async () => { if (needsDocumentCheck(industryBuild, "CLOSED") && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await run({ action: "close", outcome, closingNote }); })()}>{busy ? "Closing…" : "Close jobs"}</button></footer>
         </aside>
       </div>
     )}

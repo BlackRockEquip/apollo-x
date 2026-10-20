@@ -227,6 +227,34 @@ export function machinistFieldLabels(build?: BuildKey): { strip: string; build: 
     : { strip: "Mechanic strip", build: "Mechanic assemble", eta: "Mechanic ETA date", etaShort: "Mechanic ETA" };
 }
 
+// 2026-10-20, user request (WIP View user): an "ETA Overdue" column counting how many days past the Mechanic/Machinist ETA a job is, and
+// "-" while it is not yet overdue. Same rule as the dashboard's Overdue ETA card: the ETA date is before today (UTC day) and the job is
+// not finished (ready to deliver or later, closed or cancelled).
+const ETA_FINISHED_STATUSES: string[] = ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "AWAIT_PAYMENT", "COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"];
+export function etaOverdueDays(eta: Date | string | null | undefined, status: string, now: Date = new Date()): number | null {
+  if (!eta || ETA_FINISHED_STATUSES.includes(status)) return null;
+  const etaDate = eta instanceof Date ? eta : new Date(eta);
+  if (Number.isNaN(etaDate.getTime())) return null;
+  const etaDay = Date.UTC(etaDate.getUTCFullYear(), etaDate.getUTCMonth(), etaDate.getUTCDate());
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days = Math.round((today - etaDay) / 86_400_000);
+  return days > 0 ? days : null;
+}
+
+// 2026-10-20, user request (Engineering Business): moving a job to "To be delivered" or any later status asks "Are all documents,
+// specification sheets uploaded that are required?" first (Confirmed / Cancel).
+export const DOCUMENT_CHECK_STATUSES: string[] = ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "COMPLETE", "CLOSED"];
+export function needsDocumentCheck(build: string | null | undefined, status: string): boolean {
+  return build === "ENGINEERING" && DOCUMENT_CHECK_STATUSES.includes(status);
+}
+export const DOCUMENT_CHECK_CONFIRM = {
+  title: "Documents and specification sheets",
+  message: "Are all documents, specification sheets uploaded that are required?",
+  confirmLabel: "Confirmed",
+  cancelLabel: "Cancel",
+  tone: "neutral" as const,
+};
+
 // Statuses always selectable regardless of flow family, on top of that
 // job's own stepper stages — matches how CLOSED/CANCELLED already
 // work in JobWorkspace.tsx's CHANGEABLE_STATUSES.

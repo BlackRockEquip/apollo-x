@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Download, Loader2, Printer } from "lucide-react";
 import { CombinedAnalyticsChart, type AnalyticsSeries } from "@/components/AnalyticsLineChart";
 import { useTenantPermissions } from "@/components/AppShell";
 import { readListState, writeListState } from "@/components/list-state";
+import { jobStatusLabelsFor, jobTypeLabelsFor } from "@/lib/jobs/ui";
 
 // ---------------------------------------------------------------------------
 // 2026-10-02 — new "Reports" sidebar section (user request: "Create a
@@ -130,6 +132,9 @@ function MonthsSelect({ months, onChange }: { months: number; onChange: (value: 
 }
 
 function fmtInt(n: number): string { return n.toLocaleString("en-ZA"); }
+
+type CustomerJobRow = { id: string; jobNumber: string; type: string; status: string; returnedUnrepaired: boolean; dateReceived: string | null; closedAt: string | null; machineModel: string | null; component: string | null };
+function fmtDay(value: string | null): string { return value ? new Date(value).toLocaleDateString("en-ZA") : "—"; }
 
 // ---------------------------------------------------------------------------
 // Jobs per customer
@@ -535,6 +540,11 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
   const [jobsRow, setJobsRow] = useState<JobsPerCustomerRow | null>(null);
   const [warranty, setWarranty] = useState<WarrantyBreakdown | null>(null);
   const [series, setSeries] = useState<AnalyticsSeries[]>([]);
+  const [jobs, setJobs] = useState<CustomerJobRow[]>([]);
+  // Engineering companies see their own status/type wording (same as the Jobs screen).
+  const { industryBuild } = useTenantPermissions();
+  const statusLabels = jobStatusLabelsFor(industryBuild);
+  const typeLabels = jobTypeLabelsFor(industryBuild);
 
   useEffect(() => {
     let cancelled = false;
@@ -544,9 +554,11 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
       fetch(`/api/v1/reports/jobs-per-customer?${qs.toString()}`, { cache: "no-store" }).then((r) => r.json()),
       fetch(`/api/v1/reports/warranty-breakdown?${qs.toString()}`, { cache: "no-store" }).then((r) => r.json()),
       fetch(`/api/v1/reports/monthly?${qs.toString()}`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/v1/reports/customer-jobs?${qs.toString()}`, { cache: "no-store" }).then((r) => r.json()),
     ])
-      .then(([jobsBody, warrantyBody, monthlyBody]) => {
+      .then(([jobsBody, warrantyBody, monthlyBody, customerJobsBody]) => {
         if (cancelled) return;
+        setJobs(customerJobsBody.rows || []);
         setJobsRow((jobsBody.rows || [])[0] ?? null);
         setWarranty(warrantyBody);
         setSeries(monthlyBody.series || []);
@@ -567,6 +579,11 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
     ]);
   }
 
+  function exportJobs() {
+    downloadCsv(`customer-jobs-${customerName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${todayStamp()}.csv`, ["Job #", "Job type", "Status", "Date in", "Machine model", "Component", "Closed"],
+      jobs.map((j) => [j.jobNumber, typeLabels[j.type as keyof typeof typeLabels] ?? j.type, statusLabels[j.status as keyof typeof statusLabels] ?? j.status, fmtDay(j.dateReceived), j.machineModel ?? "", j.component ?? "", fmtDay(j.closedAt)]));
+  }
+
   return (
     <div>
       <div className="report-focus-header">
@@ -576,6 +593,7 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
       <div className="header-actions" style={{ marginBottom: 12 }}>
         <MonthsSelect months={months} onChange={onMonthsChange} />
         <ExportButton onExport={exportAll} />
+        <ExportButton onExport={exportJobs} label="Export jobs CSV" />
       </div>
       {error ? <div className="inline-error">{error}</div> : null}
       {loading ? <div className="table-state"><Loader2 className="spin" size={16} /> Loading…</div> : <>
@@ -586,6 +604,28 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
           <article className="metric-card compact"><span>Warranty jobs</span><strong>{fmtInt(jobsRow?.warranty ?? 0)}</strong></article>
         </section>
         {warranty && warranty.total.total > 0 && <WarrantyTable title="Warranty jobs by component" rows={warranty.byComponent} labelHeading="Component" />}
+        <section className="detail-panel" style={{ marginTop: 14 }}>
+          <header><div><h2>All jobs</h2><p>{fmtInt(jobs.length)} job{jobs.length === 1 ? "" : "s"} for this customer in the selected period, newest first.</p></div></header>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Job #</th><th>Job type</th><th>Status</th><th>Date in</th><th>Machine model</th><th>Component</th><th>Closed</th></tr></thead>
+              <tbody>
+                {jobs.length === 0 && <tr><td colSpan={7} className="table-state compact-empty-state">No jobs for this customer in this period.</td></tr>}
+                {jobs.map((j) => (
+                  <tr key={j.id}>
+                    <td><Link href={`/jobs/${j.id}`} className="report-customer-link"><strong className="mono">{j.jobNumber}</strong></Link></td>
+                    <td>{typeLabels[j.type as keyof typeof typeLabels] ?? j.type}</td>
+                    <td>{statusLabels[j.status as keyof typeof statusLabels] ?? j.status}{j.returnedUnrepaired ? " (returned unrepaired)" : ""}</td>
+                    <td>{fmtDay(j.dateReceived)}</td>
+                    <td>{j.machineModel || "—"}</td>
+                    <td>{j.component || "—"}</td>
+                    <td>{fmtDay(j.closedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
         <section className="detail-panel report-chart-card" style={{ marginTop: 14 }}>
           <header><div><h2>Monthly trend</h2></div></header>
           <div style={{ padding: "4px 14px 14px" }}><CombinedAnalyticsChart series={series} /></div>
@@ -593,6 +633,57 @@ function CustomerTab({ customerId, customerName, months, onMonthsChange, onBack 
       </>}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Print (2026-10-20, user request: "add print buttons on all tabs"). One button, shown above whichever tab is open, prints that tab:
+// the tab's content (metric cards, tables and charts) is copied into a new window together with the app's own stylesheets, with the
+// date-range / export controls left out and the chosen period written in the heading instead. The window is opened inside the click so
+// pop-up blockers allow it; the print dialog opens from the new page's own onload.
+// ---------------------------------------------------------------------------
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
+function PrintTabButton({ title, subtitle }: { title: string; subtitle: string }) {
+  const [error, setError] = useState("");
+
+  async function print() {
+    setError("");
+    const area = document.getElementById("report-print-area");
+    if (!area) return;
+    const win = window.open("", "_blank");
+    if (!win) { setError("Enable pop-ups to print the report."); return; }
+    let org = "";
+    try {
+      const r = await fetch("/api/v1/company-settings/print-details", { cache: "no-store" });
+      if (r.ok) org = String((await r.json()).name || "");
+    } catch { /* print without the company name */ }
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style')).map((n) => n.outerHTML).join("");
+    const printed = new Date().toLocaleString("en-ZA");
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><base href="${window.location.origin}/" /><title>${escapeHtml(title)}</title>${styles}<style>
+      body{background:#fff;color:#111;margin:0;padding:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .report-print-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #111}
+      .report-print-head h1{margin:0;font-size:18px}
+      .report-print-head p{margin:2px 0 0;color:#444;font-size:11px}
+      .report-print-head .org{font-size:13px;font-weight:700}
+      .header-actions,.report-print-bar,.tab-strip{display:none !important}
+      .report-customer-link{color:inherit;background:none;border:0;padding:0;font:inherit;text-decoration:none}
+      .data-table-wrap{overflow:visible !important;max-height:none !important}
+      .detail-panel,.metric-card{break-inside:avoid}
+      @page{margin:10mm}
+    </style></head><body>
+      <div class="report-print-head"><div><p class="org">${escapeHtml(org)}</p><h1>${escapeHtml(title)}</h1>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}</div><div><p>Printed ${escapeHtml(printed)}</p></div></div>
+      ${area.innerHTML}
+      <script>window.onload = function () { setTimeout(function () { window.print(); }, 300); };</script>
+    </body></html>`);
+    win.document.close();
+  }
+
+  return <div className="report-print-bar" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginBottom: 10 }}>
+    {error && <span className="jobs-bulk-error">{error}</span>}
+    <button type="button" className="quiet-button" onClick={() => void print()} title="Print this tab"><Printer size={14} /> Print</button>
+  </div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -625,12 +716,18 @@ export function ReportsWorkspace() {
         {TABS.map((t) => <button key={t.key} type="button" className={tab === t.key ? "active" : ""} onClick={() => setTab(t.key)}>{t.label}</button>)}
         {focusCustomer && <button type="button" className={tab === "customer" ? "active" : ""} onClick={() => setTab("customer")}>{focusCustomer.name}</button>}
       </div>
+      <PrintTabButton
+        title={tab === "customer" && focusCustomer ? `Reports - ${focusCustomer.name}` : `Reports - ${TABS.find((t) => t.key === tab)?.label ?? ""}`}
+        subtitle={tab === "monthly" ? "" : `Period: ${MONTH_OPTIONS.find((o) => o.value === months)?.label ?? ""}`}
+      />
+      <div id="report-print-area">
       {tab === "overview" && <OverviewTab months={months} onMonthsChange={setMonths} onNavigate={setTab} onSelectCustomer={handleSelectCustomer} />}
       {tab === "jobs-per-customer" && <JobsPerCustomerTab months={months} onMonthsChange={setMonths} onSelectCustomer={handleSelectCustomer} />}
       {tab === "warranty-breakdown" && <WarrantyBreakdownTab months={months} onMonthsChange={setMonths} onSelectCustomer={handleSelectCustomer} />}
       {tab === "monthly" && <MonthlyTab />}
       {tab === "ratios" && <RatiosTab months={months} onMonthsChange={setMonths} />}
       {tab === "customer" && focusCustomer && <CustomerTab customerId={focusCustomer.id} customerName={focusCustomer.name} months={months} onMonthsChange={setMonths} onBack={handleBackFromCustomer} />}
+      </div>
     </div>
   );
 }

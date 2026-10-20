@@ -40,6 +40,7 @@ export type JobsWipColumnId =
   | "description"
   | "etaDate"
   | "mechanicEtaDate"
+  | "etaOverdue"
   | "relationshipNotes"
   | "quoteNumber"
   | "quoteDate"
@@ -115,6 +116,8 @@ export const JOBS_WIP_COLUMNS: JobsWipColumnDef[] = [
   { id: "description", label: "Job description", defaultWidth: 220 },
   { id: "etaDate", label: "ETA date", defaultWidth: 110 },
   { id: "mechanicEtaDate", label: "Mechanic ETA date", defaultWidth: 110 },
+  // 2026-10-20: days past the ETA (see etaOverdueDays in ui.ts); "-" while not overdue.
+  { id: "etaOverdue", label: "ETA Overdue", defaultWidth: 100 },
   { id: "relationshipNotes", label: "Notes", defaultWidth: 200 },
   { id: "quoteNumber", label: "Quote number", defaultWidth: 130 },
   { id: "quoteDate", label: "Quote date", defaultWidth: 110 },
@@ -148,7 +151,7 @@ const ENGINEERING_COLUMN_LABELS: Partial<Record<JobsWipColumnId, string>> = { me
 
 // 2026-10-20, user request (Engineering Business, user type "WIP View"): this user sees only the Jobs & WIP table, with exactly these
 // columns (Job #, Job type, Status, Machine model, Component, Machinist ETA) and no custom columns. Fixed here and applied on the server (wip-columns-service.ts), not just hidden in the picker.
-export const WIP_VIEWER_COLUMNS: JobsWipColumnId[] = ["jobNumber", "type", "status", "machineModel", "component", "mechanicEtaDate"];
+export const WIP_VIEWER_COLUMNS: JobsWipColumnId[] = ["jobNumber", "type", "status", "machineModel", "component", "mechanicEtaDate", "etaOverdue"];
 
 export function wipColumnLabel(id: JobsWipColumnId, build?: string | null): string {
   if (build === "ENGINEERING" && ENGINEERING_COLUMN_LABELS[id]) return ENGINEERING_COLUMN_LABELS[id]!;

@@ -7,7 +7,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Unlink, Upload, X } from "lucide-react";
-import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
 import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
@@ -4980,7 +4980,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         : job.status
                   }
                   disabled={saving || mechanicFieldsLocked}
-                  onSelect={(step) => void postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null })}
+                  onSelect={(step) => void (async () => {
+                    // 2026-10-20, Engineering: from "To be delivered" upwards, ask whether the documents / specification sheets are uploaded first.
+                    if (needsDocumentCheck(industryBuild, step) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
+                    await postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null });
+                  })()}
                 />
               </>
             )}
@@ -5010,7 +5014,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <label><span>Outcome</span><input value={form.closingOutcome} onChange={(e) => updateField("closingOutcome", e.target.value)} /></label>
                   <label className="wide"><span>Closing note</span><textarea rows={3} value={form.closingNote} onChange={(e) => updateField("closingNote", e.target.value)} /></label>
                 </div>
-                <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving || form.closingOutcome.length < 2 || form.closingNote.length < 2} onClick={() => { void postAction(`/api/v1/jobs/${job.id}/close`, { outcome: form.closingOutcome, closingNote: form.closingNote }).then(() => setDialog(null)); }}>Close job</button></footer>
+                <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving || form.closingOutcome.length < 2 || form.closingNote.length < 2} onClick={() => { void (async () => { if (needsDocumentCheck(industryBuild, "CLOSED") && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await postAction(`/api/v1/jobs/${job.id}/close`, { outcome: form.closingOutcome, closingNote: form.closingNote }); setDialog(null); })(); }}>Close job</button></footer>
               </aside>
             </div>
           )}

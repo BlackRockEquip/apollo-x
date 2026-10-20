@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRequestContext } from "@/lib/auth/session";
 import { apiError } from "@/lib/http/errors";
-import { getJobsPerCustomerReport, getMonthlyReport, getRatiosReport, getWarrantyBreakdownReport } from "@/lib/reports/service";
+import { getCustomerJobsReport, getJobsPerCustomerReport, getMonthlyReport, getRatiosReport, getWarrantyBreakdownReport } from "@/lib/reports/service";
 
 // 2026-10-02 — new "Reports" sidebar section. One GET-only route, dispatched
 // by `type` the same way master-data's [kind]/route.ts dispatches by kind —
@@ -11,7 +11,7 @@ import { getJobsPerCustomerReport, getMonthlyReport, getRatiosReport, getWarrant
 // customer, warranty-breakdown and monthly additionally take an optional
 // `customerId` (customer click-through — see service.ts's header comment).
 // ratios intentionally does not: it isn't forwarded even if present.
-const REPORT_TYPES = new Set(["jobs-per-customer", "warranty-breakdown", "monthly", "ratios"]);
+const REPORT_TYPES = new Set(["jobs-per-customer", "warranty-breakdown", "monthly", "ratios", "customer-jobs"]);
 
 function parseMonths(request: NextRequest): number | undefined {
   const raw = request.nextUrl.searchParams.get("months");
@@ -35,6 +35,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         return NextResponse.json(await getWarrantyBreakdownReport(ctx, { months, customerId }));
       case "monthly":
         return NextResponse.json(await getMonthlyReport(ctx, { months, customerId }));
+      case "customer-jobs":
+        return NextResponse.json({ rows: await getCustomerJobsReport(ctx, { months, customerId }) });
       case "ratios":
         return NextResponse.json({ ratios: await getRatiosReport(ctx, { months }) });
       default:

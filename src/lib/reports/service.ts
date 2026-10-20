@@ -106,6 +106,33 @@ export async function getJobsPerCustomerReport(ctx: RequestContext, params: { mo
   return Array.from(byCustomer.values()).sort((a, b) => b.total - a.total);
 }
 
+// 2026-10-20, user request (Reports > per customer): "add a list view of all jobs". Every job for one customer in the chosen date
+// window (by date received, like the other reports), newest first.
+export type CustomerJobRow = { id: string; jobNumber: string; type: string; status: string; returnedUnrepaired: boolean; dateReceived: string | null; closedAt: string | null; machineModel: string | null; component: string | null };
+
+export async function getCustomerJobsReport(ctx: RequestContext, params: { months?: number; customerId?: string }): Promise<CustomerJobRow[]> {
+  const companyId = authorize(ctx);
+  if (!params.customerId) return [];
+  const since = sinceFor(params.months);
+  const jobs = await prisma.job.findMany({
+    where: { companyId, customerId: params.customerId, ...(since ? { dateReceived: { gte: since } } : {}) },
+    orderBy: [{ dateReceived: "desc" }, { createdAt: "desc" }],
+    take: 2000,
+    select: { id: true, jobNumber: true, draftNumber: true, type: true, status: true, returnedUnrepaired: true, dateReceived: true, closedAt: true, machineModel: true, component: true },
+  });
+  return jobs.map((job) => ({
+    id: job.id,
+    jobNumber: job.jobNumber ?? job.draftNumber ?? "—",
+    type: job.type,
+    status: job.status,
+    returnedUnrepaired: job.returnedUnrepaired,
+    dateReceived: job.dateReceived ? job.dateReceived.toISOString() : null,
+    closedAt: job.closedAt ? job.closedAt.toISOString() : null,
+    machineModel: job.machineModel,
+    component: job.component,
+  }));
+}
+
 export type WarrantyBreakdownRow = { key: string; label: string; total: number; granted: number; declined: number; pending: number; noRecord: number };
 
 export async function getWarrantyBreakdownReport(ctx: RequestContext, params: { months?: number; customerId?: string }) {

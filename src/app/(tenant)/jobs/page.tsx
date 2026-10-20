@@ -16,7 +16,7 @@ import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
-import { JOB_TYPE_LABELS, jobTypeLabelsFor } from "@/lib/jobs/ui";
+import { JOB_TYPE_LABELS, etaOverdueDays, jobTypeLabelsFor } from "@/lib/jobs/ui";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
 import { JOBS_WIP_COLUMNS, filterColumnsByPermission, wipColumnLabelsFor, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
@@ -120,6 +120,11 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
       return fmtDate(job.etaDate);
     case "mechanicEtaDate":
       return fmtDate(job.mechanicEtaDate);
+    case "etaOverdue": {
+      // 2026-10-20: days past the ETA, "-" while not yet overdue.
+      const days = etaOverdueDays(job.mechanicEtaDate, job.status);
+      return days === null ? "-" : <strong>{days}</strong>;
+    }
     case "relationshipNotes":
       return job.relationshipNotes || "—";
     case "quoteNumber":
@@ -252,7 +257,8 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           the main shared work queue, so it's the highest-value place for
           other people's status/field changes to show up without a manual
           reload. See AutoRefresh.tsx's own comment. */}
-      <AutoRefresh intervalMs={20000} />
+      {/* 2026-10-20, user request: the WIP View screen should pick up changes quicker - every 10 seconds instead of 20. */}
+      <AutoRefresh intervalMs={wipViewOnly ? 10000 : 20000} />
       <header className="page-header compact">
         <div>
           <p className="eyebrow">Jobs</p>
