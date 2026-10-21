@@ -71,6 +71,8 @@ export const adjustmentInput = z.object({
   reason: z.string().trim().min(3).max(500),
   notes: longText,
   idempotencyKey,
+  // 2026-10-21: lets a decrease go below the quantity reserved for jobs by releasing those reservations (stock not on the shelf).
+  releaseReservations: z.boolean().optional(),
 });
 
 export const reservationInput = z.object({
@@ -112,7 +114,7 @@ export const countCreateInput = z.object({
     .default([]),
 });
 
-export const countNoteInput = z.object({ notes: longText });
+export const countNoteInput = z.object({ notes: longText, releaseReservations: z.boolean().optional() });
 
 export const movementQuery = z.object({
   partId: optionalId,

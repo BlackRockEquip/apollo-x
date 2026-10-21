@@ -386,6 +386,10 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [adjustLocationId, setAdjustLocationId] = useState("");
   const [adjustSaving, setAdjustSaving] = useState(false);
   const [adjustError, setAdjustError] = useState("");
+  // 2026-10-21: shown after the server says the stock is reserved for jobs; ticking it releases those reservations (see settleReservationsForLowerStockTx).
+  const [adjustNeedsRelease, setAdjustNeedsRelease] = useState(false);
+  const [adjustRelease, setAdjustRelease] = useState(false);
+  const [stockTakeNeedsRelease, setStockTakeNeedsRelease] = useState(false);
 
   // Picking Slip History tab.
   const [history, setHistory] = useState<PickSlipData[]>([]);
@@ -558,9 +562,9 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // movement per line with a real variance). Left at status COMPLETED, not
   // auto-APPROVED — approval is a deliberate separate step (see
   // approveStockCount below), same as the backend already models it.
-  async function submitStockTake() {
+  async function submitStockTake(releaseReservations = false) {
     if (!stockTakeLocationId || stockTakeRows.length === 0) return;
-    setStockTakeSubmitting(true); setStockTakeError("");
+    setStockTakeSubmitting(true); setStockTakeError(""); setStockTakeNeedsRelease(false);
     try {
       const createRes = await fetch("/api/v1/inventory/counts", {
         method: "POST",
@@ -574,9 +578,17 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const createBody = await createRes.json();
       if (!createRes.ok) throw new Error(createBody.error?.message || "Unable to save the stock count.");
       const countId = createBody.countId as string;
-      const completeRes = await fetch(`/api/v1/inventory/counts/${countId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+      const completeRes = await fetch(`/api/v1/inventory/counts/${countId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(releaseReservations ? { releaseReservations: true } : {}) });
       const completeBody = await completeRes.json();
-      if (!completeRes.ok) throw new Error(completeBody.error?.message || "Unable to post the stock count adjustments.");
+      if (!completeRes.ok) {
+        // 2026-10-21: counted lower than the stock reserved for jobs - offer to release those reservations. The count that was
+        // just saved is cancelled so the retry does not leave a second open count behind.
+        if (completeBody.error?.code === "RESERVED_STOCK_SHORT") {
+          setStockTakeNeedsRelease(true);
+          await fetch(`/api/v1/inventory/counts/${countId}/cancel`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) }).catch(() => undefined);
+        }
+        throw new Error(completeBody.error?.message || "Unable to post the stock count adjustments.");
+      }
       setStockTakeResult({ countId, movementCount: (completeBody.movementIds || []).length });
       setStockTakeStep("result");
     } catch (e) { setStockTakeError(e instanceof Error ? e.message : "Unable to submit the stock count."); }
@@ -867,7 +879,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // --- Adjust ----------------------------------------------------------
 
   function openAdjust(row: PositionRow) {
-    setAdjustRow(row); setAdjustDirection("IN"); setAdjustQuantity("1"); setAdjustReason(""); setAdjustLocationId(row.binLocationId || ""); setAdjustError("");
+    setAdjustRow(row); setAdjustDirection("IN"); setAdjustQuantity("1"); setAdjustReason(""); setAdjustLocationId(row.binLocationId || ""); setAdjustError(""); setAdjustNeedsRelease(false); setAdjustRelease(false);
     void loadOptions();
   }
   async function submitAdjust(e: React.FormEvent<HTMLFormElement>) {
@@ -881,10 +893,13 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const r = await fetch("/api/v1/inventory/adjustments", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ partId: adjustRow.id, locationId: adjustLocationId, direction: adjustDirection, quantity: adjustQuantity, reason: adjustReason.trim() }),
+        body: JSON.stringify({ partId: adjustRow.id, locationId: adjustLocationId, direction: adjustDirection, quantity: adjustQuantity, reason: adjustReason.trim(), ...(adjustRelease ? { releaseReservations: true } : {}) }),
       });
       const body = await r.json();
-      if (!r.ok) throw new Error(body.error?.message || "Unable to adjust stock.");
+      if (!r.ok) {
+        if (body.error?.code === "RESERVED_STOCK_SHORT") setAdjustNeedsRelease(true);
+        throw new Error(body.error?.message || "Unable to adjust stock.");
+      }
       setAdjustRow(null);
       await load(true);
     } catch (e) { setAdjustError(e instanceof Error ? e.message : "Unable to adjust stock."); }
@@ -1065,6 +1080,11 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           {stockTakeView === "new" ? (
             <div style={{ padding: 14 }}>
               {stockTakeError ? <div className="inline-error">{stockTakeError}</div> : null}
+              {stockTakeNeedsRelease ? (
+                <div className="header-actions" style={{ margin: "8px 0" }}>
+                  <button type="button" className="gold-button" disabled={stockTakeSubmitting} onClick={() => void submitStockTake(true)}>Release the job reservations and post the count</button>
+                </div>
+              ) : null}
 
               {stockTakeStep === "select" && (
                 <div>
@@ -1372,6 +1392,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                 <label><span>Quantity *</span><input type="number" min="0" step="0.0001" value={adjustQuantity} onChange={(e) => setAdjustQuantity(e.target.value)} /></label>
                 <label className="wide"><span>Reason *</span><input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="e.g. Stock count correction, damaged unit written off…" /></label>
                 {adjustError ? <div className="inline-error">{adjustError}</div> : null}
+                {adjustNeedsRelease ? (
+                  <label className="wide" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={adjustRelease} onChange={(e) => setAdjustRelease(e.target.checked)} />
+                    <span>Release the job reservations - the stock is not on the shelf. The affected job part lines go back to Pending and each job&apos;s history records it.</span>
+                  </label>
+                ) : null}
               </div>
               <footer><button type="button" className="quiet-button" onClick={() => setAdjustRow(null)}>Cancel</button><button className="gold-button" disabled={adjustSaving}>{adjustSaving ? <Loader2 className="spin" size={15} /> : null}{adjustSaving ? "Saving…" : "Apply adjustment"}</button></footer>
             </form>

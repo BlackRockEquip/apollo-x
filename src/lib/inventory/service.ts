@@ -664,6 +664,92 @@ export async function returnStockTx(tx: Tx, ctx: RequestContext & { companyId: s
 // reserved quantity â€” the database CHECK would reject it anyway.
 // ============================================================
 
+// 2026-10-21, user question: a pick slip was made and the part is reserved for the job, but nothing is on the shelf. Adjusting
+// the stock down to match failed ("not enough available stock") because on-hand may never drop below the quantity reserved
+// for jobs. The shelf is the truth, so a person with the adjust permission can now choose to release the job reservations
+// that no longer have stock behind them. Without that choice the adjustment still stops, but with a message that says who
+// holds the stock and what to tick. What release does: the reservations at this bin are cut back newest first by exactly the
+// shortfall; each affected job part line that was waiting on that shelf stock (In stock / Picked) goes back to Pending (what
+// it still holds is freed; stock elsewhere that is free still counts), and the job's history says what happened. Returns the
+// bin's balance re-read, because the reservation cuts changed its reserved figure.
+async function settleReservationsForLowerStockTx(
+  tx: Tx,
+  ctx: RequestContext & { companyId: string },
+  balance: LockedBalance,
+  partId: string,
+  locationId: string,
+  nextOnHand: Quantity,
+  options: { release: boolean; reason: string },
+): Promise<LockedBalance> {
+  if (nextOnHand.lt(0)) insufficient();
+  const short = balance.reserved.minus(nextOnHand);
+  if (short.lte(0)) return balance;
+
+  const reservations = await tx.stockReservation.findMany({
+    where: { companyId: ctx.companyId, partId, locationId, status: "ACTIVE" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!options.release) {
+    const names = [...new Set(reservations.map((r) => r.referenceNumber || "a manual reservation"))].join(", ");
+    throw new StockError(
+      "RESERVED_STOCK_SHORT",
+      `${short.toString()} of the stock in this bin is reserved for ${names || "jobs"}, so on-hand cannot go that low. If the stock is really not there, tick "Release the job reservations" and apply again - the affected job part lines go back to Pending and the job history records it.`,
+    );
+  }
+
+  const part = await tx.part.findFirst({ where: { id: partId, companyId: ctx.companyId }, select: { partNumber: true } });
+  let left = short;
+  const affected = new Map<string, Quantity>();
+  for (const reservation of reservations) {
+    if (left.lte(0)) break;
+    const took = await reduceReservationTx(tx, ctx, reservation.id, left, options.reason);
+    if (took.lte(0)) continue;
+    left = left.minus(took);
+    if (reservation.referenceType === "JOB" && reservation.referenceId) affected.set(reservation.referenceId, (affected.get(reservation.referenceId) ?? new D(0)).plus(took));
+  }
+  if (left.gt(0)) insufficient();
+
+  // Free stock in the OTHER bins (this bin is the one running short).
+  const others = await tx.stockBalance.findMany({ where: { companyId: ctx.companyId, partId, locationId: { not: locationId }, quantityOnHand: { gt: 0 } } });
+  const freeElsewhere = others.reduce((sum, b) => sum.plus(D.max(b.quantityOnHand.minus(b.quantityReserved), new D(0))), new D(0));
+
+  for (const [lineId, took] of affected) {
+    const line = await tx.jobPartLine.findFirst({
+      where: { id: lineId, companyId: ctx.companyId },
+      select: { id: true, jobId: true, partNumber: true, status: true, quantity: true, orderedQuantity: true, stockIssuedQuantity: true, pickedQuantity: true, job: { select: { jobNumber: true, draftNumber: true } } },
+    });
+    if (!line) continue;
+    let toPending = false;
+    if (line.status === "IN_STOCK" || line.status === "PICKED") {
+      const heldRows = await tx.stockReservation.findMany({ where: { companyId: ctx.companyId, referenceType: "JOB", referenceId: line.id, status: "ACTIVE" } });
+      let held = new D(0);
+      for (const row of heldRows) held = held.plus((await getReservationRemaining(tx, row as unknown as LockedReservation)).remaining);
+      const needed = line.quantity.minus(line.orderedQuantity ?? new D(0)).minus(line.stockIssuedQuantity ?? new D(0));
+      if (needed.gt(0) && held.plus(freeElsewhere).lt(needed)) {
+        toPending = true;
+        await tx.jobPartLine.update({ where: { id: line.id }, data: { status: "PENDING" as never, pickedQuantity: new D(0), updatedById: ctx.userId } });
+        await reconcileJobPartLineReservationTx(tx, ctx, { jobNumber: line.job.jobNumber ?? line.job.draftNumber ?? "", lineId: line.id, partId, targetQuantity: new D(0) });
+      } else if (line.status === "PICKED") {
+        await tx.jobPartLine.update({ where: { id: line.id }, data: { pickedQuantity: D.max((line.pickedQuantity ?? new D(0)).minus(took), new D(0)), updatedById: ctx.userId } });
+      }
+    }
+    await tx.jobActivity.create({
+      data: {
+        companyId: ctx.companyId,
+        jobId: line.jobId,
+        actorId: ctx.userId,
+        type: "RESERVATION_RELEASED",
+        description: `${took.toString()} x ${part?.partNumber ?? line.partNumber} reserved for this job ${took.eq(1) ? "was" : "were"} released because the stock was not on the shelf (${options.reason}).${toPending ? " The line was set to Pending." : ""}`,
+        metadata: { kind: "STOCK_ADJUSTMENT_RELEASE", lineId: line.id, partId, partNumber: line.partNumber, quantity: took.toString(), previousStatus: String(line.status), statusChangedTo: toPending ? "PENDING" : null, locationId } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  const fresh = await lockBalance(tx, ctx.companyId, partId, locationId);
+  if (!fresh) notFound();
+  return fresh;
+}
+
 export async function adjustStock(ctx: RequestContext, input: z.infer<typeof adjustmentInput>) {
   requireInventory(ctx, "INVENTORY_ADJUST");
   const replay = await replayedMovement(ctx.companyId, input.idempotencyKey);
@@ -679,7 +765,10 @@ export async function adjustStock(ctx: RequestContext, input: z.infer<typeof adj
     const increasing = input.direction === "IN";
     const movementType: StockMovementType = input.direction === "SCRAP" ? "SCRAP" : increasing ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT";
     const nextOnHand = increasing ? balance.onHand.plus(qty) : balance.onHand.minus(qty);
-    if (!increasing && nextOnHand.lt(balance.reserved)) insufficient();
+    let workingBalance = balance;
+    if (!increasing && nextOnHand.lt(balance.reserved)) {
+      workingBalance = await settleReservationsForLowerStockTx(tx, ctx, balance, part.id, location.id, nextOnHand, { release: input.releaseReservations === true, reason: input.reason });
+    }
     const movement = await tx.stockMovement.create({
       data: buildMovement({
         companyId: ctx.companyId,
@@ -698,7 +787,7 @@ export async function adjustStock(ctx: RequestContext, input: z.infer<typeof adj
         correlationId: ctx.correlationId,
       }),
     });
-    await saveBalance(tx, balance, { onHand: nextOnHand });
+    await saveBalance(tx, workingBalance, { onHand: nextOnHand });
     return movement.id;
   });
   await recordAudit(ctx, {
@@ -931,7 +1020,10 @@ export async function countComplete(ctx: RequestContext, countId: string, input:
       const increasing = variance.gt(0);
       const absVariance = variance.abs();
       const nextOnHand = increasing ? balance.onHand.plus(absVariance) : balance.onHand.minus(absVariance);
-      if (!increasing && nextOnHand.lt(balance.reserved)) insufficient();
+      let workingBalance = balance;
+      if (!increasing && nextOnHand.lt(balance.reserved)) {
+        workingBalance = await settleReservationsForLowerStockTx(tx, ctx, balance, line.partId, count.locationId, nextOnHand, { release: input.releaseReservations === true, reason: line.reason ?? "Stock count correction" });
+      }
       const movement = await tx.stockMovement.create({
         data: buildMovement({
           companyId: ctx.companyId,
@@ -952,7 +1044,7 @@ export async function countComplete(ctx: RequestContext, countId: string, input:
           correlationId: ctx.correlationId,
         }),
       });
-      await saveBalance(tx, balance, { onHand: nextOnHand });
+      await saveBalance(tx, workingBalance, { onHand: nextOnHand });
       createdIds.push(movement.id);
     }
     const updated = await tx.stockCount.update({
