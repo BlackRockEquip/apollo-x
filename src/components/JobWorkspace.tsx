@@ -17,7 +17,7 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
-import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
+import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, partLinesForScope, type PartsListScope, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
 import { withPoweredBy } from "@/lib/documents/powered-by";
 
 type Row = Record<string, unknown> & { id: string };
@@ -1802,7 +1802,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const fieldReportSpec = () => (job ? buildFieldReportSpec({ title: documentTitles.FIELD_REPORT, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const jobHistorySpec = () => (job ? buildJobHistorySpec({ title: documentTitles.JOB_HISTORY, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string }) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes }) : null);
-  const partsListSpec = () => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob }) : null);
+  const partsListSpec = (scope?: PartsListScope) => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, scope }) : null);
   const pickSlipSpec = (slip: { lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
     buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
 
@@ -1843,13 +1843,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // list table as it stands on screen (same columns/headings: Part
   // number, Description, Qty, Received, Order number, Supplier, Status)
   // rather than just what a pick slip picked.
-  function printPartsList(): boolean {
+  function printPartsList(scope: PartsListScope = "ALL"): boolean {
     if (!job) return false;
     const w = window.open("", "_blank", "width=900,height=900");
     if (!w) return false; // popup blocked — nothing more we can do here
     const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
     const jobLabel = job.jobNumber || job.draftNumber || "";
-    const rows = job.partLines
+    const rows = partLinesForScope(job.partLines, scope)
       .map((line) => {
         const quantity = decimalText(line.quantity);
         const received = decimalText(line.receivedQuantity ?? 0);
@@ -1874,7 +1874,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th{background:#f9fafb;border-bottom:2px solid #7a5c14}
       td.qty{text-align:center;font-weight:600}
     </style></head><body>
-      <h1>${esc(documentTitles.PARTS_LIST)} — Job ${esc(jobLabel)}</h1>
+      <h1>${esc(documentTitles.PARTS_LIST)}${scope === "OUTSTANDING" ? " (outstanding parts)" : ""} — Job ${esc(jobLabel)}</h1>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(withPoweredBy(html));
@@ -1883,6 +1883,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     w.onload = doPrint;
     setTimeout(doPrint, 400);
     return true;
+  }
+
+  // 2026-10-21, user request: "on button Print Parts List add an option for the user to print complete parts list or
+  // outstanding parts (Excel or pdf)". The button opens a small window: choose Complete or Outstanding, then Print / save
+  // as PDF (the existing print window + save offer) or Download Excel (same columns as the print, plus an Outstanding
+  // quantity column). Outstanding = not yet fully received.
+  const [partsListDialog, setPartsListDialog] = useState(false);
+  const [partsListScope, setPartsListScope] = useState<PartsListScope>("ALL");
+
+  async function exportPartsListExcel(scope: PartsListScope) {
+    if (!job) return;
+    const lines = partLinesForScope(job.partLines, scope);
+    if (lines.length === 0) return;
+    const header = ["Part number", "Description", "Qty", "Received", "Outstanding", "Order number", "Supplier", "Status", "Notes"];
+    const rows = lines.map((line) => [
+      String(line.partNumber || ""),
+      String(line.description || ""),
+      Number(line.quantity ?? 0),
+      Number(line.receivedQuantity ?? 0),
+      Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0)),
+      String(line.orderNumber || ""),
+      String(line.orderedFromSupplier?.name || ""),
+      partStatusLabel(String(line.status || ""), stockOn),
+      String(line.notes || ""),
+    ]);
+    const XLSX = await import("xlsx");
+    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    worksheet["!cols"] = [{ wch: 20 }, { wch: 42 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 30 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, scope === "OUTSTANDING" ? "Outstanding parts" : "Parts list");
+    XLSX.writeFile(workbook, `${jobDocLabel} - ${documentTitles.PARTS_LIST}${scope === "OUTSTANDING" ? " - Outstanding" : ""}.xlsx`);
   }
 
   // 2026-09-29 — the persistent "Picking slips for this job" list (see
@@ -4089,7 +4120,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <button type="button" className="quiet-button" disabled={job.rfqRequests.length === 0} title={job.rfqRequests.length === 0 ? "Request a quote from at least one supplier first" : undefined} onClick={openQuoteCompare}><Columns3 size={14} /> Compare quotes</button>
                 )}
                 {job.partLines.length > 0 && (
-                  <button type="button" className="quiet-button" onClick={() => void offerToSave(printPartsList(), "PARTS_LIST", partsListSpec)}><Printer size={14} /> Print Parts List</button>
+                  <button type="button" className="quiet-button" onClick={() => { setPartsListScope("ALL"); setPartsListDialog(true); }}><Printer size={14} /> Print Parts List</button>
                 )}
                 <button type="button" className="section-action-button" onClick={() => setShowAddParts((v) => !v)}>{showAddParts ? "Cancel" : <><Plus size={15} /> Add parts to Job</>}</button>
               </div>
@@ -5006,6 +5037,36 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
           )}
 
+
+          {partsListDialog && (() => {
+            const totalLines = job.partLines.length;
+            const outstandingLines = partLinesForScope(job.partLines, "OUTSTANDING").length;
+            const chosenCount = partsListScope === "OUTSTANDING" ? outstandingLines : totalLines;
+            const suffix = partsListScope === "OUTSTANDING" ? "Outstanding" : undefined;
+            return (
+              <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="Print Parts List" onMouseDown={(e) => { if (e.target === e.currentTarget) setPartsListDialog(false); }}>
+                <aside className="form-drawer compact-dialog">
+                  <header><div><p className="eyebrow">Parts list</p><h2>Print Parts List</h2></div><button type="button" onClick={() => setPartsListDialog(false)} aria-label="Close dialog"><X size={18} /></button></header>
+                  <div className="drawer-fields">
+                    <label className="wide" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="radio" name="parts-list-scope" style={{ width: "auto" }} checked={partsListScope === "ALL"} onChange={() => setPartsListScope("ALL")} />
+                      <span>Complete parts list ({totalLines} {totalLines === 1 ? "line" : "lines"})</span>
+                    </label>
+                    <label className="wide" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="radio" name="parts-list-scope" style={{ width: "auto" }} checked={partsListScope === "OUTSTANDING"} onChange={() => setPartsListScope("OUTSTANDING")} />
+                      <span>Outstanding parts only - not yet fully received ({outstandingLines} {outstandingLines === 1 ? "line" : "lines"})</span>
+                    </label>
+                    {chosenCount === 0 ? <p className="muted small-line wide">Nothing is outstanding on this job - every part has been received.</p> : null}
+                  </div>
+                  <footer className="detail-actions">
+                    <button type="button" className="gold-button" disabled={chosenCount === 0} onClick={() => { const scope = partsListScope; setPartsListDialog(false); void offerToSave(printPartsList(scope), "PARTS_LIST", () => partsListSpec(scope), suffix); }}><Printer size={14} /> Print / save PDF</button>
+                    <button type="button" className="quiet-button" disabled={chosenCount === 0} onClick={() => { const scope = partsListScope; setPartsListDialog(false); void exportPartsListExcel(scope); }}><Download size={14} /> Download Excel</button>
+                    <button type="button" className="quiet-button" onClick={() => setPartsListDialog(false)}>Cancel</button>
+                  </footer>
+                </aside>
+              </div>
+            );
+          })()}
 
           {dialog === "close" && (
             <div className="drawer-backdrop" role="dialog" aria-modal="true">

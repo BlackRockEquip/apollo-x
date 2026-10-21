@@ -312,14 +312,29 @@ function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; j
   };
 }
 
-function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob }): DocSpec {
-  const { title, jobLabel, job } = input;
+// 2026-10-21, user request: Print Parts List can print the complete list or only the outstanding parts. "Outstanding" =
+// anything not yet fully received (quantity minus received is above zero) - the same test the Parts list uses for its
+// Receive button.
+export type PartsListScope = "ALL" | "OUTSTANDING";
+export function isOutstandingPartLine(line: { quantity?: unknown; receivedQuantity?: unknown }): boolean {
+  const quantity = Number(line.quantity ?? 0);
+  const received = Number(line.receivedQuantity ?? 0);
+  return (Number.isFinite(quantity) ? quantity : 0) - (Number.isFinite(received) ? received : 0) > 0;
+}
+export function partLinesForScope<T extends { quantity?: unknown; receivedQuantity?: unknown }>(lines: T[], scope: PartsListScope | undefined): T[] {
+  return scope === "OUTSTANDING" ? lines.filter(isOutstandingPartLine) : lines;
+}
+
+function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; scope?: PartsListScope }): DocSpec {
+  const { title, jobLabel, job, scope } = input;
+  const lines = partLinesForScope(job.partLines, scope);
+  const outstanding = scope === "OUTSTANDING";
   return {
-    title: `${title} — Job ${jobLabel}`,
+    title: `${title}${outstanding ? " (outstanding parts)" : ""} — Job ${jobLabel}`,
     blocks: [
-      job.partLines.length > 0
-        ? { type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(job.partLines) }
-        : { type: "paragraph", text: "No parts on this job." },
+      lines.length > 0
+        ? { type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(lines) }
+        : { type: "paragraph", text: outstanding && job.partLines.length > 0 ? "No outstanding parts on this job - everything has been received." : "No parts on this job." },
     ],
   };
 }
