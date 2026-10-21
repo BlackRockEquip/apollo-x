@@ -328,7 +328,8 @@ async function getJobScoped(companyId: string, id: string) {
           part: { select: { id: true, partNumber: true, description: true, unitOfMeasure: true, stockBalances: { select: { quantityOnHand: true, quantityReserved: true } } } },
           orderedFromSupplier: { select: { id: true, name: true } },
         },
-        orderBy: { createdAt: "asc" },
+        // id breaks ties so lines created in the same instant keep one fixed order (the pick slip uses the same order).
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       // Outwork — new (see schema.prisma's OutworkItem comment).
       outworkItems: {

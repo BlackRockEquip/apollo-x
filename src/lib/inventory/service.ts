@@ -2142,8 +2142,12 @@ export async function previewPickSlipForJob(ctx: RequestContext, jobId: string):
   requirePickSlipsModule(ctx, "WRITE");
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId: ctx.companyId }, select: { id: true } });
   if (!job) notFound();
+  // 2026-10-21, user report: the printed pick slip listed the parts in a different order from the Parts list (part 2 at the
+  // bottom, part 4 at the top). This query had no sort order, so the database handed lines back in whatever order they
+  // happen to be stored - which shifts once lines are updated. Same order as the Parts list table: oldest first.
   const eligibleLines = await prisma.jobPartLine.findMany({
     where: { companyId: ctx.companyId, jobId: job.id, partId: { not: null }, status: { not: "RECEIVED" } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   const conflicts = await prisma.$transaction(async (tx) => {
@@ -2504,6 +2508,9 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
   // needs to be pickable again for its remaining quantity). A deny-list
   // means the next new status doesn't require remembering to come back
   // here.
+  // 2026-10-21, user report: the printed pick slip listed the parts in a different order from the Parts list (part 2 at the
+  // bottom, part 4 at the top). This query had no sort order, so the database handed lines back in whatever order they
+  // happen to be stored - which shifts once lines are updated. Same order as the Parts list table: oldest first.
   const eligibleLines = await prisma.jobPartLine.findMany({
     where: {
       companyId: ctx.companyId,
@@ -2511,6 +2518,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
       partId: { not: null },
       status: { not: "RECEIVED" },
     },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
 
   // 2026-09-29 — jobPartLineId/previousStatus/stockMovementId added
@@ -2892,7 +2900,8 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
   const [slips, total] = await Promise.all([
     prisma.pickSlip.findMany({
       where,
-      include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } } } } },
+      // Lines in the Parts list's order (a slip's lines all share one created time, so sort by the part line they came from).
+      include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } } }, orderBy: [{ jobPartLine: { createdAt: "asc" } }, { createdAt: "asc" }, { id: "asc" }] } },
       orderBy: { createdAt: "desc" },
       skip: (input.page - 1) * input.pageSize,
       take: input.pageSize,
