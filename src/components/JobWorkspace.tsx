@@ -5118,7 +5118,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <aside className="form-drawer compact-dialog">
                 <header><div><p className="eyebrow">PEX</p><h2>Scrap PEX unit</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
-                  <p className="muted small-line">This marks the unit as scrapped and closes off its PEX cycle. It cannot be undone.</p>
+                  <p className="muted small-line">This marks the unit as scrapped and closes off its PEX cycle. It leaves PEX Stock and PEX Tracking and is listed under PEX Stock &gt; Scrapped jobs, where it can be un-scrapped.</p>
                   <label className="wide"><span>Reason</span><textarea rows={3} value={form.pexScrapReason} onChange={(e) => updateField("pexScrapReason", e.target.value)} /></label>
                 </div>
                 <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving || form.pexScrapReason.trim().length < 2} onClick={() => { void postAction(`/api/v1/pex/${job.pexAsReturn?.id}/scrap`, { reason: form.pexScrapReason }).then(() => { updateField("pexScrapReason", ""); setDialog(null); }); }}>Scrap unit</button></footer>

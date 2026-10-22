@@ -10,6 +10,7 @@ import {
   pexLinkReturnJobInput,
   pexNotesUpdateInput,
   pexScrapInput,
+  pexScrappedListQuery,
   pexTrackingListQuery,
   pexUnlinkedReturnJobsQuery,
 } from "@/lib/pex/validation";
@@ -423,6 +424,9 @@ export async function syncPexStatusFromJobStatus(
 ) {
   const pexAsReturn = await tx.pexRecord.findFirst({ where: { companyId, returnJobId: job.id } });
   if (pexAsReturn) {
+    // 2026-10-22: Scrapped stays scrapped until someone un-scraps it (PEX Stock > Scrapped jobs). Before this, moving the
+    // scrapped unit's return job to another status quietly turned the record back into an ordinary one.
+    if (pexAsReturn.status === "SCRAPPED") return;
     const mapped = JOB_STATUS_TO_PEX_STATUS[nextStatus];
     if (!mapped) return;
     await tx.pexRecord.update({
@@ -576,6 +580,32 @@ export async function scrapPexRecord(ctx: RequestContext, pexId: string, raw: un
     return updated;
   });
   await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_SCRAP", afterData: { reason: input.reason } });
+  return { ok: true };
+}
+
+// 2026-10-22, user request: "add unscrapping button" (PEX Stock > Scrapped jobs). Puts a scrapped unit back where it
+// belongs: the record's status is worked out from its return job exactly as the normal status sync does (a unit with no
+// usable return-job status goes back to Received if it is part of a supply chain, otherwise to Completed / on the shelf).
+// Logged as a note on the return job and in the unit's history. Scrapping refuses a redeployed unit, so a scrapped unit is
+// never already used on another job.
+export async function unscrapPexRecord(ctx: RequestContext, pexId: string) {
+  const companyId = requirePexWrite(ctx, "PEX_STOCK_SCRAP");
+  const result = await prisma.$transaction(async (tx) => {
+    const pex = await tx.pexRecord.findFirst({ where: { id: pexId, companyId }, include: { returnJob: true, supplyJob: true } });
+    if (!pex) notFound();
+    if (pex.status !== "SCRAPPED") throw new StockError("PEX_NOT_SCRAPPED", "This unit isn't scrapped.");
+    const mapped = pex.returnJob ? JOB_STATUS_TO_PEX_STATUS[pex.returnJob.status as JobStatus] : undefined;
+    const restored: PexStatus = mapped ?? (pex.supplyJobId ? "RECEIVED" : "COMPLETED");
+    const updated = await tx.pexRecord.update({ where: { id: pex.id }, data: { status: restored, updatedById: ctx.userId } });
+    const noteLine = "Un-scrapped — returned to PEX Inventory.";
+    if (pex.returnJob) {
+      await tx.jobNote.create({ data: { companyId, jobId: pex.returnJob.id, note: noteLine, createdById: ctx.userId } });
+      await addActivity(tx, ctx, pex.returnJob.id, "PEX_UNIT_ALLOCATED_TO_INVENTORY", noteLine, { pexId: pex.id, unscrapped: true });
+    }
+    if (pex.supplyJob) await addActivity(tx, ctx, pex.supplyJob.id, "PEX_UNIT_ALLOCATED_TO_INVENTORY", noteLine, { pexId: pex.id, unscrapped: true });
+    return updated;
+  });
+  await recordAudit(ctx, { source: "UI", module: "PEX_STOCK", entityType: "PexRecord", entityId: result.id, action: "PEX_UNSCRAP", afterData: { status: result.status } });
   return { ok: true };
 }
 
@@ -741,6 +771,65 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
   return { items, total, page: query.page, pageSize: query.pageSize, readyCount, toBeRepairedCount: totalCount - readyCount, totalCount };
 }
 
+// 2026-10-22, user request: "Scrapped jobs should be able to be viewed on pex stock under a tab called scrapped jobs".
+// Scrapping (scrapPexRecord) only flips the record to SCRAPPED so it drops out of the stock list; nothing is deleted, so
+// this lists those records again, newest first, with when / who / why from the PEX_UNIT_SCRAPPED entry that scrapping
+// writes on the job (the record's last update is used for the date if that entry is missing).
+export async function listPexScrapped(ctx: RequestContext, raw: unknown) {
+  const companyId = requirePexStockRead(ctx);
+  const query = pexScrappedListQuery.parse(raw);
+  const contains = { contains: query.q, mode: "insensitive" as const };
+  const where: Prisma.PexRecordWhereInput = {
+    companyId,
+    status: "SCRAPPED",
+    ...(query.q
+      ? {
+          OR: [
+            { unitDescription: contains },
+            { returnJob: { jobNumber: contains } },
+            { returnJob: { machineMake: contains } },
+            { returnJob: { machineModel: contains } },
+            { supplyJob: { jobNumber: contains } },
+          ],
+        }
+      : {}),
+  };
+  const [rows, total] = await prisma.$transaction([
+    prisma.pexRecord.findMany({
+      where,
+      include: {
+        supplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
+        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true, machineMake: true, machineModel: true, componentPartNumber: true } },
+      },
+      orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    }),
+    prisma.pexRecord.count({ where }),
+  ]);
+
+  const jobIds = Array.from(new Set(rows.flatMap((row) => [row.returnJobId, row.supplyJobId]).filter((jobId): jobId is string => !!jobId)));
+  const scrapEntries = jobIds.length
+    ? await prisma.jobActivity.findMany({
+        where: { companyId, jobId: { in: jobIds }, type: "PEX_UNIT_SCRAPPED" },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        select: { createdAt: true, metadata: true, actor: { select: { displayName: true } } },
+      })
+    : [];
+  const scrapByPex = new Map<string, { scrappedAt: Date; scrappedBy: string | null; reason: string | null }>();
+  for (const entry of scrapEntries) {
+    const meta = entry.metadata as { pexId?: unknown; reason?: unknown } | null;
+    const pexId = typeof meta?.pexId === "string" ? meta.pexId : null;
+    // Newest entry per unit wins (the same scrap is logged on both the return and the supply job).
+    if (pexId && !scrapByPex.has(pexId)) scrapByPex.set(pexId, { scrappedAt: entry.createdAt, scrappedBy: entry.actor?.displayName ?? null, reason: typeof meta?.reason === "string" ? meta.reason : null });
+  }
+  const items = rows.map((row) => {
+    const scrap = scrapByPex.get(row.id);
+    return { ...row, scrappedAt: scrap?.scrappedAt ?? row.updatedAt, scrappedBy: scrap?.scrappedBy ?? null, reason: scrap?.reason ?? null };
+  });
+  return { items, total, page: query.page, pageSize: query.pageSize };
+}
+
 // PEX Tracking page — shows ModApp's "PEX Units" content: every PEX record
 // with a supply leg, the full supply -> return cycle history.
 export async function listPexTracking(ctx: RequestContext, raw: unknown) {
@@ -763,7 +852,9 @@ export async function listPexTracking(ctx: RequestContext, raw: unknown) {
   // job (the 2026-10-08 rule). A unit that comes back into repair (its return
   // job is reopened) shows again. NOT (rather than a status condition) so it
   // still combines with the status filter below.
-  const redeployedAndCompletedHidden: Prisma.PexRecordWhereInput = { NOT: { status: "COMPLETED" } };
+  // 2026-10-22, user request: "remove scrapped units from pex tracking" - Scrapped units are left off too (they are listed on
+  // PEX Stock > Scrapped jobs).
+  const redeployedAndCompletedHidden: Prisma.PexRecordWhereInput = { NOT: { status: { in: ["COMPLETED", "SCRAPPED"] } } };
   const where: Prisma.PexRecordWhereInput = {
     companyId,
     supplyJobId: { not: null },

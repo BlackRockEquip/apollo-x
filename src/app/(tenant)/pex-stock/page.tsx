@@ -1,8 +1,10 @@
+import Link from "next/link";
 import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
-import { listPexInventory } from "@/lib/pex/service";
+import { listPexInventory, listPexScrapped } from "@/lib/pex/service";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
+import { PexScrappedWorkspace } from "@/components/PexScrappedWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { TablePrintButton } from "@/components/TablePrintButton";
 
@@ -29,9 +31,33 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";
+  // 2026-10-22, user request: a "Scrapped jobs" tab beside the stock list (same plain-link tab bar as Parts).
+  const tab = sp.tab === "scrapped" ? "scrapped" : "stock";
+  const tabs = <nav className="settings-nav">
+    <Link href="/pex-stock" className={tab === "stock" ? "quiet-button active" : "quiet-button"}>Stock</Link>
+    <Link href="/pex-stock?tab=scrapped" className={tab === "scrapped" ? "quiet-button active" : "quiet-button"}>Scrapped jobs</Link>
+  </nav>;
+  if (tab === "scrapped") {
+    const scrapped = await listPexScrapped(ctx, { q, page: 1, pageSize: 200 });
+    return <div>
+      <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that were scrapped as beyond repair. They no longer count as PEX stock; nothing is deleted, so the job and its history stay available here.</p></div></header>
+      {tabs}
+      <section className="master-panel jobs-panel">
+        <div className="master-toolbar jobs-toolbar">
+          <form id="pex-scrapped-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><input type="hidden" name="tab" value="scrapped" /><input type="text" name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>
+          <button type="submit" form="pex-scrapped-filter-form" className="quiet-button">Apply</button>
+          <span>{scrapped.total} scrapped unit{scrapped.total === 1 ? "" : "s"}</span>
+          <TablePrintButton tableId="pex-scrapped-table" title="PEX Stock - Scrapped jobs" noun="unit" />
+          <TableColumnFilters tableId="pex-scrapped-table" storageKey="pex-scrapped" noun="unit" />
+        </div>
+        <PexScrappedWorkspace initial={scrapped} canUnscrap={ctx.tenantPermissions.has("PEX_STOCK_SCRAP")} />
+      </section>
+    </div>;
+  }
   const data = await listPexInventory(ctx, { q, status, page: 1, pageSize: 200 });
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that have physically come back from a client and aren&apos;t out on a job yet — what&apos;s on the shelf right now. For the full supply → return history of every unit, see PEX Tracking.</p></div></header>
+    {tabs}
     <section className="master-panel jobs-panel">
       <div className="master-toolbar jobs-toolbar">
         <form id="pex-stock-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><input type="text" name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>

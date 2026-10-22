@@ -15,6 +15,9 @@ export const pexInventoryListQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 
+// 2026-10-22, user request: PEX Stock > "Scrapped jobs" tab - same search and paging as the stock list, no status filter.
+export const pexScrappedListQuery = pexInventoryListQuery.omit({ status: true });
+
 // PEX Tracking shows ModApp's "PEX Units" content — every PEX record with a
 // supply leg, full cycle history. Same "add a status filter Apollo X's
 // other list pages have, that ModApp's own /pex page doesn't" reasoning as
