@@ -55,6 +55,7 @@ export const jobCreateInput = z.object({
   machineModel: optionalText,
   machineSerial: optionalText,
   component: optionalText,
+  componentModel: optionalText,
   componentType: optionalText,
   componentSerial: optionalText,
   componentPartNumber: optionalText,
@@ -354,3 +355,6 @@ export const emailTableInput = z.object({
   rows: z.array(z.array(z.string().max(1000)).max(30)).max(3000),
 });
 export type EmailTableInput = z.infer<typeof emailTableInput>;
+
+// 2026-10-22: a Machine make typed on a job that is not yet a manufacturer (see addMachineMakeToManufacturers in service.ts).
+export const machineMakeInput = z.object({ name: z.string().trim().min(2).max(150) });

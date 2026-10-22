@@ -114,6 +114,7 @@ export const JOB_IMPORT_FIELDS: ImportFieldDef[] = [
   { key: "machineModel", label: "Machine model", aliases: ["Model"] },
   { key: "machineSerial", label: "Machine serial", aliases: ["Serial Number"] },
   { key: "component", label: "Component", aliases: [] },
+  { key: "componentModel", label: "Component model", aliases: [] },
   { key: "componentType", label: "Component type", aliases: ["Unit Type"] },
   { key: "componentSerial", label: "Component serial", aliases: ["Component Serial Number"] },
   { key: "componentPartNumber", label: "Component part number", aliases: ["Part Number", "Part #"] },

@@ -14,6 +14,7 @@ import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantySt
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
@@ -458,6 +459,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // hard foreign key), so typing a make not yet in the list is still fine.
   const [machineMakeOptions, setMachineMakeOptions] = useState<SupplierOption[]>([]);
   const [showMachineMakeOptions, setShowMachineMakeOptions] = useState(false);
+  // 2026-10-22, user request: "Machine Make - if a manufacturer is not listed it adds to list". See commitMachineMake.
+  const [machineMakeLookupOk, setMachineMakeLookupOk] = useState(false);
+  const [addedMakes, setAddedMakes] = useState<string[]>([]);
   // "Mechanic Strip"/"Mechanic Assemble" — the company's staff list, loaded
   // once on mount (small, fixed list, not a search-as-you-type field like
   // machine make above).
@@ -862,6 +866,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     machineModel: "",
     machineSerial: "",
     component: "",
+    componentModel: "",
     componentType: "",
     componentSerial: "",
     componentPartNumber: "",
@@ -950,6 +955,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         machineModel: body.machineModel || "",
         machineSerial: body.machineSerial || "",
         component: body.component || "",
+        componentModel: body.componentModel || "",
         componentType: body.componentType || "",
         componentSerial: body.componentSerial || "",
         componentPartNumber: body.componentPartNumber || "",
@@ -1095,6 +1101,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const timer = setTimeout(async () => {
       const r = await fetch(`/api/v1/master-data/manufacturers?q=${encodeURIComponent(form.machineMake.trim())}&status=active&pageSize=20`, { cache: "no-store" });
       const b = await r.json();
+      setMachineMakeLookupOk(r.ok);
       setMachineMakeOptions(b.items || []);
     }, 200);
     return () => clearTimeout(timer);
@@ -1229,6 +1236,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   const title = useMemo(() => job?.jobNumber || job?.draftNumber || "New job", [job]);
 
+  // 2026-10-22, user request: "Machine Make (make this field so that if a manufacturer is not listed it adds to the list)".
+  // A new job adds the typed make to the manufacturers list when it is created (server side, createJob). On an existing job the
+  // form autosaves while you type, so the make is added once you leave the field (not on every pause mid-word).
+  const makeTyped = form.machineMake.trim();
+  const makeListed = !makeTyped || addedMakes.includes(makeTyped.toLowerCase()) || machineMakeOptions.some((m) => m.name.trim().toLowerCase() === makeTyped.toLowerCase());
+  const newMakeHint = makeTyped.length >= 2 && machineMakeLookupOk && !makeListed
+    ? (mode === "create" ? "Not in the manufacturers list yet - it will be added when the job is saved." : "Not in the manufacturers list yet - it will be added when you leave this field.")
+    : "";
+  async function commitMachineMake() {
+    if (mode !== "detail" || !jobId || !machineMakeLookupOk || makeTyped.length < 2 || makeListed) return;
+    try {
+      const r = await fetch("/api/v1/jobs/machine-make", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: makeTyped }) });
+      if (r.ok) setAddedMakes((prev) => [...prev, makeTyped.toLowerCase()]);
+    } catch { /* best effort - the make is still saved on the job */ }
+  }
+
   function updateField(key: string, value: string) {
     if (FIELD_REPORT_KEYS.includes(key)) { fieldReportDirty.current = true; fieldReportVersion.current += 1; }
     setForm((current) => ({ ...current, [key]: value }));
@@ -1247,6 +1270,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       machineModel: form.machineModel || null,
       machineSerial: form.machineSerial || null,
       component: form.component || null,
+      componentModel: form.componentModel || null,
       componentType: form.componentType || null,
       componentSerial: form.componentSerial || null,
       componentPartNumber: form.componentPartNumber || null,
@@ -1354,7 +1378,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     mode, jobId, form.customerId, form.dateReceived, form.customerReference, form.machineMake, form.machineModel,
-    form.machineSerial, form.component, form.componentType, form.componentSerial, form.componentPartNumber,
+    form.machineSerial, form.component, form.componentModel, form.componentType, form.componentSerial, form.componentPartNumber,
     form.description, form.notes, form.type, form.etaDate, form.mechanicEtaDate, form.stripMechanicId, form.buildMechanicId, form.relationshipNotes, form.quoteNumber,
     form.quoteDate, form.salesOrderNumber, form.salesOrderDate, form.invoiceNumber, form.invoiceDate,
     form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
@@ -1739,6 +1763,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             ["Machine make", form.machineMake],
             ["Machine model", form.machineModel],
             ["Machine serial", form.machineSerial],
+            ["Component model", form.componentModel],
             ["Component", form.component],
             ["Component serial", form.componentSerial],
             ["Plant number", form.plantNumber],
@@ -2837,7 +2862,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <div class="sec"><b>Machine / component</b><i></i></div>
         <div class="cols">
           <div class="col">${kv([["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]], ["Machine serial"])}</div>
-          <div class="col">${kv([["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]], ["Component serial", "Part number"])}</div>
+          <div class="col">${kv([["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]], ["Component serial", "Part number"])}</div>
         </div>
       </div>
       ${extraHtml}
@@ -3018,6 +3043,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           ["Machine serial", form.machineSerial],
           ["Plant number", form.plantNumber],
           ["Machine hours", form.machineHours],
+          ["Component model", form.componentModel],
           ["Component", form.component],
           ["Component serial", form.componentSerial],
           ["Part number", form.componentPartNumber],
@@ -3835,7 +3861,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           editable for a Mechanic — see the hook comment above. */}
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setShowMachineMakeOptions(false))}>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
           <span>Machine make</span>
           <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
           {showMachineMakeOptions && machineMakeOptions.length > 0 && (
@@ -3844,8 +3870,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
           )}
         </label>
+        {/* 2026-10-22, user request: Machine / component details laid out in this order, two to a row:
+            Machine make (alone) / Machine model + Machine serial / Component model + Component / Component serial + Part number /
+            Plant number + Machine hours - with the new "Component model" field. The cell beside Machine make carries the
+            "not in the list yet" hint. (Field-service jobs have no Part number here, so the fields after it move up.) */}
+        <div className="muted small-line" style={{ alignSelf: "end", paddingBottom: 6 }}>{newMakeHint}</div>
         <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
         <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
+        <label><span>Component model</span><input value={form.componentModel} onChange={(e) => updateField("componentModel", e.target.value)} /></label>
         <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
         {/* 2026-09-29 — user request: "Remove the field Component type
             within jobs and remove from all printed locations." Removed
@@ -4203,8 +4235,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 ? job.partLines.filter((line) => (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q))
                 : job.partLines;
               return (
-            <div className="data-table-wrap"><table className="data-table"><thead><tr>
-              {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === visiblePartLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(visiblePartLines.map((l) => String(l.id))) : new Set())} /></th>}
+            <>
+              {/* 2026-10-22, user request: "Parts List table make the headers filterable like other tables" - the same Excel-style
+                  header filters (TableColumnFilters) as the Jobs tables. Kept per job so a filter on one job never hides rows on another. */}
+              <TableColumnFilters tableId="job-parts-table" storageKey={`job-parts-${job.id}`} noun="part" />
+            <div className="data-table-wrap"><table id="job-parts-table" className="data-table"><thead><tr>
+              {bulkEditMode && <th><input type="checkbox" aria-label="Select all part lines" checked={bulkSelectedIds.size > 0 && bulkSelectedIds.size === visiblePartLines.length} onChange={(e) => setBulkSelectedIds(e.target.checked ? new Set(Array.from(document.querySelectorAll<HTMLElement>("#job-parts-table tbody tr[data-line-id]")).filter((tr) => tr.style.display !== "none").map((tr) => tr.dataset.lineId || "").filter(Boolean)) : new Set())} /></th>}
               <th>Part</th><th>Qty</th><th>Order</th><th>Supplier</th><th>Status</th><th>Notes</th><th></th>
             </tr></thead><tbody>
               {visiblePartLines.map((line) => {
@@ -4232,13 +4268,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 const receiveStockPart = !line.part ? 0 : receiveSource === "STOCK" ? Number(receiveQty || 0) : receiveSource === "AUTO" ? Math.min(Number(receiveQty || 0), qtys.stockRemaining) : 0;
                 const statusTone = fullyReceived ? "" : line.status === "PICKED" ? "tone-blue" : "neutral";
                 const supplierPickerOpenHere = orderEditLineId === lineId;
-                return <tr key={line.id}>
-                  {bulkEditMode && <td><input type="checkbox" aria-label={`Select ${line.partNumber}`} checked={bulkSelectedIds.has(lineId)} onChange={(e) => setBulkSelectedIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(lineId); else next.delete(lineId); return next; })} /></td>}
-                  <td>
+                return <tr key={line.id} data-line-id={lineId}>
+                  {bulkEditMode && <td><input type="checkbox" className="jobs-select" aria-label={`Select ${line.partNumber}`} checked={bulkSelectedIds.has(lineId)} onChange={(e) => setBulkSelectedIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(lineId); else next.delete(lineId); return next; })} /></td>}
+                  <td data-filter-values={String(line.partNumber || "")}>
                     <strong>{text(line.partNumber)}</strong>
                     <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
                   </td>
-                  <td>
+                  <td data-filter-values={quantity}>
                     {quantity}
                     {isSplitLine ? <div className="muted small-line">From stock {qtys.stockQty} · Ordered {qtys.ordered}</div> : null}
                     {hasPickedSome ? <div className="muted small-line">On pick slip {picked} of {qtys.hasOrderInfo ? decimalText(Math.max(qtys.stockQty, qtys.picked)) : quantity}</div> : null}
@@ -4257,7 +4293,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     </div>}
                     {receivingLineId === lineId && receiveStockPart > 0 ? <div className="muted small-line">Takes {receiveStockPart} from stock</div> : null}
                   </td>
-                  <td>
+                  <td data-filter-values={line.orderNumber ? String(line.orderNumber) : ""}>
                     {/* Always an editable input, matching ModApp's
                         PartLineOrderNumberField — no need to click a
                         button first. Uncontrolled (defaultValue, not
@@ -4325,6 +4361,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   </td>
                   <td
                     className="party-selector"
+                    data-filter-values={line.orderedFromSupplier?.name ? String(line.orderedFromSupplier.name) : ""}
                     onBlur={closeDropdownUnlessWithin(() => {
                       // 2026-10-02 — user request: "when typing supplier
                       // name, prefill does not pickup supplier until i
@@ -4374,7 +4411,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     />{line.orderedFromSupplier?.id && !supplierPickerOpenHere ? <button type="button" className="table-action" title="Remove supplier" aria-label={`Remove supplier from ${line.partNumber}`} disabled={saving} onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, ""))}><X size={12} /></button> : null}</div>
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && supplierDropPos && <div className="selector-results" style={{ position: "fixed", left: supplierDropPos.left, width: supplierDropPos.width, top: supplierDropPos.top ?? "auto", bottom: supplierDropPos.bottom ?? "auto", maxHeight: supplierDropPos.maxHeight, zIndex: 40 }}>{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
-                  <td>
+                  <td data-filter-values={partStatusLabel(text(line.status), stockOn)}>
                     <span className={`status-pill ${statusTone}`}>{partStatusLabel(text(line.status), stockOn)}</span>
                     {/* 2026-09-29, user request: moved from under the part
                         number to here, under Status — see partStockOnHand's
@@ -4386,7 +4423,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       return <div className="muted small-line" style={onHand <= 0 ? { color: "var(--danger)", fontWeight: 700 } : undefined}>In stock: {onHand}{onHand > 0 ? <>, reserved: {reserved}</> : null}</div>;
                     })()}
                   </td>
-                  <td>
+                  <td data-filter-values={line.notes ? String(line.notes).trim().slice(0, 60) : ""}>
                     {/* 2026-10-12, user request: "add a column to write a note
                         per part number (next to status column on the right)".
                         Always an editable box, saved when you click away. Keyed
@@ -4419,6 +4456,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
               {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts match &quot;{partSearchQuery}&quot;.</td></tr>}
             </tbody></table></div>
+            </>
               );
             })()}
             {job.partLines.length > 0 && rfqAccess === "FULL" && (
@@ -4734,7 +4772,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
-        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => setShowMachineMakeOptions(false))}>
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
           <span>Machine make</span>
           <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
           {showMachineMakeOptions && machineMakeOptions.length > 0 && (

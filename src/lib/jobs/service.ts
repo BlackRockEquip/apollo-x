@@ -15,7 +15,7 @@ import { recordAudit } from "@/lib/audit/service";
 import { notifyAdminsAndManagers } from "@/lib/notifications/service";
 import { isCompanyEmailConfigured } from "@/lib/email";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
-import { looseNormalized } from "@/lib/master-data/validation";
+import { looseNormalized, normalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import {
   jobsListQuery,
@@ -38,6 +38,7 @@ import {
   jobAttachmentNotesUpdateInput,
   jobMarkReturnedUnrepairedInput,
   jobBreakdownInput,
+  machineMakeInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
@@ -90,6 +91,7 @@ const jobListSelect = {
   machineModel: true,
   machineSerial: true,
   component: true,
+  componentModel: true,
   componentType: true,
   componentSerial: true,
   componentPartNumber: true,
@@ -491,6 +493,7 @@ function mapListWhere(companyId: string, query: JobsListQuery, canSearchCustomer
         { machineModel: contains },
         { machineSerial: contains },
         { component: contains },
+        { componentModel: contains },
         { componentSerial: contains },
         { componentPartNumber: contains },
         { description: contains },
@@ -616,6 +619,30 @@ async function listJobsForCompany(ctx: RequestContext, companyId: string, raw: u
   return { items, total, page: query.page, pageSize: query.pageSize };
 }
 
+// 2026-10-22, user request: "Machine Make - if a manufacturer is not listed it adds to list". A make typed on a job that is not
+// yet a manufacturer is added to the company's manufacturers list (matched ignoring case and surrounding spaces, against active
+// AND inactive manufacturers so a switched-off one is never duplicated). New jobs do this when the job is created; on an
+// existing job the form calls addMachineMakeToManufacturers once the person has finished typing the make (the job form
+// autosaves while typing, so saving alone must not create a manufacturer for every half-typed word).
+async function ensureManufacturerListedTx(tx: Prisma.TransactionClient, ctx: RequestContext, companyId: string, make: string | null | undefined): Promise<boolean> {
+  const name = (make ?? "").trim().slice(0, 150);
+  if (name.length < 2) return false;
+  const nameNormalized = normalized(name)!;
+  if (await tx.manufacturer.findFirst({ where: { companyId, nameNormalized }, select: { id: true } })) return false;
+  const created = await tx.manufacturer.create({ data: { companyId, name, nameNormalized } });
+  await tx.auditEvent.create({
+    data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, correlationId: ctx.correlationId, source: "UI", module: "MASTER_DATA", entityType: "manufacturers", entityId: created.id, action: "CREATE", afterData: { id: created.id, name, addedFrom: "job machine make" } },
+  });
+  return true;
+}
+
+export async function addMachineMakeToManufacturers(ctx: RequestContext, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  const { name } = machineMakeInput.parse(raw);
+  const created = await prisma.$transaction((tx) => ensureManufacturerListedTx(tx, ctx, companyId, name));
+  return { created, name };
+}
+
 // Creates a job, numbered and active straight away: it starts at the first
 // stage of its own flow (or `options.initialStatus` when a caller such as the
 // spreadsheet import needs a different one). There is no draft state.
@@ -658,6 +685,7 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
         machineModel: input.machineModel,
         machineSerial: input.machineSerial,
         component: input.component,
+        componentModel: input.componentModel,
         componentType: input.componentType,
         componentSerial: input.componentSerial,
         componentPartNumber: input.componentPartNumber,
@@ -716,6 +744,8 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
     // A PEX Supply job gets its PexRecord the moment it exists — makes the
     // unit visible on PEX Tracking immediately, not only once a return job
     // is linked to it (see createPexRecordForSupplyJob's own comment).
+    // 2026-10-22, user request: a Machine make that is not in the manufacturers list is added to it.
+    await ensureManufacturerListedTx(tx, ctx, companyId, input.machineMake);
     await createPexRecordForSupplyJob(tx, ctx, companyId, created);
     // The job is active from creation, so its PEX record's status follows it
     // straight away (this used to happen when the job was registered).
@@ -794,6 +824,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.machineModel !== undefined ? { machineModel: input.machineModel } : {}),
         ...(input.machineSerial !== undefined ? { machineSerial: input.machineSerial } : {}),
         ...(input.component !== undefined ? { component: input.component } : {}),
+        ...(input.componentModel !== undefined ? { componentModel: input.componentModel } : {}),
         ...(input.componentType !== undefined ? { componentType: input.componentType } : {}),
         ...(input.componentSerial !== undefined ? { componentSerial: input.componentSerial } : {}),
         ...(input.componentPartNumber !== undefined ? { componentPartNumber: input.componentPartNumber } : {}),

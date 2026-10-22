@@ -20,7 +20,7 @@ export default async function PlatformProposalsPage({ searchParams }: { searchPa
   return (
     <div>
       <header className="page-header compact">
-        <div><p className="eyebrow">Platform</p><h1>Proposals</h1><p>Quotations Flo X sends to possible new clients. Prices come from the price list under Platform Settings and can be changed on each proposal.</p></div>
+        <div><p className="eyebrow">Platform</p><h1>Proposals</h1><p>Quotations Flo X sends to possible new clients. Prices come from the price list under Setup and can be changed on each proposal.</p></div>
         {canEdit ? <Link href="/platform/proposals/new" className="gold-button"><Plus size={14} /> New proposal</Link> : null}
       </header>
       <nav className="settings-nav">

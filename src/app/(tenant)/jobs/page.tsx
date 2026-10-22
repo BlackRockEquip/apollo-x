@@ -63,7 +63,7 @@ function statusFilterValues(job: JobRow, build?: string | null): string {
 function searchText(job: JobRow, canSearchCustomerName: boolean): string {
   return [
     job.jobNumber, job.draftNumber, job.previousJobNumber, job.customerReference, job.customerPo,
-    job.machineModel, job.machineSerial, job.component, job.componentSerial, job.componentPartNumber, job.description,
+    job.machineModel, job.machineSerial, job.component, job.componentModel, job.componentSerial, job.componentPartNumber, job.description,
     ...(canSearchCustomerName ? [job.customer.name, job.customer.tradingName, job.customer.accountCode] : []),
   ].filter(Boolean).join("\n").toLowerCase();
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, FileText, Headset, Inbox, LayoutDashboard, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, FileText, Headset, Inbox, LayoutDashboard, Settings, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
@@ -28,6 +28,8 @@ const NAV = [
   { href: "/platform/demo-requests", label: "Demo Requests", icon: Inbox },
   // 2026-10-21: Flo X's own quotations to prospective clients (Draft / Sent / Accepted / Declined).
   { href: "/platform/proposals", label: "Proposals", icon: FileText },
+  // 2026-10-22, user request: the proposal price list / wording defaults, moved here from Platform Settings.
+  { href: "/platform/proposal-setup", label: "Setup", icon: SlidersHorizontal },
   // 2026-09-22 — this used to point at "/platform" (the same href as
   // Overview above) because the real page didn't exist yet. Now it does
   // (platform/settings/page.tsx — platform-wide SMTP, used only for

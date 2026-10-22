@@ -68,6 +68,7 @@ const machineRows = (form: JobDocForm): [string, string][] => [
   ["Machine make", form.machineMake],
   ["Machine model", form.machineModel],
   ["Machine serial", form.machineSerial],
+  ["Component model", form.componentModel],
   ["Component", form.component],
   ["Component serial", form.componentSerial],
   ["Part number", form.componentPartNumber],
@@ -162,7 +163,7 @@ function buildJobCardSpecRaw(input: { title: string; jobLabel: string; job: JobD
     {
       type: "twoCol",
       left: [{ type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]] }],
-      right: [{ type: "kv", rows: [["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]] }],
+      right: [{ type: "kv", rows: [["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]] }],
     },
   ];
   if (layout.extra) blocks.push({ type: "heading", text: layout.extra.title }, { type: "kv", rows: layout.extra.rows });
@@ -228,7 +229,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
       ],
       right: [
         { type: "heading", text: "Machine / component" },
-        { type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber], ["Machine hours", form.machineHours], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber]] },
+        { type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber], ["Machine hours", form.machineHours], ["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber]] },
       ],
     },
     { type: "heading", text: layout.descriptionHeading },

@@ -1645,6 +1645,8 @@ model Job {
   machineModel        String?
   machineSerial       String?
   component           String?
+  // 2026-10-22, user request: Component Model field on the Machine / component details card.
+  componentModel      String?
   componentType       String?
   componentSerial     String?
   componentPartNumber String?
