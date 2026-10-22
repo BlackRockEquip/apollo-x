@@ -6,6 +6,8 @@ import { ChevronLeft, ChevronRight, Eye, Loader2, Plus, Search, Trash2, X } from
 import { formatDocumentNumber } from "@/lib/master-data/number-format";
 import { readListState, writeListState } from "./list-state";
 import { ScrollRestore } from "./ScrollRestore";
+import { useConfirmDialog } from "./ConfirmDialog";
+import { useTenantPermissions } from "./AppShell";
 
 // defaultValue: pre-filled when a NEW record is started (Document numbering: padding 5, next value 1, ...).
 type Field={key:string;label:string;defaultValue?:string;type?:"text"|"email"|"number"|"date"|"select"|"textarea"|"checkbox"|"address-group"|"contact-list"|"manufacturer-multiselect"|"payment-term"|"tax-code";required?:boolean;options?:Array<{value:string;label:string}>;placeholder?:string;
@@ -26,7 +28,10 @@ export type MasterConfig={kind:string;title:string;eyebrow:string;description:st
   // see ui-config.ts), at the user's request ("Create merge client/supplier
   // buttons on respective page"). Posts to /api/v1/{kind}/merge — see
   // src/lib/merge/service.ts for the reassign-then-deactivate behavior.
-  mergeable?:boolean};
+  mergeable?:boolean;
+  // 2026-10-22, user request: "Clone to customer" / "Clone to supplier" button on each Suppliers / Customers row (see
+  // clonePartyToOtherKind in lib/master-data/service.ts). Only shown to someone who can create in the other list.
+  cloneTo?:{kind:string;singular:string;detailBasePath:string;createPermission:string;module:string}};
 type ListResponse={items:Array<Record<string,unknown>&{id:string;active?:boolean}>;total:number;page:number;pageSize:number};
 
 // Inline "billing address" + repeatable "contacts" sections shown on the
@@ -91,6 +96,18 @@ export function MasterDataWorkspace({ config, hideHeader }: { config: MasterConf
   async function fetchAllSequences(){const r=await fetch("/api/v1/master-data/numbering?status=all&pageSize=100",{cache:"no-store"});const b=await r.json();if(!r.ok)throw new Error(b.error?.message||"Unable to load the sequences.");return (b.items||[]) as Array<Record<string,unknown>>;}
   async function openNumPreview(){setShowNumPreview(true);setNumLoading(true);try{setNumRows(await fetchAllSequences());}catch(e){setError(e instanceof Error?e.message:"Unable to load the sequences.");}finally{setNumLoading(false);}}
   function onNumberingChange(e:React.FormEvent<HTMLFormElement>){const fd=new FormData(e.currentTarget);setNumForm({type:String(fd.get("type")??""),prefix:String(fd.get("prefix")??""),padding:Number(fd.get("padding")||5),nextValue:String(fd.get("nextValue")||"1"),includeFinancialYear:fd.get("includeFinancialYear")==="on",financialYearStartMonth:Number(fd.get("financialYearStartMonth")||3)});}
+  // Clone to the other list (config.cloneTo): confirm first, then a notice with a link to the new record.
+  const {confirm,dialog:confirmDialog}=useConfirmDialog(); const {tenantPermissions,moduleAccess}=useTenantPermissions();
+  const [cloningId,setCloningId]=useState(""); const [cloneNotice,setCloneNotice]=useState<{text:string;href:string;linkText:string}|null>(null);
+  const canClone=Boolean(config.cloneTo)&&(tenantPermissions as ReadonlySet<string>).has(config.cloneTo!.createPermission)&&(moduleAccess as ReadonlyMap<string,string>).get(config.cloneTo!.module)==="FULL";
+  async function cloneRow(row:Record<string,unknown>&{id:string}){
+    const target=config.cloneTo; if(!target)return; const name=String(row.name??""); const word=target.singular.toLowerCase();
+    if(!(await confirm({title:`Clone to ${word}`,message:`Create a new ${word} called "${name}" from this ${config.singular.toLowerCase()}? Its details, addresses and contacts are copied. The ${config.singular.toLowerCase()} stays as it is.`,confirmLabel:`Clone to ${word}`,tone:"neutral"})))return;
+    setCloningId(row.id);setError("");setCloneNotice(null);
+    try{const r=await fetch(`/api/v1/master-data/${config.kind}/${row.id}/clone`,{method:"POST"});const b=await r.json();if(!r.ok)throw new Error(b.error?.message||`Couldn't clone this ${config.singular.toLowerCase()}.`);
+      setCloneNotice({text:`Cloned "${b.name}" to ${target.singular}s.`,href:`${target.detailBasePath}/${b.id}`,linkText:`Open the new ${word}`});
+    }catch(e){setError(e instanceof Error?e.message:`Couldn't clone this ${config.singular.toLowerCase()}.`);}finally{setCloningId("");}
+  }
   const [showMerge,setShowMerge]=useState(false); const [merging,setMerging]=useState(false); const [mergeError,setMergeError]=useState("");
   const [keepQuery,setKeepQuery]=useState(""); const [keepOptions,setKeepOptions]=useState<Array<{id:string;name:string}>>([]); const [keepId,setKeepId]=useState("");
   const [awayQuery,setAwayQuery]=useState(""); const [awayOptions,setAwayOptions]=useState<Array<{id:string;name:string}>>([]); const [awayId,setAwayId]=useState("");
@@ -221,7 +238,7 @@ export function MasterDataWorkspace({ config, hideHeader }: { config: MasterConf
   // just moves into the toolbar row in that case, rather than disappearing.
   return <>{!hideHeader && <header className="page-header master-header"><div><p className="eyebrow">{config.eyebrow}</p><h1>{config.title}</h1><p>{config.description}</p></div><button className="gold-button" onClick={()=>show()}><Plus size={15}/> New {config.singular}</button></header>}
     <section className="master-panel"><div className="master-toolbar"><label className="search-control"><Search size={15}/><input aria-label={`Search ${config.title}`} value={q} onChange={e=>{setQ(e.target.value);setPage(1)}} placeholder={`Search ${config.title.toLowerCase()}…`}/></label><select aria-label="Status filter" value={status} onChange={e=>{setStatus(e.target.value);setPage(1)}}><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option></select>{config.kind==="numbering"&&<button type="button" className="quiet-button" onClick={()=>void openNumPreview()}><Eye size={14}/> Preview</button>}{config.mergeable&&<button type="button" className="quiet-button" onClick={()=>{resetMerge();setShowMerge(true);}}>Merge {config.singular.toLowerCase()}s</button>}{config.deletable&&<button type="button" className="quiet-button danger" disabled={deletingAll||data.total===0} onClick={()=>void removeAll()}>{deletingAll?<Loader2 className="spin" size={14}/>:<Trash2 size={14}/>} Delete all</button>}<span>{data.total} record{data.total===1?"":"s"}</span>{hideHeader && <button className="gold-button" onClick={()=>show()}><Plus size={15}/> New {config.singular}</button>}</div>
-      {error&&<div className="inline-error">{error}</div>}{loading?<div className="table-state"><Loader2 className="spin" size={20}/>Loading…</div>:data.items.length===0?<div className="table-state">No matching records. Create the first {config.singular.toLowerCase()} when ready.</div>:<div className="data-table-wrap"><table className="data-table"><thead><tr>{config.columns.map(c=><th key={c.key}>{c.label}</th>)}<th>Status</th><th></th></tr></thead><tbody>{data.items.map(row=><tr key={row.id}>{config.columns.map(c=><td key={c.key}>{formatValue(valueAt(row,c.key),c.format)}</td>)}<td><span className={`status-pill ${row.active===false?"neutral":""}`}>{row.active===false?"Inactive":"Active"}</span></td><td>{config.detailBasePath?<Link className="table-action" href={`${config.detailBasePath}/${row.id}`}>View</Link>:null}<button className="table-action" onClick={()=>show(row)}>Edit</button>{config.deletable&&<button type="button" className="table-action danger" disabled={rowBusy===row.id} onClick={()=>void removeRow(row)}>{rowBusy===row.id?<Loader2 className="spin" size={14}/>:<Trash2 size={14}/>}</button>}</td></tr>)}</tbody></table></div>}
+      {error&&<div className="inline-error">{error}</div>}{cloneNotice&&<div className="inline-success" style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}><span>{cloneNotice.text}</span><Link className="table-action" href={cloneNotice.href}>{cloneNotice.linkText}</Link><button type="button" className="table-action" onClick={()=>setCloneNotice(null)}>Dismiss</button></div>}{loading?<div className="table-state"><Loader2 className="spin" size={20}/>Loading…</div>:data.items.length===0?<div className="table-state">No matching records. Create the first {config.singular.toLowerCase()} when ready.</div>:<div className="data-table-wrap"><table className="data-table"><thead><tr>{config.columns.map(c=><th key={c.key}>{c.label}</th>)}<th>Status</th><th></th></tr></thead><tbody>{data.items.map(row=><tr key={row.id}>{config.columns.map(c=><td key={c.key}>{formatValue(valueAt(row,c.key),c.format)}</td>)}<td><span className={`status-pill ${row.active===false?"neutral":""}`}>{row.active===false?"Inactive":"Active"}</span></td><td>{config.detailBasePath?<Link className="table-action" href={`${config.detailBasePath}/${row.id}`}>View</Link>:null}<button className="table-action" onClick={()=>show(row)}>Edit</button>{canClone&&config.cloneTo&&<button type="button" className="table-action" disabled={cloningId===row.id} onClick={()=>void cloneRow(row)}>{cloningId===row.id?<Loader2 className="spin" size={14}/>:`Clone to ${config.cloneTo.singular.toLowerCase()}`}</button>}{config.deletable&&<button type="button" className="table-action danger" disabled={rowBusy===row.id} onClick={()=>void removeRow(row)}>{rowBusy===row.id?<Loader2 className="spin" size={14}/>:<Trash2 size={14}/>}</button>}</td></tr>)}</tbody></table></div>}
       <footer className="table-footer"><span>Page {data.page} of {pages}</span><div><button disabled={page<=1} onClick={()=>setPage(p=>p-1)}><ChevronLeft size={14}/></button><button disabled={page>=pages} onClick={()=>setPage(p=>p+1)}><ChevronRight size={14}/></button></div></footer>
       {/* 2026-09-15, user request: "Back button to take you back to where
           you last were." Only mounted once the list has actually rendered
@@ -248,7 +265,7 @@ export function MasterDataWorkspace({ config, hideHeader }: { config: MasterConf
 
       {error&&<div className="inline-error" style={{margin:"0 14px"}}>{error}</div>}
       <footer><button type="button" className="quiet-button" onClick={()=>setOpen(false)}>Cancel</button><button className="gold-button" disabled={saving||(Boolean(editing)&&detailLoading)}>{saving?<Loader2 className="spin" size={15}/>:null}{saving?"Saving…":"Save"}</button></footer></form></aside></div>}
-    {showMerge&&<div className="drawer-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setShowMerge(false)}}><aside className="form-drawer" aria-modal="true">
+    {confirmDialog}{showMerge&&<div className="drawer-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setShowMerge(false)}}><aside className="form-drawer" aria-modal="true">
       <header><div><p className="eyebrow">{config.title}</p><h2>Merge {config.singular.toLowerCase()}s</h2></div><button aria-label="Close" onClick={()=>setShowMerge(false)}><X size={18}/></button></header>
       <div className="drawer-fields">
         {/* 2026-09-28 — manufacturers has neither jobs, contacts nor

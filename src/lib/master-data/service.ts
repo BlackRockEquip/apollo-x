@@ -1,4 +1,4 @@
-import { Prisma, type ModuleKey } from "@prisma/client";
+import { Prisma, type AddressType, type ModuleKey } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
@@ -8,6 +8,7 @@ import { numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { z } from "zod";
 import { ensureDefaultSequences } from "./default-sequences";
 import { financialYearFor, formatDocumentNumber } from "./number-format";
+import { StockError } from "@/lib/http/errors";
 
 export type MasterKind = "customers" | "suppliers" | "parts" | "manufacturers" | "storage-locations" | "services" | "tax-codes" | "commercial-terms" | "numbering";
 const policy: Record<MasterKind, { module: ModuleKey; view: TenantPermission; create: TenantPermission; edit: TenantPermission }> = {
@@ -466,4 +467,84 @@ export async function allocateDocumentNumberTx(tx: Prisma.TransactionClient, ctx
     return number;
   }
   throw new Error(`Couldn't allocate a free number for "${type}" after 100 attempts — check Settings > Numbering for this sequence.`);
+}
+
+// 2026-10-22, user request: "make a button on the suppliers page and clients page that can clone a supplier/customer to
+// customer/supplier. Eg; supplier clone to customer". A COPY, not a move: the original stays exactly as it was and the new
+// record is a normal, independent customer/supplier. What comes across is what both kinds have in common - name, account code,
+// registration and VAT numbers, telephone, email, website, notes, payment terms, currency, plus the active addresses and contacts.
+// What does not: a customer's trading name, credit limit, tax code and on-hold flag, a supplier's brands, a contact's "can
+// receive RFQs" tick, and anything linked to the original (jobs, outwork, RFQs, branches).
+// Refused if the other list already has an active record with the same name (so pressing the button twice cannot create a
+// duplicate). The account code is only copied when it is free in the other list - the code must be unique within each list.
+type CloneContact = { firstName: string; lastName: string | null; position: string | null; telephone: string | null; mobile: string | null; email: string | null; notes: string | null; isPrimary: boolean };
+type CloneAddress = { type: AddressType; label: string | null; line1: string; line2: string | null; city: string | null; province: string | null; postalCode: string | null; countryCode: string; isPrimary: boolean };
+type CloneBase = { name: string; accountCode: string | null; registrationNumber: string | null; vatNumber: string | null; mainTelephone: string | null; mainEmail: string | null; website: string | null; notes: string | null; paymentTermId: string | null; currencyCode: string };
+const CLONE_CONTACT_SELECT = { firstName: true, lastName: true, position: true, telephone: true, mobile: true, email: true, notes: true, isPrimary: true } as const;
+const CLONE_ADDRESS_SELECT = { type: true, label: true, line1: true, line2: true, city: true, province: true, postalCode: true, countryCode: true, isPrimary: true } as const;
+export async function clonePartyToOtherKind(ctx: RequestContext, sourceKind: string, sourceId: string) {
+  if (sourceKind !== "customers" && sourceKind !== "suppliers") throw new Error("NOT_FOUND");
+  const targetKind: "customers" | "suppliers" = sourceKind === "customers" ? "suppliers" : "customers";
+  const targetWord = targetKind === "customers" ? "customer" : "supplier";
+  authorize(ctx, sourceKind, "READ", "view");
+  const companyId = authorize(ctx, targetKind, "WRITE", "create");
+  return prisma.$transaction(async (tx) => {
+    let base: CloneBase | null = null;
+    let contacts: CloneContact[] = [];
+    let addresses: CloneAddress[] = [];
+    if (sourceKind === "customers") {
+      const row = await tx.customer.findFirst({ where: { id: sourceId, companyId }, include: { contacts: { where: { active: true }, select: CLONE_CONTACT_SELECT, orderBy: { createdAt: "asc" } }, addresses: { where: { active: true }, select: CLONE_ADDRESS_SELECT, orderBy: { createdAt: "asc" } } } });
+      if (row) { base = row; contacts = row.contacts; addresses = row.addresses; }
+    } else {
+      const row = await tx.supplier.findFirst({ where: { id: sourceId, companyId }, include: { contacts: { where: { active: true }, select: CLONE_CONTACT_SELECT, orderBy: { createdAt: "asc" } }, addresses: { where: { active: true }, select: CLONE_ADDRESS_SELECT, orderBy: { createdAt: "asc" } } } });
+      if (row) { base = row; contacts = row.contacts; addresses = row.addresses; }
+    }
+    if (!base) throw new Error("NOT_FOUND");
+
+    const nameNormalized = normalized(base.name)!;
+    const codeNormalized = normalized(base.accountCode);
+    const [sameName, sameCode] = targetKind === "customers"
+      ? await Promise.all([
+          tx.customer.findFirst({ where: { companyId, nameNormalized, active: true }, select: { id: true } }),
+          codeNormalized ? tx.customer.findFirst({ where: { companyId, accountCodeNormalized: codeNormalized }, select: { id: true } }) : null,
+        ])
+      : await Promise.all([
+          tx.supplier.findFirst({ where: { companyId, nameNormalized, active: true }, select: { id: true } }),
+          codeNormalized ? tx.supplier.findFirst({ where: { companyId, accountCodeNormalized: codeNormalized }, select: { id: true } }) : null,
+        ]);
+    if (sameName) throw new StockError("PARTY_ALREADY_EXISTS", `There is already a ${targetWord} called "${base.name}".`);
+    const keepCode = Boolean(codeNormalized) && !sameCode;
+    const fields = {
+      companyId,
+      name: base.name,
+      nameNormalized,
+      accountCode: keepCode ? base.accountCode : null,
+      accountCodeNormalized: keepCode ? codeNormalized : null,
+      registrationNumber: base.registrationNumber,
+      vatNumber: base.vatNumber,
+      mainTelephone: base.mainTelephone,
+      mainEmail: base.mainEmail,
+      website: base.website,
+      notes: base.notes,
+      paymentTermId: base.paymentTermId,
+      currencyCode: base.currencyCode,
+    };
+    const created = targetKind === "customers" ? await tx.customer.create({ data: fields }) : await tx.supplier.create({ data: fields });
+    await tx.auditEvent.create({ data: audit(ctx, targetKind, created.id, "CREATE", undefined, JSON.parse(JSON.stringify({ ...created, clonedFrom: { kind: sourceKind, id: sourceId } }))) });
+
+    const parent = targetKind === "customers" ? "customer" : "supplier";
+    for (const address of addresses) {
+      const row = parent === "customer"
+        ? await tx.customerAddress.create({ data: { ...address, companyId, customerId: created.id } })
+        : await tx.supplierAddress.create({ data: { ...address, companyId, supplierId: created.id } });
+      await tx.auditEvent.create({ data: audit(ctx, `${parent}.addresses`, row.id, "CREATE", null, { parentId: created.id, ...row }) });
+    }
+    for (const contact of contacts) {
+      const row = parent === "customer"
+        ? await tx.customerContact.create({ data: { ...contact, companyId, customerId: created.id } })
+        : await tx.supplierContact.create({ data: { ...contact, companyId, supplierId: created.id } });
+      await tx.auditEvent.create({ data: audit(ctx, `${parent}.contacts`, row.id, "CREATE", null, { parentId: created.id, ...row }) });
+    }
+    return { id: created.id, name: created.name, kind: targetKind, contacts: contacts.length, addresses: addresses.length, accountCodeKept: keepCode || !codeNormalized };
+  });
 }
