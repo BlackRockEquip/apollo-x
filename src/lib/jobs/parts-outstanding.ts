@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
@@ -28,6 +29,12 @@ import { prisma } from "@/lib/prisma";
 // jobs and jobs flagged Return unrepaired (Job.returnedUnrepaired — a flag on
 // top of the job's normal status, added on the user's instruction) never count. This applies to
 // this list only — the RFQs table's own Parts outstanding column is unchanged.
+//
+// 2026-10-22, user request: "Parts Outstanding should only count from status Await Outwork / Parts and upwards." The
+// days-outstanding clock (outstandingSince, which also drives the dashboard's "overdue for parts") now starts when the job
+// reaches that stage, not when the part line was typed in during quoting: a line is dated from the later of (when it was
+// ordered / added) and (when its job first reached Await outwork / parts or later). A job created straight into that stage,
+// or with no status history, counts from when it was created.
 export type PartsOutstandingRow = {
   key: string;
   jobId: string;
@@ -62,9 +69,24 @@ export async function listPartsOutstanding(ctx: RequestContext): Promise<PartsOu
     select: {
       jobId: true, status: true, quantity: true, receivedQuantity: true, orderedAt: true, createdAt: true,
       orderedFromSupplier: { select: { id: true, name: true } },
-      job: { select: { jobNumber: true, draftNumber: true } },
+      job: { select: { jobNumber: true, draftNumber: true, createdAt: true } },
     },
   });
+
+  // When each job first reached the outstanding stage (earliest status change to one of OUTSTANDING_JOB_STATUSES).
+  const jobIds = Array.from(new Set(lines.map((line) => line.jobId)));
+  const reachedStage = new Map<string, Date>();
+  if (jobIds.length > 0) {
+    const reached = await prisma.$queryRaw<Array<{ jobId: string; since: Date }>>(Prisma.sql`
+      SELECT a."jobId" AS "jobId", MIN(a."createdAt") AS "since"
+      FROM "JobActivity" a
+      WHERE a."jobId" IN (${Prisma.join(jobIds)})
+        AND a."type"::text IN ('STATUS_CHANGED', 'JOB_REOPENED')
+        AND a."metadata"->>'to' IN (${Prisma.join([...OUTSTANDING_JOB_STATUSES])})
+      GROUP BY a."jobId"
+    `);
+    for (const row of reached) reachedStage.set(row.jobId, new Date(row.since));
+  }
 
   type Group = { jobId: string; jobNumber: string; supplierId: string | null; supplierName: string | null; fromStock: boolean; partLines: number; qty: number; since: Date | null };
   const groups = new Map<string, Group>();
@@ -74,7 +96,9 @@ export async function listPartsOutstanding(ctx: RequestContext): Promise<PartsOu
     const supplierId = line.orderedFromSupplier?.id ?? null;
     const fromStock = !supplierId && (line.status === "IN_STOCK" || line.status === "PICKED");
     const key = `${line.jobId}:${supplierId ?? (fromStock ? "stock" : "none")}`;
-    const since = line.orderedAt ?? line.createdAt;
+    const lineStart = line.orderedAt ?? line.createdAt;
+    const stageStart = reachedStage.get(line.jobId) ?? line.job.createdAt;
+    const since = lineStart > stageStart ? lineStart : stageStart;
     const group = groups.get(key) ?? { jobId: line.jobId, jobNumber: line.job.jobNumber ?? line.job.draftNumber, supplierId, supplierName: line.orderedFromSupplier?.name ?? null, fromStock, partLines: 0, qty: 0, since: null };
     group.partLines += 1;
     group.qty += qty;

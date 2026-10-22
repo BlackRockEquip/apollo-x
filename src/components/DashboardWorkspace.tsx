@@ -44,7 +44,7 @@ type DashboardData = {
   completedThisMonth: { count: number; previous: number; previousLabel: string } | null;
   jobsSummary: Record<string, number>;
   recentJobs: RecentJob[];
-  procurementOpen: number;
+  outworkOutstanding: number;
   pexStatus: Record<string, number>;
   supportTickets: Record<string, number>;
   analyticsSeries: AnalyticsSeries[];
@@ -70,6 +70,7 @@ type DashboardData = {
 // 2026-09-15 — "Refresh faster with changes": the 20-second silent poll
 // below (silent = no loading-state flip, so it doesn't blank the page).
 // 2026-09-18 — procurement-summary got a real count (open outwork + RFQs).
+// 2026-10-22 — now "Outstanding outwork": outwork still out with the supplier only (it links to the Outwork screen).
 // 2026-09-29 — Inventory alerts / Low stock cards removed.
 // 2026-10-01 — split out of dashboard/page.tsx, which is now a thin server
 // wrapper doing requireTenantPageAccess(ctx, "DASHBOARD_VIEW").
@@ -86,9 +87,9 @@ const KPI_LABEL: Record<string, string> = {
   "jobs-summary": "Completed this month",
   "wip-status-counts": "Jobs in progress",
   "outstanding-parts": "Parts outstanding",
-  "procurement-summary": "Open procurement",
+  "procurement-summary": "Outstanding outwork",
   "pex-status": "PEX units",
-  "support-tickets": "Support tickets",
+  "support-tickets": "Open support tickets",
 };
 
 const KPI_ICON: Record<string, { icon: ReactNode; tone: string }> = {
@@ -121,7 +122,7 @@ function widgetValue(key: string, data: DashboardData | null): string {
     case "outstanding-parts":
       return String(data?.partsOutstandingLineCount ?? 0);
     case "procurement-summary":
-      return String(data?.procurementOpen ?? 0);
+      return String(data?.outworkOutstanding ?? 0);
     default:
       return "—";
   }
@@ -205,6 +206,8 @@ function StatusBars({ rows, href }: { rows: Array<{ key: string; label: string; 
 }
 
 export function DashboardWorkspace() {
+  // 2026-10-22, dashboard check: the Recently updated jobs pills use the company's own status wording (Engineering differs).
+  const { industryBuild } = useTenantPermissions();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [widgets, setWidgets] = useState<Widget[]>([]);
@@ -402,7 +405,7 @@ export function DashboardWorkspace() {
               {recentJobs.slice(0, 6).map((job) => (
                 <Link key={job.id} href={`/jobs/${job.id}`} className="dash-row">
                   <div className="dash-row-main"><div className="dash-job">{job.jobNumber || "—"}</div><div className="dash-sub">{job.customer?.name || "—"}</div></div>
-                  <StatusPill status={job.status} />
+                  <StatusPill status={job.status} build={industryBuild} />
                 </Link>
               ))}
             </section>
@@ -420,8 +423,8 @@ export function DashboardWorkspace() {
           )}
           {on("support-tickets") && (
             <section className="dash-card dash-panel">
-              <header className="dash-panel-head"><div><h2>Support tickets</h2><p>By status</p></div><Link href="/support" className="dash-link">View all <ChevronRight size={12} /></Link></header>
-              {ticketRows.length === 0 ? <div className="dash-empty">No support tickets.</div> : <StatusBars rows={ticketRows} href="/support" />}
+              <header className="dash-panel-head"><div><h2>Open support tickets</h2><p>By status</p></div><Link href="/support" className="dash-link">View all <ChevronRight size={12} /></Link></header>
+              {ticketRows.length === 0 ? <div className="dash-empty">No open support tickets.</div> : <StatusBars rows={ticketRows} href="/support" />}
             </section>
           )}
         </div>

@@ -44,13 +44,16 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
   // WIDGET_HREF, so even on the rare account where it *did* show up it
   // wasn't clickable. Regated to match its real data source and wired up
   // below (procurementOpen) — see dashboard/page.tsx for the display side.
-  { key: "procurement-summary", label: "Procurement / outwork", module: ["PROCUREMENT", "OUTWORK"], permission: "JOBS_VIEW" },
+  //
+  // 2026-10-22, user request: the card is "Outstanding outwork" - it goes to the Outwork screen, so it counts
+  // outwork still out with the supplier (no RFQs) and needs the Outwork module.
+  { key: "procurement-summary", label: "Outstanding outwork", module: "OUTWORK", permission: "JOBS_VIEW" },
   // 2026-10-16, user request: "ETA cards can be built for everyone". Part of core
   // Jobs & WIP (not an optional module), so every industry build gets them. Both read
   // the job's Mechanic ETA date; jobs with no Mechanic ETA are ignored.
   { key: "upcoming-etas", label: "Upcoming ETAs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "overdue-etas", label: "Overdue ETAs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
-  { key: "support-tickets", label: "Support tickets", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
+  { key: "support-tickets", label: "Open support tickets", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
   { key: "notifications", label: "Notifications", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];
 
@@ -129,6 +132,31 @@ function bucketKeyFor(date: Date): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+// 2026-10-22, user request: "Completed jobs should take into account when the status says completed as well".
+// A job is completed when its status is Complete or Closed (the status is the truth: closedAt is not cleared when a
+// closed job is reopened, so a reopened job must not keep counting). The date it is placed on is the Delivery date, as
+// before; a completed job with no Delivery date falls back to when it was closed, then to when its status moved to
+// Complete, then to its last update, so it is still counted rather than silently dropped.
+async function loadCompletionDates(companyId: string, since: Date): Promise<Date[]> {
+  const rows = await prisma.$queryRaw<Array<{ doneAt: Date }>>(Prisma.sql`
+    SELECT "doneAt" FROM (
+      SELECT COALESCE(
+        j."deliveryDate",
+        j."closedAt",
+        MAX(a."createdAt") FILTER (WHERE a."type"::text IN ('STATUS_CHANGED', 'JOB_REOPENED') AND a."metadata"->>'to' = 'COMPLETE'),
+        j."updatedAt"
+      ) AS "doneAt"
+      FROM "Job" j
+      LEFT JOIN "JobActivity" a ON a."jobId" = j."id"
+      WHERE j."companyId" = ${companyId}
+        AND j."status"::text IN ('COMPLETE', 'CLOSED')
+      GROUP BY j."id"
+    ) done
+    WHERE "doneAt" >= ${since}
+  `);
+  return rows.map((row) => new Date(row.doneAt));
+}
+
 // One timestamp fetcher per metric — each just selects the single date
 // field that defines "when this happened" for that metric, scoped to the
 // trailing window; bucketing into months happens once, generically, in
@@ -151,21 +179,24 @@ function bucketKeyFor(date: Date): string {
 // missing the relevant one is simply excluded from that series, same as
 // jobs-completed already excluded jobs with no closedAt. support-tickets-
 // opened is untouched — it isn't a job metric and has neither field.
-const ANALYTICS_METRIC_FETCHERS: Record<DashboardAnalyticsMetricKey, (companyId: string, since: Date) => Promise<Date[]>> = {
+//
+// 2026-10-22, dashboard check: the support-ticket numbers follow the same visibility as the Support
+// page - people who can manage users see every ticket in the company, everyone else only the tickets
+// they reported themselves. `ownTicketsOnly` is that user's id (or null for "all tickets").
+const ANALYTICS_METRIC_FETCHERS: Record<DashboardAnalyticsMetricKey, (companyId: string, since: Date, ownTicketsOnly: string | null) => Promise<Date[]>> = {
   "jobs-created": async (companyId, since) =>
     (await prisma.job.findMany({ where: { companyId, dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
-  "jobs-completed": async (companyId, since) =>
-    (await prisma.job.findMany({ where: { companyId, deliveryDate: { gte: since }, closedAt: { not: null } }, select: { deliveryDate: true } })).map((row) => row.deliveryDate).filter((d): d is Date => d != null),
+  "jobs-completed": async (companyId, since) => loadCompletionDates(companyId, since),
   "warranty-jobs": async (companyId, since) =>
     (await prisma.job.findMany({ where: { companyId, type: "WARRANTY", dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
-  "support-tickets-opened": async (companyId, since) =>
-    (await prisma.supportTicket.findMany({ where: { companyId, tenantDeletedAt: null, createdAt: { gte: since } }, select: { createdAt: true } })).map((row) => row.createdAt),
+  "support-tickets-opened": async (companyId, since, ownTicketsOnly) =>
+    (await prisma.supportTicket.findMany({ where: { companyId, tenantDeletedAt: null, createdAt: { gte: since }, ...(ownTicketsOnly ? { reportedById: ownTicketsOnly } : {}) }, select: { createdAt: true } })).map((row) => row.createdAt),
 };
 
-async function buildMetricSeries(companyId: string, key: DashboardAnalyticsMetricKey) {
+async function buildMetricSeries(companyId: string, key: DashboardAnalyticsMetricKey, ownTicketsOnly: string | null) {
   const buckets = monthBuckets(ANALYTICS_SERIES_MONTHS);
   const since = buckets[0].start;
-  const dates = await ANALYTICS_METRIC_FETCHERS[key](companyId, since);
+  const dates = await ANALYTICS_METRIC_FETCHERS[key](companyId, since, ownTicketsOnly);
   const counts = new Map<string, number>(buckets.map((b) => [b.key, 0]));
   for (const date of dates) {
     const bucketKey = bucketKeyFor(date);
@@ -205,9 +236,10 @@ type EtaCard = { count: number; jobs: EtaJobRow[] };
 async function loadEtaCard(ctx: RequestContext, companyId: string, kind: "upcoming" | "overdue"): Promise<EtaCard> {
   const today = startOfTodayUtc();
   const horizon = new Date(today.getTime() + (ETA_UPCOMING_DAYS + 1) * DAY_MS);
+  // closedAt is deliberately not checked: it is not cleared when a closed job is reopened, so checking it hid every
+  // reopened job from these cards. The status list below already leaves out closed and cancelled jobs.
   const where: Prisma.JobWhereInput = {
     companyId,
-    closedAt: null,
     status: { notIn: [...ETA_FINISHED_STATUSES] },
     mechanicEtaDate: kind === "overdue" ? { not: null, lt: today } : { gte: today, lt: horizon },
   };
@@ -362,8 +394,10 @@ export async function getDashboardData(ctx: RequestContext) {
   const companyId = authorize(ctx);
   const { widgets, analyticsCharts } = await getDashboardConfig(ctx);
   const enabled = widgets.filter((row) => row.enabled).map((row) => row.key);
+  // Same ticket visibility as the Support page (see ANALYTICS_METRIC_FETCHERS above).
+  const ownTicketsOnly = ctx.tenantPermissions.has("USERS_MANAGE") ? null : ctx.userId;
 
-  const [jobsByStatus, recentJobs, pexOpen, tickets, procurementOpen] = await Promise.all([
+  const [jobsByStatus, recentJobs, pexOpen, tickets, outworkOutstanding] = await Promise.all([
     enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts")
       ? prisma.job.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
@@ -376,23 +410,16 @@ export async function getDashboardData(ctx: RequestContext) {
     // leg count here, matching PEX Tracking's own "chains" scope, not PEX
     // Stock's inventory scope.
     enabled.includes("pex-status")
-      ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null }, NOT: { status: "COMPLETED" } }, _count: { _all: true } })
+      ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null }, status: { notIn: ["COMPLETED", "SCRAPPED"] } }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("support-tickets")
-      ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId, tenantDeletedAt: null }, _count: { _all: true } })
+      // 2026-10-22, user request: only tickets still open - not Resolved or Closed.
+      ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId, tenantDeletedAt: null, status: { notIn: ["RESOLVED", "CLOSED"] }, ...(ownTicketsOnly ? { reportedById: ownTicketsOnly } : {}) }, _count: { _all: true } })
       : Promise.resolve([]),
-    // "Procurement / outwork" — see the widget def's comment above for why
-    // this needed fixing. "Open" = still needs following up: an outwork
-    // item not yet back from the supplier, or an RFQ that hasn't come back
-    // with a quote yet (job RFQs: anything short of QUOTED; general/job-less
-    // RFQs: anything short of RECEIVED — SKIPPED counts as open on both
-    // since it means "still expecting a phone/in-person quote", not done).
+    // "Outstanding outwork" (2026-10-22, was "Procurement / outwork" with RFQs added in): outwork items still
+    // out with the supplier - the same filter as the Outwork screen (anything not yet received).
     enabled.includes("procurement-summary")
-      ? Promise.all([
-          prisma.outworkItem.count({ where: { companyId, status: "SENT_OUT" } }),
-          prisma.jobRfqRequest.count({ where: { companyId, status: { not: "QUOTED" } } }),
-          prisma.generalRfqRequest.count({ where: { companyId, status: { not: "RECEIVED" } } }),
-        ]).then(([outwork, jobRfq, generalRfq]) => outwork + jobRfq + generalRfq)
+      ? prisma.outworkItem.count({ where: { companyId, status: "SENT_OUT" } })
       : Promise.resolve(0),
   ]);
 
@@ -405,7 +432,7 @@ export async function getDashboardData(ctx: RequestContext) {
     analyticsCharts.map(async (key) => ({
       key,
       label: DASHBOARD_ANALYTICS_METRIC_DEFS.find((def) => def.key === key)?.label ?? key,
-      points: await buildMetricSeries(companyId, key),
+      points: await buildMetricSeries(companyId, key, ownTicketsOnly),
     })),
   );
 
@@ -480,17 +507,15 @@ export async function getDashboardData(ctx: RequestContext) {
     : new Map<string, { id: string; jobNumber: string | null; draftNumber: string; customer: { name: string } | null }>();
   for (const row of partsOutstandingJobs) row.customerName = jobInfo.get(row.jobId)?.customer?.name ?? null;
 
-  // "Completed this month" — same definition as the chart's
-  // jobs-completed series (closed, bucketed by delivery date).
+  // "Completed this month" — same definition as the chart's jobs-completed series
+  // (status Complete or Closed, placed on the delivery date - see loadCompletionDates).
   let completedThisMonth: { count: number; previous: number; previousLabel: string } | null = null;
   if (jobsAccess) {
     const current = monthRange(0);
     const previous = monthRange(-1);
-    const [count, prev] = await Promise.all([
-      prisma.job.count({ where: { companyId, closedAt: { not: null }, deliveryDate: { gte: current.start, lt: current.end } } }),
-      prisma.job.count({ where: { companyId, closedAt: { not: null }, deliveryDate: { gte: previous.start, lt: previous.end } } }),
-    ]);
-    completedThisMonth = { count, previous: prev, previousLabel: previous.label };
+    const doneDates = await loadCompletionDates(companyId, previous.start);
+    const inMonth = (range: { start: Date; end: Date }) => doneDates.filter((date) => date >= range.start && date < range.end).length;
+    completedThisMonth = { count: inMonth(current), previous: inMonth(previous), previousLabel: previous.label };
   }
 
   // ETA cards — see ETA_* above.
@@ -529,7 +554,7 @@ export async function getDashboardData(ctx: RequestContext) {
       completedThisMonth,
       jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[statusLabels[row.status]] = row._count._all; return acc; }, {}),
       recentJobs,
-      procurementOpen,
+      outworkOutstanding,
       pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),
       supportTickets: tickets.reduce<Record<TicketStatus | string, number>>((acc, row) => { acc[String(row.status)] = row._count._all; return acc; }, {}),
       // 2026-09-15, user request: "add a linegraph that is customizable for
