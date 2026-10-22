@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FocusEvent } from "react";
-import { Loader2, Plus, Search, X } from "lucide-react";
+import { FileText, Loader2, Plus, Search, X } from "lucide-react";
+import { BlankDeliveryNoteDialog } from "@/components/BlankDeliveryNoteDialog";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { TablePrintButton } from "@/components/TablePrintButton";
 import { ScrollRestore } from "@/components/ScrollRestore";
@@ -43,6 +44,7 @@ export function OutworkAllWorkspace() {
   const [rows, setRows] = useState<OutworkRow[] | null>(null);
   const [error, setError] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [showBlankNote, setShowBlankNote] = useState(false); // 2026-10-22, user request: "Blank Delivery Note" button
   const [saving, setSaving] = useState(false);
 
   const [jobQuery, setJobQuery] = useState("");
@@ -152,9 +154,11 @@ export function OutworkAllWorkspace() {
       <span>{openCount} item{openCount === 1 ? "" : "s"}</span>
       <TablePrintButton tableId="outwork-all-table" title="Outwork" noun="item" />
       <TableColumnFilters tableId="outwork-all-table" storageKey="outwork-all" noun="item" />
+      <button type="button" className="quiet-button" onClick={() => setShowBlankNote(true)}><FileText size={14} /> Blank Delivery Note</button>
       <button className="gold-button" onClick={() => setShowAdd(true)}><Plus size={15} /> Create outwork</button>
     </div>
     {error && <div className="inline-error">{error}</div>}
+    {showBlankNote && <BlankDeliveryNoteDialog onClose={() => setShowBlankNote(false)} />}
     <ScrollRestore selector="[data-scroll='outwork-all']" storageKey="outwork-all" />
     <div className="data-table-wrap" data-scroll="outwork-all"><table id="outwork-all-table" className="data-table"><thead>
       <tr><th>Job</th><th>Supplier</th><th>Description</th><th>Qty</th><th>Status</th><th>Sent</th><th>Received</th><th>Days outstanding</th><th></th></tr>

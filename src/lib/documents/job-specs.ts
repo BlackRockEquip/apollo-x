@@ -474,3 +474,26 @@ export const buildPickSlipSpec: typeof buildPickSlipSpecRaw = (input) => clean(b
 export const buildOutworkDeliveryNoteSpec: typeof buildOutworkDeliveryNoteSpecRaw = (input) => clean(buildOutworkDeliveryNoteSpecRaw(input));
 
 export const buildFieldReportSpec: typeof buildFieldReportSpecRaw = (input) => clean(buildFieldReportSpecRaw(input));
+
+// 2026-10-22, user request: Outwork page > "Blank Delivery Note". A delivery note that is not built from a job: the user picks a
+// customer or supplier, types the job number and a PO reference (typed in - never pulled from a job), lists what is being
+// delivered and adds notes. Same look as the outwork / job delivery notes: party block, Description + Qty table, Notes and the
+// Dispatched by / Received by signature fields.
+export type BlankDeliveryNoteParty = { kind: "CUSTOMER" | "SUPPLIER"; name: string; tradingName?: string | null; addressLines: string[]; vatNumber?: string | null; telephone?: string | null };
+function buildBlankDeliveryNoteSpecRaw(input: { title: string; party: BlankDeliveryNoteParty; jobNumber: string; poReference: string; deliveryDate: string | null; items: Array<{ description: string; quantity: string }>; notes?: string }): DocSpec {
+  const { title, party } = input;
+  const partyLines = [party.name, party.tradingName && party.tradingName !== party.name ? party.tradingName : "", ...party.addressLines, party.vatNumber ? `VAT: ${party.vatNumber}` : "", party.telephone ? `Tel: ${party.telephone}` : ""].filter((line) => line && String(line).trim());
+  return {
+    title,
+    rightLines: [`Job ${input.jobNumber}`, `PO reference: ${input.poReference}`, `Delivery date: ${dateText(input.deliveryDate)}`],
+    blocks: [
+      { type: "heading", text: party.kind === "CUSTOMER" ? "Customer details" : "Supplier details" },
+      { type: "lines", lines: partyLines },
+      { type: "table", headers: ["Description", "Qty"], widths: [6, 1], center: [1], rows: input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]) },
+      { type: "heading", text: "Notes" },
+      { type: "paragraph", text: input.notes && input.notes.trim() ? input.notes : " \n \n " },
+      { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
+    ],
+  };
+}
+export const buildBlankDeliveryNoteSpec: typeof buildBlankDeliveryNoteSpecRaw = (input) => clean(buildBlankDeliveryNoteSpecRaw(input));
