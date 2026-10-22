@@ -30,7 +30,7 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
   const data = await listPexTracking(ctx, { q, status, page: 1, pageSize: 200 });
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Tracking</h1><p>Every PEX unit supplied and returned, linked pair by pair for full history and auditing. Looking for what&apos;s currently on the shelf? See PEX Stock instead.</p></div></header>
-    <section className="master-panel jobs-panel">
+    <section className="master-panel jobs-panel pex-tracking-panel">
       <div className="master-toolbar jobs-toolbar">
         <form id="pex-tracking-filter-form" method="GET" action="/pex-tracking" className="search-control inventory-search-control"><Search size={15} /><input type="text" name="q" placeholder="Search unit, customer, supply or return job" defaultValue={q} /></form>
         {/* 2026-09-23, user request: "make the pex tracking status for
@@ -54,7 +54,8 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
           same-day follow-up request, the status filter dropdown above and
           each row's own Status column (StatusPill.tsx) now treat the two
           the same way too — "Awaiting core" everywhere, not just here. */}
-      <section className="metric-grid compact">
+      {/* 2026-10-22, user request: smaller stats cards, all four on one row (see .pex-stat-row in globals.css). */}
+      <section className="pex-stat-row">
         <article className="metric-card compact"><span>To be delivered</span><strong>{data.counts.toBeDelivered}</strong></article>
         <article className="metric-card compact"><span>Outstanding at client</span><strong>{data.counts.outstanding}</strong></article>
         <article className="metric-card compact"><span>Received, awaiting inspection</span><strong>{data.counts.received}</strong></article>
