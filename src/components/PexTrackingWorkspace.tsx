@@ -69,7 +69,8 @@ export function PexTrackingWorkspace({ initial }: { initial: { items: TrackingRo
       <thead><tr><th>Client</th><th>Unit</th><th>Supply job</th><th>Return job</th><th>Status</th><th>Supply date</th><th>Return date</th><th>PO number</th><th></th></tr></thead>
       <tbody>
         {initial.items.map((item) => {
-          return <tr key={item.id}>
+          // 2026-10-22, user request: search as you type - see PexStockWorkspace; same fields the server search covers.
+          return <tr key={item.id} data-search={[item.unitDescription, item.customer?.name, item.customer?.tradingName, item.supplyJob?.jobNumber, item.supplyJob?.draftNumber, item.returnJob?.jobNumber, item.returnJob?.draftNumber].filter(Boolean).join(" ").toLowerCase()}>
               <td>{text(item.customer?.tradingName || item.customer?.name)}</td>
               <td>{text(item.unitDescription)}</td>
               <td className="mono">{item.supplyJob?.id ? <Link href={`/jobs/${item.supplyJob.id}`} className="table-action">{text(item.supplyJob.jobNumber || item.supplyJob.draftNumber)}</Link> : "—"}</td>

@@ -76,7 +76,7 @@ export function PexScrappedWorkspace({ initial, canUnscrap }: { initial: { items
         {initial.items.map((item) => {
           // A unit scrapped from PEX Stock has a return job; fall back to the supply job so the row always links somewhere.
           const job = item.returnJob ?? item.supplyJob ?? null;
-          return <tr key={item.id}>
+          return <tr key={item.id} data-search={[item.unitDescription, item.returnJob?.jobNumber, item.returnJob?.draftNumber, item.returnJob?.machineMake, item.returnJob?.machineModel, item.supplyJob?.jobNumber, item.supplyJob?.draftNumber].filter(Boolean).join(" ").toLowerCase()}>
             <td className="mono">{job?.id ? <Link href={`/jobs/${job.id}`} className="table-action">{text(job.jobNumber || job.draftNumber)}</Link> : "—"}</td>
             <td>{text(item.unitDescription)}</td>
             <td>{text(item.returnJob?.machineMake)}</td>

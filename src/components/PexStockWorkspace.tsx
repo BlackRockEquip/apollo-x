@@ -87,7 +87,8 @@ export function PexStockWorkspace({ initial }: { initial: { items: InventoryRow[
       <tbody>
         {items.map((item) => {
           const ready = item.returnJob?.status === "COMPLETE";
-          return <tr key={item.id}>
+          // 2026-10-22, user request: search as you type - the page's search box filters these rows in the browser (LiveSearchInput + TableColumnFilters) using data-search; same fields the server search covers.
+          return <tr key={item.id} data-search={[item.unitDescription, item.returnJob?.jobNumber, item.returnJob?.draftNumber, item.returnJob?.machineMake, item.returnJob?.machineModel, item.supplyJob?.jobNumber, item.supplyJob?.draftNumber].filter(Boolean).join(" ").toLowerCase()}>
               <td className="mono">{item.returnJob?.id ? <Link href={`/jobs/${item.returnJob.id}`} className="table-action">{text(item.returnJob.jobNumber || item.returnJob.draftNumber)}</Link> : "—"}</td>
               <td>{text(item.unitDescription)}</td>
               <td>{text(item.returnJob?.machineMake)}</td>

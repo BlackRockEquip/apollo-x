@@ -4,6 +4,8 @@ import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/pag
 import { listPexTracking } from "@/lib/pex/service";
 import { PexTrackingWorkspace } from "@/components/PexTrackingWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { LiveSearchInput } from "@/components/LiveSearchInput";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { TablePrintButton } from "@/components/TablePrintButton";
 
 export const dynamic = "force-dynamic";
@@ -27,23 +29,26 @@ export default async function PexTrackingPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "ALL";
-  const data = await listPexTracking(ctx, { q, status, page: 1, pageSize: 200 });
+  // 2026-10-22, user request: "both pex stock and tracking search bars, make them auto search as I type" - see pex-stock/page.tsx.
+  const trackingAll = await listPexTracking(ctx, { status, page: 1, pageSize: 200 });
+  const serverSearch = trackingAll.total > trackingAll.items.length;
+  const data = serverSearch && q ? await listPexTracking(ctx, { q, status, page: 1, pageSize: 200 }) : trackingAll;
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Tracking</h1><p>Every PEX unit supplied and returned, linked pair by pair for full history and auditing. Looking for what&apos;s currently on the shelf? See PEX Stock instead.</p></div></header>
-    <section className="master-panel jobs-panel pex-tracking-panel">
+    <section className="master-panel jobs-panel pex-panel">
       <div className="master-toolbar jobs-toolbar">
-        <form id="pex-tracking-filter-form" method="GET" action="/pex-tracking" className="search-control inventory-search-control"><Search size={15} /><input type="text" name="q" placeholder="Search unit, customer, supply or return job" defaultValue={q} /></form>
+        <form id="pex-tracking-filter-form" method="GET" action="/pex-tracking" className="search-control inventory-search-control"><Search size={15} /><LiveSearchInput tableId="pex-tracking-table" serverMode={serverSearch} name="q" placeholder="Search unit, customer, supply or return job" defaultValue={q} /></form>
         {/* 2026-09-23, user request: "make the pex tracking status for
             outstanding and awaiting core the same 'Awaiting Core'." Dropped
             the separate "Outstanding" option — selecting "Awaiting core"
             now matches both AWAIT_CORE and OUTSTANDING records (see
             listPexTracking's statusFilter), same merge as the Status
             column's own label (StatusPill.tsx). */}
-        <select name="status" defaultValue={status === "OUTSTANDING" ? "AWAIT_CORE" : status} form="pex-tracking-filter-form"><option value="ALL">All</option><option value="TO_BE_DELIVERED">To be delivered</option><option value="AWAIT_CORE">Awaiting core</option><option value="RECEIVED">Received</option><option value="IN_REPAIR">In repair</option></select>
-        <button type="submit" form="pex-tracking-filter-form" className="quiet-button">Apply</button>
+        <AutoSubmitSelect name="status" defaultValue={status === "OUTSTANDING" ? "AWAIT_CORE" : status} form="pex-tracking-filter-form"><option value="ALL">All</option><option value="TO_BE_DELIVERED">To be delivered</option><option value="AWAIT_CORE">Awaiting core</option><option value="RECEIVED">Received</option><option value="IN_REPAIR">In repair</option></AutoSubmitSelect>
+        {/* 2026-10-22, user request: no Apply button - the status dropdown filters as soon as it is picked. */}
         <span>{data.total} chain{data.total === 1 ? "" : "s"}</span>
         <TablePrintButton tableId="pex-tracking-table" title="PEX Tracking" noun="chain" />
-        <TableColumnFilters tableId="pex-tracking-table" storageKey="pex-tracking" noun="chain" />
+        <TableColumnFilters tableId="pex-tracking-table" storageKey="pex-tracking" noun="chain" initialSearch={serverSearch ? "" : q} />
       </div>
       {/* 2026-09-23, user report: "Pex tracking if status is awaiting core
           or outstanding, it is the same thing, so the stats cards can be

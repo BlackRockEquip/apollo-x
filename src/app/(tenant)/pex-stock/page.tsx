@@ -6,6 +6,8 @@ import { listPexInventory, listPexScrapped } from "@/lib/pex/service";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
 import { PexScrappedWorkspace } from "@/components/PexScrappedWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
+import { LiveSearchInput } from "@/components/LiveSearchInput";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { TablePrintButton } from "@/components/TablePrintButton";
 
 export const dynamic = "force-dynamic";
@@ -38,36 +40,43 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
     <Link href="/pex-stock?tab=scrapped" className={tab === "scrapped" ? "quiet-button active" : "quiet-button"}>Scrapped jobs</Link>
   </nav>;
   if (tab === "scrapped") {
-    const scrapped = await listPexScrapped(ctx, { q, page: 1, pageSize: 200 });
+    // 2026-10-22, user request: "both pex stock and tracking search bars, make them auto search as I type". Same approach as Jobs & WIP:
+    // load the list WITHOUT the search text and let the search box filter the rows in the browser as you type; only a list longer
+    // than one page load (200) falls back to searching on the server.
+    const scrappedAll = await listPexScrapped(ctx, { page: 1, pageSize: 200 });
+    const scrappedServerSearch = scrappedAll.total > scrappedAll.items.length;
+    const scrapped = scrappedServerSearch && q ? await listPexScrapped(ctx, { q, page: 1, pageSize: 200 }) : scrappedAll;
     return <div>
       <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that were scrapped as beyond repair. They no longer count as PEX stock; nothing is deleted, so the job and its history stay available here.</p></div></header>
       {tabs}
-      <section className="master-panel jobs-panel">
+      <section className="master-panel jobs-panel pex-panel">
         <div className="master-toolbar jobs-toolbar">
-          <form id="pex-scrapped-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><input type="hidden" name="tab" value="scrapped" /><input type="text" name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>
-          <button type="submit" form="pex-scrapped-filter-form" className="quiet-button">Apply</button>
+          <form id="pex-scrapped-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><input type="hidden" name="tab" value="scrapped" /><LiveSearchInput tableId="pex-scrapped-table" serverMode={scrappedServerSearch} name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>
           <span>{scrapped.total} scrapped unit{scrapped.total === 1 ? "" : "s"}</span>
           <TablePrintButton tableId="pex-scrapped-table" title="PEX Stock - Scrapped jobs" noun="unit" />
-          <TableColumnFilters tableId="pex-scrapped-table" storageKey="pex-scrapped" noun="unit" />
+          <TableColumnFilters tableId="pex-scrapped-table" storageKey="pex-scrapped" noun="unit" initialSearch={scrappedServerSearch ? "" : q} />
         </div>
         <PexScrappedWorkspace initial={scrapped} canUnscrap={ctx.tenantPermissions.has("PEX_STOCK_SCRAP")} />
       </section>
     </div>;
   }
-  const data = await listPexInventory(ctx, { q, status, page: 1, pageSize: 200 });
+  const stockAll = await listPexInventory(ctx, { status, page: 1, pageSize: 200 });
+  const serverSearch = stockAll.total > stockAll.items.length;
+  const data = serverSearch && q ? await listPexInventory(ctx, { q, status, page: 1, pageSize: 200 }) : stockAll;
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that have physically come back from a client and aren&apos;t out on a job yet — what&apos;s on the shelf right now. For the full supply → return history of every unit, see PEX Tracking.</p></div></header>
     {tabs}
-    <section className="master-panel jobs-panel">
+    <section className="master-panel jobs-panel pex-panel">
       <div className="master-toolbar jobs-toolbar">
-        <form id="pex-stock-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><input type="text" name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>
-        <select name="status" defaultValue={status} form="pex-stock-filter-form"><option value="ALL">All</option><option value="READY">Ready to go</option><option value="TO_BE_REPAIRED">To be repaired</option></select>
-        <button type="submit" form="pex-stock-filter-form" className="quiet-button">Apply</button>
+        <form id="pex-stock-filter-form" method="GET" action="/pex-stock" className="search-control inventory-search-control"><Search size={15} /><LiveSearchInput tableId="pex-stock-table" serverMode={serverSearch} name="q" placeholder="Search unit, job number or machine make/model" defaultValue={q} /></form>
+        {/* 2026-10-22, user request: the status dropdown filters as soon as it is picked - no Apply button (AutoSubmitSelect submits the form). */}
+        <AutoSubmitSelect name="status" defaultValue={status} form="pex-stock-filter-form"><option value="ALL">All</option><option value="READY">Ready to go</option><option value="TO_BE_REPAIRED">To be repaired</option></AutoSubmitSelect>
         <span>{data.totalCount} unit{data.totalCount === 1 ? "" : "s"}</span>
         <TablePrintButton tableId="pex-stock-table" title="PEX Stock" noun="unit" />
-        <TableColumnFilters tableId="pex-stock-table" storageKey="pex-stock" noun="unit" />
+        <TableColumnFilters tableId="pex-stock-table" storageKey="pex-stock" noun="unit" initialSearch={serverSearch ? "" : q} />
       </div>
-      <section className="metric-grid compact">
+      {/* 2026-10-22, user request: same compact one-row cards and table box as PEX Tracking (.pex-stat-row / .pex-panel in globals.css). */}
+      <section className="pex-stat-row">
         <article className="metric-card compact"><span>Total units in inventory</span><strong>{data.totalCount}</strong></article>
         <article className="metric-card compact"><span>To be repaired</span><strong>{data.toBeRepairedCount}</strong></article>
         <article className="metric-card compact"><span>Ready to go</span><strong>{data.readyCount}</strong></article>
