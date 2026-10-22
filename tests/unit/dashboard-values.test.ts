@@ -3,13 +3,13 @@ import type { RequestContext } from "@/lib/auth/context-types";
 
 // 2026-10-22 - dashboard values: what each card counts. Runs the real getDashboardData against a stand-in for the database and
 // checks the filters it asks for (completed = status Complete/Closed, Outstanding outwork = outwork only, open tickets only,
-// no scrapped PEX units, ETA cards not hidden by a stale closedAt).
+// the PEX tile counts PEX Stock, ETA cards not hidden by a stale closedAt).
 type Where = { where: Record<string, unknown> };
 const h = vi.hoisted(() => ({
   doneAt: [] as string[],
   jobCount: vi.fn<(args: unknown) => Promise<number>>(),
   outworkCount: vi.fn<(args: unknown) => Promise<number>>(),
-  pexGroupBy: vi.fn<(args: unknown) => Promise<unknown>>(),
+  pexCount: vi.fn<(args: unknown) => Promise<number>>(),
   ticketGroupBy: vi.fn<(args: unknown) => Promise<unknown>>(),
 }));
 
@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
     $queryRaw: async (query: { text: string }) => (query.text.includes('"doneAt"') ? h.doneAt.map((doneAt) => ({ doneAt: new Date(doneAt) })) : []),
     job: { groupBy: async () => [], findMany: async () => [], count: h.jobCount },
     outworkItem: { count: h.outworkCount },
-    pexRecord: { groupBy: h.pexGroupBy },
+    pexRecord: { count: h.pexCount },
     supportTicket: { groupBy: h.ticketGroupBy, findMany: async () => [] },
   },
 }));
@@ -35,8 +35,8 @@ import { getDashboardData } from "@/lib/dashboard/service";
 const ctx = {
   userId: "u1",
   companyId: "c1",
-  tenantPermissions: new Set(["DASHBOARD_VIEW", "JOBS_VIEW", "PEX_TRACKING_VIEW", "USERS_MANAGE"]),
-  moduleAccess: new Map([["DASHBOARD", "FULL"], ["JOBS_WIP", "FULL"], ["PEX_TRACKING", "FULL"], ["OUTWORK", "FULL"], ["NOTIFICATIONS", "FULL"]]),
+  tenantPermissions: new Set(["DASHBOARD_VIEW", "JOBS_VIEW", "PEX_STOCK_VIEW", "USERS_MANAGE"]),
+  moduleAccess: new Map([["DASHBOARD", "FULL"], ["JOBS_WIP", "FULL"], ["PEX_STOCK", "FULL"], ["OUTWORK", "FULL"], ["NOTIFICATIONS", "FULL"]]),
 } as unknown as RequestContext;
 
 describe("dashboard values", () => {
@@ -46,7 +46,8 @@ describe("dashboard values", () => {
     h.doneAt = [];
     h.jobCount.mockReset().mockResolvedValue(0);
     h.outworkCount.mockReset().mockResolvedValue(3);
-    h.pexGroupBy.mockReset().mockResolvedValue([{ status: "RECEIVED", _count: { _all: 1 } }]);
+    // total in stock, then the ready-to-go subset (the dashboard asks in that order)
+    h.pexCount.mockReset().mockResolvedValueOnce(7).mockResolvedValueOnce(3);
     h.ticketGroupBy.mockReset().mockResolvedValue([{ status: "OPEN", _count: { _all: 2 } }]);
   });
   afterEach(() => vi.useRealTimers());
@@ -70,10 +71,13 @@ describe("dashboard values", () => {
     expect(where.status).toEqual({ notIn: ["RESOLVED", "CLOSED"] });
   });
 
-  it("PEX units leave out Completed and Scrapped", async () => {
-    await getDashboardData(ctx);
-    const where = (h.pexGroupBy.mock.calls[0][0] as Where).where;
-    expect(where.status).toEqual({ notIn: ["COMPLETED", "SCRAPPED"] });
+  it("the PEX tile counts the units in PEX Stock, split into ready and to be repaired", async () => {
+    const { data } = await getDashboardData(ctx);
+    expect(data.pexStock).toEqual({ total: 7, ready: 3, toBeRepaired: 4 });
+    // Same scope as the PEX Stock page: came back from a client, not redeployed, not scrapped.
+    const where = (h.pexCount.mock.calls[0][0] as Where).where;
+    expect(where).toMatchObject({ companyId: "c1", consumedByJobId: null, status: { not: "SCRAPPED" }, returnJobId: { not: null } });
+    expect((h.pexCount.mock.calls[1][0] as Where).where).toEqual({ AND: [where, { returnJob: { status: "COMPLETE" } }] });
   });
 
   it("ETA cards do not depend on closedAt (it is not cleared when a job is reopened)", async () => {

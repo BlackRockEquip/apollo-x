@@ -3,6 +3,7 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { recordAudit } from "@/lib/audit/service";
 import { StockError } from "@/lib/http/errors";
+import { PEX_STOCK_READY_WHERE, pexStockBaseWhere } from "@/lib/pex/stock-scope";
 import { prisma } from "@/lib/prisma";
 import { allocateDocumentNumberTx } from "@/lib/master-data/service";
 import {
@@ -717,17 +718,8 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
   const companyId = requirePexStockRead(ctx);
   const query = pexInventoryListQuery.parse(raw);
   const contains = { contains: query.q, mode: "insensitive" as const };
-  // A return job still To be received is hidden (the unit hasn't come back
-  // yet) unless the record is a direct "Send to PEX Inventory" allocation
-  // (no supply job), which may be sent from To be received on purpose.
-  const arrivedOrDirect: Prisma.PexRecordWhereInput = { OR: [{ returnJob: { status: { not: "TO_BE_RECEIVED" } } }, { supplyJobId: null }] };
-  const baseWhere: Prisma.PexRecordWhereInput = {
-    companyId,
-    returnJobId: { not: null },
-    consumedByJobId: null,
-    status: { not: "SCRAPPED" },
-    ...arrivedOrDirect,
-  };
+  // What counts as "in PEX Stock" lives in lib/pex/stock-scope.ts (shared with the dashboard's PEX tile).
+  const baseWhere = pexStockBaseWhere(companyId);
   const statusFilter: Prisma.PexRecordWhereInput =
     query.status === "READY"
       ? { returnJob: { status: "COMPLETE" } }
@@ -765,7 +757,7 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
       take: query.pageSize,
     }),
     prisma.pexRecord.count({ where }),
-    prisma.pexRecord.count({ where: { AND: [baseWhere, { returnJob: { status: "COMPLETE" } }] } }),
+    prisma.pexRecord.count({ where: { AND: [baseWhere, PEX_STOCK_READY_WHERE] } }),
     prisma.pexRecord.count({ where: baseWhere }),
   ]);
   return { items, total, page: query.page, pageSize: query.pageSize, readyCount, toBeRepairedCount: totalCount - readyCount, totalCount };

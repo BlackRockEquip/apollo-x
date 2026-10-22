@@ -4,6 +4,7 @@ import { requireModule, requireTenant, requireTenantPermission } from "@/lib/aut
 import { prisma } from "@/lib/prisma";
 import { JOB_STATUS_LABELS, MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor } from "@/lib/jobs/ui";
 import { listPartsOutstanding } from "@/lib/jobs/parts-outstanding";
+import { PEX_STOCK_READY_WHERE, pexStockBaseWhere } from "@/lib/pex/stock-scope";
 
 export type DashboardWidgetKey =
   | "jobs-summary"
@@ -30,7 +31,9 @@ export const DASHBOARD_WIDGET_DEFS: Array<{ key: DashboardWidgetKey; label: stri
   { key: "jobs-summary", label: "Jobs summary", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "wip-status-counts", label: "WIP status counts", module: "JOBS_WIP", permission: "JOBS_VIEW" },
   { key: "recent-jobs", label: "Recent jobs", module: "JOBS_WIP", permission: "JOBS_VIEW" },
-  { key: "pex-status", label: "PEX status", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW" },
+  // 2026-10-22, user request: the PEX tile counts the units in PEX Stock and opens PEX Stock (not PEX Tracking), so the
+  // widget now needs the PEX Stock module and view permission, like the page it links to. Key kept for saved layouts.
+  { key: "pex-status", label: "PEX stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW" },
   { key: "outstanding-parts", label: "Outstanding parts", module: "JOB_PARTS", permission: "INVENTORY_VIEW" },
   // 2026-09-18 — user asked "What is procurement summary on dashboard?"
   // while investigating it: it turned out to be a dead stub. Its gate
@@ -397,21 +400,21 @@ export async function getDashboardData(ctx: RequestContext) {
   // Same ticket visibility as the Support page (see ANALYTICS_METRIC_FETCHERS above).
   const ownTicketsOnly = ctx.tenantPermissions.has("USERS_MANAGE") ? null : ctx.userId;
 
-  const [jobsByStatus, recentJobs, pexOpen, tickets, outworkOutstanding] = await Promise.all([
+  const [jobsByStatus, recentJobs, pexStock, tickets, outworkOutstanding] = await Promise.all([
     enabled.some((key) => key === "jobs-summary" || key === "wip-status-counts")
       ? prisma.job.groupBy({ by: ["status"], where: { companyId }, _count: { _all: true } })
       : Promise.resolve([]),
     enabled.includes("recent-jobs")
       ? prisma.job.findMany({ where: { companyId }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, jobNumber: true, status: true, customerReference: true, customerPo: true, component: true, machineModel: true, customer: { select: { name: true } } } })
       : Promise.resolve([]),
-    // Repointed (2026-09-09) from the old PexSupplyLink.returnStatus to
-    // PexRecord.status as part of the full PEX -> PexRecord replacement
-    // (see schema.prisma's PexRecord comment) — only records with a supply
-    // leg count here, matching PEX Tracking's own "chains" scope, not PEX
-    // Stock's inventory scope.
+    // 2026-10-22, user request: units in PEX Stock (the same definition as the PEX Stock page - see lib/pex/stock-scope.ts),
+    // split into Ready to go / To be repaired like that page's cards. Was PEX Tracking's chains by status.
     enabled.includes("pex-status")
-      ? prisma.pexRecord.groupBy({ by: ["status"], where: { companyId, supplyJobId: { not: null }, status: { notIn: ["COMPLETED", "SCRAPPED"] } }, _count: { _all: true } })
-      : Promise.resolve([]),
+      ? Promise.all([
+          prisma.pexRecord.count({ where: pexStockBaseWhere(companyId) }),
+          prisma.pexRecord.count({ where: { AND: [pexStockBaseWhere(companyId), PEX_STOCK_READY_WHERE] } }),
+        ]).then(([total, ready]) => ({ total, ready }))
+      : Promise.resolve({ total: 0, ready: 0 }),
     enabled.includes("support-tickets")
       // 2026-10-22, user request: only tickets still open - not Resolved or Closed.
       ? prisma.supportTicket.groupBy({ by: ["status"], where: { companyId, tenantDeletedAt: null, status: { notIn: ["RESOLVED", "CLOSED"] }, ...(ownTicketsOnly ? { reportedById: ownTicketsOnly } : {}) }, _count: { _all: true } })
@@ -555,7 +558,7 @@ export async function getDashboardData(ctx: RequestContext) {
       jobsSummary: jobsByStatus.reduce<Record<string, number>>((acc, row) => { acc[statusLabels[row.status]] = row._count._all; return acc; }, {}),
       recentJobs,
       outworkOutstanding,
-      pexStatus: pexOpen.reduce<Record<string, number>>((acc, row) => { acc[String(row.status ?? "UNKNOWN")] = row._count._all; return acc; }, {}),
+      pexStock: { total: pexStock.total, ready: pexStock.ready, toBeRepaired: pexStock.total - pexStock.ready },
       supportTickets: tickets.reduce<Record<TicketStatus | string, number>>((acc, row) => { acc[String(row.status)] = row._count._all; return acc; }, {}),
       // 2026-09-15, user request: "add a linegraph that is customizable for
       // different analytics ... user can select 3 line graph views."

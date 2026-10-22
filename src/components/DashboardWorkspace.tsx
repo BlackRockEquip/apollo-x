@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Activity, ArrowUpRight, ChevronRight, CircleCheck, Clock, FlaskConical, MessageSquare, Package, RefreshCw, ShoppingCart, Truck, TriangleAlert } from "lucide-react";
 import { CombinedAnalyticsChart, type AnalyticsSeriesPoint } from "@/components/AnalyticsLineChart";
-import { StatusPill, pexStatusLabel } from "@/components/StatusPill";
+import { StatusPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { machinistFieldLabels } from "@/lib/jobs/ui";
 
@@ -45,7 +45,7 @@ type DashboardData = {
   jobsSummary: Record<string, number>;
   recentJobs: RecentJob[];
   outworkOutstanding: number;
-  pexStatus: Record<string, number>;
+  pexStock: { total: number; ready: number; toBeRepaired: number };
   supportTickets: Record<string, number>;
   analyticsSeries: AnalyticsSeries[];
 };
@@ -79,7 +79,7 @@ const WIDGET_HREF: Record<string, string> = {
   "wip-status-counts": "/jobs?view=wip",
   "outstanding-parts": "/parts",
   "procurement-summary": "/outwork",
-  "pex-status": "/pex-tracking",
+  "pex-status": "/pex-stock",
   "support-tickets": "/support",
 };
 
@@ -88,7 +88,7 @@ const KPI_LABEL: Record<string, string> = {
   "wip-status-counts": "Jobs in progress",
   "outstanding-parts": "Parts outstanding",
   "procurement-summary": "Outstanding outwork",
-  "pex-status": "PEX units",
+  "pex-status": "Units in PEX stock",
   "support-tickets": "Open support tickets",
 };
 
@@ -118,7 +118,7 @@ function widgetValue(key: string, data: DashboardData | null): string {
     case "support-tickets":
       return String(sum(data?.supportTickets));
     case "pex-status":
-      return String(sum(data?.pexStatus));
+      return String(data?.pexStock?.total ?? 0);
     case "outstanding-parts":
       return String(data?.partsOutstandingLineCount ?? 0);
     case "procurement-summary":
@@ -247,14 +247,11 @@ export function DashboardWorkspace() {
   const partsJobs = data?.partsOutstandingJobs ?? [];
   const recentJobs = data?.recentJobs ?? [];
 
-  // PEX has two statuses that read as one ("Awaiting core"), so merge by label.
-  const pexRows = Object.entries(data?.pexStatus ?? {}).reduce<Array<{ key: string; label: string; count: number }>>((rows, [status, count]) => {
-    const label = pexStatusLabel(status);
-    const existing = rows.find((row) => row.label === label);
-    if (existing) existing.count += Number(count);
-    else rows.push({ key: status, label, count: Number(count) });
-    return rows;
-  }, []);
+  // 2026-10-22: the PEX panel shows what is in PEX Stock, split the way the PEX Stock page's cards are.
+  const pexRows = [
+    { key: "TO_BE_REPAIRED", label: "To be repaired", count: data?.pexStock?.toBeRepaired ?? 0 },
+    { key: "READY", label: "Ready to go", count: data?.pexStock?.ready ?? 0 },
+  ].filter((row) => row.count > 0);
   const ticketRows = Object.entries(data?.supportTickets ?? {}).map(([status, count]) => ({ key: status, label: TICKET_LABELS[status] ?? status, count: Number(count) }));
 
   return <div className="dash">
@@ -417,8 +414,8 @@ export function DashboardWorkspace() {
         <div className="dash-bottom">
           {on("pex-status") && (
             <section className="dash-card dash-panel">
-              <header className="dash-panel-head"><div><h2>PEX units</h2><p>By status</p></div><Link href="/pex-tracking" className="dash-link">View all <ChevronRight size={12} /></Link></header>
-              {pexRows.length === 0 ? <div className="dash-empty">No PEX units on the go.</div> : <StatusBars rows={pexRows} href="/pex-tracking" />}
+              <header className="dash-panel-head"><div><h2>PEX stock</h2><p>Units on the shelf, by status</p></div><Link href="/pex-stock" className="dash-link">View all <ChevronRight size={12} /></Link></header>
+              {pexRows.length === 0 ? <div className="dash-empty">No units in PEX stock.</div> : <StatusBars rows={pexRows} href="/pex-stock" />}
             </section>
           )}
           {on("support-tickets") && (
