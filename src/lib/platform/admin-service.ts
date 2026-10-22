@@ -11,6 +11,7 @@ import { isIndustryBuildId, type IndustryBuildId } from "@/lib/builds/definition
 import { grantInitialModules } from "@/lib/platform/industry-build-service";
 import { ensureDefaultSequences } from "@/lib/master-data/default-sequences";
 import { createTenantUserCore } from "@/lib/users/service";
+import { hashPassword } from "@/lib/security/passwords";
 
 type CompanyListQuery = {
   q?: string;
@@ -82,7 +83,7 @@ type EntitlementInput = {
 
 type PlatformUserQuery = { q?: string };
 
-type PlatformAuthorityCreateInput = { email: string; role: PlatformRole };
+type PlatformAuthorityCreateInput = { email: string; role: PlatformRole; displayName?: string; password?: string };
 type PlatformAuthorityUpdateInput = { assignmentId: string; role: PlatformRole; active: boolean };
 
 function requirePlatformCompaniesView(ctx: RequestContext) {
@@ -681,8 +682,21 @@ export async function grantPlatformAuthority(ctx: RequestContext, input: Platfor
   const email = input.email.trim().toLowerCase();
   if (!email) throw new Error("EMAIL_REQUIRED");
   return prisma.$transaction(async (tx) => {
-    const user = await tx.userIdentity.findUnique({ where: { email } });
-    if (!user) throw new Error("RESOURCE_NOT_FOUND");
+    let user = await tx.userIdentity.findUnique({ where: { email } });
+    let createdLogin = false;
+    if (!user) {
+      // 2026-10-22, user request: "it doesnt allow me to add a new user as platform administrator". Until now a platform
+      // role could only be granted to someone who already had a login (from a company), so a brand-new operator could
+      // never be added. With a name and a starting password supplied, the login is created here, with the role.
+      const displayName = (input.displayName ?? "").trim();
+      const password = input.password ?? "";
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("INVALID_EMAIL");
+      if (!displayName && !password) throw new Error("RESOURCE_NOT_FOUND");
+      if (displayName.length < 2) throw new Error("DISPLAY_NAME_TOO_SHORT");
+      if (password.length < 8) throw new Error("PASSWORD_TOO_SHORT");
+      user = await tx.userIdentity.create({ data: { email, displayName, passwordHash: await hashPassword(password), active: true } });
+      createdLogin = true;
+    }
     await assertNotActiveCompanyMember(tx, user.id);
     const assignment = await tx.platformRoleAssignment.upsert({
       where: { userId_role: { userId: user.id, role: input.role } },
@@ -700,7 +714,7 @@ export async function grantPlatformAuthority(ctx: RequestContext, input: Platfor
         entityId: assignment.id,
         action: "PLATFORM_AUTHORITY_GRANTED",
         correlationId: ctx.correlationId,
-        afterData: { affectedUserId: user.id, email: user.email, role: assignment.role, active: assignment.active },
+        afterData: { affectedUserId: user.id, email: user.email, role: assignment.role, active: assignment.active, loginCreated: createdLogin },
       },
     });
     return assignment;

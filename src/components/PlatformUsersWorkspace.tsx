@@ -50,6 +50,8 @@ export function PlatformUsersWorkspace() {
   const [profileForm, setProfileForm] = useState({ displayName: "", email: "", active: true });
   const [newRole, setNewRole] = useState<PlatformRole>(PlatformRole.SUPPORT_READ_ONLY);
   const [grantEmail, setGrantEmail] = useState("");
+  const [grantName, setGrantName] = useState("");
+  const [grantPassword, setGrantPassword] = useState("");
   const [grantRole, setGrantRole] = useState<PlatformRole>(PlatformRole.SUPPORT_READ_ONLY);
   const [saving, setSaving] = useState(false);
 
@@ -126,11 +128,11 @@ export function PlatformUsersWorkspace() {
   async function grantNew() {
     setSaving(true); setError(""); setNotice("");
     try {
-      const r = await fetch("/api/v1/platform/users/authority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: grantEmail, role: grantRole }) });
+      const r = await fetch("/api/v1/platform/users/authority", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: grantEmail, role: grantRole, displayName: grantName, password: grantPassword }) });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to grant platform authority.");
-      setNotice("Platform authority granted.");
-      setGrantEmail("");
+      setNotice("Platform user added.");
+      setGrantEmail(""); setGrantName(""); setGrantPassword("");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to grant platform authority.");
@@ -143,11 +145,14 @@ export function PlatformUsersWorkspace() {
     <>
       <section className="platform-grid">
         <article className="platform-card">
-          <h3>Grant platform role</h3>
+          <h3>Add platform user</h3>
+          <p className="muted small-line">Enter the person&apos;s name, email and a starting password to create their login with the platform role. If they already have a login, just enter their email and role.</p>
           <div className="platform-form-grid">
-            <label><span>User email</span><input type="email" required placeholder="operator@example.com" value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)} /></label>
+            <label><span>Name</span><input value={grantName} autoComplete="off" placeholder="Full name" onChange={(e) => setGrantName(e.target.value)} /></label>
+            <label><span>Email</span><input type="email" required autoComplete="off" placeholder="operator@example.com" value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)} /></label>
+            <label><span>Starting password</span><input type="password" autoComplete="new-password" placeholder="At least 8 characters" value={grantPassword} onChange={(e) => setGrantPassword(e.target.value)} /></label>
             <label><span>Role</span><select value={grantRole} onChange={(e) => setGrantRole(e.target.value as PlatformRole)}>{ROLE_OPTIONS.map((role) => <option key={role} value={role}>{PLATFORM_ROLE_LABELS[role]}</option>)}</select></label>
-            <div className="platform-form-actions wide"><button type="button" className="primary-button" disabled={saving || !grantEmail.trim()} onClick={() => void grantNew()}>Grant platform authority</button></div>
+            <div className="platform-form-actions wide"><button type="button" className="primary-button" disabled={saving || !grantEmail.trim()} onClick={() => void grantNew()}>Add platform user</button></div>
           </div>
         </article>
         <article className="platform-card">

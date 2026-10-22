@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     requireSameOrigin(request);
     const ctx = await requireRequestContext();
     const body = await request.json();
-    return NextResponse.json(await grantPlatformAuthority(ctx, { email: String(body.email ?? ""), role: body.role }), { status: 201 });
+    return NextResponse.json(await grantPlatformAuthority(ctx, { email: String(body.email ?? ""), role: body.role, displayName: typeof body.displayName === "string" ? body.displayName : undefined, password: typeof body.password === "string" ? body.password : undefined }), { status: 201 });
   } catch (error) {
     return apiError(error);
   }
