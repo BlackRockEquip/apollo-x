@@ -1898,8 +1898,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left}
       th{background:#f9fafb;border-bottom:2px solid #7a5c14}
       td.qty{text-align:center;font-weight:600}
+      .printed{margin:8px 0 0;font-size:12px;color:#4b5563;text-align:right}
     </style></head><body>
       <h1>${esc(documentTitles.PARTS_LIST)}${scope === "OUTSTANDING" ? " (outstanding parts)" : ""} — Job ${esc(jobLabel)}</h1>
+      <p class="printed">Printed: ${esc(new Date().toLocaleDateString("en-ZA"))}</p>
       <table><thead><tr><th>Part number</th><th>Description</th><th>Qty</th><th>Received</th><th>Order number</th><th>Supplier</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
     </body></html>`;
     w.document.write(withPoweredBy(html));

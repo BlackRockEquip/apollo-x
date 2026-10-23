@@ -367,12 +367,14 @@ export function partLinesForScope<T extends { quantity?: unknown; receivedQuanti
   return scope === "OUTSTANDING" ? lines.filter(isOutstandingPartLine) : lines;
 }
 
-function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; scope?: PartsListScope }): DocSpec {
+function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; scope?: PartsListScope; printedAt?: Date }): DocSpec {
   const { title, jobLabel, job, scope } = input;
   const lines = partLinesForScope(job.partLines, scope);
   const outstanding = scope === "OUTSTANDING";
   return {
     title: `${title}${outstanding ? " (outstanding parts)" : ""} — Job ${jobLabel}`,
+    // 2026-10-23, user request: the date the parts list was printed is on the sheet.
+    rightLines: [`Printed: ${(input.printedAt ?? new Date()).toLocaleDateString("en-ZA")}`],
     blocks: [
       lines.length > 0
         ? { type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(lines) }

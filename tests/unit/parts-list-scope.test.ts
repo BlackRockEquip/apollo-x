@@ -27,6 +27,8 @@ describe("parts list scope", () => {
     const out = buildPartsListSpec({ title: "Parts List", jobLabel: "J1", job: j, scope: "OUTSTANDING" });
     const rows = (spec: typeof all) => (spec.blocks[0] as { rows: string[][] }).rows;
     expect(all.title).toBe("Parts List — Job J1");
+    expect(all.rightLines).toEqual([`Printed: ${new Date().toLocaleDateString("en-ZA")}`]);
+    expect(buildPartsListSpec({ title: "Parts List", jobLabel: "J1", job: j, printedAt: new Date("2026-10-23T08:00:00Z") }).rightLines).toEqual([`Printed: ${new Date("2026-10-23T08:00:00Z").toLocaleDateString("en-ZA")}`]);
     expect(rows(all)).toHaveLength(2);
     expect(out.title).toBe("Parts List (outstanding parts) — Job J1");
     expect(rows(out).map((r) => r[0])).toEqual(["B"]);

@@ -10,12 +10,15 @@
 //  * Print windows built as HTML (job card, delivery note, pick slip, reports,
 //    table prints ...): wrap the finished HTML with withPoweredBy(html). The line
 //    is `position: fixed` so the browser repeats it on every printed page.
-//  * Server-made PDFs (lib/documents/pdf.ts): drawn in the footer of every page.
+//  * Server-made PDFs (lib/documents/pdf.ts): drawn in the footer of every page, with the web address on a second line.
 export const POWERED_BY_TEXT = "Powered by Flo X Integrations";
+// 2026-10-23, user request: the web address goes on the line below "Powered by Flo X Integrations".
+export const POWERED_BY_URL_TEXT = "www.floxintegrations.co.za";
+export const POWERED_BY_URL = "https://www.floxintegrations.co.za";
 
-export const POWERED_BY_CSS = `.fx-powered{position:fixed;left:0;right:0;bottom:2.5mm;text-align:center;font:9px Arial,Helvetica,sans-serif;color:#8a8f98;letter-spacing:.03em;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media screen{.fx-powered{position:static;margin:22px 0 8px}}`;
+export const POWERED_BY_CSS = `.fx-powered{position:fixed;left:0;right:0;bottom:2mm;text-align:center;font:9px/1.3 Arial,Helvetica,sans-serif;color:#8a8f98;letter-spacing:.03em;-webkit-print-color-adjust:exact;print-color-adjust:exact}.fx-powered a{display:block;color:inherit;text-decoration:none}@media screen{.fx-powered{position:static;margin:22px 0 8px}}`;
 
-export const POWERED_BY_HTML = `<div class="fx-powered">${POWERED_BY_TEXT}</div>`;
+export const POWERED_BY_HTML = `<div class="fx-powered">${POWERED_BY_TEXT}<a href="${POWERED_BY_URL}" target="_blank" rel="noopener">${POWERED_BY_URL_TEXT}</a></div>`;
 
 /**
  * 2026-10-21, user request: a platform admin can switch the line off per company

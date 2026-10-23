@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
-import { POWERED_BY_TEXT } from "@/lib/documents/powered-by";
+import { POWERED_BY_TEXT, POWERED_BY_URL_TEXT } from "@/lib/documents/powered-by";
 
 // Generic, dependency-light PDF renderer for the documents saved into a job's
 // folder (Job Card, Job History, Delivery Note, Pick Slip, Parts List …).
@@ -342,6 +342,9 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
     if (!letterhead?.hidePoweredBy) {
       const poweredWidth = regular.widthOfTextAtSize(POWERED_BY_TEXT, 8);
       p.drawText(POWERED_BY_TEXT, { x: (p.getWidth() - poweredWidth) / 2, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
+      // 2026-10-23: the web address on the line below.
+      const urlWidth = regular.widthOfTextAtSize(POWERED_BY_URL_TEXT, 8);
+      p.drawText(POWERED_BY_URL_TEXT, { x: (p.getWidth() - urlWidth) / 2, y: MARGIN - 16, size: 8, font: regular, color: MUTED });
     }
   });
 
