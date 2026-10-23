@@ -68,10 +68,6 @@ services:
           property: connectionString
       - key: SESSION_COOKIE_SECURE
         value: "true"
-      - key: BOOTSTRAP_PLATFORM_EMAIL
-        sync: false
-      - key: BOOTSTRAP_PLATFORM_PASSWORD
-        sync: false
       # Object storage — the platform-wide default bucket (used by any
       # company without its own per-company override on Platform >
       # Companies > [company] > Storage location). Must be filled in before

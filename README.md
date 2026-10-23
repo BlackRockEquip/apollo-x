@@ -23,7 +23,7 @@ Phase 2 adds tenant-scoped customers (branches, contacts and typed addresses), s
 2. Run `npm install`.
 3. Run `npm run prisma:generate`.
 4. Run `npm run prisma:migrate -- --name phase_1_foundation` against PostgreSQL.
-5. Set secure bootstrap credentials and run `npm run seed`.
+5. On a brand-new database only: temporarily add `BOOTSTRAP_PLATFORM_EMAIL` and `BOOTSTRAP_PLATFORM_PASSWORD` (12+ characters) to `.env`, run `npm run seed`, then delete both lines. Further platform users are added on Platform > Platform Users.
 6. Run `npm run dev`.
 
 The integration test suite requires a disposable PostgreSQL database in `DATABASE_URL_TEST` whose schema has been migrated. Never point it at production.
