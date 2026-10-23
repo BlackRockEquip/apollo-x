@@ -921,6 +921,8 @@ model CompanySettings {
   wipEmailBody           String?
   // 2026-10-21: platform admins can switch off the "Powered by Flo X Integrations" line printed in the footer of documents (Platform > Companies > company).
   hidePoweredBy          Boolean @default(false)
+  // 2026-10-23: platform admins can switch off the advertising block in this company's sidebar (Platform > Companies > company).
+  hideAds                Boolean @default(false)
 
   // Per-company file-storage override — added 2026-09-14, Super Admin
   // (Platform > Companies > [company]) setting only, not editable by the
@@ -2999,4 +3001,35 @@ model Proposal {
 
   @@index([status, createdAt])
   @@index([demoRequestId])
+}
+
+// 2026-10-23, user request: Platform > Advertising. Supplier ads shown in a block above the Reports pane in every company's
+// sidebar (Flo X's own card shows when no ad is live). Not tenant data: no companyId. `slots` holds up to 10 timeslots
+// (weekdays, from/to time, start/end date; South African time), `audience` + `companyIds` choose which companies see it.
+enum AdAudience {
+  ALL
+  SELECTED
+}
+
+model Advertisement {
+  id           String     @id @default(cuid())
+  advertiser   String
+  headline     String
+  body         String?
+  buttonText   String     @default("Learn more")
+  linkUrl      String
+  imageData    Bytes?
+  imageMime    String?
+  imageVersion Int        @default(0)
+  active       Boolean    @default(true)
+  audience     AdAudience @default(ALL)
+  companyIds   String[]   @default([])
+  slots        Json       @default("[]")
+  views        Int        @default(0)
+  clicks       Int        @default(0)
+  createdById  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([active])
 }

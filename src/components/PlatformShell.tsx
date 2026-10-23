@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, FileText, Headset, Inbox, LayoutDashboard, Settings, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
+import { Building2, FileText, Headset, Inbox, LayoutDashboard, Megaphone, Settings, ShieldCheck, SlidersHorizontal, Users } from "lucide-react";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { LogoutButton } from "@/components/LogoutButton";
 import { ChangePasswordButton } from "@/components/ChangePasswordButton";
@@ -30,6 +30,8 @@ const NAV = [
   { href: "/platform/proposals", label: "Proposals", icon: FileText },
   // 2026-10-22, user request: the proposal price list / wording defaults, moved here from Platform Settings.
   { href: "/platform/proposal-setup", label: "Setup", icon: SlidersHorizontal },
+  // 2026-10-23, user request: supplier adverts shown in every company's sidebar above Reports, scheduled in timeslots.
+  { href: "/platform/advertising", label: "Advertising", icon: Megaphone },
   // 2026-09-22 — this used to point at "/platform" (the same href as
   // Overview above) because the real page didn't exist yet. Now it does
   // (platform/settings/page.tsx — platform-wide SMTP, used only for

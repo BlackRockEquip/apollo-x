@@ -37,6 +37,7 @@ type CompanySettingsInput = {
   // 2026-10-21: tick box on the company page — true hides the "Powered by Flo X Integrations" footer on this
   // company's printed documents and PDFs. Undefined = leave as stored.
   hidePoweredBy?: boolean;
+  hideAds?: boolean;
 };
 
 // 2026-10-16: the company's own letterhead address (a single PHYSICAL, primary
@@ -143,6 +144,7 @@ function settingsPatch(input: CompanySettingsInput | undefined, currency: string
     if (colour !== undefined) patch[key] = colour;
   }
   if (typeof s.hidePoweredBy === "boolean") patch.hidePoweredBy = s.hidePoweredBy;
+  if (typeof s.hideAds === "boolean") patch.hideAds = s.hideAds;
   const validity = finiteInt(s.quoteValidityDays);
   if (validity !== undefined) patch.quoteValidityDays = validity;
   const jurisdiction = s.defaultTaxJurisdiction?.trim();
@@ -295,6 +297,7 @@ export async function getPlatformCompanyDetail(ctx: RequestContext, companyId: s
           documentHeaderText: true,
           documentFooterText: true,
           hidePoweredBy: true,
+          hideAds: true,
           // Storage location (Super Admin setting) — never select
           // storageSecretAccessKey here, same write-only convention as
           // smtpPassword.

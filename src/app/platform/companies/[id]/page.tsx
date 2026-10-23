@@ -145,6 +145,11 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
               <input type="checkbox" name="hidePoweredBy" defaultChecked={!!company.settings?.hidePoweredBy} disabled={company.blackRockIncluded} style={{ width: "auto" }} />
               <span>Hide &ldquo;Powered by Flo X Integrations&rdquo; on this company&rsquo;s printed documents and PDFs</span>
             </label>
+            <label className="wide" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="hidden" name="hideAdsField" value="1" />
+              <input type="checkbox" name="hideAds" defaultChecked={!!company.settings?.hideAds} disabled={company.blackRockIncluded} style={{ width: "auto" }} />
+              <span>Hide the advertising block in this company&rsquo;s sidebar (the Flo X card is hidden too)</span>
+            </label>
             <div className="platform-form-actions"><button type="submit" className="primary-button" disabled={company.blackRockIncluded}>Save company</button></div>
           </form>
           {!company.blackRockIncluded && (

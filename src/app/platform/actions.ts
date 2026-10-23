@@ -55,6 +55,7 @@ function settingsFromForm(formData: FormData) {
     documentFooterText: opt(formData, "documentFooterText"),
     // Unticked checkboxes are absent from FormData, so the hidden marker says the field was on the form.
     hidePoweredBy: formData.has("hidePoweredByField") ? formData.get("hidePoweredBy") === "on" : undefined,
+    hideAds: formData.has("hideAdsField") ? formData.get("hideAds") === "on" : undefined,
   };
 }
 

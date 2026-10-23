@@ -16,6 +16,7 @@ import { SupportExitButton } from "@/components/SupportExitButton";
 import { NotificationBell } from "@/components/NotificationBell";
 import { SupportRequestDialog } from "@/components/SupportRequestDialog";
 import { BroadcastBanner } from "@/components/BroadcastBanner";
+import { SidebarAd } from "@/components/SidebarAd";
 import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavModuleReadOnly, settingsNavPermissionAllowed } from "@/lib/settings-nav";
 
 // 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
@@ -171,6 +172,9 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
         {settingsNavPermissionAllowed(context.tenantPermissions, DASHBOARD_ITEM.permission) && <Link href={DASHBOARD_ITEM.href} className={pathname === DASHBOARD_ITEM.href ? "nav-item active" : "nav-item"}><DASHBOARD_ITEM.icon size={18} /><span>{DASHBOARD_ITEM.label}</span></Link>}
         <nav>{topGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = isActiveGroup || expandedGroupKey === group.key; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; const active = item.href === bestHref; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</nav>
         <div className="sidebar-footer">
+          {/* 2026-10-23, user request: advertising block above the Reports pane (supplier ads, Flo X card when none is running;
+              hidden in support sessions and for companies with ads switched off - see SidebarAd.tsx). */}
+          {!context.supportAccessId && <SidebarAd />}
           {/* 2026-10-02 — Reports, above Settings (see REPORTS_ITEM's own
               comment above) — same plain nav-item treatment as the
               Dashboard item at the top of the sidebar, not a nav-group. */}
