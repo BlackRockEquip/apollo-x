@@ -2704,14 +2704,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
       .date-captured{font-size:13px;color:#444;text-align:right}
-      .supplier-block{margin-top:14px}
-      .supplier-name{font-weight:bold;font-size:14px;margin:0 0 2px}
-      .supplier-block p{font-size:13px;color:#444;margin:1px 0}
-      table{width:100%;border-collapse:collapse;margin-top:16px}
+      h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+      .two-col{display:flex;gap:24px;align-items:flex-start;margin-top:14px}
+      .two-col > div{flex:1;min-width:0}
+      .info-block .block-name{font-weight:bold;font-size:14px;margin:0 0 2px}
+      .info-block p{font-size:13px;color:#444;margin:1px 0}
+      table{width:100%;border-collapse:collapse;margin-top:24px}
       th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
       .checked-box{width:60px;text-align:center}
-      .machine-line{margin:14px 0 0;font-size:11px;font-weight:bold;color:#111}
-      .machine-line span{margin-right:28px}
       .vehicle-reg{margin-top:28px;font-size:13px}
       .vehicle-reg .line{display:inline-block;min-width:220px;border-bottom:1px solid #111;margin-left:8px}
       .sign-blocks{display:flex;gap:40px;margin-top:36px}
@@ -2728,12 +2728,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <div class="date-captured">Date captured: ${dateCapturedText}</div>
         </div>
       </div>
-      <div class="supplier-block">
-        <p class="supplier-name">${escapeHtml(deliveryNote.supplierName)}</p>
-        ${addressRows}
-        ${vatRow}
+      <div class="two-col">
+        <div class="info-block">
+          <h2>Supplier details</h2>
+          <p class="block-name">${escapeHtml(deliveryNote.supplierName)}</p>
+          ${addressRows}
+          ${vatRow}
+        </div>
+        <div class="info-block">
+          <h2>Machine details</h2>
+          <p>Make: ${escapeHtml(deliveryNote.make) || "—"}</p>
+          <p>Model: ${escapeHtml(deliveryNote.model) || "—"}</p>
+          <p>Serial: ${escapeHtml(deliveryNote.serial) || "—"}</p>
+        </div>
       </div>
-      <p class="machine-line"><span>Make: ${escapeHtml(deliveryNote.make) || "—"}</span><span>Model: ${escapeHtml(deliveryNote.model) || "—"}</span><span>Serial: ${escapeHtml(deliveryNote.serial) || "—"}</span></p>
       <table><thead><tr><th>Description</th><th>Quantity</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="vehicle-reg">Vehicle reg:<span class="line">&nbsp;</span></p>
       <div class="sign-blocks">
@@ -3191,7 +3199,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .two-col > div{flex:1;min-width:0}
       .info-block .block-name{font-weight:bold;font-size:14px;margin:0 0 2px}
       .info-block p{font-size:13px;color:#444;margin:1px 0}
-      table{width:100%;border-collapse:collapse;margin-top:16px}
+      table{width:100%;border-collapse:collapse;margin-top:24px}
       th,td{border:1px solid #ccc;padding:8px;text-align:left;font-size:13px}
       .qty-col{width:90px;text-align:center}
       .qty-input{width:64px;font-size:13px;border:1px solid #999;padding:3px;text-align:center}

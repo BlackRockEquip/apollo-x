@@ -11,14 +11,16 @@ import { POWERED_BY_TEXT } from "@/lib/documents/powered-by";
 export type DocBlock =
   | { type: "heading"; text: string }
   | { type: "paragraph"; text: string }
-  | { type: "lines"; lines: string[]; /** Small bold text (8.5pt) instead of the normal 9pt regular. */ bold?: boolean }
+  | { type: "lines"; lines: string[]; /** Small bold text (8.5pt) instead of the normal 9pt regular. */ bold?: boolean; /** Print the first line (e.g. the customer name) in bold, the rest regular. */ boldFirst?: boolean }
   | { type: "kv"; rows: [string, string][] }
   | { type: "table"; headers: string[]; rows: string[][]; widths?: number[]; center?: number[]; /** Text size in points (default 8.5); smaller for wide tables. */ size?: number }
   | { type: "twoCol"; left: DocBlock[]; right: DocBlock[] }
   | { type: "signatures"; labels: string[]; fields: string[] }
   /** Empty ruled lines to write on (e.g. the mechanic's notes on the Job Card). */
   | { type: "lined"; count: number }
-  | { type: "pageBreak" };
+  | { type: "pageBreak" }
+  /** Empty vertical space (points, default 12), e.g. between a details block and the table below it. */
+  | { type: "spacer"; height?: number };
 
 export type DocSpec = {
   /** Main heading, e.g. "Job History". */
@@ -199,13 +201,17 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
       case "lines": {
         const lineFont = block.bold ? bold : regular;
         const lineSize = block.bold ? 8.5 : 9;
-        for (const raw of block.lines.length ? block.lines : ["—"]) {
-          for (const line of wrap(raw, lineFont, lineSize, c.w)) {
+        (block.lines.length ? block.lines : ["—"]).forEach((raw, index) => {
+          // boldFirst: the first line (the name) is bold 9.5pt, the rest regular 9pt.
+          const first = Boolean(block.boldFirst) && index === 0;
+          const font = first ? bold : lineFont;
+          const size = first ? 9.5 : lineSize;
+          for (const line of wrap(raw, font, size, c.w)) {
             if (c.draw) ensure(12);
             y -= 11;
-            if (c.draw) text(line, c.x, lineSize, lineFont);
+            if (c.draw) text(line, c.x, size, font);
           }
-        }
+        });
         y -= 4;
         return;
       }
@@ -317,6 +323,9 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
       }
       case "pageBreak":
         if (c.draw) newPage();
+        return;
+      case "spacer":
+        y -= block.height ?? 12;
         return;
     }
   };

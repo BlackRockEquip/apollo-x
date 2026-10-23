@@ -14,7 +14,7 @@ vi.mock("@/lib/master-data/company-settings-service", () => ({ getCompanyLetterh
 vi.mock("@/lib/attachments/blob-store", () => ({ sanitizeSegment: (v: string) => v.replace(/[<>:"/\\|?*]/g, "_") }));
 
 import { renderBlankDeliveryNote } from "@/lib/outwork/blank-delivery-note";
-import { buildBlankDeliveryNoteSpec } from "@/lib/documents/job-specs";
+import { buildBlankDeliveryNoteSpec, buildJobDeliveryNoteSpec, buildOutworkDeliveryNoteSpec } from "@/lib/documents/job-specs";
 
 function ctxWith(permissions: string[], outwork = "FULL"): RequestContext {
   return { userId: "u1", companyId: "c1", tenantPermissions: new Set(permissions), moduleAccess: new Map([["OUTWORK", outwork]]) } as unknown as RequestContext;
@@ -33,12 +33,29 @@ describe("Blank delivery note", () => {
       title: "Delivery Note", party: { kind: "SUPPLIER", name: "Acme Hydraulics", addressLines: ["1 Main Rd"], vatNumber: "4123", telephone: "011 555" },
       jobNumber: "BRE1152", poReference: "PO-77", deliveryDate: "2026-10-22", items: [{ description: "Hydraulic ram", quantity: "2" }, { description: " ", quantity: "" }], notes: "Handle with care",
     });
-    expect(spec.rightLines).toEqual(expect.arrayContaining(["Job BRE1152", "PO reference: PO-77"]));
-    expect(spec.blocks).toContainEqual({ type: "heading", text: "Supplier details" });
-    expect(spec.blocks).toContainEqual({ type: "lines", lines: ["Acme Hydraulics", "1 Main Rd", "VAT: 4123", "Tel: 011 555"] });
+    // The delivery date and job number are top right; the PO reference sits to the right of the party details, under
+    // Commercial & logistics, like the job delivery note.
+    expect(spec.rightLines).toEqual(["Job BRE1152", `Delivery date: ${new Date("2026-10-22").toLocaleDateString("en-ZA")}`]);
+    const twoCol = spec.blocks[0] as { type: string; left: unknown[]; right: unknown[] };
+    expect(twoCol.type).toBe("twoCol");
+    expect(twoCol.left).toEqual([{ type: "heading", text: "Supplier details" }, { type: "lines", boldFirst: true, lines: ["Acme Hydraulics", "1 Main Rd", "VAT: 4123", "Tel: 011 555"] }]);
+    expect(twoCol.right).toEqual([{ type: "heading", text: "Commercial & logistics" }, { type: "lines", lines: ["PO reference: PO-77"] }]);
+    // Space between the details and the table.
+    expect(spec.blocks[1]).toEqual({ type: "spacer", height: 14 });
     expect(spec.blocks).toContainEqual(expect.objectContaining({ type: "table", headers: ["Description", "Qty"], rows: [["Hydraulic ram", "2"]] }));
     expect(spec.blocks).toContainEqual({ type: "paragraph", text: "Handle with care" });
     expect(spec.blocks).toContainEqual({ type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] });
+  });
+
+  it("uses the same template for the job and outwork delivery notes", () => {
+    const outwork = buildOutworkDeliveryNoteSpec({ title: "Outwork Delivery Note", note: { jobNumber: "BRE1152", supplierName: "Acme Hydraulics", supplierAddressLines: ["1 Main Rd"], supplierVat: null, dateCaptured: "2026-10-22", make: "CAT", model: "320", serial: "S1", items: [{ description: "Ram", quantity: 1 }] } });
+    expect(outwork.blocks[0]).toMatchObject({ type: "twoCol", left: [{ type: "heading", text: "Supplier details" }, { type: "lines", boldFirst: true }] });
+    expect(outwork.blocks[1]).toEqual({ type: "spacer", height: 14 });
+    expect(outwork.blocks[2]).toMatchObject({ type: "table", headers: ["Description", "Quantity", "Checked"] });
+
+    const job = buildJobDeliveryNoteSpec({ title: "Delivery Note", jobLabel: "BRE1152", job: { type: "WORKSHOP", status: "OPEN", customer: { name: "Beta Mining", addresses: [], contacts: [] }, partLines: [], outworkItems: [] }, form: { purchaseOrderNumber: "PO-9", deliveryDate: "2026-10-22" } as never });
+    expect(job.blocks[0]).toMatchObject({ type: "twoCol", left: [{ type: "heading", text: "Customer details" }, { type: "lines", boldFirst: true, lines: ["Beta Mining"] }], right: [{ type: "heading", text: "Commercial & logistics" }, { type: "lines", lines: ["Purchase order number: PO-9"] }] });
+    expect(job.blocks[1]).toEqual({ type: "spacer", height: 14 });
   });
 
   it("renders a PDF for a supplier, looked up in this company only", async () => {

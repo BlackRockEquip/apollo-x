@@ -11,7 +11,7 @@ const longText = z.string().max(20000);
 const flatBlock = z.discriminatedUnion("type", [
   z.object({ type: z.literal("heading"), text: shortText }),
   z.object({ type: z.literal("paragraph"), text: longText }),
-  z.object({ type: z.literal("lines"), lines: z.array(shortText).max(60), bold: z.boolean().optional() }),
+  z.object({ type: z.literal("lines"), lines: z.array(shortText).max(60), bold: z.boolean().optional(), boldFirst: z.boolean().optional() }),
   z.object({ type: z.literal("kv"), rows: z.array(z.tuple([shortText, longText])).max(60) }),
   z.object({
     type: z.literal("table"),
@@ -23,6 +23,7 @@ const flatBlock = z.discriminatedUnion("type", [
   z.object({ type: z.literal("signatures"), labels: z.array(shortText).min(1).max(3), fields: z.array(shortText).max(6) }),
   z.object({ type: z.literal("lined"), count: z.number().int().min(1).max(40) }),
   z.object({ type: z.literal("pageBreak") }),
+  z.object({ type: z.literal("spacer"), height: z.number().min(0).max(200).optional() }),
 ]);
 
 const block: z.ZodType<DocBlock> = z.union([

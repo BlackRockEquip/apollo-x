@@ -296,21 +296,62 @@ function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; j
   if (form.purchaseOrderNumber) commercial.push(`Purchase order number: ${form.purchaseOrderNumber}`);
   if (form.deliveryType) commercial.push(`Delivery type: ${words(form.deliveryType)}`);
   const description = [form.machineMake, form.machineModel, form.component, form.componentSerial].filter(Boolean).join(" · ");
-  return {
+  return deliveryNoteTemplate({
     title,
-    rightLines: [`Job ${jobLabel}`, `Delivery date: ${dateText(form.deliveryDate)}`],
-    blocks: [
-      {
-        type: "twoCol",
-        left: [{ type: "heading", text: "Customer details" }, { type: "lines", lines: [str(job.customer?.name) || "—", str(job.customer?.tradingName), ...addressLines, contact].filter(Boolean) }],
-        right: [{ type: "heading", text: "Commercial & logistics" }, { type: "lines", lines: commercial.length ? commercial : ["—"] }],
-      },
-      { type: "table", headers: ["Description", "Qty"], widths: [6, 1], center: [1], rows: input.items ? input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]) : [[description, "1"]] },
-      { type: "heading", text: "Notes" },
-      { type: "paragraph", text: input.notes && input.notes.trim() ? input.notes : " \n \n " },
-      { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
-    ],
-  };
+    jobLabel,
+    dateLabel: "Delivery date",
+    date: form.deliveryDate,
+    partyHeading: "Customer details",
+    partyLines: [str(job.customer?.name) || "—", str(job.customer?.tradingName), ...addressLines, contact],
+    rightHeading: "Commercial & logistics",
+    rightLines: commercial,
+    items: input.items ? input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]) : [[description, "1"]],
+    notes: input.notes,
+  });
+}
+
+// 2026-10-23, user request: "use the blank delivery note template throughout the system". ONE layout for every delivery note
+// (job, outwork and blank): title with the job number and date top right, the customer / supplier block on the left (name in
+// bold) next to a second block on the right (Commercial & logistics, or the machine details for outwork), a gap, then the
+// Description / Qty table, optional notes, any extra lines (e.g. vehicle reg) and the Dispatched by / Received by signatures.
+type DeliveryNoteTemplateInput = {
+  title: string;
+  jobLabel: string;
+  dateLabel: string;
+  date: string | null | undefined;
+  /** Extra right-hand header lines, e.g. a PO reference for the blank note. */
+  headerLines?: string[];
+  partyHeading: string;
+  partyLines: string[];
+  rightHeading: string;
+  rightLines: string[];
+  /** Table headers, default Description + Qty. */
+  headers?: string[];
+  widths?: number[];
+  center?: number[];
+  items: string[][];
+  /** undefined = no Notes section (outwork); a string (even empty) = Notes section with writing space when empty. */
+  notes?: string;
+  showNotes?: boolean;
+  after?: DocBlock[];
+};
+function deliveryNoteTemplate(input: DeliveryNoteTemplateInput): DocSpec {
+  const blocks: DocBlock[] = [
+    {
+      type: "twoCol",
+      left: [{ type: "heading", text: input.partyHeading }, { type: "lines", boldFirst: true, lines: input.partyLines.filter((line) => line && String(line).trim()) }],
+      right: [{ type: "heading", text: input.rightHeading }, { type: "lines", lines: input.rightLines.length ? input.rightLines : ["—"] }],
+    },
+    // Space between the details above and the table, so the two never touch.
+    { type: "spacer", height: 14 },
+    { type: "table", headers: input.headers ?? ["Description", "Qty"], widths: input.widths ?? [6, 1], center: input.center ?? [1], rows: input.items },
+  ];
+  if (input.showNotes !== false) {
+    blocks.push({ type: "heading", text: "Notes" }, { type: "paragraph", text: input.notes && input.notes.trim() ? input.notes : " \n \n " });
+  }
+  if (input.after?.length) blocks.push(...input.after);
+  blocks.push({ type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] });
+  return { title: input.title, rightLines: [`Job ${input.jobLabel}`, ...(input.headerLines ?? []), `${input.dateLabel}: ${dateText(input.date)}`], blocks };
 }
 
 // 2026-10-21, user request: Print Parts List can print the complete list or only the outstanding parts. "Outstanding" =
@@ -363,18 +404,22 @@ function buildOutworkDeliveryNoteSpecRaw(input: {
   note: { jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; make?: string; model?: string; serial?: string; items: Array<{ description: string; quantity: number }> };
 }): DocSpec {
   const { title, note } = input;
-  return {
+  return deliveryNoteTemplate({
     title,
-    rightLines: [`Job ${note.jobNumber}`, `Date captured: ${dateText(note.dateCaptured)}`],
-    blocks: [
-      { type: "lines", lines: [note.supplierName, ...note.supplierAddressLines, note.supplierVat ? `VAT: ${note.supplierVat}` : ""].filter(Boolean) },
-      // 2026-10-06 — Make / Model / Serial as one line of small bold text, not a table.
-      { type: "lines", bold: true, lines: [`Make: ${note.make || "—"}  ·  Model: ${note.model || "—"}  ·  Serial: ${note.serial || "—"}`] },
-      { type: "table", headers: ["Description", "Quantity", "Checked"], widths: [5, 1, 1], center: [1, 2], rows: note.items.map((item) => [item.description, String(item.quantity), ""]) },
-      { type: "paragraph", text: "Vehicle reg: ______________________________" },
-      { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
-    ],
-  };
+    jobLabel: note.jobNumber,
+    dateLabel: "Date captured",
+    date: note.dateCaptured,
+    partyHeading: "Supplier details",
+    partyLines: [note.supplierName, ...note.supplierAddressLines, note.supplierVat ? `VAT: ${note.supplierVat}` : ""],
+    rightHeading: "Machine details",
+    rightLines: [`Make: ${note.make || "—"}`, `Model: ${note.model || "—"}`, `Serial: ${note.serial || "—"}`],
+    headers: ["Description", "Quantity", "Checked"],
+    widths: [5, 1, 1],
+    center: [1, 2],
+    items: note.items.map((item) => [item.description, String(item.quantity), ""]),
+    showNotes: false,
+    after: [{ type: "spacer", height: 8 }, { type: "paragraph", text: "Vehicle reg: ______________________________" }],
+  });
 }
 
 // Field Report (field-service jobs only) — what was saved on the job: customer
@@ -483,18 +528,18 @@ export const buildFieldReportSpec: typeof buildFieldReportSpecRaw = (input) => c
 export type BlankDeliveryNoteParty = { kind: "CUSTOMER" | "SUPPLIER"; name: string; tradingName?: string | null; addressLines: string[]; vatNumber?: string | null; telephone?: string | null };
 function buildBlankDeliveryNoteSpecRaw(input: { title: string; party: BlankDeliveryNoteParty; jobNumber: string; poReference: string; deliveryDate: string | null; items: Array<{ description: string; quantity: string }>; notes?: string }): DocSpec {
   const { title, party } = input;
-  const partyLines = [party.name, party.tradingName && party.tradingName !== party.name ? party.tradingName : "", ...party.addressLines, party.vatNumber ? `VAT: ${party.vatNumber}` : "", party.telephone ? `Tel: ${party.telephone}` : ""].filter((line) => line && String(line).trim());
-  return {
+  const partyLines = [party.name, party.tradingName && party.tradingName !== party.name ? party.tradingName : "", ...party.addressLines, party.vatNumber ? `VAT: ${party.vatNumber}` : "", party.telephone ? `Tel: ${party.telephone}` : ""];
+  return deliveryNoteTemplate({
     title,
-    rightLines: [`Job ${input.jobNumber}`, `PO reference: ${input.poReference}`, `Delivery date: ${dateText(input.deliveryDate)}`],
-    blocks: [
-      { type: "heading", text: party.kind === "CUSTOMER" ? "Customer details" : "Supplier details" },
-      { type: "lines", lines: partyLines },
-      { type: "table", headers: ["Description", "Qty"], widths: [6, 1], center: [1], rows: input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]) },
-      { type: "heading", text: "Notes" },
-      { type: "paragraph", text: input.notes && input.notes.trim() ? input.notes : " \n \n " },
-      { type: "signatures", labels: ["Dispatched by", "Received by"], fields: ["Name", "Signature", "Date"] },
-    ],
-  };
+    jobLabel: input.jobNumber,
+    dateLabel: "Delivery date",
+    date: input.deliveryDate,
+    partyHeading: party.kind === "CUSTOMER" ? "Customer details" : "Supplier details",
+    partyLines,
+    rightHeading: "Commercial & logistics",
+    rightLines: input.poReference.trim() ? [`PO reference: ${input.poReference.trim()}`] : [],
+    items: input.items.filter((item) => item.description.trim() || item.quantity.trim()).map((item) => [item.description, item.quantity]),
+    notes: input.notes,
+  });
 }
 export const buildBlankDeliveryNoteSpec: typeof buildBlankDeliveryNoteSpecRaw = (input) => clean(buildBlankDeliveryNoteSpecRaw(input));

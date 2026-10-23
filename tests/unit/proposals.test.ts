@@ -50,7 +50,6 @@ describe("proposal maths", () => {
     expect(calc.monthlyTotals.sub).toBe(3645);
     expect(calc.monthlyTotals.vat).toBe(546.75);
     expect(calc.monthlyTotals.total).toBe(4191.75);
-    expect(calc.firstTwelveMonths).toBe(65941);
   });
   it("adds extra users and applies discounts before VAT", () => {
     const data = seed();
@@ -69,7 +68,6 @@ describe("proposal maths", () => {
     const calc = calcProposal(data);
     expect(calc.once).toHaveLength(0);
     expect(calc.monthly).toHaveLength(0);
-    expect(calc.firstTwelveMonths).toBe(0);
   });
   it("ignores unticked modules and bad numbers", () => {
     const data = seed();
@@ -98,13 +96,22 @@ describe("proposal document", () => {
   it("shows the totals, validity date and the signature block", () => {
     const html = renderProposalHtml(seed());
     expect(html).toContain("Valid until: 20 November 2026");
-    expect(html).toContain(formatMoney(65941));
+    expect(html).not.toContain("First 12 months");
+    expect(html).toContain("Once-off (incl. VAT)");
+    expect(html).toContain("Per month (incl. VAT)");
     expect(html).toContain("Signature and date");
   });
   it("makes a complete print page", () => {
     const page = renderProposalPrintPage(seed());
     expect(page.startsWith("<!doctype html>")).toBe(true);
     expect(page).toContain("window.print()");
+  });
+  it("puts an Initials box on every printed page and keeps each section whole", () => {
+    const page = renderProposalPrintPage(seed());
+    expect(page).toContain('<div class="initials">Initials</div>');
+    expect(page).toContain("position:fixed");
+    expect(page).toContain("break-inside:avoid");
+    expect(page).toContain('class="blk"');
   });
 });
 
