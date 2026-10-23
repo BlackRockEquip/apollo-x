@@ -204,8 +204,6 @@ export type ProposalCalc = {
   monthly: PriceRow[];
   onceTotals: Totals;
   monthlyTotals: Totals;
-  /** Once-off + 12 months of monthly fees, VAT included. */
-  firstTwelveMonths: number;
 };
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -238,7 +236,7 @@ export function calcProposal(data: ProposalData): ProposalCalc {
   }
   const onceTotals = totals(once, s.discountOnceOff, s.vatPercent);
   const monthlyTotals = totals(monthly, s.discountMonthly, s.vatPercent);
-  return { picks, once, monthly, onceTotals, monthlyTotals, firstTwelveMonths: r2(onceTotals.total + monthlyTotals.total * 12) };
+  return { picks, once, monthly, onceTotals, monthlyTotals };
 }
 
 export function formatMoney(n: number): string {

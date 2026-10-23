@@ -146,7 +146,6 @@ export function ProposalBuilder({
       ...calc.picks.map((p) => `- ${p.name} (${p.modules.length} modules)`),
       `Once-off incl. VAT: ${formatMoney(calc.onceTotals.total)}`,
       `Monthly incl. VAT: ${formatMoney(calc.monthlyTotals.total)}`,
-      `First 12 months incl. VAT: ${formatMoney(calc.firstTwelveMonths)}`,
     ];
     try { await navigator.clipboard.writeText(lines.join("\n")); setNotice("Summary copied."); } catch { setError("Copy is not available in this browser."); }
   }
@@ -263,7 +262,6 @@ export function ProposalBuilder({
               <div className="l"><span>Monthly (excl. VAT)</span><b>{formatMoney(calc.monthlyTotals.net)}</b></div>
               <div className="l"><span>Once-off (incl. VAT)</span><b>{formatMoney(calc.onceTotals.total)}</b></div>
               <div className="l"><span>Monthly (incl. VAT)</span><b>{formatMoney(calc.monthlyTotals.total)}</b></div>
-              <div className="l big"><span>First 12 months (incl. VAT)</span><b>{formatMoney(calc.firstTwelveMonths)}</b></div>
             </div>
           </div>
         </fieldset>
