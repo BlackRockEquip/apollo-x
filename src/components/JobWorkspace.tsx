@@ -3869,11 +3869,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // card and by the new-job form while the job type is Field service. The make input still adds a new make to the manufacturers list
   // when you leave it.
   const fieldMachineFields = (
-    <>
-      <div className="wide field-machine-row field-machine-row-5">
+    <div className="field-machine-rows">
+      <div className="field-machine-row field-machine-row-5">
         <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
           <span>Machine make</span>
-          <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
+          <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search or type new" /></div>
           {showMachineMakeOptions && machineMakeOptions.length > 0 && (
             <div className="selector-results">
               {machineMakeOptions.map((m) => <button key={m.id} type="button" onClick={() => { updateField("machineMake", m.name); setShowMachineMakeOptions(false); }}><strong>{m.name}</strong></button>)}
@@ -3885,16 +3885,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
         <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
       </div>
-      <div className="wide field-machine-row field-machine-row-3">
+      <div className="field-machine-row field-machine-row-3">
         <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
         <label><span>Component model</span><input value={form.componentModel} onChange={(e) => updateField("componentModel", e.target.value)} /></label>
         <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
       </div>
-    </>
+    </div>
   );
 
+  // 2026-10-26, user report: on a new Field service job the five machine fields were squeezed into one quarter of the screen. Field
+  // service uses a double-width Machine card and a double-width Job details card on the first row (Commercial & logistics below).
   const machineSection = (
-    <section className="detail-panel">
+    <section className={isFieldForm ? "detail-panel wide-panel" : "detail-panel"}>
       <header><div><h2>Machine / component details</h2></div></header>
       {/* 2026-10-01 — locked (not hidden) for mechanicFieldsLocked:
           per the user's choice, only Notes/Parts List/Outwork remain
@@ -3982,7 +3984,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   );
 
   const jobDetailsSection = (
-    <section className="detail-panel">
+    <section className={isFieldForm ? "detail-panel wide-panel" : "detail-panel"}>
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">

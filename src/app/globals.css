@@ -1609,9 +1609,11 @@ label:has(> input:disabled),
 a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disabled { cursor: not-allowed !important; }
 
 /* 2026-10-26, user request: field service jobs - machine / component fields in two rows:
-   row 1 Machine make, model, serial, Plant number, Hours (5 across); row 2 Component, model, serial (3 across). Fewer columns on narrow screens. */
+   row 1 Machine make, model, serial, Plant number, Hours (5 across); row 2 Component, model, serial (3 across).
+   The wrapper is a size container, so the rows drop to fewer columns when THEIR card is narrow (not just when the screen is). */
+.drawer-fields .field-machine-rows { grid-column: 1 / -1; display: grid; gap: 12px 14px; container-type: inline-size; min-width: 0; }
 .drawer-fields .field-machine-row { display: grid; gap: 12px 14px; min-width: 0; }
 .drawer-fields .field-machine-row-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .drawer-fields .field-machine-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (min-width: 1101px) and (max-width: 1350px) { .drawer-fields .field-machine-row-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .drawer-fields .field-machine-row-5, .drawer-fields .field-machine-row-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 600px) { .field-machine-row-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (max-width: 380px) { .field-machine-row-5, .field-machine-row-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
