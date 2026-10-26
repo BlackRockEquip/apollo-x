@@ -16,6 +16,17 @@ describe("Powered by Flo X Integrations footer", () => {
     expect(html).toContain(">www.floxintegrations.co.za</a>");
     expect(html.indexOf(POWERED_BY_TEXT)).toBeLessThan(html.indexOf("www.floxintegrations.co.za</a>"));
   });
+  it("reserves room at the bottom of every printed page so the line never sits on the content", () => {
+    const html = withPoweredBy("<!doctype html><html><head><style>@page{size:A4;margin:12mm}</style></head><body><p>Hi</p></body></html>");
+    expect(html).toContain('<table class="fx-wrap"><tbody><tr><td><p>Hi</p></td></tr></tbody><tfoot>');
+    expect(html).toContain("@media print{.fx-spacer{height:10mm}}");
+    expect(html.indexOf("fx-wrap")).toBeLessThan(html.indexOf('class="fx-powered"'));
+  });
+  it("leaves full-size sheets (@page margin 0) as they were", () => {
+    const html = withPoweredBy("<html><head><style>@page{size:A4;margin:0}</style></head><body><div class=\"sheet\">x</div></body></html>");
+    expect(html).not.toContain("fx-wrap");
+    expect(html).toContain('class="fx-powered"');
+  });
   it("copes with documents that have no style or body tag", () => {
     expect(withPoweredBy("<p>x</p>")).toContain(POWERED_BY_TEXT);
     expect(withPoweredBy("<html><head></head><body>x</body></html>")).toContain("<style>");
