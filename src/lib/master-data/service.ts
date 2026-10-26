@@ -122,7 +122,9 @@ export async function createMaster(ctx: RequestContext, kind: MasterKind, raw: u
         created=await tx.part.create({data:{...partFields,companyId}});
         break;
       }
-      case "storage-locations": { const v=locationInput.parse(input); if(v.parentId&&!await tx.storageLocation.findFirst({where:{id:v.parentId,companyId}})) throw new Error("PARENT_NOT_FOUND"); created=await tx.storageLocation.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
+      case "storage-locations": { const v=locationInput.parse(input); if(v.parentId&&!await tx.storageLocation.findFirst({where:{id:v.parentId,companyId}})) throw new Error("PARENT_NOT_FOUND"); // 2026-10-26: a code already used by this company (an inactive/"deleted" location still holds its code, and the default list hides it) gets a clear message instead of the generic duplicate error.
+        const sameCode=await tx.storageLocation.findFirst({where:{companyId,codeNormalized:normalized(v.code)!},select:{active:true}}); if(sameCode) throw new Error(sameCode.active?"LOCATION_CODE_EXISTS":"LOCATION_CODE_EXISTS_INACTIVE");
+        created=await tx.storageLocation.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
       case "services": { const v=serviceInput.parse(input); created=await tx.serviceItem.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,defaultCost:v.defaultCost==null?null:new Prisma.Decimal(v.defaultCost),defaultSellingPrice:v.defaultSellingPrice==null?null:new Prisma.Decimal(v.defaultSellingPrice)}}); break; }
       case "tax-codes": { const v=taxInput.parse(input); created=await tx.taxCode.create({data:{...v,companyId,codeNormalized:normalized(v.code)!,rate:new Prisma.Decimal(v.rate)}}); break; }
       case "commercial-terms": { const v=termInput.parse(input); created=await tx.commercialTerm.create({data:{...v,companyId,codeNormalized:normalized(v.code)!}}); break; }
