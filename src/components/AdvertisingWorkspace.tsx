@@ -6,6 +6,7 @@ import { ImagePlus, Plus, Trash2 } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { MAX_AD_IMAGE_BYTES, MAX_SLOTS, WEEKDAY_LABELS, localParts, type AdSlot } from "@/lib/ads/model";
 import type { AdCompanyOption, AdRow } from "@/lib/ads/service";
+import { SIDEBAR_AD_STYLES, SupplierAdCard } from "@/components/SidebarAd";
 
 // 2026-10-23, user request: Platform > Advertising. Left: the ads. Right: the selected ad - what it says, who sees it, its
 // picture and up to 10 timeslots (weekdays + times + a date range, South African time) - and a week preview of who shows when.
@@ -155,6 +156,23 @@ export function AdvertisingWorkspace() {
   const visibleCompanies = companies.filter((c) => !companyFilter.trim() || `${c.name} ${c.code}`.toLowerCase().includes(companyFilter.trim().toLowerCase()));
   const imageSrc = previewUrl ?? (row?.hasImage ? `/api/v1/ads/${row.id}/image?v=${row.imageVersion}` : null);
   const editing = selected !== null;
+  // Preview: the real sidebar card built from what is typed and the chosen picture, so the picture can be judged before saving.
+  const [imageInfo, setImageInfo] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (!imageSrc) { setImageInfo(null); return; }
+    let cancelled = false;
+    const probe = new window.Image();
+    probe.onload = () => { if (!cancelled) setImageInfo({ w: probe.naturalWidth, h: probe.naturalHeight }); };
+    probe.onerror = () => { if (!cancelled) setImageInfo(null); };
+    probe.src = imageSrc;
+    return () => { cancelled = true; };
+  }, [imageSrc]);
+  const imageWarning = imageInfo
+    ? imageInfo.w < 420 ? "This picture is small and may look soft in the sidebar. A width of 500 px or more is best."
+      : imageInfo.w / imageInfo.h > 6 ? "This picture is very wide, so it will appear as a thin strip."
+        : imageInfo.h / imageInfo.w > 1.6 ? "This picture is very tall, so it will appear narrow with white sides."
+          : ""
+    : "";
 
   return (
     <>
@@ -208,6 +226,25 @@ export function AdvertisingWorkspace() {
                       <small className="muted">PNG, JPG or WebP, under {Math.round(MAX_AD_IMAGE_BYTES / 1024)} KB. Any shape works - the picture is shown whole and scaled to fit the sidebar. Leave the headline, text and button empty to show just the picture (the whole picture is the link).</small>
                     </span>
                     <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { chooseFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                  </div>
+                </div>
+                <div className="adv-preview">
+                  <span className="adv-label">Preview — how it looks in a company's sidebar</span>
+                  <div className="adv-preview-row">
+                    <div className="adv-preview-sidebar">
+                      <style>{SIDEBAR_AD_STYLES}</style>
+                      <SupplierAdCard
+                        preview
+                        href="#"
+                        ad={{ id: "preview", advertiser: form.advertiser.trim() || "Advertiser", headline: form.headline.trim(), body: form.body.trim(), buttonText: form.buttonText.trim(), imageUrl: imageSrc }}
+                      />
+                    </div>
+                    <div className="adv-preview-notes">
+                      <p>{imageSrc ? (!form.headline.trim() && !form.body.trim() && !form.buttonText.trim() ? "Picture only: the whole picture is the link." : "Picture with text underneath.") : "No picture yet: the advertiser name shows on a blue banner."}</p>
+                      {imageInfo ? <p>Picture: {imageInfo.w} × {imageInfo.h} px{pendingFile ? `, ${Math.max(1, Math.round(pendingFile.size / 1024))} KB` : ""}. It is shown whole, scaled to fit.</p> : null}
+                      {imageWarning ? <p className="adv-preview-warn">{imageWarning}</p> : null}
+                      <p className="muted">Nothing is saved or shown to companies until you press Save ad.</p>
+                    </div>
                   </div>
                 </div>
                 <label><span>Show to</span>
@@ -316,6 +353,13 @@ const STYLES = `
 .adv-fields .wide,.adv-image{grid-column:1/-1}
 .adv-fields label{display:grid;gap:4px}.adv-fields label>span,.adv-label{font-size:10.5px;font-weight:800;color:var(--ink-500);text-transform:uppercase;letter-spacing:.06em}
 .adv-fields input,.adv-fields select,.adv-table input,.adv-companies-head input{min-height:36px;border:1px solid var(--ink-300);border-radius:7px;background:#fff;padding:6px 9px;font:inherit;width:100%}
+.adv-preview{grid-column:1/-1}
+.adv-preview-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:16px;margin-top:4px}
+.adv-preview-sidebar{flex:none;width:242px;box-sizing:border-box;padding:14px;border-radius:10px;background:var(--navy-950,#0c1a2c)}
+.adv-preview-sidebar .sb-ad{margin:0}
+.adv-preview-notes{min-width:200px;flex:1}
+.adv-preview-notes p{margin:0 0 7px;font-size:12px;line-height:1.45;color:var(--ink-700)}
+.adv-preview-notes .adv-preview-warn{color:#9a5b00;font-weight:600}
 .adv-image-row{display:flex;align-items:center;gap:12px;margin-top:4px}
 .adv-image-box{display:grid;flex:none;width:120px;height:44px;place-items:center;overflow:hidden;border:1px dashed var(--ink-300);border-radius:8px;background:var(--ink-50,#f4f6fa);color:var(--ink-500)}
 .adv-image-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
