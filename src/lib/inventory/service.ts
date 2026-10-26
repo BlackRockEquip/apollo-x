@@ -29,6 +29,7 @@ import { deriveStockState } from "@/lib/inventory/stock-state";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { normalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
+import { canSeePickSlipValue, estimatePickValue } from "@/lib/inventory/pick-slip-value";
 
 type Tx = Prisma.TransactionClient;
 type Quantity = Prisma.Decimal;
@@ -2993,7 +2994,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
     prisma.pickSlip.findMany({
       where,
       // Lines in the Parts list's order (a slip's lines all share one created time, so sort by the part line they came from).
-      include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } } }, orderBy: [{ jobPartLine: { createdAt: "asc" } }, { createdAt: "asc" }, { id: "asc" }] } },
+      include: { job: { include: { customer: true } }, lines: { include: { binLocation: { select: { code: true, name: true } }, part: { select: { defaultPurchaseCost: true } } }, orderBy: [{ jobPartLine: { createdAt: "asc" } }, { createdAt: "asc" }, { id: "asc" }] } },
       orderBy: { createdAt: "desc" },
       skip: (input.page - 1) * input.pageSize,
       take: input.pageSize,
@@ -3001,8 +3002,12 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
     prisma.pickSlip.count({ where }),
   ]);
   const supersededByPart = await supersededNumbersByPart(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.partId)));
+  // "Estimate Stock Price" column: only company admins, managers and stock controllers (who may see cost prices); a cancelled slip picked nothing.
+  const viewCost = canSeePickSlipValue(ctx);
   return {
+    canViewCost: viewCost,
     items: slips.map((ps) => ({
+      estimatedValue: viewCost && String(ps.status) !== "CANCELLED" ? estimatePickValue(ps.lines) : null,
       id: ps.id,
       jobId: ps.jobId,
       jobNumber: ps.job.jobNumber ?? ps.job.draftNumber,
