@@ -5,7 +5,7 @@
 // Who sees the column (user request 2026-10-26): company admins, managers and stock controllers - and only if they may see cost prices
 // at all (INVENTORY_VIEW_COST), so a company that took cost visibility away from one of these roles still hides it.
 const VALUE_ROLES = new Set(["COMPANY_ADMIN", "MANAGER", "STORE_CONTROLLER"]);
-export function canSeePickSlipValue(ctx: { tenantRole: string | null; tenantPermissions: Set<string> }): boolean {
+export function canSeePickSlipValue(ctx: { tenantRole: string | null; tenantPermissions: ReadonlySet<string> }): boolean {
   return ctx.tenantRole !== null && VALUE_ROLES.has(ctx.tenantRole) && ctx.tenantPermissions.has("INVENTORY_VIEW_COST");
 }
 
