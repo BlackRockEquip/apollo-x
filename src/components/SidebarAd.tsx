@@ -8,10 +8,57 @@ import { useEffect, useRef, useState } from "react";
 // Nothing is shown inside a platform support session, or for a company where ads are switched off (the server decides: it
 // answers hidden = true). The list is refreshed every few minutes so a timeslot starting or ending is picked up without a reload.
 
-type Ad = { id: string; advertiser: string; headline: string; body: string; buttonText: string; imageUrl: string | null };
+export type Ad = { id: string; advertiser: string; headline: string; body: string; buttonText: string; imageUrl: string | null };
 const ROTATE_MS = 12000;
 const REFRESH_MS = 5 * 60 * 1000;
 const FLOX_URL = "https://www.floxintegrations.co.za";
+
+/** The supplier ad card, shared by the sidebar and the platform's Advertising preview (preview = links do nothing). */
+export function SupplierAdCard({ ad, href, dots, preview = false }: { ad: Ad; href: string; dots?: { index: number; ids: string[] }; preview?: boolean }) {
+  // Only a picture (no headline, text or button): show the picture alone, scaled whole to the sidebar, all of it the link.
+  const imageOnly = Boolean(ad.imageUrl) && !ad.headline && !ad.body && !ad.buttonText;
+  const linkProps = { href: preview ? "#" : href, target: preview ? undefined : "_blank", rel: "noopener noreferrer sponsored", onClick: preview ? (e: React.MouseEvent) => e.preventDefault() : undefined };
+  const dotRow = dots ? dots.ids.map((id, i) => <i key={id} className={i === dots.index ? "on" : ""} />) : null;
+  if (imageOnly) {
+    return (
+      <div className="sb-ad sb-ad-photo" aria-label="Sponsored">
+        <a {...linkProps} title={ad.advertiser}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- ad pictures come from our own API, sizes are unknown */}
+          <img src={ad.imageUrl ?? ""} alt={ad.advertiser} />
+          <em>Sponsored</em>
+        </a>
+        {dotRow ? <div className="sb-ad-dots on-photo" aria-hidden="true">{dotRow}</div> : null}
+      </div>
+    );
+  }
+  return (
+    <div className="sb-ad sb-ad-supplier" aria-label="Sponsored">
+      <a className={`sb-ad-img${ad.imageUrl ? " has-img" : ""}`} {...linkProps}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- ad pictures come from our own API, sizes are unknown */}
+        {ad.imageUrl ? <img src={ad.imageUrl} alt={ad.advertiser} /> : <span>{ad.advertiser}</span>}
+        <em>Sponsored</em>
+      </a>
+      <div className="sb-ad-body">
+        {ad.headline ? <b>{ad.headline}</b> : null}
+        {ad.body ? <p>{ad.body}</p> : null}
+        {ad.buttonText ? <a className="sb-ad-cta" {...linkProps}>{ad.buttonText}</a> : null}
+        {dotRow ? <div className="sb-ad-dots" aria-hidden="true">{dotRow}</div> : null}
+        <small>Ad · Flo X Integrations</small>
+      </div>
+    </div>
+  );
+}
+
+export function FloxAdCard() {
+  return (
+    <div className="sb-ad sb-ad-flox">
+      <div className="sb-ad-tag">Flo X</div>
+      <div className="sb-ad-brand"><span>FX</span><b>Flo X Integrations</b></div>
+      <p>Modular management software for workshops. Need another module?</p>
+      <a className="sb-ad-gold" href={FLOX_URL} target="_blank" rel="noopener noreferrer">Talk to us</a>
+    </div>
+  );
+}
 
 export function SidebarAd() {
   const [state, setState] = useState<{ hidden: boolean; ads: Ad[] } | null>(null);
@@ -50,47 +97,19 @@ export function SidebarAd() {
   }, [ad]);
 
   if (!state || state.hidden) return null;
-  // Only a picture (no headline, text or button): show the picture alone, scaled whole to the sidebar, all of it the link.
-  const imageOnly = Boolean(ad?.imageUrl) && !ad?.headline && !ad?.body && !ad?.buttonText;
-
   return (
     <>
-      <style>{STYLES}</style>
-      {ad && imageOnly ? (
-        <div className="sb-ad sb-ad-photo" aria-label="Sponsored">
-          <a href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored" title={ad.advertiser}>
-            <img src={ad.imageUrl ?? ""} alt={ad.advertiser} />
-            <em>Sponsored</em>
-          </a>
-          {ads.length > 1 ? <div className="sb-ad-dots on-photo" aria-hidden="true">{ads.map((a, i) => <i key={a.id} className={i === index % ads.length ? "on" : ""} />)}</div> : null}
-        </div>
-      ) : ad ? (
-        <div className="sb-ad sb-ad-supplier" aria-label="Sponsored">
-          <a className={`sb-ad-img${ad.imageUrl ? " has-img" : ""}`} href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">
-            {ad.imageUrl ? <img src={ad.imageUrl} alt={ad.advertiser} /> : <span>{ad.advertiser}</span>}
-            <em>Sponsored</em>
-          </a>
-          <div className="sb-ad-body">
-            {ad.headline ? <b>{ad.headline}</b> : null}
-            {ad.body ? <p>{ad.body}</p> : null}
-            {ad.buttonText ? <a className="sb-ad-cta" href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">{ad.buttonText}</a> : null}
-            {ads.length > 1 ? <div className="sb-ad-dots" aria-hidden="true">{ads.map((a, i) => <i key={a.id} className={i === index % ads.length ? "on" : ""} />)}</div> : null}
-            <small>Ad · Flo X Integrations</small>
-          </div>
-        </div>
+      <style>{SIDEBAR_AD_STYLES}</style>
+      {ad ? (
+        <SupplierAdCard ad={ad} href={`/api/v1/ads/${ad.id}/click`} dots={ads.length > 1 ? { index: index % ads.length, ids: ads.map((x) => x.id) } : undefined} />
       ) : (
-        <div className="sb-ad sb-ad-flox">
-          <div className="sb-ad-tag">Flo X</div>
-          <div className="sb-ad-brand"><span>FX</span><b>Flo X Integrations</b></div>
-          <p>Modular management software for workshops. Need another module?</p>
-          <a className="sb-ad-gold" href={FLOX_URL} target="_blank" rel="noopener noreferrer">Talk to us</a>
-        </div>
+        <FloxAdCard />
       )}
     </>
   );
 }
 
-const STYLES = `
+export const SIDEBAR_AD_STYLES = `
 .sb-ad{margin:0 0 10px;border-radius:10px;overflow:hidden}
 .sb-ad-flox{padding:12px;background:linear-gradient(145deg,#12315c,#0c1a2c);border:1px solid rgba(255,255,255,.1)}
 .sb-ad-tag{font-size:8.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8ba0bd}
