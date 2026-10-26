@@ -12,7 +12,7 @@ import type { AdCompanyOption, AdRow } from "@/lib/ads/service";
 // Companies that have no ad at a given moment see Flo X's own card. Several ads in the same slot rotate.
 
 type Form = { advertiser: string; headline: string; body: string; buttonText: string; linkUrl: string; active: boolean; audience: "ALL" | "SELECTED"; companyIds: string[]; slots: AdSlot[] };
-const EMPTY: Form = { advertiser: "", headline: "", body: "", buttonText: "Learn more", linkUrl: "", active: true, audience: "ALL", companyIds: [], slots: [] };
+const EMPTY: Form = { advertiser: "", headline: "", body: "", buttonText: "", linkUrl: "", active: true, audience: "ALL", companyIds: [], slots: [] };
 const PALETTE = ["#7aa7ee", "#e5b64a", "#6fc4a0", "#c79bea", "#f0937a", "#8fd0e0"];
 
 function fromRow(row: AdRow): Form {
@@ -129,7 +129,7 @@ export function AdvertisingWorkspace() {
 
   async function remove() {
     if (!row) return;
-    if (!(await confirm({ title: "Delete ad", message: `Delete the ad "${row.headline}" for ${row.advertiser}? Its views and clicks are lost.`, confirmLabel: "Delete", tone: "danger" }))) return;
+    if (!(await confirm({ title: "Delete ad", message: `Delete the ad ${row.headline ? `"${row.headline}" ` : ""}for ${row.advertiser}? Its views and clicks are lost.`, confirmLabel: "Delete", tone: "danger" }))) return;
     const r = await fetch(`/api/v1/platform/ads/${row.id}`, { method: "DELETE" });
     if (!r.ok) { setError(errorText(await r.json(), "Unable to delete the ad.")); return; }
     setSelected(null); setForm(EMPTY); setNotice("Ad deleted.");
@@ -195,9 +195,9 @@ export function AdvertisingWorkspace() {
               <div className="adv-fields">
                 <label><span>Advertiser / supplier</span><input value={form.advertiser} maxLength={120} onChange={(e) => patch({ advertiser: e.target.value })} /></label>
                 <label><span>Button link</span><input value={form.linkUrl} maxLength={500} placeholder="https://" onChange={(e) => patch({ linkUrl: e.target.value })} /></label>
-                <label><span>Headline</span><input value={form.headline} maxLength={80} onChange={(e) => patch({ headline: e.target.value })} /></label>
-                <label><span>Button text</span><input value={form.buttonText} maxLength={24} onChange={(e) => patch({ buttonText: e.target.value })} /></label>
-                <label className="wide"><span>Text (one line)</span><input value={form.body} maxLength={160} onChange={(e) => patch({ body: e.target.value })} /></label>
+                <label><span>Headline (optional)</span><input value={form.headline} maxLength={80} onChange={(e) => patch({ headline: e.target.value })} /></label>
+                <label><span>Button text (optional)</span><input value={form.buttonText} maxLength={24} placeholder="e.g. Learn more" onChange={(e) => patch({ buttonText: e.target.value })} /></label>
+                <label className="wide"><span>Text, one line (optional)</span><input value={form.body} maxLength={160} onChange={(e) => patch({ body: e.target.value })} /></label>
                 <div className="adv-image">
                   <span className="adv-label">Image</span>
                   <div className="adv-image-row">
@@ -205,7 +205,7 @@ export function AdvertisingWorkspace() {
                     <span className="adv-image-actions">
                       <button type="button" className="quiet-button" onClick={() => fileInput.current?.click()}>{imageSrc ? "Replace" : "Choose image"}</button>
                       {imageSrc ? <button type="button" className="quiet-button" onClick={() => void removeImage()}>Remove</button> : null}
-                      <small className="muted">PNG, JPG or WebP, under {Math.round(MAX_AD_IMAGE_BYTES / 1024)} KB. About 3:1 wide works best.</small>
+                      <small className="muted">PNG, JPG or WebP, under {Math.round(MAX_AD_IMAGE_BYTES / 1024)} KB. Any shape works - the picture is shown whole and scaled to fit the sidebar. Leave the headline, text and button empty to show just the picture (the whole picture is the link).</small>
                     </span>
                     <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { chooseFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
                   </div>

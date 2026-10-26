@@ -97,7 +97,7 @@ function dataFrom(input: ReturnType<typeof adInputSchema.parse>) {
     advertiser: input.advertiser,
     headline: input.headline,
     body: input.body || null,
-    buttonText: input.buttonText || "Learn more",
+    buttonText: input.buttonText,
     linkUrl: normalizeAdLink(input.linkUrl) as string,
     active: input.active,
     audience: input.audience,

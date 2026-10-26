@@ -50,20 +50,30 @@ export function SidebarAd() {
   }, [ad]);
 
   if (!state || state.hidden) return null;
+  // Only a picture (no headline, text or button): show the picture alone, scaled whole to the sidebar, all of it the link.
+  const imageOnly = Boolean(ad?.imageUrl) && !ad?.headline && !ad?.body && !ad?.buttonText;
 
   return (
     <>
       <style>{STYLES}</style>
-      {ad ? (
+      {ad && imageOnly ? (
+        <div className="sb-ad sb-ad-photo" aria-label="Sponsored">
+          <a href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored" title={ad.advertiser}>
+            <img src={ad.imageUrl ?? ""} alt={ad.advertiser} />
+            <em>Sponsored</em>
+          </a>
+          {ads.length > 1 ? <div className="sb-ad-dots on-photo" aria-hidden="true">{ads.map((a, i) => <i key={a.id} className={i === index % ads.length ? "on" : ""} />)}</div> : null}
+        </div>
+      ) : ad ? (
         <div className="sb-ad sb-ad-supplier" aria-label="Sponsored">
-          <a className="sb-ad-img" href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">
+          <a className={`sb-ad-img${ad.imageUrl ? " has-img" : ""}`} href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">
             {ad.imageUrl ? <img src={ad.imageUrl} alt={ad.advertiser} /> : <span>{ad.advertiser}</span>}
             <em>Sponsored</em>
           </a>
           <div className="sb-ad-body">
-            <b>{ad.headline}</b>
+            {ad.headline ? <b>{ad.headline}</b> : null}
             {ad.body ? <p>{ad.body}</p> : null}
-            <a className="sb-ad-cta" href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">{ad.buttonText}</a>
+            {ad.buttonText ? <a className="sb-ad-cta" href={`/api/v1/ads/${ad.id}/click`} target="_blank" rel="noopener noreferrer sponsored">{ad.buttonText}</a> : null}
             {ads.length > 1 ? <div className="sb-ad-dots" aria-hidden="true">{ads.map((a, i) => <i key={a.id} className={i === index % ads.length ? "on" : ""} />)}</div> : null}
             <small>Ad · Flo X Integrations</small>
           </div>
@@ -92,7 +102,14 @@ const STYLES = `
 .sb-ad-gold:hover{background:#e0b74f}
 .sb-ad-supplier{background:#fff;color:#0c1a2c}
 .sb-ad-img{position:relative;display:flex;height:84px;align-items:flex-end;overflow:hidden;background:linear-gradient(120deg,#2674df,#12315c);text-decoration:none}
+.sb-ad-img.has-img{display:block;height:auto;background:#f3f5f9}
 .sb-ad-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sb-ad-img.has-img img{position:static;display:block;width:100%;height:auto;max-height:150px;object-fit:contain}
+.sb-ad-photo{position:relative;background:#fff;border:1px solid rgba(255,255,255,.12)}
+.sb-ad-photo a{position:relative;display:block;text-decoration:none}
+.sb-ad-photo img{display:block;width:100%;height:auto;max-height:210px;object-fit:contain;margin:0 auto}
+.sb-ad-photo em{position:absolute;top:6px;left:7px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.45);color:#fff;font-size:8px;font-style:normal;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.sb-ad-dots.on-photo{position:absolute;right:0;bottom:5px;left:0;margin:0;pointer-events:none}
 .sb-ad-img span{position:relative;padding:8px 10px;color:#fff;font-size:17px;font-weight:900;line-height:1.05;letter-spacing:-.01em}
 .sb-ad-img em{position:absolute;top:7px;left:9px;padding:2px 5px;border-radius:3px;background:rgba(0,0,0,.45);color:#fff;font-size:8px;font-style:normal;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
 .sb-ad-body{padding:9px 11px 10px}

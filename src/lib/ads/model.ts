@@ -45,9 +45,9 @@ const short = (max: number) => z.string().trim().max(max);
 export const adInputSchema = z
   .object({
     advertiser: short(120).min(1, "Enter the advertiser's name."),
-    headline: short(80).min(1, "Enter a headline."),
+    headline: short(80).optional().default(""),
     body: short(160).optional().default(""),
-    buttonText: short(24).optional().default("Learn more"),
+    buttonText: short(24).optional().default(""),
     linkUrl: z.string().trim().max(500),
     active: z.boolean().default(true),
     audience: z.enum(["ALL", "SELECTED"]).default("ALL"),

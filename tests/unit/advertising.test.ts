@@ -65,7 +65,13 @@ describe("timeslots (South African time)", () => {
 describe("ad validation", () => {
   it("accepts a complete ad and fills the defaults", () => {
     const ad = adInputSchema.parse(valid);
-    expect(ad).toMatchObject({ audience: "ALL", active: true, buttonText: "Learn more", companyIds: [] });
+    expect(ad).toMatchObject({ audience: "ALL", active: true, buttonText: "", companyIds: [] });
+  });
+
+  it("needs no headline or button text (a picture-only ad)", () => {
+    const ad = adInputSchema.parse({ advertiser: "HydroTech", linkUrl: "hydrotech.co.za", slots: [slot()] });
+    expect(ad).toMatchObject({ headline: "", body: "", buttonText: "" });
+    expect(adInputSchema.safeParse({ advertiser: "", linkUrl: "hydrotech.co.za" }).success).toBe(false);
   });
 
   it("allows at most ten timeslots", () => {
