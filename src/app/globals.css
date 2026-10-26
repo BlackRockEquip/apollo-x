@@ -82,7 +82,7 @@ a { color: inherit; text-decoration: none; }
 .login-form input:focus, .login-form select:focus, .support-form input:focus, .support-form select:focus { border-color: var(--blue-600); box-shadow: 0 0 0 3px var(--blue-100); }
 .primary-button { display: flex; min-height: 45px; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 8px; background: var(--blue-700); color: white; cursor: pointer; font-weight: 750; }
 .primary-button:hover { background: #0d4fae; }
-.primary-button:disabled { cursor: wait; opacity: .7; }
+.primary-button:disabled { cursor: not-allowed; opacity: .7; }
 .form-error { margin: 0; color: var(--danger); font-size: 12px; }
 /* 2026-09-22 — "Add n forgot password to the login screen" (LoginForm.tsx).
    Reads as a plain link, not a second button, so it doesn't compete with
@@ -373,7 +373,7 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .master-header { gap: 24px; }
 .gold-button { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:7px; border:1px solid #a97917; border-radius:7px; background:linear-gradient(#e0b74f,#c39224); padding:8px 13px; color:#17120a; cursor:pointer; font-size:12px; font-weight:800; box-shadow:0 1px 2px rgba(0,0,0,.12); }
 .gold-button:hover { background:#e0b74f; }
-.gold-button:disabled { cursor:wait; opacity:.65; }
+.gold-button:disabled { cursor:not-allowed; opacity:.65; }
 /* A section-header trigger button (e.g. "Add parts to Job", "Record
    outwork", "Send follow-up", "Request quotes from suppliers") — 2026-09-10,
    user request: these were using .quiet-button, whose plain-white/thin-border
@@ -385,7 +385,7 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
    .quiet-button/.table-action, so these read as distinct section controls. */
 .section-action-button { display:inline-flex; min-height:34px; align-items:center; gap:7px; border:1px solid var(--gold-600); border-radius:7px; background:#fbf2d7; padding:7px 12px; color:#5c4109; cursor:pointer; font-size:11.5px; font-weight:750; box-shadow:0 1px 2px rgba(15,23,42,.05); }
 .section-action-button:hover { background:#f7e8bd; }
-.section-action-button:disabled { cursor:wait; opacity:.6; }
+.section-action-button:disabled { cursor:not-allowed; opacity:.6; }
 .master-panel { overflow:hidden; border:1px solid var(--ink-150); border-radius:10px; background:white; box-shadow:0 2px 8px rgba(15,23,42,.04); }
 .master-toolbar { display:flex; min-height:52px; align-items:center; gap:9px; border-bottom:1px solid var(--ink-150); padding:10px 13px; flex-wrap:wrap; }
 .master-toolbar > span { margin-left:auto; color:var(--ink-500); font-size:11px; }
@@ -1592,3 +1592,26 @@ a.dash-card { color: inherit; text-decoration: none; }
 .pex-stat-row .metric-card span { align-self: auto; }
 .pex-stat-row .metric-card strong { font-size: 18px; line-height: 1.1; }
 .pex-panel .data-table-wrap { max-height: calc(100vh - 350px); }
+
+/* 2026-10-26, user request: disabled controls (a Save with nothing to save, a button that is busy, an upload that is running)
+   show the standard "not allowed" cursor, never the spinning "wait" cursor. One rule for the whole system; !important so it also
+   wins over per-button inline styles (e.g. an upload label that sets cursor:pointer). Enabled controls keep their own cursor. */
+button:disabled:not(.status-stepper-node),
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"],
+fieldset:disabled button,
+fieldset:disabled select,
+fieldset:disabled input,
+fieldset:disabled textarea,
+label:has(> input:disabled),
+a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disabled { cursor: not-allowed !important; }
+
+/* 2026-10-26, user request: field service jobs - machine / component fields in two rows:
+   row 1 Machine make, model, serial, Plant number, Hours (5 across); row 2 Component, model, serial (3 across). Fewer columns on narrow screens. */
+.drawer-fields .field-machine-row { display: grid; gap: 12px 14px; min-width: 0; }
+.drawer-fields .field-machine-row-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.drawer-fields .field-machine-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (min-width: 1101px) and (max-width: 1350px) { .drawer-fields .field-machine-row-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .drawer-fields .field-machine-row-5, .drawer-fields .field-machine-row-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -53,8 +53,9 @@ export function AdvertisingWorkspace() {
   const fileInput = useRef<HTMLInputElement>(null);
   const { confirm, dialog } = useConfirmDialog();
 
-  async function load(keep?: string | "new" | null) {
-    setLoading(true);
+  // silent = refresh the list in the background (no "Loading" flash, the open form is left as it is).
+  async function load(keep?: string | "new" | null, silent = false) {
+    if (!silent) setLoading(true);
     try {
       const r = await fetch("/api/v1/platform/ads", { cache: "no-store" });
       const b = await r.json();
@@ -66,12 +67,19 @@ export function AdvertisingWorkspace() {
         if (row) { setSelected(row.id); setForm(fromRow(row)); }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load the ads.");
+      if (!silent) setError(e instanceof Error ? e.message : "Unable to load the ads.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
   useEffect(() => { void load(); }, []);
+  // The screen keeps itself up to date: every 30 seconds and whenever the tab is shown again (live / scheduled labels, views, clicks).
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void load(undefined, true); };
+    const timer = setInterval(refresh, 30000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, []);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const row = ads.find((a) => a.id === selected) ?? null;
@@ -95,11 +103,11 @@ export function AdvertisingWorkspace() {
     setPreviewUrl(URL.createObjectURL(file));
   }
 
-  async function save() {
+  async function save(changes: Partial<Form> = {}, doneNotice = "Ad saved.") {
     setSaving(true); setError(""); setNotice("");
     try {
       const isNew = selected === "new";
-      const r = await fetch(isNew ? "/api/v1/platform/ads" : `/api/v1/platform/ads/${selected}`, { method: isNew ? "POST" : "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(form) });
+      const r = await fetch(isNew ? "/api/v1/platform/ads" : `/api/v1/platform/ads/${selected}`, { method: isNew ? "POST" : "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...form, ...changes }) });
       const b = await r.json();
       if (!r.ok) throw new Error(errorText(b, "Unable to save the ad."));
       const id = (b as AdRow).id;
@@ -110,8 +118,8 @@ export function AdvertisingWorkspace() {
         if (!up.ok) throw new Error(errorText(await up.json(), "The ad was saved, but the image could not be uploaded."));
       }
       setPendingFile(null); setPreviewUrl(null);
-      setNotice("Ad saved.");
-      await load(id);
+      setNotice(doneNotice);
+      await load(id, true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save the ad.");
     } finally {
@@ -125,7 +133,7 @@ export function AdvertisingWorkspace() {
     setError("");
     const r = await fetch(`/api/v1/platform/ads/${row.id}/image`, { method: "DELETE" });
     if (!r.ok) { setError(errorText(await r.json(), "Unable to remove the image.")); return; }
-    await load(row.id);
+    await load(row.id, true);
   }
 
   async function remove() {
@@ -134,7 +142,7 @@ export function AdvertisingWorkspace() {
     const r = await fetch(`/api/v1/platform/ads/${row.id}`, { method: "DELETE" });
     if (!r.ok) { setError(errorText(await r.json(), "Unable to delete the ad.")); return; }
     setSelected(null); setForm(EMPTY); setNotice("Ad deleted.");
-    await load();
+    await load(undefined, true);
   }
 
   // ---- week preview: this week, 2-hour bands, saved ads plus the unsaved edits of the open one
@@ -204,12 +212,12 @@ export function AdvertisingWorkspace() {
               <div className="adv-head">
                 <h3>{selected === "new" ? "New ad" : `Edit ad — ${row?.advertiser ?? ""}`}</h3>
                 <div className="adv-actions">
-                  {row ? <button type="button" className="quiet-button" onClick={() => patch({ active: !form.active })}>{form.active ? "Pause" : "Resume"}</button> : null}
+                  {row ? <button type="button" className="quiet-button" disabled={saving} onClick={() => void save({ active: !form.active }, form.active ? "Ad paused - companies no longer see it." : "Ad resumed.")}>{form.active ? "Pause" : "Resume"}</button> : null}
                   {row ? <button type="button" className="quiet-button danger" onClick={() => void remove()}><Trash2 size={13} /> Delete</button> : null}
                   <button type="button" className="gold-button" disabled={saving || !dirty} onClick={() => void save()}>{saving ? "Saving…" : "Save ad"}</button>
                 </div>
               </div>
-              {!form.active ? <p className="adv-paused">This ad is paused and will not show. Save to keep the change.</p> : null}
+              {!form.active ? <p className="adv-paused">This ad is paused and will not show to any company. Press Resume to show it again.</p> : null}
               <div className="adv-fields">
                 <label><span>Advertiser / supplier</span><input value={form.advertiser} maxLength={120} onChange={(e) => patch({ advertiser: e.target.value })} /></label>
                 <label><span>Button link</span><input value={form.linkUrl} maxLength={500} placeholder="https://" onChange={(e) => patch({ linkUrl: e.target.value })} /></label>

@@ -3863,6 +3863,36 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // dropdown straight away.
   const isFieldForm = form.type === "FIELD_SERVICE";
 
+  // 2026-10-26, user request: field service jobs lay the machine / component fields out as two rows -
+  // row 1: Machine make, Machine model, Machine serial, Plant number, Machine hours; row 2: Component, Component model, Component serial.
+  // (.field-machine-row-5 / -3 in globals.css; they drop to fewer columns on narrow screens.) Used by the field-service "Work requested"
+  // card and by the new-job form while the job type is Field service. The make input still adds a new make to the manufacturers list
+  // when you leave it.
+  const fieldMachineFields = (
+    <>
+      <div className="wide field-machine-row field-machine-row-5">
+        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
+          <span>Machine make</span>
+          <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
+          {showMachineMakeOptions && machineMakeOptions.length > 0 && (
+            <div className="selector-results">
+              {machineMakeOptions.map((m) => <button key={m.id} type="button" onClick={() => { updateField("machineMake", m.name); setShowMachineMakeOptions(false); }}><strong>{m.name}</strong></button>)}
+            </div>
+          )}
+        </label>
+        <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
+        <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
+        <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
+        <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
+      </div>
+      <div className="wide field-machine-row field-machine-row-3">
+        <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
+        <label><span>Component model</span><input value={form.componentModel} onChange={(e) => updateField("componentModel", e.target.value)} /></label>
+        <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
+      </div>
+    </>
+  );
+
   const machineSection = (
     <section className="detail-panel">
       <header><div><h2>Machine / component details</h2></div></header>
@@ -3871,6 +3901,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           editable for a Mechanic — see the hook comment above. */}
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
+        {isFieldForm ? fieldMachineFields : (<>
         <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
           <span>Machine make</span>
           <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
@@ -3902,6 +3933,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         {!isFieldForm && (<label><span>Part number</span><input value={form.componentPartNumber} onChange={(e) => updateField("componentPartNumber", e.target.value)} /></label>)}
         <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
         <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
+</>)}
       </div>
       </fieldset>
     </section>
@@ -4782,21 +4814,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
-        <label className="party-selector" onBlur={closeDropdownUnlessWithin(() => { setShowMachineMakeOptions(false); void commitMachineMake(); })}>
-          <span>Machine make</span>
-          <div><Search size={14} /><input value={form.machineMake} onChange={(e) => { updateField("machineMake", e.target.value); setShowMachineMakeOptions(true); }} onFocus={() => setShowMachineMakeOptions(true)} placeholder="Search manufacturers or type a new one" /></div>
-          {showMachineMakeOptions && machineMakeOptions.length > 0 && (
-            <div className="selector-results">
-              {machineMakeOptions.map((m) => <button key={m.id} type="button" onClick={() => { updateField("machineMake", m.name); setShowMachineMakeOptions(false); }}><strong>{m.name}</strong></button>)}
-            </div>
-          )}
-        </label>
-        <label><span>Machine model</span><input value={form.machineModel} onChange={(e) => updateField("machineModel", e.target.value)} /></label>
-        <label><span>Machine serial</span><input value={form.machineSerial} onChange={(e) => updateField("machineSerial", e.target.value)} /></label>
-        <label><span>Plant number</span><input value={form.plantNumber} onChange={(e) => updateField("plantNumber", e.target.value)} /></label>
-        <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={form.machineHours} onChange={(e) => updateField("machineHours", e.target.value)} /></label>
-        <label><span>Component</span><input value={form.component} onChange={(e) => updateField("component", e.target.value)} /></label>
-        <label><span>Component serial</span><input value={form.componentSerial} onChange={(e) => updateField("componentSerial", e.target.value)} /></label>
+        {fieldMachineFields}
       </div>
       </fieldset>
     </section>

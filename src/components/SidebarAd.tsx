@@ -6,11 +6,11 @@ import { useEffect, useRef, useState } from "react";
 // 2026-10-23, user request: an advertising block above the Reports pane in every company's sidebar. A platform admin schedules
 // supplier ads under Platform > Advertising; when no ad is live the block shows Flo X's own card. Several live ads take turns.
 // Nothing is shown inside a platform support session, or for a company where ads are switched off (the server decides: it
-// answers hidden = true). The list is refreshed every few minutes so a timeslot starting or ending is picked up without a reload.
+// answers hidden = true). The list is refreshed every minute (and when the browser tab is shown again) so a timeslot starting or ending is picked up without a reload.
 
 export type Ad = { id: string; advertiser: string; headline: string; body: string; buttonText: string; imageUrl: string | null };
 const ROTATE_MS = 12000;
-const REFRESH_MS = 5 * 60 * 1000;
+const REFRESH_MS = 60 * 1000; // a paused / changed ad disappears from the sidebar within a minute (and when the tab is shown again)
 const FLOX_URL = "https://www.floxintegrations.co.za";
 
 /** The supplier ad card, shared by the sidebar and the platform's Advertising preview (preview = links do nothing). */
@@ -79,7 +79,9 @@ export function SidebarAd() {
     }
     void load();
     const timer = setInterval(() => void load(), REFRESH_MS);
-    return () => { cancelled = true; clearInterval(timer); };
+    const onShow = () => { if (document.visibilityState === "visible") void load(); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => { cancelled = true; clearInterval(timer); document.removeEventListener("visibilitychange", onShow); };
   }, []);
 
   const ads = state?.ads ?? [];

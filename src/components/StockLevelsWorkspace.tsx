@@ -129,7 +129,7 @@ const BLANK_FORM: PartForm = {
 type PickEntry = { partId: string; partNumber: string; description: string; binLocationLabel: string | null; quantityAvailable: number; quantity: number };
 type JobOption = { id: string; jobNumber: string; customerName: string | null };
 type PickSlipLineData = { partNumber: string; supersededNumbers?: string; description: string; quantity: string; binLocationLabel: string | null };
-type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; lines: PickSlipLineData[] };
+type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; estimatedValue?: string | null; lines: PickSlipLineData[] };
 type BulkSearchRow = { partNumber: string; found: boolean; partId: string | null; description: string | null; binLocationLabel: string | null; quantityAvailable: string };
 // 2026-10-02 — Stock Take tab types. systemQty is a snapshot taken when the
 // location is opened for counting (for the printed sheet and the entry
@@ -395,6 +395,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [history, setHistory] = useState<PickSlipData[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [historyCanViewCost, setHistoryCanViewCost] = useState(false);
   // 2026-09-29 — "Delete slip" (user request: "add a delete slip button
   // and allocate stock back") — id of the slip currently being cancelled,
   // so its own row can show a spinner without blocking the others.
@@ -498,6 +499,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error?.message || "Unable to load picking slip history.");
       setHistory(body.items || []);
+      setHistoryCanViewCost(Boolean(body.canViewCost));
     } catch (e) { setHistoryError(e instanceof Error ? e.message : "Unable to load picking slip history."); }
     finally { setHistoryLoading(false); }
   }, []);
@@ -1184,16 +1186,16 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               by definition still active — no more Status column/pill,
               which only ever existed to distinguish a soft-cancelled row
               from an active one. */}
-          <p className="hint-text" style={{ padding: "12px 14px 0" }}>Every picking slip generated for this company, most recent first. Reprint shows it exactly as it would print today.</p>
+          <p className="hint-text" style={{ padding: "12px 14px 0" }}>Every picking slip generated for this company, most recent first. Reprint shows it exactly as it would print today.{historyCanViewCost ? " Estimate Stock Price is the quantity picked times each part's cost price today (a part with no cost price counts as nothing)." : ""}</p>
           {historyError ? <div className="inline-error">{historyError}</div> : null}
           <div className="data-table-wrap">
             <table className="data-table">
-              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
+              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th>{historyCanViewCost && <th className="numeric" title="Quantity picked x the parts' cost price today">Estimate Stock Price</th>}<th className="actions">Actions</th></tr></thead>
               <tbody>
                 {historyLoading ? (
-                  <tr><td colSpan={5} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={historyCanViewCost ? 6 : 5} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : history.length === 0 ? (
-                  <tr><td colSpan={5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
+                  <tr><td colSpan={historyCanViewCost ? 6 : 5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
                 ) : history.map((ps) => (
                   <tr key={ps.id}>
                     {/* 2026-10-02 — user report: this link "looks like a button
@@ -1208,6 +1210,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                     <td>{ps.customerName || "—"}</td>
                     <td>{new Date(ps.createdAt).toLocaleString()}</td>
                     <td>{ps.lines.length}</td>
+                    {historyCanViewCost && <td className="numeric">{formatMoney(ps.estimatedValue)}</td>}
                     <td className="actions">
                       <button type="button" className="table-action" onClick={() => setPickResult(ps)}><Printer size={14} /> Reprint</button>
                       {canManage && (
