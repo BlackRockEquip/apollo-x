@@ -21,10 +21,12 @@ export const POWERED_BY_CSS = `.fx-powered{position:fixed;left:0;right:0;bottom:
 // 2026-10-26, user report (Field Report print): the footer printed over the last lines of the page. `position: fixed` puts it inside
 // the printed page area (inside the @page margin), so content that runs to the bottom of a page ran underneath it. Fix: the
 // document body is wrapped in a one-cell table whose repeating footer row (tfoot) reserves room at the bottom of EVERY printed
-// page, and the fixed line sits in that room. Documents that set `@page { margin: 0 }` and lay out their own full-size sheet
+// page, and the fixed line sits in that room. (A real <table> is needed: Chrome only repeats a real tfoot on every page. The
+// print windows have their own `table{...}` / `td{...}` rules - borders, padding, font size, page-break-inside:avoid - so the wrapper
+// resets itself with `all:unset !important`, which keeps those rules away from it.) Documents that set `@page { margin: 0 }` and lay out their own full-size sheet
 // (Job Card, Job History) are left alone - wrapping them would push their sheet onto an extra page; they leave their own bottom
 // space. On screen the wrapper is invisible (no padding, no spacer).
-export const POWERED_BY_WRAP_CSS = `.fx-wrap{width:100%;border-collapse:collapse;border-spacing:0}.fx-wrap>tbody>tr>td,.fx-wrap>tfoot>tr>td{padding:0;border:0}.fx-spacer{height:0}@media print{.fx-spacer{height:10mm}}`;
+export const POWERED_BY_WRAP_CSS = `table.fx-wrap{all:unset!important;display:table!important;width:100%!important;border-collapse:collapse!important}table.fx-wrap>tbody>tr>td,table.fx-wrap>tfoot>tr>td{all:unset!important;display:table-cell!important}.fx-spacer{height:0}@media print{.fx-spacer{height:10mm}}`;
 
 /** True when the print window's own @page rule sets a zero margin (it draws its own full-size sheet). */
 function hasZeroPageMargin(html: string): boolean {

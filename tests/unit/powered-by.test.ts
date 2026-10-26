@@ -19,6 +19,7 @@ describe("Powered by Flo X Integrations footer", () => {
   it("reserves room at the bottom of every printed page so the line never sits on the content", () => {
     const html = withPoweredBy("<!doctype html><html><head><style>@page{size:A4;margin:12mm}</style></head><body><p>Hi</p></body></html>");
     expect(html).toContain('<table class="fx-wrap"><tbody><tr><td><p>Hi</p></td></tr></tbody><tfoot>');
+    expect(html).toContain("table.fx-wrap{all:unset!important");
     expect(html).toContain("@media print{.fx-spacer{height:10mm}}");
     expect(html.indexOf("fx-wrap")).toBeLessThan(html.indexOf('class="fx-powered"'));
   });
