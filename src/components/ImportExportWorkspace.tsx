@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Check, Download, Upload, X } from "lucide-react";
+import { ActivityExportCard } from "@/components/ActivityExportCard";
 import { CUSTOMER_IMPORT_FIELDS, JOB_IMPORT_FIELDS, PART_IMPORT_FIELDS, SUPPLIER_IMPORT_FIELDS, type ImportExportKind, type ImportFieldDef } from "@/lib/import-export/fields";
 
 // ---------------------------------------------------------------------------
@@ -639,6 +640,8 @@ export function ImportExportWorkspace() {
           </div>
         </div>
       </section>
+
+      <ActivityExportCard />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { PlatformStorageForm } from "@/components/PlatformStorageForm";
 import { ResetCompanyButton } from "@/components/ResetCompanyButton";
 import { CloneCompanyButton } from "@/components/CloneCompanyButton";
+import { DownloadActivityHistoryButton } from "@/components/DownloadActivityHistoryButton";
 import { countCompanyStoredFiles } from "@/lib/platform/storage-admin-service";
 import { countInlineFiles } from "@/lib/attachments/offload";
 import { accountIdFromR2Endpoint } from "@/lib/storage/profile";
@@ -265,6 +266,16 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             ))}
           </div>
         </article>
+
+        {context.platformPermissions.has("PLATFORM_AUDIT_VIEW") && (
+          <article className="platform-card platform-card-span-2">
+            <h3>Activity history</h3>
+            <p className="muted small-line">Download the complete activity history of {displayName} as an Excel workbook: every job&rsquo;s activity (created, status changes, parts, notes and so on) plus the company&rsquo;s system audit log, from the beginning.</p>
+            <div className="platform-form-actions">
+              <DownloadActivityHistoryButton companyId={company.id} />
+            </div>
+          </article>
+        )}
 
         {!company.blackRockIncluded && (
           <article className="platform-card platform-card-span-2">
