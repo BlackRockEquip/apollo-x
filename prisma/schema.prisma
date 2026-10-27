@@ -392,6 +392,10 @@ enum NotificationType {
   // managers and admins are told when a request comes in, and the mechanic is told when it has been dealt with.
   PICK_SLIP_REQUESTED
   PICK_SLIP_REQUEST_HANDLED
+  // 2026-10-27, user request: platform admin can broadcast a message to all companies, chosen companies or chosen users.
+  // One row per recipient (membership), tied to its PlatformBroadcast through Notification.broadcastId. Shown by the same
+  // BroadcastBanner as ORG_BROADCAST, and listed in the bell and History like any other notification.
+  PLATFORM_BROADCAST
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
@@ -2586,10 +2590,13 @@ model Notification {
   // dismissNotification in notifications/service.ts), so the unread-count
   // query below doesn't need its own dismissedAt check.
   dismissedAt DateTime?
+  // 2026-10-27: set for PLATFORM_BROADCAST rows only - the broadcast this notification was delivered for.
+  broadcastId String?
   createdAt DateTime         @default(now())
 
   company   Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
   user      UserIdentity     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  broadcast PlatformBroadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
 
   // userId + readAt — the unread-count query (companyId, userId, readAt:
   // null) is the one this needs to be fastest for, since it's the query
@@ -2598,6 +2605,52 @@ model Notification {
   // Active-tab / History-tab split (companyId, userId, dismissedAt) — the
   // other query this list makes on every /notifications page load.
   @@index([companyId, userId, dismissedAt])
+  @@index([broadcastId])
+}
+
+// 2026-10-27, user request: "add functionality to do broadcast message throughout the platform to all companies, specific
+// companies, specific users". Created under Platform > Broadcasts. Delivery turns it into one Notification row per
+// recipient (see lib/platform/broadcasts-service.ts): immediately, or - when startsAt is in the future - the first time
+// anyone's browser polls after that moment. kind picks the banner colour; requireAck swaps the banner's dismiss cross for an
+// "I have read this" button; sendEmail also sends it through the platform mail server; a withdrawn broadcast is hidden from the banner.
+enum PlatformBroadcastKind {
+  INFORMATION
+  IMPORTANT
+  MAINTENANCE
+}
+
+enum PlatformBroadcastAudience {
+  ALL
+  COMPANIES
+  USERS
+}
+
+model PlatformBroadcast {
+  id             String                    @id @default(cuid())
+  title          String
+  message        String
+  linkUrl        String?
+  kind           PlatformBroadcastKind     @default(INFORMATION)
+  audience       PlatformBroadcastAudience
+  companyIds     String[]                  @default([])
+  userIds        String[]                  @default([])
+  sendEmail      Boolean                   @default(false)
+  requireAck     Boolean                   @default(false)
+  startsAt       DateTime
+  expiresAt      DateTime?
+  deliveredAt    DateTime?
+  withdrawnAt    DateTime?
+  recipientCount Int                       @default(0)
+  companyCount   Int                       @default(0)
+  emailedCount   Int                       @default(0)
+  createdById    String
+  createdByName  String
+  createdAt      DateTime                  @default(now())
+
+  notifications Notification[]
+
+  @@index([createdAt])
+  @@index([deliveredAt, withdrawnAt, startsAt])
 }
 
 // 2026-10-01 — user request: "when clicking the support button... if Org

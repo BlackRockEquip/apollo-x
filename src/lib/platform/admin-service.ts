@@ -604,7 +604,8 @@ export async function listPlatformUsers(ctx: RequestContext, query: PlatformUser
   const q = (query.q ?? "").trim();
   const contains = { contains: q, mode: "insensitive" as const };
   const users = await prisma.userIdentity.findMany({
-    where: q ? { OR: [{ displayName: contains }, { email: contains }] } : undefined,
+    // 2026-10-27, user request: group the users by company for easier searching - so a company's name finds its people too.
+    where: q ? { OR: [{ displayName: contains }, { email: contains }, { memberships: { some: { status: "ACTIVE", company: { OR: [{ legalName: contains }, { tradingName: contains }, { internalCode: contains }] } } } }] } : undefined,
     orderBy: [{ displayName: "asc" }],
     select: {
       id: true,
@@ -621,7 +622,7 @@ export async function listPlatformUsers(ctx: RequestContext, query: PlatformUser
       // on grant/reactivate in grantPlatformAuthority/updatePlatformAuthority
       // below) so the Platform Users table can show/disable the option
       // up front instead of only failing after the admin tries it.
-      memberships: { where: { status: "ACTIVE" }, select: { id: true }, take: 1 },
+      memberships: { where: { status: "ACTIVE" }, select: { id: true, role: true, company: { select: { id: true, legalName: true, tradingName: true, internalCode: true } } }, orderBy: [{ createdAt: "asc" }] },
     },
   });
   return users.map((user) => {
@@ -643,6 +644,7 @@ export async function listPlatformUsers(ctx: RequestContext, query: PlatformUser
       roles,
       effectivePermissions: Array.from(aggregate).sort(),
       hasActiveCompanyMembership: memberships.length > 0,
+      companies: memberships.map((m) => ({ companyId: m.company.id, name: m.company.tradingName || m.company.legalName, code: m.company.internalCode, role: m.role })),
     };
   });
 }

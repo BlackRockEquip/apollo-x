@@ -3,6 +3,7 @@ import type { NotificationType } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { requireTenant, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
+import { deliverDueBroadcasts } from "@/lib/platform/broadcasts-service";
 
 // 2026-09-19 — user request: a notifications bell (always visible, next to
 // Support) plus its own page, and an admin/manager notification whenever a
@@ -179,15 +180,35 @@ export async function sendCompanyBroadcast(ctx: RequestContext, raw: unknown) {
   return { ok: true, sentTo: targetIds.length };
 }
 
-// Polled by BroadcastBanner.tsx — the single newest unread ORG_BROADCAST
-// notification for the signed-in user, if any. Separate from the bell's
-// unread count/list since a broadcast needs its own, more intrusive
-// "popsup" presentation rather than just another row to click into later.
+// Polled by BroadcastBanner.tsx — the single newest unread broadcast for the signed-in user, if any: an Org Admin's own
+// ORG_BROADCAST, or (2026-10-27) a platform admin's PLATFORM_BROADCAST. Separate from the bell's unread count/list since a
+// broadcast needs its own, more intrusive "popsup" presentation rather than just another row to click into later.
+// A platform broadcast that has been withdrawn or has run past its end time is skipped. This is also where a scheduled
+// platform broadcast whose start time has come gets delivered (see deliverDueBroadcasts - no separate scheduler needed).
 export async function getActiveBroadcast(ctx: RequestContext) {
   requireTenant(ctx);
   const companyId = ctx.companyId!;
-  return prisma.notification.findFirst({
-    where: { companyId, userId: ctx.userId, type: "ORG_BROADCAST", readAt: null },
+  await deliverDueBroadcasts();
+  const now = new Date();
+  const row = await prisma.notification.findFirst({
+    where: {
+      companyId,
+      userId: ctx.userId,
+      type: { in: ["ORG_BROADCAST", "PLATFORM_BROADCAST"] as NotificationType[] },
+      readAt: null,
+      OR: [{ broadcastId: null }, { broadcast: { is: { withdrawnAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } } }],
+    },
     orderBy: { createdAt: "desc" },
+    include: { broadcast: { select: { kind: true, requireAck: true } } },
   });
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    link: row.link,
+    kind: row.broadcast?.kind ?? "INFORMATION",
+    requireAck: row.broadcast?.requireAck ?? false,
+    fromPlatform: row.type === "PLATFORM_BROADCAST",
+  };
 }

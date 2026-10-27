@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- async loading mirrors the other platform workspaces */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ImagePlus, Plus, Trash2 } from "lucide-react";
+import { Eye, ImagePlus, Plus, Trash2, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { MAX_AD_IMAGE_BYTES, MAX_SLOTS, WEEKDAY_LABELS, localParts, type AdSlot } from "@/lib/ads/model";
 import type { AdCompanyOption, AdRow } from "@/lib/ads/service";
@@ -36,6 +36,20 @@ function slotsCoverBand(slot: AdSlot, date: string, weekday: number, bandStart: 
   const to = Number(slot.to.slice(0, 2)) * 60 + Number(slot.to.slice(3, 5));
   return from < bandEnd && to > bandStart;
 }
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const prettyDate = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1] ?? ""} ${iso.slice(0, 4)}`;
+/** [0,1,2,3,4] -> "Mon-Fri"; [0,2,4] -> "Mon, Wed, Fri". */
+function prettyDays(days: number[]) {
+  const list = Array.from(new Set(days)).sort((a, b) => a - b);
+  if (list.length === 7) return "Every day";
+  const runs: number[][] = [];
+  for (const d of list) {
+    const last = runs[runs.length - 1];
+    if (last && last[last.length - 1] === d - 1) last.push(d); else runs.push([d]);
+  }
+  return runs.map((r) => (r.length >= 3 ? `${WEEKDAY_LABELS[r[0]]}-${WEEKDAY_LABELS[r[r.length - 1]]}` : r.map((d) => WEEKDAY_LABELS[d]).join(", "))).join(", ");
+}
+
 const stateLabel = (ad: AdRow) => (ad.state === "live" ? "Live now" : ad.state === "scheduled" ? `Next: ${ad.nextLive}` : ad.state === "paused" ? "Paused" : "No slots");
 
 export function AdvertisingWorkspace() {
@@ -46,6 +60,8 @@ export function AdvertisingWorkspace() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState("");
+  // 2026-10-27, user request: preview an ad that is already allocated, straight from the list, without opening it for editing.
+  const [previewAdId, setPreviewAdId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -164,6 +180,7 @@ export function AdvertisingWorkspace() {
   const visibleCompanies = companies.filter((c) => !companyFilter.trim() || `${c.name} ${c.code}`.toLowerCase().includes(companyFilter.trim().toLowerCase()));
   const imageSrc = previewUrl ?? (row?.hasImage ? `/api/v1/ads/${row.id}/image?v=${row.imageVersion}` : null);
   const editing = selected !== null;
+  const previewAd = previewAdId ? ads.find((a) => a.id === previewAdId) ?? null : null;
   // Preview: the real sidebar card built from what is typed and the chosen picture, so the picture can be judged before saving.
   const [imageInfo, setImageInfo] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
@@ -186,6 +203,14 @@ export function AdvertisingWorkspace() {
     <>
       <style>{STYLES}</style>
       {dialog}
+      {previewAd ? (
+        <AdPreviewDialog
+          ad={previewAd}
+          companies={companies}
+          onClose={() => setPreviewAdId(null)}
+          onEdit={() => { const id = previewAd.id; setPreviewAdId(null); select(id); }}
+        />
+      ) : null}
       {error ? <div className="inline-error">{error}</div> : null}
       {notice ? <div className="inline-success">{notice}</div> : null}
       <div className="adv-grid">
@@ -193,11 +218,14 @@ export function AdvertisingWorkspace() {
           <h3>Ads</h3>
           {loading && ads.length === 0 ? <p className="muted small-line">Loading…</p> : null}
           {ads.map((ad, index) => (
-            <button type="button" key={ad.id} className={selected === ad.id ? "adv-item sel" : "adv-item"} onClick={() => select(ad.id)}>
-              <span className="adv-thumb" style={{ background: PALETTE[index % PALETTE.length] }}>{ad.hasImage ? <img src={`/api/v1/ads/${ad.id}/image?v=${ad.imageVersion}`} alt="" /> : initials(ad.advertiser)}</span>
-              <span className="adv-meta"><b>{ad.advertiser}</b><small>{ad.slots.length} of {MAX_SLOTS} slots · {ad.views} views · {ad.clicks} clicks</small></span>
-              <span className={`adv-pill ${ad.state}`}>{stateLabel(ad)}</span>
-            </button>
+            <div key={ad.id} className="adv-row">
+              <button type="button" className={selected === ad.id ? "adv-item sel" : "adv-item"} onClick={() => select(ad.id)}>
+                <span className="adv-thumb" style={{ background: PALETTE[index % PALETTE.length] }}>{ad.hasImage ? <img src={`/api/v1/ads/${ad.id}/image?v=${ad.imageVersion}`} alt="" /> : initials(ad.advertiser)}</span>
+                <span className="adv-meta"><b>{ad.advertiser}</b><small>{ad.slots.length} of {MAX_SLOTS} slots · {ad.views} views · {ad.clicks} clicks</small></span>
+                <span className={`adv-pill ${ad.state}`}>{stateLabel(ad)}</span>
+              </button>
+              <button type="button" className="adv-eye" aria-label={`Preview the ${ad.advertiser} ad`} title="Preview" onClick={() => setPreviewAdId(ad.id)}><Eye size={15} /></button>
+            </div>
           ))}
           {!loading && ads.length === 0 ? <p className="muted small-line">No ads yet. Companies see the Flo X card.</p> : null}
           <div style={{ marginTop: 10 }}><button type="button" className="gold-button" onClick={() => select("new")}><Plus size={14} /> New ad</button></div>
@@ -327,6 +355,47 @@ export function AdvertisingWorkspace() {
   );
 }
 
+/** Read-only look at an ad that is already saved: the real sidebar card, who it is allocated to and when it runs. */
+function AdPreviewDialog({ ad, companies, onClose, onEdit }: { ad: AdRow; companies: AdCompanyOption[]; onClose: () => void; onEdit: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const imageUrl = ad.hasImage ? `/api/v1/ads/${ad.id}/image?v=${ad.imageVersion}` : null;
+  const names = ad.audience === "SELECTED" ? ad.companyIds.map((id) => companies.find((c) => c.id === id)?.name).filter((n): n is string => Boolean(n)) : [];
+  const shown = names.slice(0, 8);
+  return (
+    <div className="adv-modal-back" onClick={onClose}>
+      <div className="adv-modal" role="dialog" aria-modal="true" aria-label={`Preview of the ${ad.advertiser} ad`} onClick={(e) => e.stopPropagation()}>
+        <style>{SIDEBAR_AD_STYLES}</style>
+        <header className="adv-modal-head">
+          <div><b>{ad.advertiser}</b><small>{ad.headline || "Picture only"}</small></div>
+          <span className={`adv-pill ${ad.state}`}>{stateLabel(ad)}</span>
+          <button type="button" className="adv-eye" aria-label="Close preview" onClick={onClose}><X size={16} /></button>
+        </header>
+        <div className="adv-modal-body">
+          <div className="adv-modal-side">
+            <span className="adv-label">As a company sees it</span>
+            <div className="adv-preview-sidebar">
+              <SupplierAdCard preview ad={{ id: ad.id, advertiser: ad.advertiser, headline: ad.headline, body: ad.body, buttonText: ad.buttonText, imageUrl }} href="#" />
+            </div>
+          </div>
+          <dl className="adv-modal-facts">
+            <div><dt>Shown to</dt><dd>{ad.audience === "ALL" ? `All companies (${companies.length})` : `${ad.companyIds.length} selected ${ad.companyIds.length === 1 ? "company" : "companies"}`}
+              {ad.audience === "SELECTED" ? <span className="adv-chips">{shown.map((n) => <i key={n}>{n}</i>)}{names.length > shown.length ? <i>+{names.length - shown.length} more</i> : null}</span> : null}</dd></div>
+            <div><dt>Timeslots</dt><dd>{ad.slots.length === 0 ? "None yet, so it never shows." : <ul>{ad.slots.map((slot, i) => <li key={i}><b>{prettyDays(slot.days)}</b> {slot.from}-{slot.to}<small>{prettyDate(slot.startDate)} to {prettyDate(slot.endDate)}</small></li>)}</ul>}</dd></div>
+            <div><dt>Status</dt><dd>{!ad.active ? "Paused - companies do not see it." : ad.state === "live" ? "Live now." : ad.state === "scheduled" ? `Not showing yet. Next: ${ad.nextLive}.` : "Active, but no timeslot is running."}</dd></div>
+            <div><dt>Results</dt><dd>{ad.views} views, {ad.clicks} clicks{ad.views > 0 ? ` (${((ad.clicks / ad.views) * 100).toFixed(1)}%)` : ""}</dd></div>
+            <div><dt>Link</dt><dd className="adv-link">{ad.linkUrl || "None"}</dd></div>
+          </dl>
+        </div>
+        <footer className="adv-modal-foot"><button type="button" className="quiet-button" onClick={onClose}>Close</button><button type="button" className="gold-button" onClick={onEdit}>Edit this ad</button></footer>
+      </div>
+    </div>
+  );
+}
+
 function FragmentRow({ label, cells }: { label: string; cells: { name: string; color: string }[][] }) {
   return (
     <>
@@ -339,6 +408,20 @@ function FragmentRow({ label, cells }: { label: string; cells: { name: string; c
 }
 
 const STYLES = `
+.adv-row{display:flex;align-items:stretch;gap:4px;margin-bottom:6px}.adv-row .adv-item{flex:1;min-width:0;margin-bottom:0}
+.adv-eye{display:grid;flex:none;width:34px;place-items:center;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--ink-500);cursor:pointer}
+.adv-eye:hover{background:var(--ink-50,#f4f6fa);color:var(--ink-900,#172033)}
+.adv-modal-back{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:20px;background:rgba(7,17,31,.55)}
+.adv-modal{display:flex;flex-direction:column;width:min(720px,100%);max-height:calc(100vh - 40px);border-radius:14px;background:#fff;box-shadow:0 24px 60px rgba(7,17,31,.35);overflow:hidden}
+.adv-modal-head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line,#e2e6ec)}.adv-modal-head>div{display:grid;flex:1;min-width:0}.adv-modal-head small{color:var(--ink-500);font-size:12px}
+.adv-modal-body{display:flex;flex-wrap:wrap;gap:20px;padding:16px;overflow-y:auto}
+.adv-modal-side{display:grid;flex:0 0 242px;gap:6px;align-content:start}
+.adv-modal-facts{flex:1 1 260px;display:grid;gap:12px;margin:0;align-content:start}.adv-modal-facts div{display:grid;gap:3px}
+.adv-modal-facts dt{font-size:10.5px;font-weight:800;color:var(--ink-500);text-transform:uppercase;letter-spacing:.06em}.adv-modal-facts dd{margin:0;font-size:13px}
+.adv-modal-facts ul{margin:0;padding:0;list-style:none;display:grid;gap:6px}.adv-modal-facts li small{display:block;color:var(--ink-500);font-size:11.5px}
+.adv-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}.adv-chips i{padding:2px 8px;border-radius:999px;background:#eceff4;font-size:11.5px;font-style:normal}
+.adv-link{word-break:break-all;color:var(--ink-500)}
+.adv-modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--line,#e2e6ec)}
 .adv-grid{display:grid;grid-template-columns:minmax(260px,330px) minmax(0,1fr);gap:16px;align-items:start}
 @media (max-width:1000px){.adv-grid{grid-template-columns:1fr}}
 .adv-grid>.detail-panel{padding:16px}

@@ -59,6 +59,7 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "INDUSTRY_BUILD_UNKNOWN_TILE") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "That module is not part of any industry build." } }, { status: 400 });
   if (error instanceof Error && error.message === "INVALID_INDUSTRY_BUILD") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Pick one of the listed industry builds." } }, { status: 400 });
   if (error instanceof Error && error.message === "EXPIRY_BEFORE_START") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "A module's expiry date cannot be before its effective-from date." } }, { status: 400 });
+  if (error instanceof Error && error.message === "BROADCAST_NO_RECIPIENTS") return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Nobody can receive that. The chosen companies or users have no active members (suspended companies are skipped)." } }, { status: 400 });
   if (error instanceof Error && error.message === "PLATFORM_CONTEXT_REQUIRED") return NextResponse.json({ error: { code: "FORBIDDEN", message: "Leave the company's support context to manage platform settings." } }, { status: 403 });
   // 2026-10-21 — Platform > Proposals (proposals/service.ts).
   if (error instanceof Error && error.message === "PROPOSAL_NUMBER_TAKEN") return NextResponse.json({ error: { code: "PROPOSAL_NUMBER_TAKEN", message: "Another proposal already uses that quote number — type a different one." } }, { status: 409 });
