@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WIP_VIEWER_COLUMNS, wipColumnLabel, wipColumnLabelsFor } from "@/lib/jobs/wip-columns";
+import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { DOCUMENT_CHECK_CONFIRM, etaOverdueDays, machinistFieldLabels, needsDocumentCheck } from "@/lib/jobs/ui";
 
 describe("WIP View user type (Engineering Business)", () => {
@@ -49,5 +50,24 @@ describe("Machinist ETA label", () => {
     expect(machinistFieldLabels("ENGINEERING").etaShort).toBe("Machinist ETA");
     expect(machinistFieldLabels("WORKSHOP").eta).toBe("Mechanic ETA date");
     expect(machinistFieldLabels(undefined).etaShort).toBe("Mechanic ETA");
+  });
+});
+
+describe("WIP View (View Only) is offered to both builds", () => {
+  it("Workshop and Engineering companies can both be given the view-only type", () => {
+    expect(tenantRolesFor("WORKSHOP")).toContain("WIP_VIEWER");
+    expect(tenantRolesFor("ENGINEERING")).toContain("WIP_VIEWER");
+    expect(tenantRolesFor(null)).toContain("WIP_VIEWER");
+  });
+  it("uses the same label in both builds", () => {
+    expect(tenantRoleLabelsFor("WORKSHOP").WIP_VIEWER).toBe("WIP View (View Only)");
+    expect(tenantRoleLabelsFor("ENGINEERING").WIP_VIEWER).toBe("WIP View (View Only)");
+  });
+  it("Workshop keeps its other user types", () => {
+    expect(tenantRolesFor("WORKSHOP")).toEqual(["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "FINANCE", "WIP_VIEWER"]);
+  });
+  it("Workshop view-only users see the Mechanic ETA date wording", () => {
+    const labels = wipColumnLabelsFor("WORKSHOP");
+    expect(WIP_VIEWER_COLUMNS.map((id) => labels[id])).toEqual(["Job #", "Job type", "Status", "Machine model", "Component", "Mechanic ETA date", "ETA Overdue"]);
   });
 });

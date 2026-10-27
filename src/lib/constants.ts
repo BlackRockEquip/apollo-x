@@ -43,7 +43,8 @@ export const TENANT_ROLE_LABELS: Record<TenantRole, string> = {
 };
 
 // 2026-10-16, Engineering Business: the user types offered are exactly Company Admin, Manager, Store Controller,
-// Machinist and WIP View (View Only). Workshop keeps its own list and wording. A user already holding a type that
+// Machinist and WIP View (View Only). Workshop keeps its own list and wording, except that 2026-10-27 it also
+// offers WIP View (View Only), the same build-independent view-only type. A user already holding a type that
 // is not in the build's list (an older Sales / Finance user) keeps working; the type just is not offered for new users.
 const ENGINEERING_ROLE_LABELS: Partial<Record<TenantRole, string>> = {
   COMPANY_ADMIN: "Company Admin",
@@ -53,7 +54,7 @@ const ENGINEERING_ROLE_LABELS: Partial<Record<TenantRole, string>> = {
   WIP_VIEWER: "WIP View (View Only)",
 };
 export const ENGINEERING_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "STORE_CONTROLLER", "USER", "WIP_VIEWER"];
-export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "FINANCE"];
+export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "FINANCE", "WIP_VIEWER"];
 
 export function tenantRoleLabelsFor(build?: string | null): Record<TenantRole, string> {
   return build === "ENGINEERING" ? { ...TENANT_ROLE_LABELS, ...ENGINEERING_ROLE_LABELS } as Record<TenantRole, string> : TENANT_ROLE_LABELS;
