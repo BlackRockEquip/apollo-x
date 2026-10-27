@@ -20,6 +20,8 @@ import { buildTabletCard, buildTabletFacts, formatQty, latestNote, outstandingHe
 import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
+import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
+import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -215,6 +217,8 @@ type JobDetail = Row & {
   // record-only (SKIPPED) instead of silently failing.
   emailConfigured?: boolean;
 };
+
+const EMAIL_NOT_SET_UP_MESSAGE = "Email isn't set up for this company yet, so no follow-up was sent. Add the SMTP email details under Settings > Company / Branding first.";
 
 const JOB_TYPES = Object.entries(JOB_TYPE_LABELS);
 
@@ -3690,6 +3694,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // for just one supplier, not only "send to everyone".
   async function sendPartsFollowup(supplierId?: string) {
     if (!jobId) return;
+    // 2026-10-27, user request: "if mails are not setup, give error
+    // confirmation when clicking follow up button". Said straight away (the
+    // server refuses too), instead of a per-supplier "skipped" note.
+    if (job?.emailConfigured === false) {
+      setPartsFollowupResult(null);
+      setError(EMAIL_NOT_SET_UP_MESSAGE);
+      return;
+    }
     setSaving(true); setError(""); setPartsFollowupResult(null);
     try {
       const r = await fetch(`/api/v1/jobs/${jobId}/parts-followup`, {
@@ -3752,43 +3764,64 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // exporters below (and mirrors the dialog table's own columns — see the
   // quote-comparison-table JSX) so the on-screen table, the CSV, and the
   // Excel file can never drift out of sync with each other.
+  // 2026-10-27, user request: "when preferred supplier selected, when
+  // exporting, highlight the selected supplier in the table as well". The
+  // export uses the same effective choice as the Compare Prices dialog: a
+  // staged pick (pendingPreferred) wins over the saved one. Row building lives
+  // in lib/jobs/quote-comparison-export.ts; Excel gets the gold fill on the
+  // preferred supplier's cells, and both files a "Preferred supplier" column.
   function buildQuoteComparisonExport(job: JobDetail) {
     const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-    const header = ["Part", "Description", "Qty", ...quotedRequests.flatMap((r) => [`${r.supplier.name} (unit)`, `${r.supplier.name} (total)`, `${r.supplier.name} (availability)`])];
-    const rows = job.partLines.map((line) => {
+    const quotes: ExportQuote[] = quotedRequests.map((r) => ({
+      quoteId: String(r.quote!.id),
+      supplierName: text(r.supplier.name),
+      lines: Object.fromEntries(
+        r.quote!.lines.map((l) => [String(l.partLineId), { unitPrice: l.unitPrice == null || l.unitPrice === "" ? null : (l.unitPrice as string | number), available: l.available === false ? false : true, leadTime: text(l.leadTime) }]),
+      ),
+    }));
+    const pickedQuoteIdByLine: Record<string, string | null> = {};
+    for (const line of job.partLines) {
+      const lineId = String(line.id);
+      if (Object.prototype.hasOwnProperty.call(pendingPreferred, lineId)) {
+        pickedQuoteIdByLine[lineId] = pendingPreferred[lineId];
+        continue;
+      }
+      const saved = quotedRequests.find((r) => r.quote!.lines.some((l) => String(l.partLineId) === lineId && l.preferred));
+      pickedQuoteIdByLine[lineId] = saved ? String(saved.quote!.id) : null;
+    }
+    const parts = job.partLines.map((line) => {
       const qty = Number(line.quantity ?? 0);
-      const cells = quotedRequests.flatMap((request) => {
-        const quoteLine = request.quote!.lines.find((l) => l.partLineId === String(line.id));
-        if (!quoteLine || quoteLine.available === false || quoteLine.unitPrice == null || quoteLine.unitPrice === "") return ["", "", ""];
-        const unit = Number(quoteLine.unitPrice);
-        return [unit.toFixed(2), (unit * qty).toFixed(2), text(quoteLine.leadTime)];
-      });
-      return [text(line.partNumber), text(line.description), decimalText(line.quantity), ...cells];
+      return { id: String(line.id), partNumber: text(line.partNumber), description: text(line.description), quantity: Number.isFinite(qty) ? qty : 0, quantityText: decimalText(line.quantity) };
     });
-    return { quotedRequests, header, rows };
+    return { quotedRequests, ...buildQuoteComparisonRows({ quotes, parts, pickedQuoteIdByLine }) };
   }
 
   function exportQuoteComparisonCsv() {
     if (!job) return;
-    const { quotedRequests, header, rows } = buildQuoteComparisonExport(job);
+    const { quotedRequests, header, csvRows } = buildQuoteComparisonExport(job);
     if (quotedRequests.length === 0 || job.partLines.length === 0) return;
-    downloadCsv(`quote-comparison-${job.jobNumber || job.draftNumber}.csv`, [header, ...rows]);
+    downloadCsv(`quote-comparison-${job.jobNumber || job.draftNumber}.csv`, [header, ...csvRows]);
   }
 
-  // Excel export — same rows as the CSV above, built into a workbook with
-  // SheetJS (already a project dependency, used server-side for Settings >
-  // Import/Export; loaded here via dynamic import so it's only pulled into
-  // the browser bundle if this button is actually clicked). writeFile
-  // triggers the browser download itself, no manual Blob/anchor needed.
-  async function exportQuoteComparisonExcel() {
+  // Excel export - same rows as the CSV above, written with the small
+  // built-in writer (lib/files/xlsx-lite.ts) because it can colour cells,
+  // which the SheetJS community build cannot.
+  function exportQuoteComparisonExcel() {
     if (!job) return;
-    const { quotedRequests, header, rows } = buildQuoteComparisonExport(job);
+    const { quotedRequests, header, xlsxRows, anyPreferred } = buildQuoteComparisonExport(job);
     if (quotedRequests.length === 0 || job.partLines.length === 0) return;
-    const XLSX = await import("xlsx");
-    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Quote comparison");
-    XLSX.writeFile(workbook, `quote-comparison-${job.jobNumber || job.draftNumber}.xlsx`);
+    const rows: XlsxCell[][] = [header.map((h) => ({ v: h, header: true })), ...xlsxRows];
+    if (anyPreferred) rows.push([], [{ v: "Highlighted cells are the preferred supplier for that line.", bold: true }]);
+    const bytes = buildXlsx({ name: "Quote comparison", rows, widths: quoteComparisonWidths(quotedRequests.length), freezeHeader: true });
+    const blob = new Blob([bytes as unknown as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `quote-comparison-${job.jobNumber || job.draftNumber}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   async function applyJobKit() {
@@ -5733,7 +5766,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 onApply={() => void applyPendingPreferred()}
                 onCancel={closeSavedQuotes}
                 onExportCsv={exportQuoteComparisonCsv}
-                onExportExcel={() => void exportQuoteComparisonExcel()}
+                onExportExcel={exportQuoteComparisonExcel}
               />
             );
           })()}

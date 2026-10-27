@@ -119,6 +119,13 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
   }
 
   const emailConfigured = await isCompanyEmailConfigured(companyId);
+  // 2026-10-27, user request: "if mails are not setup, give error
+  // confirmation when clicking follow up button". Refuse outright (nothing
+  // is recorded) instead of returning every supplier as "skipped". Parts with
+  // no supplier assigned never need email, so they alone don't trigger this.
+  if (!emailConfigured && Array.from(bySupplier.values()).some((e) => e.supplierId !== UNKNOWN_SUPPLIER_ID && (!onlySupplierId || e.supplierId === onlySupplierId))) {
+    throw new Error("EMAIL_NOT_CONFIGURED");
+  }
   const templates = await getCompanyEmailTemplates(companyId);
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
