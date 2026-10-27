@@ -235,7 +235,7 @@ export function QuoteEntryDialog(props: Props) {
               <div style={{ paddingLeft: 6 }}>Unit price</div>
               <div>Availability</div>
               <div style={{ textAlign: "right", paddingRight: 16 }}>Line total</div>
-              <div>Compared with other suppliers</div>
+              <div style={{ paddingLeft: 6 }}>Compared with other suppliers</div>
             </div>
 
             <div className="qc-rows">
@@ -283,13 +283,13 @@ export function QuoteEntryDialog(props: Props) {
                       {cmp.kind === "best" && (
                         <>
                           <span className="qc-vs-tag is-best"><Check size={12} strokeWidth={3} />{cmp.otherIndex === null ? "Only quote" : "Lowest of all"}</span>
-                          {cmp.otherIndex !== null && cmp.otherUnit !== null && <span>next: {shortSupplierName(suppliers[cmp.otherIndex].name)} {formatRand(cmp.otherUnit)}</span>}
+                          {cmp.otherIndex !== null && cmp.otherUnit !== null && <span title={`Next lowest: ${suppliers[cmp.otherIndex].name} ${formatRand(cmp.otherUnit)}`}>next: {shortSupplierName(suppliers[cmp.otherIndex].name)} {formatRand(cmp.otherUnit)}</span>}
                         </>
                       )}
                       {cmp.kind === "behind" && (
                         <>
                           <span className="qc-vs-tag is-behind">{cmp.percent === null ? "Higher" : `+${cmp.percent}%`}</span>
-                          <span>lowest: <strong>{shortSupplierName(suppliers[cmp.bestIndex].name)} {formatRand(cmp.bestUnit)}</strong></span>
+                          <span title={`Lowest: ${suppliers[cmp.bestIndex].name} ${formatRand(cmp.bestUnit)}`}>lowest: <strong>{shortSupplierName(suppliers[cmp.bestIndex].name)} {formatRand(cmp.bestUnit)}</strong></span>
                         </>
                       )}
                       {cmp.kind === "na" && <span className="qc-vs-muted">Not offered</span>}
