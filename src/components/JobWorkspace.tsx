@@ -5002,7 +5002,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // Status stepper: TO_BE_COLLECTED is merged into TO_BE_RECEIVED and WAITING_FOR_PARTS into AWAIT_OUTWORK for display (see the comments at the stepper below).
   const stepperSteps = job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
-  const stepperStatus = job ? (job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status === "TO_BE_COLLECTED" ? "TO_BE_RECEIVED" : job.status) : "";
+  const stepperStatus = job ? (job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status === "TO_BE_COLLECTED" ? "TO_BE_RECEIVED" : job.status) : "TO_BE_RECEIVED";
   const stepNumber = (stepperSteps as string[]).indexOf(String(stepperStatus)) + 1;
 
   return (
