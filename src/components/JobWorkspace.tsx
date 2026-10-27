@@ -6,12 +6,17 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
-import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Trash2, Unlink, X } from "lucide-react";
+import { ArrowLeft, Camera, ClipboardList, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "./job-screen/ActionMenu";
 import { JobFactsStrip } from "./job-screen/JobFactsStrip";
 import { JobTabBar } from "./job-screen/JobTabBar";
 import { buildJobTabs, hashForTab, resolveActiveTab, tabFromHash, type JobTabKey } from "./job-screen/job-tabs";
-import { buildFacts } from "./job-screen/job-facts";
+import { buildFacts, formatFactDate } from "./job-screen/job-facts";
+import { TabletSheet } from "./job-screen/TabletSheet";
+import { TabletStatusTrack } from "./job-screen/TabletStatusTrack";
+import { TabletPartCard } from "./job-screen/TabletPartCard";
+import { QtyStepper } from "./job-screen/QtyStepper";
+import { buildTabletCard, buildTabletFacts, formatQty, latestNote, outstandingHeadline, tabletSegments } from "./job-screen/tablet-model";
 import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
@@ -660,6 +665,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     try { window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hashForTab(key)}`); } catch { /* the tab still switches without the URL update */ }
   }, []);
   const [partFilter, setPartFilter] = useState<PartFilter>("all");
+  // Mechanic tablet layout (design C): which popup is open, which part line's details are open, and whether the search box is showing.
+  const [tabletSheet, setTabletSheet] = useState<"addparts" | "pickslips" | "photos" | "notes" | "outwork" | null>(null);
+  const [tabletLineId, setTabletLineId] = useState("");
+  const [tabletSearchOpen, setTabletSearchOpen] = useState(false);
   // "in 3 days" style notes need the current day; set after mount so the server render and the browser agree.
   const [today, setToday] = useState<Date | null>(null);
   useEffect(() => { setToday(new Date()); }, []);
@@ -2097,7 +2106,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // what was typed or chosen isn't lost.
   async function addOrImportParts() {
     const ok = partsImportFile ? await importPartsFile(partsImportFile) : await addPartLines();
-    if (ok) setShowAddParts(false);
+    if (ok) { setShowAddParts(false); setTabletSheet(null); }
   }
 
   // Downloads a blank CSV template for the parts-list import — matches the
@@ -4198,11 +4207,48 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // Field service jobs (detail mode) use the field layout — see fieldJobLayout below.
   const fieldLayout = mode === "detail" && !!job && job.type === "FIELD_SERVICE";
+  // Design C: only the Mechanic role (tenantRole USER), not the view-only role.
+  const tabletLayout = mode === "detail" && !!job && tenantRole === "USER";
 
   const showPickSlipsTab = !!job && (pickSlipsAccess !== "DENIED" ? (job.partLines.length > 0 || jobPickSlips.length > 0) : jobPickSlips.length > 0);
   const showFollowupTab = !!job && !mechanicFieldsLocked && partsAccess === "FULL" && partsFollowupGroups.length > 0;
   const partCounts = countParts(job?.partLines ?? []);
   const oldestOrderDays = partsFollowupGroups.reduce((max, g) => Math.max(max, g.overdueDays), 0);
+
+  // The "Add parts" form (kit, pasted list, file import). Shown inline on the desktop Parts tab and inside a popup on the mechanic tablet layout.
+  const addPartsBlock = job ? (
+              <>
+    <div className="drawer-fields">
+      <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setJobKitOptions([]))}><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
+      <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
+      <label className="wide"><span>Paste parts list (one per line — part number and quantity are required; description is optional: &quot;PN-1001, 2, Hydraulic seal kit&quot;)</span><textarea rows={4} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044, 4"} /></label>
+      <label className="wide">
+        <span>Or import a parts list file (.xlsx, .xls or .csv — needs Part number / Qty / Description columns)</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setPartsImportFile(e.target.files?.[0] || null)} />
+          <button type="button" className="quiet-button" title="Download a blank parts-list template" aria-label="Download parts-list template" onClick={downloadPartsTemplate}><FileText size={15} /></button>
+        </div>
+      </label>
+    </div>
+    {/* 2026-10-01 — user request: "combine the 'Add / cross-check
+        with stock' button and 'import' button into one button
+        called 'Add/Import Parts', move the button below the
+        choose file section." See addOrImportParts above —
+        imports the chosen file when one's selected, otherwise
+        adds/cross-checks the pasted lines.
+        2026-10-01 follow-up — user request: "the add/import
+        button to be on the left, same style as the pickslip
+        button." .detail-actions is shared by every other footer
+        in this app and right-aligns by default (justify-content:
+        flex-end) — left-aligned here via an inline override
+        rather than touching that shared class. "Same style as
+        the pickslip button" = .section-action-button, the gold
+        accent style "Create picking slip" and "Add parts to Job"
+        above both already use, replacing the plain
+        .quiet-button this had. */}
+    <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
+  </>
+  ) : null;
 
   const partsListSection = job ? (
           <section className="detail-panel">
@@ -4264,39 +4310,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {showFollowupTab && <button type="button" className="jw-strip-link" onClick={() => selectTab("followup")}><Mail size={13} /> Email supplier follow-up</button>}
               </div>
             )}
-            {showAddParts && (
-              <>
-                <div className="drawer-fields">
-                  <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setJobKitOptions([]))}><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
-                  <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
-                  <label className="wide"><span>Paste parts list (one per line — part number and quantity are required; description is optional: &quot;PN-1001, 2, Hydraulic seal kit&quot;)</span><textarea rows={4} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044, 4"} /></label>
-                  <label className="wide">
-                    <span>Or import a parts list file (.xlsx, .xls or .csv — needs Part number / Qty / Description columns)</span>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setPartsImportFile(e.target.files?.[0] || null)} />
-                      <button type="button" className="quiet-button" title="Download a blank parts-list template" aria-label="Download parts-list template" onClick={downloadPartsTemplate}><FileText size={15} /></button>
-                    </div>
-                  </label>
-                </div>
-                {/* 2026-10-01 — user request: "combine the 'Add / cross-check
-                    with stock' button and 'import' button into one button
-                    called 'Add/Import Parts', move the button below the
-                    choose file section." See addOrImportParts above —
-                    imports the chosen file when one's selected, otherwise
-                    adds/cross-checks the pasted lines.
-                    2026-10-01 follow-up — user request: "the add/import
-                    button to be on the left, same style as the pickslip
-                    button." .detail-actions is shared by every other footer
-                    in this app and right-aligns by default (justify-content:
-                    flex-end) — left-aligned here via an inline override
-                    rather than touching that shared class. "Same style as
-                    the pickslip button" = .section-action-button, the gold
-                    accent style "Create picking slip" and "Add parts to Job"
-                    above both already use, replacing the plain
-                    .quiet-button this had. */}
-                <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
-              </>
-            )}
+            {showAddParts && !tabletLayout && addPartsBlock}
             {/* 2026-09-15, user request: "Parts list table, make it that
                 bulk update can be done on the parts to add supplier and
                 order number, instead of one at a time." A row checkbox
@@ -4954,7 +4968,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     outworkCount: job?.outworkItems.length ?? 0,
     attachmentsCount: job?.attachments.length ?? 0,
   });
-  const activeTab = resolveActiveTab(requestedTab, jobTabs);
+  const deskTab = resolveActiveTab(requestedTab, jobTabs);
+  // "none" on the tablet layout, so none of the desktop tab panels render there.
+  const activeTab: JobTabKey | "none" = tabletLayout ? "none" : deskTab;
 
   const jobEnded = !!job && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status);
   const factItems = job ? buildFacts({
@@ -5004,6 +5020,303 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const stepperSteps = job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
   const stepperStatus = job ? (job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status === "TO_BE_COLLECTED" ? "TO_BE_RECEIVED" : job.status) : "TO_BE_RECEIVED";
   const stepNumber = (stepperSteps as string[]).indexOf(String(stepperStatus)) + 1;
+  // ---------------------------------------------------------------------
+  // 2026-10-27 — design C: the mechanic tablet layout (tenantRole USER only; the view-only role keeps design A).
+  // Big touch targets, a read-only status track, a "This job" summary without customer details, one card per part and a bottom action bar.
+  // Everything a mechanic could do before is still here: the same handlers, saved the same way.
+  // ---------------------------------------------------------------------
+  const closeTabletLine = () => { setTabletLineId(""); setOrderEditLineId(""); setOrderSupplierId(""); setOrderSupplierQuery(""); setOrderSupplierOptions([]); };
+  const cancelReceive = () => { setReceivingLineId(""); setReceiveQty(""); setReceiveSource("AUTO"); };
+  const partsEditable = !partsReadOnly;
+  const tabletHeadline = outstandingHeadline(partCounts);
+  const tabletMachine = [form.machineMake, form.machineModel].filter(Boolean).join(" ") || String(form.component || "");
+  const tabletFacts = buildTabletFacts({
+    machine: tabletMachine,
+    machineSerial: form.machineSerial,
+    componentSerial: form.componentSerial,
+    plantNumber: form.plantNumber,
+    machineHours: form.machineHours,
+    scheduled: formatFactDate(form.fieldScheduledDate),
+    technician: form.fieldTechnician,
+    fieldService: fieldLayout,
+  });
+  const tabletNote = latestNote(form.notes);
+
+  const tabletHeader = tabletLayout && job ? (
+    <div className="job-sticky-header jt-fixed" ref={setStickyHeaderNode}>
+      <div className="jt-top">
+        <Link href={backHref} className="jt-icon-button big" onClick={handleBackClick} aria-label="Back to jobs"><ArrowLeft size={22} /></Link>
+        <div className="jt-title">
+          <h1>{title}</h1>
+          <span>{[tabletMachine, typeLabels[(job.type || "STANDARD_REPAIR") as keyof typeof typeLabels]].filter(Boolean).join(" · ")}</span>
+        </div>
+        <div className="jt-pills">
+          <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />
+          {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
+          {job.breakdown && <BreakdownPill />}
+          {pexInStock && <PexAllocatedPill />}
+        </div>
+        <span className="jt-spacer" />
+        <span className={`autosave-indicator jt-autosave ${autosaveState}`}>
+          {autosaveState === "saving" ? <><Loader2 className="spin" size={15} /> Saving…</> : autosaveState === "error" ? "Save failed — retrying" : <><Save size={15} /> All changes saved</>}
+        </span>
+      </div>
+      {error && <div className="inline-error">{error}</div>}
+      {documentNotice && <div className="inline-success">{documentNotice}</div>}
+      {["CLOSED", "CANCELLED"].includes(job.status) ? (
+        <p className="jt-track-note solo">This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}). Your office team manages its status.</p>
+      ) : (
+        <TabletStatusTrack steps={stepperSteps as string[]} labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" } as Record<string, string>} status={String(stepperStatus)} />
+      )}
+    </div>
+  ) : null;
+
+  const tabletCardLines = job ? job.partLines.filter((line) => {
+    const q = partSearchQuery.trim().toLowerCase();
+    return matchesPartFilter(line, partFilter) && (!q || (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q));
+  }) : [];
+
+  const tabletBody = tabletLayout && job ? (
+    <div className="jt-body">
+      <section className="jt-summary" aria-label="This job">
+        <h2>This job</h2>
+        {tabletFacts.map((fact) => (
+          <div key={fact.label} className="jt-fact"><span>{fact.label}</span><strong>{fact.value}</strong></div>
+        ))}
+        {(tabletFacts.length > 0 && (form.description || tabletNote)) && <div className="jt-rule" />}
+        {form.description ? <div className="jt-fact"><span>Job description</span><p>{form.description}</p></div> : null}
+        {tabletNote ? (
+          <button type="button" className="jt-note" onClick={() => setTabletSheet("notes")}><span>Latest note</span><p>{tabletNote}</p></button>
+        ) : null}
+      </section>
+
+      <section className="jt-parts" aria-label="Parts list">
+        {!showPartsBlock ? (
+          <p className="jt-empty">Job parts &amp; ordering is switched off for this company.</p>
+        ) : (
+          <>
+            <div className="jt-parts-head">
+              <h2>Parts list</h2>
+              <div className="jt-segments" role="tablist" aria-label="Filter parts">
+                {tabletSegments(partCounts).map((seg) => (
+                  <button key={seg.key} type="button" role="tab" aria-selected={partFilter === seg.key} className={partFilter === seg.key ? "jt-segment active" : "jt-segment"} onClick={() => setPartFilter(seg.key)}>{seg.label}<span>{seg.count}</span></button>
+                ))}
+              </div>
+              <span className="jt-spacer" />
+              <button type="button" className={tabletSearchOpen ? "jt-icon-button big active" : "jt-icon-button big"} aria-label="Search parts" aria-pressed={tabletSearchOpen} onClick={() => { setTabletSearchOpen((v) => !v); if (tabletSearchOpen) setPartSearchQuery(""); }}><Search size={22} /></button>
+            </div>
+            {tabletSearchOpen && (
+              <div className="jt-search">
+                <Search size={20} aria-hidden="true" />
+                <input autoFocus value={partSearchQuery} onChange={(e) => setPartSearchQuery(e.target.value)} placeholder="Part number or description" aria-label="Search parts" />
+                {partSearchQuery ? <button type="button" className="jt-icon-button" aria-label="Clear search" onClick={() => setPartSearchQuery("")}><X size={18} /></button> : null}
+              </div>
+            )}
+            {partsReadOnly && <p className="jt-hint">Job parts &amp; ordering is switched off for this company, so these parts are read-only.</p>}
+            {job.partLines.length === 0 ? (
+              <p className="jt-empty">No parts on this job yet.{partsEditable ? " Tap Add parts below." : ""}</p>
+            ) : tabletCardLines.length === 0 ? (
+              <p className="jt-empty">{partSearchQuery.trim() ? `No parts match "${partSearchQuery.trim()}".` : "No parts in this view."}</p>
+            ) : (
+              <div className="jt-cards">
+                {tabletCardLines.map((line) => {
+                  const lineId = String(line.id);
+                  const card = buildTabletCard({ id: lineId, partNumber: line.partNumber, description: line.description, quantity: line.quantity, receivedQuantity: line.receivedQuantity, pickedQuantity: line.pickedQuantity, status: line.status, supplierName: line.orderedFromSupplier?.name ? String(line.orderedFromSupplier.name) : "", orderNumber: line.orderNumber });
+                  return (
+                    <TabletPartCard
+                      key={lineId}
+                      card={card}
+                      canEdit={partsEditable}
+                      disabled={saving}
+                      onOpen={() => setTabletLineId(lineId)}
+                      onAction={() => {
+                        const kind = card.action?.kind;
+                        if (kind === "receive" || kind === "receive-rest") { setReceivingLineId(lineId); setReceiveQty(String(card.outstanding)); setReceiveSource("AUTO"); }
+                        else if (kind === "supplier") setTabletLineId(lineId);
+                        else if (kind === "undo") void confirm({ message: `Undo the received quantity on ${card.partNumber}?`, tone: "neutral", confirmLabel: "Undo receive" }).then((ok) => { if (ok) void unreceivePartLine(lineId); });
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </div>
+  ) : null;
+
+  const tabletBar = tabletLayout && job ? (
+    <div className="jt-bar">
+      {partsEditable && <button type="button" className="jt-bar-primary" onClick={() => { setShowAddParts(true); setTabletSheet("addparts"); }}><Plus size={20} strokeWidth={2.5} />Add parts</button>}
+      {showPickSlipsTab && <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("pickslips")}><ClipboardList size={20} />Pick slips{jobPickSlips.length > 0 ? <span>{jobPickSlips.length}</span> : null}</button>}
+      <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("photos")}><Camera size={20} />Photos{job.attachments.length > 0 ? <span>{job.attachments.length}</span> : null}</button>
+      <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("notes")}><StickyNote size={20} />Notes</button>
+      {outworkSection && <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("outwork")}><Truck size={20} />Outwork{job.outworkItems.length > 0 ? <span>{job.outworkItems.length}</span> : null}</button>}
+      <span className="jt-spacer" />
+      <div className="jt-bar-total"><strong>{tabletHeadline.title}</strong>{tabletHeadline.sub ? <span>{tabletHeadline.sub}</span> : null}</div>
+    </div>
+  ) : null;
+
+  // Receive sheet: driven by the same receivingLineId / receiveQty / receiveSource state as the desktop table's inline form.
+  const tabletReceiveLine = tabletLayout && job && receivingLineId ? job.partLines.find((l) => String(l.id) === receivingLineId) : undefined;
+  const tabletDetailLine = tabletLayout && job && tabletLineId ? job.partLines.find((l) => String(l.id) === tabletLineId) : undefined;
+  const tabletSheets = tabletLayout && job ? (
+    <>
+      {tabletReceiveLine && (() => {
+        const line = tabletReceiveLine;
+        const lineId = String(line.id);
+        const outstanding = Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0));
+        const qtys = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity, pickedQuantity: line.pickedQuantity });
+        const askSource = stockOn && qtys.stockRemaining > 0 && qtys.supplierOutstanding > 0 && qtys.hasOrderInfo;
+        const takesFromStock = !line.part ? 0 : receiveSource === "STOCK" ? Number(receiveQty || 0) : receiveSource === "AUTO" ? Math.min(Number(receiveQty || 0), qtys.stockRemaining) : 0;
+        const qtyValid = Number(receiveQty) > 0 && Number(receiveQty) <= outstanding;
+        return (
+          <TabletSheet
+            title="Mark received"
+            subtitle={`${text(line.partNumber)}${line.description ? ` · ${text(line.description)}` : ""}`}
+            onClose={cancelReceive}
+            footer={<>
+              <button type="button" className="jt-footer-button" disabled={saving} onClick={cancelReceive}>Cancel</button>
+              <button type="button" className="jt-footer-button primary" disabled={saving || !qtyValid} onClick={() => void receivePartLine(lineId)}>{saving ? "Saving…" : "Confirm received"}</button>
+            </>}
+          >
+            <p className="jt-sheet-lead">{formatQty(outstanding)} still to come in. How many arrived?</p>
+            <QtyStepper value={receiveQty} min={Math.min(1, outstanding)} max={outstanding} onChange={setReceiveQty} label="Quantity received" />
+            {outstanding > 1 && <button type="button" className="jt-link-button" onClick={() => setReceiveQty(String(outstanding))}>All {formatQty(outstanding)}</button>}
+            {askSource && (
+              <div className="jt-source" role="group" aria-label="Where these units came from">
+                {([["AUTO", "Stock first"], ["STOCK", "From stock"], ["ORDER", "From supplier"]] as const).map(([value, label]) => (
+                  <button key={value} type="button" className={receiveSource === value ? "jt-segment active" : "jt-segment"} aria-pressed={receiveSource === value} onClick={() => setReceiveSource(value)}>{label}</button>
+                ))}
+              </div>
+            )}
+            {takesFromStock > 0 ? <p className="jt-hint">Takes {formatQty(takesFromStock)} from stock.</p> : null}
+            {error ? <p className="jt-sheet-error">{error}</p> : null}
+          </TabletSheet>
+        );
+      })()}
+
+      {tabletDetailLine && (() => {
+        const line = tabletDetailLine;
+        const lineId = String(line.id);
+        const qtys = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity, pickedQuantity: line.pickedQuantity });
+        const pickerOpen = orderEditLineId === lineId;
+        return (
+          <TabletSheet
+            title={text(line.partNumber)}
+            subtitle={`${line.description ? `${text(line.description)} · ` : ""}Qty ${formatQty(line.quantity)}`}
+            onClose={closeTabletLine}
+            footer={<>
+              {partsEditable && <button type="button" className="jt-footer-button danger" disabled={saving} onClick={() => { void confirm({ message: `Remove ${text(line.partNumber)} from this job?`, tone: "danger", confirmLabel: "Remove" }).then((ok) => { if (ok) { closeTabletLine(); void removePartLineRow(lineId); } }); }}>Remove part</button>}
+              <span className="jt-spacer" />
+              <button type="button" className="jt-footer-button primary" onClick={closeTabletLine}>Done</button>
+            </>}
+          >
+            <fieldset disabled={!partsEditable} className="unstyled-fieldset">
+              <div className="jt-form">
+                <label>
+                  <span>Order number</span>
+                  <input
+                    key={`${lineId}:${line.orderNumber ? String(line.orderNumber) : ""}`}
+                    defaultValue={line.orderNumber ? String(line.orderNumber) : ""}
+                    placeholder="PO / order #"
+                    disabled={saving}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next === (line.orderNumber ? String(line.orderNumber).trim() : "")) return;
+                      void queueRowSave(lineId, () => saveOrderNumberInline(lineId, next));
+                    }}
+                  />
+                </label>
+                {stockOn && qtys.hasOrderInfo && (
+                  <label>
+                    <span>Qty ordered from supplier</span>
+                    <input
+                      key={`${lineId}:ordered:${qtys.ordered}`}
+                      type="number"
+                      inputMode="decimal"
+                      min={1}
+                      max={Math.max(qtys.quantity - qtys.issued, 1)}
+                      step="any"
+                      defaultValue={qtys.ordered}
+                      disabled={saving}
+                      onBlur={(e) => {
+                        const next = e.target.value.trim();
+                        if (!next || Number(next) === qtys.ordered) return;
+                        void queueRowSave(lineId, () => saveOrderedQtyInline(lineId, next));
+                      }}
+                    />
+                  </label>
+                )}
+                <div className="jt-field-wide">
+                  <span>Supplier</span>
+                  {line.orderedFromSupplier?.id && !pickerOpen ? (
+                    <div className="jt-chosen">
+                      <strong>{text(line.orderedFromSupplier.name)}</strong>
+                      <button type="button" className="jt-link-button" disabled={saving} onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, ""))}>Remove supplier</button>
+                    </div>
+                  ) : null}
+                  <div className="jt-search inline">
+                    <Search size={20} aria-hidden="true" />
+                    <input
+                      value={pickerOpen ? orderSupplierQuery : ""}
+                      onFocus={() => { setOrderEditLineId(lineId); setOrderSupplierQuery(""); setOrderSupplierId(""); }}
+                      onChange={(e) => { setOrderEditLineId(lineId); setOrderSupplierQuery(e.target.value); setOrderSupplierId(""); }}
+                      placeholder={line.orderedFromSupplier?.id ? "Change supplier — type to search" : "Search active supplier"}
+                      aria-label="Search active supplier"
+                    />
+                  </div>
+                  {pickerOpen && orderSupplierOptions.length > 0 && (
+                    <div className="jt-options">
+                      {orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}>{s.name}</button>)}
+                    </div>
+                  )}
+                </div>
+                <label className="jt-field-wide">
+                  <span>Note for this part</span>
+                  <textarea
+                    key={`${lineId}:notes:${line.notes ? String(line.notes) : ""}`}
+                    rows={3}
+                    maxLength={1000}
+                    defaultValue={line.notes ? String(line.notes) : ""}
+                    placeholder="Add a note"
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (next === (line.notes ? String(line.notes).trim() : "")) return;
+                      void queueRowSave(lineId, () => saveNotesInline(lineId, next));
+                    }}
+                  />
+                </label>
+              </div>
+            </fieldset>
+            {error ? <p className="jt-sheet-error">{error}</p> : null}
+          </TabletSheet>
+        );
+      })()}
+
+      {tabletSheet === "addparts" && (
+        <TabletSheet title="Add parts" subtitle="Paste a list or import a file." size="large" onClose={() => { setTabletSheet(null); setShowAddParts(false); }}>
+          {addPartsBlock}
+          {error ? <p className="jt-sheet-error">{error}</p> : null}
+        </TabletSheet>
+      )}
+      {tabletSheet === "pickslips" && showPickSlipsTab && (
+        <TabletSheet title="Pick slips" size="large" onClose={() => setTabletSheet(null)}>
+          <fieldset disabled={pickSlipsAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{pickSlipsSection}</fieldset>
+        </TabletSheet>
+      )}
+      {tabletSheet === "photos" && (
+        <TabletSheet title="Photos & attachments" size="large" onClose={() => setTabletSheet(null)}>{attachmentsSection}</TabletSheet>
+      )}
+      {tabletSheet === "notes" && (
+        <TabletSheet title="Notes" size="large" onClose={() => setTabletSheet(null)}>{notesSection}</TabletSheet>
+      )}
+      {tabletSheet === "outwork" && outworkSection && (
+        <TabletSheet title="Outwork" size="large" onClose={() => setTabletSheet(null)}>{outworkSection}</TabletSheet>
+      )}
+    </>
+  ) : null;
 
   return (
     <div className="job-workspace" style={{ "--jw-fixed-h": `${stickyHeaderHeight}px` } as CSSProperties}>
@@ -5027,7 +5340,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {error && <div className="inline-error">{error}</div>}
           {documentNotice && <div className="inline-success">{documentNotice}</div>}
         </div>
-      ) : job ? (
+      ) : tabletLayout ? tabletHeader : job ? (
         <div className="job-sticky-header jw-fixed" ref={setStickyHeaderNode}>
           {/* 2026-10-27, design A. The header and status stepper stay fixed at the top (2026-09-10 request); the key facts and tabs scroll with the page,
               with the tab bar pinned just beneath this block. */}
@@ -5116,15 +5429,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
       {job && (
         <>
-          <JobFactsStrip items={factItems} />
-          <JobTabBar tabs={jobTabs} active={activeTab} onSelect={selectTab} />
+          {tabletBody}
+          {tabletBar}
+          {tabletSheets}
+          {!tabletLayout && <JobFactsStrip items={factItems} />}
+          {!tabletLayout && <JobTabBar tabs={jobTabs} active={deskTab} onSelect={selectTab} />}
 
           {/* Always mounted (just hidden on other tabs) so a field you were typing in keeps its state when you flip tabs. */}
-          <div className="jw-panel" hidden={activeTab !== "overview"}>
-            {fieldLayout ? fieldOverview : (
-              <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
-            )}
-          </div>
+          {!tabletLayout && (
+            <div className="jw-panel" hidden={activeTab !== "overview"}>
+              {fieldLayout ? fieldOverview : (
+                <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
+              )}
+            </div>
+          )}
 
 
           {partsListDialog && (() => {
