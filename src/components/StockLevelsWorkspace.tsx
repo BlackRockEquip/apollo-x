@@ -868,7 +868,8 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
         setJobs((body.items || []).map((j: { id: string; jobNumber: string | null; draftNumber: string; customer?: { name?: string; tradingName?: string | null } }) => ({
           id: j.id,
           jobNumber: j.jobNumber || j.draftNumber,
-          customerName: j.customer?.tradingName || j.customer?.name || null,
+          // 2026-10-27: a mechanic requesting a picking slip picks the job by number only (no client name).
+          customerName: canRequestPick ? null : j.customer?.tradingName || j.customer?.name || null,
         })));
       }
     } catch {
