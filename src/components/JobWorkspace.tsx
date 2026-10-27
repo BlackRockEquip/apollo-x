@@ -4,9 +4,15 @@ import { useRememberedListUrl } from "@/components/RememberListUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FocusEvent } from "react";
+import type { CSSProperties, FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
 import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Trash2, Unlink, X } from "lucide-react";
+import { ActionMenu, type ActionMenuItem } from "./job-screen/ActionMenu";
+import { JobFactsStrip } from "./job-screen/JobFactsStrip";
+import { JobTabBar } from "./job-screen/JobTabBar";
+import { buildJobTabs, hashForTab, resolveActiveTab, tabFromHash, type JobTabKey } from "./job-screen/job-tabs";
+import { buildFacts } from "./job-screen/job-facts";
+import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { quoteLineToCell } from "./quote-compare/compare-model";
@@ -642,7 +648,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / ...).
   const [attachmentTag, setAttachmentTag] = useState("");
   // 2026-10-06 — field jobs: which of Parts list / Pick slips / Follow-up is open.
-  const [fieldPartsTab, setFieldPartsTab] = useState<"parts" | "pickslips" | "followup">("parts");
+  // 2026-10-27, job screen redesign: the open tab lives in the URL hash (#tab=parts) so a refresh or a shared link lands on the same tab.
+  // Read after mount (not in the initial state) so the server and first client render agree.
+  const [requestedTab, setRequestedTab] = useState<JobTabKey>("overview");
+  useEffect(() => {
+    const fromHash = tabFromHash(window.location.hash);
+    if (fromHash) setRequestedTab(fromHash);
+  }, []);
+  const selectTab = useCallback((key: JobTabKey) => {
+    setRequestedTab(key);
+    try { window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hashForTab(key)}`); } catch { /* the tab still switches without the URL update */ }
+  }, []);
+  const [partFilter, setPartFilter] = useState<PartFilter>("all");
+  // "in 3 days" style notes need the current day; set after mount so the server render and the browser agree.
+  const [today, setToday] = useState<Date | null>(null);
+  useEffect(() => { setToday(new Date()); }, []);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   // 2026-09-15, user request: "once a note is added [to an attachment],
   // allow a user to edit it as well." (Job notes themselves later moved
@@ -654,7 +674,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Activity history hidden behind a toggle instead of shown by default —
   // 2026-09-10, user request ("Active history also only to be visible on
   // click, not visible from beginning").
-  const [showActivityHistory, setShowActivityHistory] = useState(false);
+  const [showActivityHistory, setShowActivityHistory] = useState(true);
   // supplierAddressLines/supplierVat added 2026-09-16 — user request: print
   // the supplier's full block (name bold, address lines stacked, VAT
   // number) instead of a bare "Supplier: {name}" line. dateSentOut renamed
@@ -4179,6 +4199,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Field service jobs (detail mode) use the field layout — see fieldJobLayout below.
   const fieldLayout = mode === "detail" && !!job && job.type === "FIELD_SERVICE";
 
+  const showPickSlipsTab = !!job && (pickSlipsAccess !== "DENIED" ? (job.partLines.length > 0 || jobPickSlips.length > 0) : jobPickSlips.length > 0);
+  const showFollowupTab = !!job && !mechanicFieldsLocked && partsAccess === "FULL" && partsFollowupGroups.length > 0;
+  const partCounts = countParts(job?.partLines ?? []);
+  const oldestOrderDays = partsFollowupGroups.reduce((max, g) => Math.max(max, g.overdueDays), 0);
+
   const partsListSection = job ? (
           <section className="detail-panel">
             <header>
@@ -4211,7 +4236,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 description so a partial memory of either still finds the
                 line. Hidden when there's nothing yet to search. */}
             {job.partLines.length > 0 && (
-              <div className="drawer-fields" style={{ padding: "10px 14px 14px" }}>
+              <div className="jw-parts-toolbar">
                 <div className="search-control inventory-search-control">
                   <Search size={15} />
                   <input
@@ -4221,6 +4246,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     aria-label="Search parts list by part number"
                   />
                 </div>
+                <div className="jw-chips" role="group" aria-label="Filter parts">
+                  {([["all", "All", partCounts.total], ["outstanding", "Outstanding", partCounts.outstanding], ["pickslip", "On pick slip", partCounts.onPickSlip], ["received", "Received", partCounts.received]] as const).map(([key, label, n]) => (
+                    <button key={key} type="button" className={partFilter === key ? "jw-chip active" : "jw-chip"} aria-pressed={partFilter === key} onClick={() => setPartFilter(key)}>{label}<span>{n}</span></button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Design A: a one-line nudge that links straight to the Follow-up tab when ordered parts are still outstanding. */}
+            {job.partLines.length > 0 && partCounts.outstanding > 0 && (
+              <div className="jw-outstanding-strip">
+                <span>
+                  <strong>{partCounts.outstanding} {partCounts.outstanding === 1 ? "part" : "parts"} outstanding</strong>
+                  {showFollowupTab ? ` from ${partsFollowupGroups.length} ${partsFollowupGroups.length === 1 ? "supplier" : "suppliers"}` : ""}
+                  {showFollowupTab && oldestOrderDays > 0 ? ` · oldest order ${oldestOrderDays} ${oldestOrderDays === 1 ? "day" : "days"} ago` : ""}
+                </span>
+                {showFollowupTab && <button type="button" className="jw-strip-link" onClick={() => selectTab("followup")}><Mail size={13} /> Email supplier follow-up</button>}
               </div>
             )}
             {showAddParts && (
@@ -4279,9 +4320,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {error ? <div className="inline-error" style={{ margin: "8px 14px" }}>{error}</div> : null}
             {(() => {
               const q = partSearchQuery.trim().toLowerCase();
-              const visiblePartLines = q
-                ? job.partLines.filter((line) => (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q))
-                : job.partLines;
+              const visiblePartLines = job.partLines.filter((line) => matchesPartFilter(line, partFilter) && (!q || (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q)));
               return (
             <>
               {/* 2026-10-22, user request: "Parts List table make the headers filterable like other tables" - the same Excel-style
@@ -4297,7 +4336,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 const received = decimalText(line.receivedQuantity ?? 0);
                 const outstanding = Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0));
                 const hasReceivedSome = Number(line.receivedQuantity ?? 0) > 0;
-                const fullyReceived = line.status === "RECEIVED";
                 // 2026-09-29, user request: "when clicking create picking
                 // slip inside a job, it should not change the status to
                 // received as the part might not be in stock physically."
@@ -4314,7 +4352,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 const qtys = partLineQuantities({ quantity: line.quantity, orderedQuantity: line.orderedQuantity, orderNumber: line.orderNumber, hasSupplier: Boolean(line.orderedFromSupplier), receivedQuantity: line.receivedQuantity, stockIssuedQuantity: line.stockIssuedQuantity, pickedQuantity: line.pickedQuantity });
                 const isSplitLine = stockOn && qtys.hasOrderInfo && qtys.ordered > 0 && qtys.stockQty > 0;
                 const receiveStockPart = !line.part ? 0 : receiveSource === "STOCK" ? Number(receiveQty || 0) : receiveSource === "AUTO" ? Math.min(Number(receiveQty || 0), qtys.stockRemaining) : 0;
-                const statusTone = fullyReceived ? "" : line.status === "PICKED" ? "tone-blue" : "neutral";
                 const supplierPickerOpenHere = orderEditLineId === lineId;
                 return <tr key={line.id} data-line-id={lineId}>
                   {bulkEditMode && <td><input type="checkbox" className="jobs-select" aria-label={`Select ${line.partNumber}`} checked={bulkSelectedIds.has(lineId)} onChange={(e) => setBulkSelectedIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(lineId); else next.delete(lineId); return next; })} /></td>}
@@ -4460,7 +4497,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     {supplierPickerOpenHere && orderSupplierOptions.length > 0 && supplierDropPos && <div className="selector-results" style={{ position: "fixed", left: supplierDropPos.left, width: supplierDropPos.width, top: supplierDropPos.top ?? "auto", bottom: supplierDropPos.bottom ?? "auto", maxHeight: supplierDropPos.maxHeight, zIndex: 40 }}>{orderSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => void queueRowSave(lineId, () => saveSupplierInline(lineId, s.id))}><strong>{s.name}</strong></button>)}</div>}
                   </td>
                   <td data-filter-values={partStatusLabel(text(line.status), stockOn)}>
-                    <span className={`status-pill ${statusTone}`}>{partStatusLabel(text(line.status), stockOn)}</span>
+                    <span className={`jw-pill ${partTone(line.status)}`}>{partStatusLabel(text(line.status), stockOn)}</span>
                     {/* 2026-09-29, user request: moved from under the part
                         number to here, under Status — see partStockOnHand's
                         own comment above for what this shows and why. */}
@@ -4493,17 +4530,29 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     />
                   </td>
                   <td className="actions">
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      {hasReceivedSome && <button type="button" className="table-action" disabled={saving} onClick={() => void unreceivePartLine(lineId)}>Undo receive</button>}
-                      {outstanding > 0 && receivingLineId !== lineId && <button type="button" className="table-action" disabled={saving} onClick={() => { setReceivingLineId(lineId); setReceiveQty(String(outstanding)); setReceiveSource("AUTO"); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
-                      <button type="button" className="table-action danger" onClick={() => void removePartLineRow(lineId)}>Remove</button>
+                    <div className="jw-row-actions">
+                      {outstanding > 0 && receivingLineId !== lineId && <button type="button" className="jw-row-primary" disabled={saving} onClick={() => { setReceivingLineId(lineId); setReceiveQty(String(outstanding)); setReceiveSource("AUTO"); }}>{hasReceivedSome ? "Receive outstanding" : "Mark received"}</button>}
+                      <ActionMenu
+                        variant="icon"
+                        ariaLabel={`More actions for ${line.partNumber || "part"}`}
+                        items={[
+                          ...(hasReceivedSome ? [{ key: "undo", label: "Undo receive", onSelect: () => void unreceivePartLine(lineId), disabled: saving }] : []),
+                          { key: "remove", label: "Remove part", danger: true, dividerBefore: hasReceivedSome, onSelect: () => void removePartLineRow(lineId) },
+                        ] satisfies ActionMenuItem[]}
+                      />
                     </div>
                   </td>
                 </tr>;
               })}
               {job.partLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts on this job yet.</td></tr>}
-              {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">No parts match &quot;{partSearchQuery}&quot;.</td></tr>}
+              {job.partLines.length > 0 && visiblePartLines.length === 0 && <tr><td colSpan={bulkEditMode ? 8 : 7} className="table-state compact-empty-state">{q ? <>No parts match &quot;{partSearchQuery}&quot;{partFilter !== "all" ? " in this filter" : ""}.</> : "No parts match this filter."}</td></tr>}
             </tbody></table></div>
+            {job.partLines.length > 0 && (
+              <div className="jw-parts-footer">
+                <strong>{partCounts.total} {partCounts.total === 1 ? "part" : "parts"}</strong>
+                {summaryParts(partCounts, "not yet ordered").map((part) => <span key={part}>{part}</span>)}
+              </div>
+            )}
             </>
               );
             })()}
@@ -4801,17 +4850,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const fieldHoursTotal = fieldHoursParts.every((value) => !value) ? "" : String(Math.round(fieldHoursParts.reduce((sum, value) => sum + (Number(value) || 0), 0) * 100) / 100);
   const fieldSiteLine = (form.siteAddress || form.fieldSite || "").split("\n")[0];
 
-  const fieldSummaryStrip = job && fieldLayout ? (
-    <section className="detail-panel field-summary-strip">
-      <div><b>Customer</b><span>{job.customer?.name ? String(job.customer.name) : "—"}</span></div>
-      <div><b>Site</b><span>{fieldSiteLine || "—"}</span></div>
-      <div><b>Scheduled</b><span>{form.fieldScheduledDate ? new Date(form.fieldScheduledDate).toLocaleDateString("en-ZA") : "—"}</span></div>
-      <div><b>Technician</b><span>{form.fieldTechnician || "—"}</span></div>
-      <div><b>Machine</b><span>{[form.machineMake, form.machineModel].filter(Boolean).join(" ") || "—"}</span></div>
-      <div><b>Total hours</b><span>{fieldHoursTotal || "—"}</span></div>
-    </section>
-  ) : null;
-
   const workRequestedSection = job && fieldLayout ? (
     <section className="detail-panel">
       <header><div><h2>Work requested</h2><p>What the customer wants done, and the machine it is on.</p></div></header>
@@ -4867,234 +4905,207 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </section>
   ) : null;
 
-  // 2026-10-06 — user request: use the Field job's tabbed Parts card on every
-  // job type. Parts list / Pick slips / Follow-up are tabs of one card; Pick
-  // slips only once parts are added; Follow-up only while ordered parts are
-  // outstanding (same groups the Follow-up section itself lists).
-  const showPickSlipsTab = !!job && (pickSlipsAccess !== "DENIED" ? (job.partLines.length > 0 || jobPickSlips.length > 0) : jobPickSlips.length > 0);
-  const showFollowupTab = !!job && !mechanicFieldsLocked && partsAccess === "FULL" && partsFollowupGroups.length > 0;
-  const activePartsTab = fieldPartsTab === "pickslips" && showPickSlipsTab ? "pickslips" : fieldPartsTab === "followup" && showFollowupTab ? "followup" : "parts";
-  // Industry builds step C: the whole Parts card is hidden when Job parts & ordering is off and the job has no
+  // Industry builds step C: the whole Parts tab is hidden when Job parts & ordering is off and the job has no
   // parts; with parts already on it, it stays but read-only.
   const partsReadOnly = partsAccess !== "FULL" || viewOnly;
   const showPartsBlock = !!job && (partsAccess !== "DENIED" || job.partLines.length > 0);
-  const fieldPartsBlock = job && showPartsBlock ? (
-    <div className="field-parts-block">
+  const partsPanel = job && showPartsBlock ? (
+    <div className="jw-panel">
       {partsReadOnly && <p className="muted small-line" style={{ margin: "0 0 8px" }}>Job parts &amp; ordering is switched off for this company, so the parts already on this job are read-only.</p>}
-      <div className="field-tabs" role="tablist" aria-label="Parts">
-        <button type="button" role="tab" aria-selected={activePartsTab === "parts"} className={activePartsTab === "parts" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("parts")}>Parts list <span className="field-tab-count">{job.partLines.length}</span></button>
-        {showPickSlipsTab && <button type="button" role="tab" aria-selected={activePartsTab === "pickslips"} className={activePartsTab === "pickslips" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("pickslips")}>Pick slips <span className="field-tab-count">{jobPickSlips.length}</span></button>}
-        {showFollowupTab && <button type="button" role="tab" aria-selected={activePartsTab === "followup"} className={activePartsTab === "followup" ? "field-tab active" : "field-tab"} onClick={() => setFieldPartsTab("followup")}>Follow-up <span className="field-tab-count">{partsFollowupGroups.length}</span></button>}
-      </div>
-      {activePartsTab === "parts" && <fieldset disabled={partsReadOnly} className="unstyled-fieldset">{partsListSection}</fieldset>}
-      {activePartsTab === "pickslips" && <fieldset disabled={pickSlipsAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
-      {activePartsTab === "followup" && followUpSection}
+      <fieldset disabled={partsReadOnly} className="unstyled-fieldset">{partsListSection}</fieldset>
     </div>
   ) : null;
 
-  const fieldJobLayout = job && fieldLayout ? (
+  // Field service jobs: the Overview tab is the customer / work requested / field service sections plus notes and commercial details.
+  const fieldOverview = job && fieldLayout ? (
     <div className="field-job-layout">
-      {fieldSummaryStrip}
       <div className="field-job-grid">
         <div className="field-job-main">
           <div className="job-edit-grid field-stack">{customerSection}{workRequestedSection}{fieldServiceSection}</div>
-          {attachmentsSection}
-          {outworkSection}
-          {fieldPartsBlock}
         </div>
         <div className="field-job-side">
           <div className="job-edit-grid field-stack">{notesSection}{commercialSection}</div>
-          {activitySection}
         </div>
       </div>
     </div>
   ) : null;
 
+  // ---------------------------------------------------------------------
+  // 2026-10-27 — job screen redesign (design A): header card, key facts, tabs.
+  // ---------------------------------------------------------------------
+  const hasPexPanel = !!job && !fieldLayout && (
+    (job.type === "PEX_SUPPLY" && !!job.pexAsSupply) ||
+    (canSendToPex && !job.pexAsSupply && !job.pexAsReturn) ||
+    (pexAllocatedDirect && job.type !== "PEX_RETURN" && canSendToPex && !job.pexAsReturn?.consumedByJob) ||
+    (job.type === "PEX_RETURN" && !!job.pexAsReturn)
+  );
+  const jobTabs = buildJobTabs({
+    showParts: showPartsBlock,
+    showPickSlips: showPickSlipsTab,
+    showFollowup: showFollowupTab,
+    showOutwork: !!outworkSection,
+    showSpecifications: !!specificationsSection,
+    showPex: hasPexPanel,
+    showWarranty: !!job && job.type === "WARRANTY",
+    showActivity: !!activitySection,
+    partsCount: job?.partLines.length ?? 0,
+    pickSlipsCount: jobPickSlips.length,
+    followupCount: partsFollowupGroups.length,
+    outworkCount: job?.outworkItems.length ?? 0,
+    attachmentsCount: job?.attachments.length ?? 0,
+  });
+  const activeTab = resolveActiveTab(requestedTab, jobTabs);
+
+  const jobEnded = !!job && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status);
+  const factItems = job ? buildFacts({
+    fieldService: fieldLayout,
+    closed: jobEnded,
+    etaDate: form.etaDate,
+    quoteNumber: form.quoteNumber,
+    quoteDate: form.quoteDate,
+    salesOrderNumber: form.salesOrderNumber,
+    purchaseOrderNumber: form.purchaseOrderNumber,
+    purchaseOrderStatus: form.purchaseOrderStatus,
+    machineHours: form.machineHours,
+    scheduledDate: form.fieldScheduledDate,
+    technician: form.fieldTechnician,
+    siteLine: fieldSiteLine,
+    machine: [form.machineMake, form.machineModel].filter(Boolean).join(" "),
+    hoursTotal: fieldHoursTotal,
+    partsTotal: job.partLines.length,
+    partsReceived: job.partLines.filter((line) => line.status === "RECEIVED").length,
+    now: today ?? undefined,
+  }) : [];
+
+  const printMenuItems: ActionMenuItem[] = job && mode === "detail" && !mechanicFieldsLocked ? [
+    job.type === "FIELD_SERVICE"
+      ? { key: "field-report", label: "Field report", onSelect: () => void offerToSave(printFieldReport(), "FIELD_REPORT", fieldReportSpec) }
+      : { key: "job-card", label: "Job card", onSelect: () => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec) },
+    { key: "job-history", label: "Job history", onSelect: () => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec) },
+    { key: "delivery-note", label: "Delivery note", onSelect: openJobDeliveryNoteDialog },
+  ] : [];
+  // Every item here changes job status, so they are hidden together with the stepper for a Mechanic / view-only user
+  // (the server rejects them too — requireNotMechanicRestricted in jobs/service.ts).
+  const moreMenuItems: ActionMenuItem[] = [];
+  if (job && mode === "detail" && !mechanicFieldsLocked) {
+    if (canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !jobEnded) {
+      moreMenuItems.push({ key: "mark-unrepaired", label: "Mark returned unrepaired", onSelect: () => setDialog("returned-unrepaired") });
+    }
+    if (job.returnedUnrepaired && !["CLOSED", "CANCELLED"].includes(job.status)) {
+      moreMenuItems.push({ key: "undo-unrepaired", label: "Undo returned unrepaired", onSelect: () => { void confirm({ message: "Undo \"Returned unrepaired\" on this job?", tone: "neutral", confirmLabel: "Undo" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/returned-unrepaired/undo`, {}); }); } });
+    }
+    if (!jobEnded) {
+      moreMenuItems.push({ key: "cancel-job", label: "Cancel job", danger: true, dividerBefore: moreMenuItems.length > 0, onSelect: () => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); } });
+    }
+  }
+  const headerMachineLine = [[form.machineMake, form.machineModel].filter(Boolean).join(" ") || String(form.component || ""), form.machineSerial ? `S/N ${form.machineSerial}` : ""].filter(Boolean).join(" · ");
+
+  // Status stepper: TO_BE_COLLECTED is merged into TO_BE_RECEIVED and WAITING_FOR_PARTS into AWAIT_OUTWORK for display (see the comments at the stepper below).
+  const stepperSteps = job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
+  const stepperStatus = job ? (job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status === "TO_BE_COLLECTED" ? "TO_BE_RECEIVED" : job.status) : "";
+  const stepNumber = (stepperSteps as string[]).indexOf(String(stepperStatus)) + 1;
 
   return (
-    <div className="job-workspace">
-      <div className="job-sticky-header" ref={setStickyHeaderNode}>
-        <header className="page-header compact">
-          <div>
-            <Link href={backHref} className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
-            <p className="eyebrow">Jobs</p>
-            {/* Status pill moved up next to the job number, and the status
-                stepper (below, still inside .job-sticky-header) moved from
-                its own separate "Job status" section up to sit directly
-                under this header block — both 2026-09-29, user request
-                ("mockup of how the job status slider will look inline with
-                the job number field"). The plain-text " · <status label>"
-                that used to follow the job type below has been dropped
-                since the pill now carries that same information. */}
-            <div className="header-title-row">
-              <h1>{title}</h1>
-              {/* 2026-10-01 — user request ("let it add a status pill next
-                  to the job status 'Return Unrepaired' and once the job is
-                  completed the status will become 'Completed /
-                  Unrepaired'"): the flag shows as its own pill alongside
-                  the normal status pill right up until the job reaches
-                  COMPLETE, at which point it's folded into the main pill's
-                  own label instead (jobStatusLabel in StatusPill.tsx) —
-                  see ReturnUnrepairedPill's own comment there. */}
-              {job && <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />}
-              {job && job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
-              {job && job.breakdown && <BreakdownPill />}
-              {pexInStock && <PexAllocatedPill />}
+    <div className="job-workspace" style={{ "--jw-fixed-h": `${stickyHeaderHeight}px` } as CSSProperties}>
+      {mode === "create" ? (
+        <div className="job-sticky-header" ref={setStickyHeaderNode}>
+          <header className="page-header compact">
+            <div>
+              <Link href={backHref} className="back-link" onClick={handleBackClick}><ArrowLeft size={15} /> Back to jobs</Link>
+              <p className="eyebrow">Jobs</p>
+              <div className="header-title-row">
+                <h1>{title}</h1>
+              </div>
+              <p>The job number is allocated immediately, using your Numbering settings.</p>
             </div>
-            {/* 2026-10-01 — gated by canViewCustomer alongside the
-                Customer details section itself (see jobFormSections
-                above); this clickable name is also customer information. */}
-            {mode === "detail" && job?.customer && canViewCustomer && (
-              <p className="header-customer-line"><Link href={`/customers/${job.customer.id}`}>{job.customer.name}</Link></p>
-            )}
-            <p>
-              {mode === "create" ? "The job number is allocated immediately, using your Numbering settings." : typeLabels[(job?.type || "STANDARD_REPAIR") as keyof typeof typeLabels]}
-              {/* 2026-10-01, user request — warranty status shown next to
-                  the job type, only for Warranty-type jobs. job.warranty is
-                  only set once a JobWarranty row exists (saved from the
-                  Warranty panel below); defaults to PENDING same as that
-                  panel's own form.warrantyStatus default until then. */}
-              {mode === "detail" && job?.type === "WARRANTY" && <> · <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} /></>}
-            </p>
-          </div>
-          <div className="header-actions-stack">
-          <div className="header-actions">
-            {mode === "create" ? (
-              <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create job"}</button>
-            ) : (
-              // Save button removed in detail mode (2026-09-14, user
-              // request) — every field autosaves on its own (see the
-              // effect above); this just reflects that status back to the
-              // person instead of asking them to trigger it.
+            <div className="header-actions-stack">
+              <div className="header-actions">
+                <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create job"}</button>
+              </div>
+            </div>
+          </header>
+          {error && <div className="inline-error">{error}</div>}
+          {documentNotice && <div className="inline-success">{documentNotice}</div>}
+        </div>
+      ) : job ? (
+        <div className="job-sticky-header jw-fixed" ref={setStickyHeaderNode}>
+          {/* 2026-10-27, design A. The header and status stepper stay fixed at the top (2026-09-10 request); the key facts and tabs scroll with the page,
+              with the tab bar pinned just beneath this block. */}
+          <header className="jw-head">
+            <div className="jw-head-main">
+              <Link href={backHref} className="back-link jw-back" onClick={handleBackClick}><ArrowLeft size={14} /> Back to jobs</Link>
+              <div className="header-title-row">
+                <h1>{title}</h1>
+                {/* The return-unrepaired pill shows next to the status pill until COMPLETE, where it folds into the status label (see StatusPill). */}
+                <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />
+                {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
+                {job.breakdown && <BreakdownPill />}
+                {pexInStock && <PexAllocatedPill />}
+              </div>
+              <p className="jw-subline">
+                {/* The customer name is customer information, so it is gated by canViewCustomer like the Customer details section. */}
+                {job.customer && canViewCustomer && <Link href={`/customers/${job.customer.id}`} className="jw-customer">{job.customer.name}</Link>}
+                <span>{typeLabels[(job.type || "STANDARD_REPAIR") as keyof typeof typeLabels]}{job.type === "WARRANTY" && <> <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} /></>}</span>
+                {headerMachineLine && <span>{headerMachineLine}</span>}
+              </p>
+            </div>
+            <div className="jw-head-actions">
+              {/* Every field autosaves on its own (2026-09-14), so this just reflects that status back. */}
               <span className={`autosave-indicator ${autosaveState}`}>
                 {autosaveState === "saving" ? <><Loader2 className="spin" size={13} /> Saving…</> : autosaveState === "error" ? "Save failed — retrying" : <><Save size={13} /> All changes saved</>}
               </span>
-            )}
-            {job && mode === "detail" && (
-              <>
-                {/* 2026-10-01 — user request: "mechanic user - remove the
-                    print job card, job history, delivery note buttons from
-                    job views." Hidden (not just locked) for
-                    mechanicFieldsLocked, same tenantRole === "USER" flag as
-                    every other Mechanic-only restriction on this page. */}
-                {/* 2026-10-06 — field service jobs print a Field Report (what was saved
-                    on the job) instead of the workshop job card. */}
-                {!mechanicFieldsLocked && job.type === "FIELD_SERVICE" && <button type="button" className="table-action" onClick={() => void offerToSave(printFieldReport(), "FIELD_REPORT", fieldReportSpec)}><Printer size={14} /> Print Field Report</button>}
-                {!mechanicFieldsLocked && job.type !== "FIELD_SERVICE" && <button type="button" className="table-action" onClick={() => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec)}><Printer size={14} /> Print job card</button>}
-                {/* 2026-09-19, user request — see printJobHistory/
-                    printJobDeliveryNote's own comments above for scope. */}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={() => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec)}><Printer size={14} /> Print Job History</button>}
-                {!mechanicFieldsLocked && <button type="button" className="table-action" onClick={openJobDeliveryNoteDialog}><Printer size={14} /> Print Delivery Note</button>}
-                {/* 2026-10-01 — every button below changes job.status (the
-                    same action the status stepper performs, just via a
-                    dedicated dialog/confirm instead of a stepper click), so
-                    they're hidden together with it for mechanicFieldsLocked
-                    — leaving them visible would let a Mechanic route around
-                    the locked stepper. Server-side: requireNotMechanicRestricted
-                    in jobs/service.ts rejects all of these regardless. */}
-                {/* 2026-10-01 — no longer excludes a "RETURNED_UNREPAIRED"
-                    status (that status is retired — see
-                    Job.returnedUnrepaired's own comment in schema.prisma);
-                    instead hidden once the flag itself is already set,
-                    since the job can only be flagged once. */}
-                {!mechanicFieldsLocked && canMarkReturnedUnrepaired(job.type) && !job.returnedUnrepaired && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("returned-unrepaired")}>Mark returned unrepaired</button>}
-                {/* 2026-10-01, user request: "Mark return unrepaired button,
-                    allow to undo once clicked." Shown whenever the flag is
-                    set, including once the job has reached COMPLETE (it's
-                    showing as "Completed / Unrepaired" by then — see
-                    ReturnUnrepairedPill), since it was still set by mistake
-                    and should still be clearable. */}
-                {!mechanicFieldsLocked && job.returnedUnrepaired && !["CLOSED", "CANCELLED"].includes(job.status) && <button type="button" className="table-action" onClick={() => { void confirm({ message: "Undo \"Returned unrepaired\" on this job?", tone: "neutral", confirmLabel: "Undo" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/returned-unrepaired/undo`, {}); }); }}>Undo returned unrepaired</button>}
-                {!mechanicFieldsLocked && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action danger" onClick={() => { void confirm({ message: "Cancel this job?", tone: "danger", confirmLabel: "Cancel job" }).then((ok) => { if (ok) void postAction(`/api/v1/jobs/${job.id}/status`, { status: "CANCELLED", reason: null }); }); }}>Cancel job</button>}
-                {!mechanicFieldsLocked && !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("close")}>Close job</button>}
-                {!mechanicFieldsLocked && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status) && <button type="button" className="table-action" onClick={() => setDialog("reopen")}>Reopen job</button>}
-              </>
-            )}
-          </div>
-          {mode === "detail" && jobViewers.length > 0 && (
-            <div className="job-viewers" aria-label="People in this job">
-              {jobViewers.slice(0, 6).map((v) => (
-                <span key={v.userId} className={`job-viewer${v.you ? " you" : ""}`} style={{ background: viewerColour(v.userId) }} title={v.you ? `${v.name} (you)` : `${v.name} is in this job`}>{v.initials}</span>
-              ))}
-              {jobViewers.length > 6 && <span className="job-viewer more" title={jobViewers.slice(6).map((v) => v.name).join(", ")}>+{jobViewers.length - 6}</span>}
+              {jobViewers.length > 0 && (
+                <div className="job-viewers" aria-label="People in this job">
+                  {jobViewers.slice(0, 6).map((v) => (
+                    <span key={v.userId} className={`job-viewer${v.you ? " you" : ""}`} style={{ background: viewerColour(v.userId) }} title={v.you ? `${v.name} (you)` : `${v.name} is in this job`}>{v.initials}</span>
+                  ))}
+                  {jobViewers.length > 6 && <span className="job-viewer more" title={jobViewers.slice(6).map((v) => v.name).join(", ")}>+{jobViewers.length - 6}</span>}
+                </div>
+              )}
+              <ActionMenu label="Print" icon={<Printer size={14} />} items={printMenuItems} />
+              <ActionMenu variant="icon" ariaLabel="More job actions" items={moreMenuItems} />
+              {!mechanicFieldsLocked && !jobEnded && <button type="button" className="gold-button jw-close-button" onClick={() => setDialog("close")}>Close job</button>}
+              {!mechanicFieldsLocked && jobEnded && <button type="button" className="quiet-button" onClick={() => setDialog("reopen")}>Reopen job</button>}
             </div>
-          )}
-          </div>
-        </header>
+          </header>
 
-        {error && <div className="inline-error">{error}</div>}
-        {documentNotice && <div className="inline-success">{documentNotice}</div>}
+          {error && <div className="inline-error">{error}</div>}
+          {documentNotice && <div className="inline-success">{documentNotice}</div>}
 
-        {job && (
-          <div className="job-header-stepper">
-            {/* 2026-10-20, user request: a Breakdown button above the status stepper, on the right, which adds a red "Breakdown" pill
-                to the job's status (Job.breakdown). Press it again to clear. Not offered to a Mechanic or the view-only user, same as
-                the other status actions, and only while the job is still open (it can always be cleared). */}
-            {!mechanicFieldsLocked && !viewOnly && (job.breakdown || !["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status)) && (
-              <div className="job-header-stepper-top">
-                <button type="button" className={job.breakdown ? "table-action" : "table-action danger"} disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/breakdown`, { active: !job.breakdown })}>{job.breakdown ? "Clear breakdown" : "Breakdown"}</button>
-              </div>
-            )}
+          <div className="job-header-stepper jw-status-card">
+            <div className="jw-status-top">
+              <span className="jw-status-title">Job status{stepNumber > 0 && !["CLOSED", "CANCELLED"].includes(job.status) ? <em> · Step {stepNumber} of {stepperSteps.length}</em> : null}</span>
+              {!["CLOSED", "CANCELLED"].includes(job.status) && <span className="jw-status-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office team." : "Click a stage to move the job straight there — saves immediately."}</span>}
+              {/* 2026-10-20, user request: a Breakdown button which adds a red "Breakdown" pill to the job's status (Job.breakdown). Press it again to clear.
+                  Not offered to a Mechanic or the view-only user, and only while the job is still open (it can always be cleared). */}
+              {!mechanicFieldsLocked && !viewOnly && (job.breakdown || !jobEnded) && (
+                <button type="button" className={job.breakdown ? "table-action" : "table-action danger"} disabled={saving} onClick={() => void postAction(`/api/v1/jobs/${job.id}/breakdown`, { active: !job.breakdown })}>{job.breakdown ? "Clear breakdown" : "Flag breakdown"}</button>
+              )}
+            </div>
             {["CLOSED", "CANCELLED"].includes(job.status) ? (
               <p className="status-stepper-note">
-                This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}) — use Reopen above to bring it back onto the stepper.
+                This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}){mechanicFieldsLocked ? "." : " — use Reopen above to bring it back onto the stepper."}
               </p>
             ) : (
-              <>
-                {/* 2026-10-01 — user's explicit choice: lock the status
-                    stepper for a Mechanic (tenantRole === "USER"), not
-                    just hide its hint text. disabled below additionally
-                    covers `saving`, same as before. */}
-                <p className="job-header-stepper-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office/admin team." : "Click a stage to move the job straight there — saves immediately."}</p>
-                <StatusStepper
-                  // TO_BE_COLLECTED is deliberately left OUT of this call's
-                  // `steps` only — @/lib/jobs/ui's MAIN_WORKSHOP_STATUS_STEPS
-                  // itself is untouched, so the "Initial status"/"Reopen to
-                  // status" dropdowns below (which read that same array
-                  // directly) still offer "To be collected" as its own
-                  // choice. This is purely a stepper *display* merge
-                  // (2026-09-29, user request: "combine to be received and
-                  // to be collected as they are the same thing") — a job
-                  // actually registered as TO_BE_COLLECTED keeps that exact
-                  // status (and its own "To be collected" label everywhere
-                  // else: the pill above, the Jobs list, prints) and just
-                  // shows as the current stage on TO_BE_RECEIVED's node
-                  // here, same mechanism as WAITING_FOR_PARTS/AWAIT_OUTWORK
-                  // below.
-                  steps={statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED")}
-                  // Relabels only the merged node for this stepper — the
-                  // shared JOB_STATUS_LABELS.TO_BE_RECEIVED entry itself is
-                  // untouched, so every other place a TO_BE_RECEIVED job's
-                  // status is shown (pill, Jobs list, prints) still just
-                  // reads "To be received".
-                  labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" }}
-                  // WAITING_FOR_PARTS was folded into the AWAIT_OUTWORK
-                  // stepper stage on 2026-09-10, and TO_BE_COLLECTED folded
-                  // into TO_BE_RECEIVED on 2026-09-29 (see the `steps`/
-                  // `labels` comments above) — normalize both here so a job
-                  // still sitting on either merged-away status highlights on
-                  // its surviving stepper stage instead of showing no
-                  // current stage at all (StatusStepper's currentIndex is
-                  // steps.indexOf(status)).
-                  status={
-                    job.status === "WAITING_FOR_PARTS"
-                      ? "AWAIT_OUTWORK"
-                      : job.status === "TO_BE_COLLECTED"
-                        ? "TO_BE_RECEIVED"
-                        : job.status
-                  }
-                  disabled={saving || mechanicFieldsLocked}
-                  onSelect={(step) => void (async () => {
-                    // 2026-10-20, Engineering: from "To be delivered" upwards, ask whether the documents / specification sheets are uploaded first.
-                    if (needsDocumentCheck(industryBuild, step) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
-                    await postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null });
-                  })()}
-                />
-              </>
+              <StatusStepper
+                // TO_BE_COLLECTED is left OUT of `steps` only — the "Initial status" / "Reopen to status" dropdowns still offer it. A job actually in
+                // TO_BE_COLLECTED keeps that status everywhere else and shows as current on TO_BE_RECEIVED's node here (2026-09-29, "combine to be
+                // received and to be collected"); WAITING_FOR_PARTS folds into AWAIT_OUTWORK the same way (2026-09-10). See stepperSteps / stepperStatus.
+                steps={stepperSteps}
+                labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" }}
+                status={stepperStatus}
+                // 2026-10-01 — user's explicit choice: the stepper is locked for a Mechanic (tenantRole === "USER").
+                disabled={saving || mechanicFieldsLocked}
+                onSelect={(step) => void (async () => {
+                  // 2026-10-20, Engineering: from "To be delivered" upwards, ask whether the documents / specification sheets are uploaded first.
+                  if (needsDocumentCheck(industryBuild, step) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
+                  await postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null });
+                })()}
+              />
             )}
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
       {/* Reserves the space the now-fixed header above no longer occupies
           in normal flow — see stickyHeaderHeight's ResizeObserver above. */}
       <div style={{ height: stickyHeaderHeight }} aria-hidden="true" />
@@ -5105,9 +5116,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
       {job && (
         <>
-          {fieldLayout ? fieldJobLayout : (
-          <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
-          )}
+          <JobFactsStrip items={factItems} />
+          <JobTabBar tabs={jobTabs} active={activeTab} onSelect={selectTab} />
+
+          {/* Always mounted (just hidden on other tabs) so a field you were typing in keeps its state when you flip tabs. */}
+          <div className="jw-panel" hidden={activeTab !== "overview"}>
+            {fieldLayout ? fieldOverview : (
+              <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
+            )}
+          </div>
 
 
           {partsListDialog && (() => {
@@ -5207,7 +5224,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
           )}
 
-          {!fieldLayout && fieldPartsBlock}
+          {activeTab === "parts" && partsPanel}
+          {activeTab === "pickslips" && showPickSlipsTab && <fieldset disabled={pickSlipsAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
+          {activeTab === "followup" && showFollowupTab && followUpSection}
 
           {showRfqPopup && (
           <div className="drawer-backdrop" role="dialog" aria-modal="true">
@@ -5481,16 +5500,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               whatever permission gates this for role-based API protection
               — this is just the UI-level hide. */}
 
-          {!fieldLayout && outworkSection}
-          {!fieldLayout && specificationsSection}
+          {activeTab === "outwork" && outworkSection}
+          {activeTab === "specifications" && specificationsSection}
 
           {/* 2026-10-06 — user request: Attachments and Send to PEX side by
               side. The PEX panels (mutually exclusive: Send job to PEX / In PEX
               Inventory) moved up to sit directly beside Attachments; when
               neither applies Attachments simply fills the row. */}
-          {!fieldLayout && (
+          {activeTab === "attachments" && attachmentsSection}
+          {activeTab === "pex" && hasPexPanel && (
           <div className="job-pair-row">
-            {attachmentsSection}
             {/* 2026-10-06 — user request: simplified PEX Supply panel, beside
                 Attachments. Chain of Previous PEX return -> Current supply job
                 -> New PEX return; buttons under the New PEX return card (Unlink
@@ -5698,7 +5717,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               and upsertJobWarranty both reject this role via
               requireNotMechanicRestricted regardless. */}
 
-          {job.type === "WARRANTY" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
+          {job.type === "WARRANTY" && activeTab === "warranty" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
 
 
 
@@ -5713,7 +5732,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               above). Whole section hidden for mechanicFieldsLocked, same
               tenantRole === "USER" flag as every other Mechanic-only
               restriction on this page. */}
-          {!fieldLayout && activitySection}
+          {activeTab === "activity" && activitySection}
         </>
       )}
       {confirmDialog}
