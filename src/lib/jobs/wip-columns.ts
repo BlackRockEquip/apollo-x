@@ -194,14 +194,36 @@ export const JOBS_WIP_DEFAULT_COLUMNS: JobsWipColumnId[] = JOBS_WIP_COLUMNS.filt
 
 // Filters a saved/submitted list down to real, currently-known column ids
 // (an older saved selection can't retain a column this build has since
-// removed), always includes every locked column whether or not it was
-// submitted, and always returns them in the table's own fixed left-to-right
-// order rather than whatever order they were submitted in — column ORDER
-// isn't user-customizable in this version, only which ones are checked.
+// removed) and drops duplicates. Locked columns (Job #) are always included
+// and always come first. 2026-10-27, user request: "a user can drag and
+// rearrange the columns as they require" - the rest now keep the order they
+// were submitted in (the picker's drag order) instead of the catalogue order.
+// Selections saved before this change were already in catalogue order, so
+// they keep showing exactly as they did.
 export function normalizeJobsWipColumns(raw: unknown): JobsWipColumnId[] {
   const requested = Array.isArray(raw)
     ? raw.filter((value): value is JobsWipColumnId => typeof value === "string" && VALID_COLUMN_IDS.has(value))
     : [];
-  const selected = new Set<JobsWipColumnId>([...LOCKED_COLUMN_IDS, ...requested]);
-  return JOBS_WIP_COLUMNS.filter((c) => selected.has(c.id)).map((c) => c.id);
+  const seen = new Set<JobsWipColumnId>();
+  const ordered: JobsWipColumnId[] = [];
+  for (const id of [...LOCKED_COLUMN_IDS, ...requested]) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(id);
+  }
+  return ordered;
+}
+
+// Picker helper: moves `id` to the position currently held by `overId`
+// (drag-and-drop reorder). Locked columns never move and nothing can be
+// dropped in front of one; an unknown id leaves the list unchanged.
+export function moveWipColumn(list: JobsWipColumnId[], id: JobsWipColumnId, overId: JobsWipColumnId): JobsWipColumnId[] {
+  const locked = new Set(LOCKED_COLUMN_IDS);
+  const from = list.indexOf(id);
+  const to = list.indexOf(overId);
+  if (from < 0 || to < 0 || from === to || locked.has(id) || locked.has(overId)) return list;
+  const next = list.slice();
+  next.splice(from, 1);
+  next.splice(to, 0, id);
+  return next;
 }
