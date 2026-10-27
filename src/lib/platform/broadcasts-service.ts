@@ -98,9 +98,7 @@ export async function listBroadcasts(ctx: RequestContext, now = new Date()): Pro
     prisma.companyMembership.groupBy({ by: ["companyId"], where: { status: "ACTIVE" }, _count: { _all: true } }),
     isPlatformEmailConfigured().catch(() => false),
   ]);
-  const reads: { broadcastId: string | null; _count: { _all: number } }[] = records.length
-    ? await prisma.notification.groupBy({ by: ["broadcastId"], where: { broadcastId: { in: records.map((r) => r.id) }, readAt: { not: null } }, _count: { _all: true } })
-    : [];
+  const reads = await prisma.notification.groupBy({ by: ["broadcastId"], where: { broadcastId: { in: records.map((r) => r.id) }, readAt: { not: null } }, _count: { _all: true } });
   const readByBroadcast = new Map(reads.map((r) => [r.broadcastId, r._count._all]));
   const memberByCompany = new Map(memberCounts.map((m) => [m.companyId, m._count._all]));
   const nameById = new Map(companies.map((c) => [c.id, c.tradingName || c.legalName]));
