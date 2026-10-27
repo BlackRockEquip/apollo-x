@@ -100,6 +100,8 @@ type RfqQuoteLineRow = Row & {
   unitPrice?: unknown;
   available?: boolean;
   notes?: string | null;
+  // The supplier's lead time for the part ("In stock", "7 days"...), shown as Availability in Compare quotes.
+  leadTime?: string | null;
   preferred?: boolean;
 };
 type RfqQuoteRow = Row & {
@@ -506,12 +508,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // pattern as mechanics above, loaded once on mount the same way.
   const [salesRepresentatives, setSalesRepresentatives] = useState<SalesRepresentativeOption[]>([]);
   const [bulkPartLines, setBulkPartLines] = useState("");
-  // Hides the "add parts" UI (job kit / paste box / import) behind an
+  // Hides the "add parts" UI (job kit / typed or pasted list) behind an
   // explicit "Add parts to Job" toggle instead of showing it by default —
   // at the user's request, so the parts table itself leads on a job that
   // already has parts on it.
   const [showAddParts, setShowAddParts] = useState(false);
-  const [partsImportFile, setPartsImportFile] = useState<File | null>(null);
   // "Create picking slip" — 2026-09-16 user request: pick this job's own
   // outstanding parts against warehouse stock right from the Parts list,
   // instead of going to Stock Levels and searching for the job there. See
@@ -771,7 +772,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // list toolbar, where every requested supplier is its own editable
   // column in one table, so prices can be imported or typed in for any
   // supplier without leaving the others out of view.
-  type QuoteDraftLine = { unitPrice: string; available: boolean; notes: string };
+  type QuoteDraftLine = { unitPrice: string; available: boolean; notes: string; leadTime: string };
   const [showQuoteComparePopup, setShowQuoteComparePopup] = useState(false);
   const [quoteDrafts, setQuoteDrafts] = useState<Record<string, Record<string, QuoteDraftLine>>>({});
   const [quoteNotesByRequest, setQuoteNotesByRequest] = useState<Record<string, string>>({});
@@ -1612,8 +1613,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  // Parts list — paste box, one row per line ("partNumber, quantity[,
-  // description]"), same shape as ModApp's AddPartLinesForm.
+  // Parts list — the typed or pasted box, one part per line. 2026-10-27, user request: parts are added by typing or
+  // pasting only (no file import, so no spreadsheet columns or headings to get right). The server reads each line
+  // leniently (see lib/jobs/parts-paste.ts: commas, tabs, spaces, "x2", no quantity = 1, a pasted heading row is
+  // ignored). A line it cannot use (no part number, a zero quantity) is left in the box with a note, so nothing
+  // typed is lost, and the section stays open.
   async function addPartLines(): Promise<boolean> {
     if (!jobId || !bulkPartLines.trim()) return false;
     setSaving(true); setError("");
@@ -1625,8 +1629,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to add part lines.");
-      setBulkPartLines("");
+      const skipped = Array.isArray(b.skipped) ? (b.skipped as unknown[]).map(String) : [];
+      const added = Number(b.addedFromPaste || 0);
+      setBulkPartLines(skipped.join("\n"));
       await load(true);
+      if (skipped.length > 0) {
+        setError(`${added > 0 ? `Added ${added} part${added === 1 ? "" : "s"}. ` : ""}${skipped.length} line${skipped.length === 1 ? " was" : "s were"} not added (each needs a part number and a quantity above zero) and ${skipped.length === 1 ? "is" : "are"} left in the box.`);
+        return false;
+      }
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to add part lines.");
@@ -2071,67 +2081,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  // Import a parts-list spreadsheet (.xlsx/.xls/.csv) — parsed server-side
-  // by src/lib/jobs/parts-import.ts, same upload shape as the RFQ quote
-  // file upload below (fileName/mimeType/contentBase64).
-  async function importPartsFile(file: File): Promise<boolean> {
-    if (!jobId) return false;
-    setSaving(true); setError("");
-    try {
-      const contentBase64 = await fileToBase64(file);
-      const r = await fetch(`/api/v1/jobs/${jobId}/parts`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", contentBase64 }),
-      });
-      const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to import parts file.");
-      setPartsImportFile(null);
-      await load(true);
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to import parts file.");
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // 2026-10-01 — user request: "combine the 'Add / cross-check with stock'
-  // button and 'import' button into one button called 'Add/Import Parts',
-  // move the button below the choose file section." Those two buttons each
-  // drove a separate input (the pasted bulkPartLines textarea vs. the
-  // chosen partsImportFile) and separate handlers above — kept both
-  // handlers as-is (still two different request payloads to the same
-  // endpoint) and just added this single entry point: a file takes
-  // priority when one's been chosen (it's the more deliberate action —
-  // picking a file is a stronger signal than leftover pasted text), and
-  // otherwise it falls back to the pasted lines.
-  // 2026-10-06 — user request: "once the button add import parts is clicked,
-  // close the add parts section automatically." Closes once the parts were
-  // added/imported; if the server rejected them the section stays open so
-  // what was typed or chosen isn't lost.
-  async function addOrImportParts() {
-    const ok = partsImportFile ? await importPartsFile(partsImportFile) : await addPartLines();
+  // 2026-10-27, user request: the "import parts list" file option (and its template download) is gone from adding
+  // parts. The box takes typed or pasted parts only. The section closes once the parts were added; if any line was
+  // not usable (see addPartLines) it stays open with those lines still in the box.
+  async function addParts() {
+    const ok = await addPartLines();
     if (ok) { setShowAddParts(false); setTabletSheet(null); }
-  }
-
-  // Downloads a blank CSV template for the parts-list import — matches the
-  // columns parts-import.ts looks for (Part number / Qty / Description),
-  // generated client-side (no network round-trip needed for a static
-  // template) and triggered via a temporary anchor click, the standard way
-  // to save generated same-origin content without a real download link.
-  function downloadPartsTemplate() {
-    const csv = "Part number,Qty,Description\nPN-1001,2,Hydraulic seal kit\nPN-2044,4,\n";
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "parts-list-template.csv";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }
 
   async function receivePartLine(lineId: string) {
@@ -3400,6 +3355,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           unitPrice: existing?.unitPrice != null ? String(existing.unitPrice) : "",
           available: existing?.available !== false,
           notes: existing?.notes ? String(existing.notes) : "",
+          leadTime: existing?.leadTime ? String(existing.leadTime) : "",
         };
       }
       drafts[requestId] = lineDrafts;
@@ -3433,7 +3389,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   function updateQuoteDraftLine(rfqRequestId: string, partLineId: string, patch: Partial<QuoteDraftLine>) {
     setQuoteDrafts((current) => {
       const requestDrafts = current[rfqRequestId] || {};
-      const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "" };
+      const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "", leadTime: "" };
       return { ...current, [rfqRequestId]: { ...requestDrafts, [partLineId]: { ...existing, ...patch } } };
     });
   }
@@ -3466,6 +3422,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to analyze the quote file.");
       const guesses = (b.guesses || {}) as Record<string, number>;
+      // The lead time read from the same quote row as each price (keyed by part line), shown as Availability.
+      const leadTimes = (b.leadTimes || {}) as Record<string, string>;
       let applied = 0;
       let markedNa = 0;
       // 2026-10-09, user request: "if a supplier only quotes on certain items,
@@ -3483,18 +3441,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         if (replaceExisting) {
           for (const line of job?.partLines || []) {
             const partLineId = String(line.id);
-            requestDrafts[partLineId] = { ...(requestDrafts[partLineId] || { notes: "" }), unitPrice: "", available: true };
+            requestDrafts[partLineId] = { ...(requestDrafts[partLineId] || { notes: "" }), unitPrice: "", available: true, leadTime: "" };
           }
         }
         for (const [partLineId, price] of Object.entries(guesses)) {
           const existing = requestDrafts[partLineId];
-          if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price), available: true }; applied += 1; }
+          if (existing && !existing.unitPrice) { requestDrafts[partLineId] = { ...existing, unitPrice: String(price), available: true, leadTime: existing.leadTime || leadTimes[partLineId] || "" }; applied += 1; }
         }
         if (foundPrices) {
           for (const line of job?.partLines || []) {
             const partLineId = String(line.id);
             if (guesses[partLineId] !== undefined) continue;
-            const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "" };
+            const existing = requestDrafts[partLineId] || { unitPrice: "", available: true, notes: "", leadTime: "" };
             if (existing.unitPrice || !existing.available) continue;
             requestDrafts[partLineId] = { ...existing, available: false };
             markedNa += 1;
@@ -3511,7 +3469,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       setQuoteImportNotes((current) => ({
         ...current,
         [rfqRequestId]: foundPrices
-          ? `Read ${Object.keys(guesses).length} price${Object.keys(guesses).length === 1 ? "" : "s"}${applied !== Object.keys(guesses).length ? ` (${applied} filled in, the rest were already typed)` : ""}; ${markedNa} item${markedNa === 1 ? "" : "s"} not quoted set to N/A — review below.`
+          ? `Read ${Object.keys(guesses).length} price${Object.keys(guesses).length === 1 ? "" : "s"}${Object.keys(leadTimes).length > 0 ? ` and ${Object.keys(leadTimes).length} availability note${Object.keys(leadTimes).length === 1 ? "" : "s"}` : ""}${applied !== Object.keys(guesses).length ? ` (${applied} filled in, the rest were already typed)` : ""}; ${markedNa} item${markedNa === 1 ? "" : "s"} not quoted set to N/A — review below.`
           : "No prices could be read from this file, so nothing was set to N/A. Type the prices in, then Save — any item left without a price is set to N/A.",
       }));
       // The file is now stored on the quote and copied into the job's
@@ -3560,6 +3518,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           unitPrice: available && draft.unitPrice ? Number(draft.unitPrice) : null,
           available,
           notes: draft.notes.trim() || null,
+          leadTime: available ? draft.leadTime.trim() || null : null,
         };
       });
       if (lines.length > 0) {
@@ -3606,6 +3565,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (draft.available !== (existing?.available !== false)) return true;
       if (draftPrice !== existingPrice) return true;
       if (draft.notes.trim() !== String(existing?.notes || "").trim()) return true;
+      if (draft.available && draft.leadTime.trim() !== String(existing?.leadTime || "").trim()) return true;
     }
     return false;
   }
@@ -3794,14 +3754,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Excel file can never drift out of sync with each other.
   function buildQuoteComparisonExport(job: JobDetail) {
     const quotedRequests = job.rfqRequests.filter((r) => r.quote);
-    const header = ["Part", "Description", "Qty", ...quotedRequests.flatMap((r) => [`${r.supplier.name} (unit)`, `${r.supplier.name} (total)`])];
+    const header = ["Part", "Description", "Qty", ...quotedRequests.flatMap((r) => [`${r.supplier.name} (unit)`, `${r.supplier.name} (total)`, `${r.supplier.name} (availability)`])];
     const rows = job.partLines.map((line) => {
       const qty = Number(line.quantity ?? 0);
       const cells = quotedRequests.flatMap((request) => {
         const quoteLine = request.quote!.lines.find((l) => l.partLineId === String(line.id));
-        if (!quoteLine || quoteLine.available === false || quoteLine.unitPrice == null || quoteLine.unitPrice === "") return ["", ""];
+        if (!quoteLine || quoteLine.available === false || quoteLine.unitPrice == null || quoteLine.unitPrice === "") return ["", "", ""];
         const unit = Number(quoteLine.unitPrice);
-        return [unit.toFixed(2), (unit * qty).toFixed(2)];
+        return [unit.toFixed(2), (unit * qty).toFixed(2), text(quoteLine.leadTime)];
       });
       return [text(line.partNumber), text(line.description), decimalText(line.quantity), ...cells];
     });
@@ -4232,38 +4192,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const partCounts = countParts(job?.partLines ?? []);
   const oldestOrderDays = partsFollowupGroups.reduce((max, g) => Math.max(max, g.overdueDays), 0);
 
-  // The "Add parts" form (kit, pasted list, file import). Shown inline on the desktop Parts tab and inside a popup on the mechanic tablet layout.
+  // The "Add parts" form (kit, typed or pasted list). Shown inline on the desktop Parts tab and inside a popup on the mechanic tablet layout.
   const addPartsBlock = job ? (
               <>
     <div className="drawer-fields">
       <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setJobKitOptions([]))}><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
       <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
-      <label className="wide"><span>Paste parts list (one per line — part number and quantity are required; description is optional: &quot;PN-1001, 2, Hydraulic seal kit&quot;)</span><textarea rows={4} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044, 4"} /></label>
-      <label className="wide">
-        <span>Or import a parts list file (.xlsx, .xls or .csv — needs Part number / Qty / Description columns)</span>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setPartsImportFile(e.target.files?.[0] || null)} />
-          <button type="button" className="quiet-button" title="Download a blank parts-list template" aria-label="Download parts-list template" onClick={downloadPartsTemplate}><FileText size={15} /></button>
-        </div>
-      </label>
+      <label className="wide"><span>Type or paste the parts required, one per line: part number, then quantity, then an optional description (e.g. &quot;PN-1001, 2, Hydraulic seal kit&quot;). Commas, tabs or spaces all work, and a line with only a part number adds 1.</span><textarea rows={6} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044 4\nPN-3010 x3"} /></label>
     </div>
-    {/* 2026-10-01 — user request: "combine the 'Add / cross-check
-        with stock' button and 'import' button into one button
-        called 'Add/Import Parts', move the button below the
-        choose file section." See addOrImportParts above —
-        imports the chosen file when one's selected, otherwise
-        adds/cross-checks the pasted lines.
-        2026-10-01 follow-up — user request: "the add/import
-        button to be on the left, same style as the pickslip
-        button." .detail-actions is shared by every other footer
-        in this app and right-aligns by default (justify-content:
-        flex-end) — left-aligned here via an inline override
-        rather than touching that shared class. "Same style as
-        the pickslip button" = .section-action-button, the gold
-        accent style "Create picking slip" and "Add parts to Job"
-        above both already use, replacing the plain
-        .quiet-button this had. */}
-    <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || (!partsImportFile && !bulkPartLines.trim())} onClick={() => void addOrImportParts()}><Plus size={15} /> Add/Import Parts</button></footer>
+    <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || !bulkPartLines.trim()} onClick={() => void addParts()}><Plus size={15} /> Add parts</button></footer>
   </>
   ) : null;
 
@@ -5338,7 +5275,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       })()}
 
       {tabletSheet === "addparts" && (
-        <TabletSheet title="Add parts" subtitle="Paste a list or import a file." size="large" onClose={() => { setTabletSheet(null); setShowAddParts(false); }}>
+        <TabletSheet title="Add parts" subtitle="Type or paste the parts required." size="large" onClose={() => { setTabletSheet(null); setShowAddParts(false); }}>
           {addPartsBlock}
           {error ? <p className="jt-sheet-error">{error}</p> : null}
         </TabletSheet>
@@ -5739,6 +5676,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 onToggleMaximize={() => setQuoteCompareMaximized((v) => !v)}
                 onPriceChange={(supplierId, lineId, unitPrice) => updateQuoteDraftLine(supplierId, lineId, { unitPrice })}
                 onNaChange={(supplierId, lineId, notAvailable) => updateQuoteDraftLine(supplierId, lineId, { available: !notAvailable })}
+                onLeadTimeChange={(supplierId, lineId, leadTime) => updateQuoteDraftLine(supplierId, lineId, { leadTime })}
                 onNotesChange={(supplierId, notes) => setQuoteNotesByRequest((c) => ({ ...c, [supplierId]: notes }))}
                 onImportFile={async (supplierId, file) => {
                   const request = job.rfqRequests.find((r) => String(r.id) === supplierId);

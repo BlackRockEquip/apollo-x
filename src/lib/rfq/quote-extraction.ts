@@ -20,7 +20,21 @@
 // heuristic — good enough as a starting point, not meant to be perfect.
 // ----------------------------------------------------------------------------
 
+import { leadTimeFromCells, normalizeLeadTime } from "@/lib/rfq/lead-time";
+
+// 2026-10-27, user request (Compare quotes): next to each price, the lead time the supplier printed for that part
+// ("STOCK", "7 DAYS", "10-14 Days", "AVAILABLE IMMEDIATELY"...), tidied into one short phrase by rfq/lead-time.ts.
+// It comes from the same quote row the price was read from, so the two always belong together. null = none printed.
+export type QuoteGuess = { price: number; leadTime: string | null };
+
 export async function guessPricesFromFile(bytes: Buffer, fileName: string, partNumbers: string[], quantities: Record<string, number> = {}): Promise<Record<string, number>> {
+  const detailed = await guessQuoteFromFile(bytes, fileName, partNumbers, quantities);
+  const prices: Record<string, number> = {};
+  for (const [partNumber, guess] of Object.entries(detailed)) prices[partNumber] = guess.price;
+  return prices;
+}
+
+export async function guessQuoteFromFile(bytes: Buffer, fileName: string, partNumbers: string[], quantities: Record<string, number> = {}): Promise<Record<string, QuoteGuess>> {
   const ext = fileName.toLowerCase().split(".").pop() || "";
 
   try {
@@ -29,11 +43,11 @@ export async function guessPricesFromFile(bytes: Buffer, fileName: string, partN
     }
     if (ext === "pdf") {
       const text = await extractPdfText(bytes);
-      return guessFromText(text, partNumbers, quantities);
+      return guessFromTextDetailed(text, partNumbers, quantities);
     }
     if (ext === "docx") {
       const text = await extractDocxText(bytes);
-      return guessFromText(text, partNumbers, quantities);
+      return guessFromTextDetailed(text, partNumbers, quantities);
     }
   } catch {
     // Corrupt file, password-protected PDF, scanned image with no text
@@ -209,7 +223,13 @@ function splitCells(line: string): string[] {
 const NOT_QUOTED = /\b(?:unavailable|not available|out of stock|no quote|no bid|discontinued)\b/i;
 
 export function guessFromText(text: string, partNumbers: string[], quantities: Record<string, number>): Record<string, number> {
-  const guesses: Record<string, number> = {};
+  const prices: Record<string, number> = {};
+  for (const [partNumber, guess] of Object.entries(guessFromTextDetailed(text, partNumbers, quantities))) prices[partNumber] = guess.price;
+  return prices;
+}
+
+export function guessFromTextDetailed(text: string, partNumbers: string[], quantities: Record<string, number>): Record<string, QuoteGuess> {
+  const guesses: Record<string, QuoteGuess> = {};
   const lines = text.split(/\r?\n/);
 
   for (const partNumber of partNumbers) {
@@ -228,8 +248,8 @@ export function guessFromText(text: string, partNumbers: string[], quantities: R
       // 2026-10-27: the same number can be quoted on more than one line (e.g. 1 off from stock and 6 off in 3 hours at
       // different prices). A line whose price multiplies up to a total for the quantity on the parts list is taken in
       // preference to the first priced line; otherwise the first priced line, as before.
-      let first: number | undefined;
-      let preferred: number | undefined;
+      let first: QuoteGuess | undefined;
+      let preferred: QuoteGuess | undefined;
       for (const line of lines) {
         if (!pattern.test(line)) continue;
         if (NOT_QUOTED.test(line)) continue;
@@ -239,11 +259,12 @@ export function guessFromText(text: string, partNumbers: string[], quantities: R
         const prices = priceCandidates(cells);
         const price = pickUnitPrice(prices, quantityCandidates(cells, wanted));
         if (price === null) continue;
-        if (first === undefined) first = price;
+        const guess: QuoteGuess = { price, leadTime: leadTimeFromCells(cells) };
+        if (first === undefined) first = guess;
         if (wanted && wanted > 0) {
           const expected = price * wanted;
           const tolerance = Math.max(0.02, expected * 0.0005);
-          if (preferred === undefined && prices.slice(prices.indexOf(price) + 1).some((p) => Math.abs(p - expected) <= tolerance)) preferred = price;
+          if (preferred === undefined && prices.slice(prices.indexOf(price) + 1).some((p) => Math.abs(p - expected) <= tolerance)) preferred = guess;
         }
       }
       const found = preferred ?? first;
@@ -350,7 +371,26 @@ function columnLooksNumeric(rows: unknown[][], startRow: number, col: number): b
   return checked > 0 && numeric / checked >= 0.5;
 }
 
-async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promise<Record<string, number>> {
+const LEAD_HEADER_LABELS = ["lead time", "leadtime", "lead-time", "delivery time", "delivery", "availability", "delay", "eta", "available"];
+
+// A lead time cell in a spreadsheet. Wording is tidied the same way as in PDFs; a bare number under a header that talks
+// about days/weeks ("Lead time (days)") is read in that unit, and otherwise the supplier's own short wording is kept
+// as typed, since it is only ever shown for a person to review.
+export function leadTimeFromSheetCell(raw: unknown, header: string): string | null {
+  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const tidy = normalizeLeadTime(text);
+  if (tidy) return tidy;
+  if (/^\d{1,3}$/.test(text) && /lead|delay|deliver|eta|day|week|hour/.test(header)) {
+    const unit = /week/.test(header) ? "weeks" : /hour/.test(header) ? "hours" : "days";
+    return `${Number(text)} ${unit}`;
+  }
+  // A bare number or "10+" under another heading is a quantity (how many they hold), not a lead time.
+  if (/^[\d\s.,+]+$/.test(text) || /^(?:no|n|false)$/i.test(text) || text.length > 30) return null;
+  return text;
+}
+
+async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promise<Record<string, QuoteGuess>> {
   // Dynamically imported for the same reason as pdf-parse/mammoth above —
   // only loaded when a spreadsheet is actually uploaded.
   const XLSX = await import("xlsx");
@@ -404,7 +444,16 @@ async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promi
 
   if (priceCol === -1) return {};
 
-  const guesses: Record<string, number> = {};
+  // The lead time column, when the sheet has one ("Lead time", "Delivery", "Availability", "Delay", "ETA"). Taken from
+  // the first label that matches, and never a column already used for the part, price or quantity.
+  let leadCol = -1;
+  for (const label of LEAD_HEADER_LABELS) {
+    const idx = headerRow.findIndex((c, i) => new RegExp(`\\b${label}\\b`).test(c) && ![partCol, priceCol, qtyCol].includes(i));
+    if (idx !== -1) { leadCol = idx; break; }
+  }
+  const leadHeader = leadCol === -1 ? "" : headerRow[leadCol];
+
+  const guesses: Record<string, QuoteGuess> = {};
   const normalizedPartNumbers = new Map(partNumbers.map((p) => [looseKey(p), p]));
 
   for (let i = headerIndex + 1; i < rows.length; i++) {
@@ -426,7 +475,7 @@ async function guessFromSpreadsheet(bytes: Buffer, partNumbers: string[]): Promi
       if (qty && qty > 0) priceValue = priceValue / qty;
     }
     if (priceValue !== null) {
-      guesses[original] = priceValue;
+      guesses[original] = { price: priceValue, leadTime: leadCol === -1 ? null : leadTimeFromSheetCell(row[leadCol], leadHeader) };
     }
   }
 

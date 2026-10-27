@@ -27,7 +27,7 @@ export type EntrySupplier = {
 };
 
 export type EntryLine = { id: string; partNumber: string; description: string; quantity: number };
-export type EntryDraft = { unitPrice: string; available: boolean };
+export type EntryDraft = { unitPrice: string; available: boolean; leadTime: string };
 
 type Props = {
   subtitle: string;
@@ -42,6 +42,7 @@ type Props = {
   onToggleMaximize: () => void;
   onPriceChange: (supplierId: string, lineId: string, unitPrice: string) => void;
   onNaChange: (supplierId: string, lineId: string, notAvailable: boolean) => void;
+  onLeadTimeChange: (supplierId: string, lineId: string, leadTime: string) => void;
   onNotesChange: (supplierId: string, notes: string) => void;
   onImportFile: (supplierId: string, file: File) => Promise<void>;
   onViewFile: (supplierId: string) => void;
@@ -130,15 +131,17 @@ export function QuoteEntryDialog(props: Props) {
     return { text: "Complete", tone: "tone-green" };
   }
 
-  // Enter in a price box jumps to the next line's price box.
-  function onPriceKey(e: KeyboardEvent<HTMLInputElement>) {
+  // Enter in a price box jumps to the next line's price box; Enter in an availability box, to the next line's.
+  function jumpToNext(e: KeyboardEvent<HTMLInputElement>, selector: string) {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    const boxes = Array.from(e.currentTarget.closest(".qc-rows")?.querySelectorAll<HTMLInputElement>("input[data-qc-price]") ?? []);
+    const boxes = Array.from(e.currentTarget.closest(".qc-rows")?.querySelectorAll<HTMLInputElement>(selector) ?? []);
     const at = boxes.indexOf(e.currentTarget);
     boxes[at + 1]?.focus();
     boxes[at + 1]?.select();
   }
+  const onPriceKey = (e: KeyboardEvent<HTMLInputElement>) => jumpToNext(e, "input[data-qc-price]");
+  const onLeadKey = (e: KeyboardEvent<HTMLInputElement>) => jumpToNext(e, "input[data-qc-lead]");
 
   const selectedPill = pillFor(selectedIndex);
   const fileName = selected.pendingFileName || selected.savedFileName;
@@ -221,7 +224,7 @@ export function QuoteEntryDialog(props: Props) {
             </div>
 
             {selected.analyzing ? (
-              <div className="qc-banner qc-pane-banner"><Loader2 className="spin" size={16} /><span>Reading prices from the file…</span></div>
+              <div className="qc-banner qc-pane-banner"><Loader2 className="spin" size={16} /><span>Reading prices and availability from the file…</span></div>
             ) : selected.importNote ? (
               <div className="qc-banner qc-pane-banner"><AlertCircle size={16} /><span>{selected.importNote}</span></div>
             ) : null}
@@ -230,6 +233,7 @@ export function QuoteEntryDialog(props: Props) {
               <div>Part</div>
               <div style={{ textAlign: "center" }}>Qty</div>
               <div style={{ paddingLeft: 6 }}>Unit price</div>
+              <div>Availability</div>
               <div style={{ textAlign: "right", paddingRight: 16 }}>Line total</div>
               <div>Compared with other suppliers</div>
             </div>
@@ -255,6 +259,23 @@ export function QuoteEntryDialog(props: Props) {
                           <PriceInput value={draft?.unitPrice ?? ""} label={`Unit price for ${line.partNumber}`} onChange={(v) => props.onPriceChange(selected.id, line.id, v)} onKeyDown={onPriceKey} />
                           <button type="button" className="qc-na-btn" title="This supplier cannot supply this part" onClick={() => props.onNaChange(selected.id, line.id, true)}>N/A</button>
                         </div>
+                      )}
+                    </div>
+                    <div className="qc-lead-cell">
+                      {cell.kind === "na" ? (
+                        <span className="qc-vs-muted">—</span>
+                      ) : (
+                        <input
+                          type="text"
+                          className="qc-lead"
+                          data-qc-lead=""
+                          value={draft?.leadTime ?? ""}
+                          maxLength={60}
+                          placeholder="e.g. In stock"
+                          aria-label={`Availability for ${line.partNumber}`}
+                          onChange={(e) => props.onLeadTimeChange(selected.id, line.id, e.target.value)}
+                          onKeyDown={onLeadKey}
+                        />
                       )}
                     </div>
                     <div className="qc-line-total qc-num">{cell.kind === "price" ? formatRand(cell.unit * line.quantity) : "—"}</div>
@@ -283,6 +304,7 @@ export function QuoteEntryDialog(props: Props) {
               <div className="qc-eyebrow">Total · {pricedLines} priced {pricedLines === 1 ? "line" : "lines"}</div>
               <div />
               <div />
+              <div />
               <div className="qc-line-total qc-num">{formatRand(selectedStat.total)}</div>
               <div className="qc-foot-note">
                 Lowest on {selectedStat.lowestOn} {selectedStat.lowestOn === 1 ? "line" : "lines"}
@@ -297,7 +319,7 @@ export function QuoteEntryDialog(props: Props) {
           {props.error ? (
             <div className="qc-banner is-error" role="alert"><AlertCircle size={16} /><span>{props.error}</span></div>
           ) : (
-            <div className="qc-actions-note">Each supplier saves on its own, and Done saves any supplier still marked Unsaved. Importing a file only fills blanks and never overwrites a price you typed. Parts left blank are saved as N/A once you have priced at least one.</div>
+            <div className="qc-actions-note">Each supplier saves on its own, and Done saves any supplier still marked Unsaved. Importing a file only fills blanks and never overwrites a price or availability you typed. Parts left blank are saved as N/A once you have priced at least one.</div>
           )}
           <button type="button" className="qc-btn" disabled={!props.canCompare || busy} title={props.canCompare ? undefined : "Save at least one supplier's prices first"} onClick={props.onComparePrices}>
             <Columns3 size={15} /> Compare prices

@@ -68,6 +68,8 @@ export const rfqQuoteLineInput = z.object({
   unitPrice: z.coerce.number().nonnegative().optional().nullable(),
   available: z.boolean().default(true),
   notes: optionalText,
+  // How soon the supplier can deliver the part ("In stock", "7 days", "10-14 days"); blank = not given.
+  leadTime: z.string().trim().max(60).optional().nullable(),
 });
 
 export const rfqQuoteLinesSaveInput = z.object({

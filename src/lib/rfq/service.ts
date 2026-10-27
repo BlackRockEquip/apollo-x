@@ -8,7 +8,7 @@ import { recordAudit } from "@/lib/audit/service";
 import { rfqRequestInput, rfqQuoteRecordInput, rfqQuoteLinesSaveInput, rfqPreferredInput, rfqNewSupplierRequestInput, generalRfqCreateInput, generalRfqUpdateInput } from "@/lib/rfq/validation";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
-import { guessPricesFromFile } from "@/lib/rfq/quote-extraction";
+import { guessQuoteFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
 import { normalized } from "@/lib/master-data/validation";
 import { reconcileJobPartLineReservationTx } from "@/lib/inventory/service";
@@ -367,19 +367,25 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
   const file = decodeQuoteFile(input);
 
   let guesses: Record<string, number> = {};
+  // 2026-10-27: the lead time read from the same quote row as each price, keyed by part line id like `guesses`.
+  let leadTimes: Record<string, string> = {};
   if (file) {
     const partLines = await prisma.jobPartLine.findMany({ where: { companyId, jobId }, select: { id: true, partNumber: true, quantity: true } });
     try {
       const quantitiesByPartNumber: Record<string, number> = {};
       for (const l of partLines) quantitiesByPartNumber[l.partNumber] = Number(l.quantity);
-      const guessesByPartNumber = await guessPricesFromFile(file.data, file.fileName, partLines.map((l) => l.partNumber), quantitiesByPartNumber);
+      const guessesByPartNumber = await guessQuoteFromFile(file.data, file.fileName, partLines.map((l) => l.partNumber), quantitiesByPartNumber);
       for (const line of partLines) {
-        if (guessesByPartNumber[line.partNumber] !== undefined) guesses[line.id] = guessesByPartNumber[line.partNumber];
+        const guess = guessesByPartNumber[line.partNumber];
+        if (guess === undefined) continue;
+        guesses[line.id] = guess.price;
+        if (guess.leadTime) leadTimes[line.id] = guess.leadTime;
       }
     } catch {
       // Extraction is best-effort — a parse failure just means no guesses,
       // never a failed quote record.
       guesses = {};
+      leadTimes = {};
     }
   }
 
@@ -435,7 +441,7 @@ export async function recordRfqQuote(ctx: RequestContext, jobId: string, rfqRequ
 
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobRfqQuote", entityId: quote.id, action: "CREATE", afterData: { jobId, rfqRequestId } });
   if (file) await offloadQuietly(offloadRfqQuote(quote.id));
-  return { ...quote, guesses };
+  return { ...quote, guesses, leadTimes };
 }
 
 // Commits the prices a person has entered for one supplier's quote. This
@@ -454,10 +460,12 @@ export async function saveRfqQuoteLines(ctx: RequestContext, jobId: string, rfqR
   await prisma.$transaction(async (tx) => {
     for (const line of input.lines) {
       const unitPrice = line.available ? (line.unitPrice != null ? new Prisma.Decimal(line.unitPrice) : null) : null;
+      // A part the supplier cannot supply has no lead time, so it is cleared along with the price.
+      const leadTime = line.available ? line.leadTime?.trim() || null : null;
       await tx.jobRfqQuoteLine.upsert({
         where: { rfqQuoteId_partLineId: { rfqQuoteId, partLineId: line.partLineId } },
-        create: { rfqQuoteId, partLineId: line.partLineId, unitPrice, available: line.available, notes: line.notes ?? null },
-        update: { unitPrice, available: line.available, notes: line.notes ?? null },
+        create: { rfqQuoteId, partLineId: line.partLineId, unitPrice, available: line.available, notes: line.notes ?? null, leadTime },
+        update: { unitPrice, available: line.available, notes: line.notes ?? null, leadTime },
       });
     }
     await addActivity(tx, ctx, jobId, "RFQ_QUOTE_RECORDED", `Prices saved for ${quote.rfqRequest.supplier.name}'s quote (${input.lines.length} line${input.lines.length === 1 ? "" : "s"}).`, { rfqQuoteId, lineCount: input.lines.length });

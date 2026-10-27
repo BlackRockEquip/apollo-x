@@ -47,6 +47,7 @@ import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relin
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
+import { parsePartsPaste, type ParsedPartLineRow } from "@/lib/jobs/parts-paste";
 import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
@@ -1161,26 +1162,11 @@ const ALLOWED_PARTS_IMPORT_MIME_TYPES = [
 ];
 const MAX_PARTS_IMPORT_FILE_BYTES = 8_000_000;
 
-type ParsedPartLineRow = { partNumber: string; description: string | null; quantity: number };
-
-// "PN-1001, 2, Hydraulic seal kit" or a tab-separated paste straight out of
-// Excel — same shape as ModApp's parseBulkPartRow. Part number and quantity
-// are required; description is optional and can be filled in later via
-// updatePartLineDescription. Unparseable rows (no part number, or a
-// quantity that isn't a positive number) are silently dropped rather than
-// failing the whole paste — a stray blank line or header row shouldn't
-// block the rest of the list.
-function parseBulkPartRow(raw: string): ParsedPartLineRow | null {
-  const cells = (raw.includes("\t") ? raw.split("\t") : raw.split(",")).map((c) => c.trim());
-  const partNumber = cells[0] || "";
-  if (!partNumber) return null;
-  const quantity = Number(cells[1]);
-  if (!Number.isFinite(quantity) || quantity <= 0) return null;
-  const description = cells[2]?.trim() || null;
-  return { partNumber, description, quantity };
-}
-
-export type AddPartLinesResult = { addedFromPaste: number; addedFromFile: number };
+// 2026-10-27, user request: the Add parts box is typed or pasted only. The reading of a line (commas, tabs, plain
+// spaces, "x2", a missing quantity, a pasted header row) lives in parts-paste.ts so it can be tested on its own.
+// Lines that cannot be used (no part number, a zero quantity) are skipped and reported back rather than failing the
+// whole paste.
+export type AddPartLinesResult = { addedFromPaste: number; addedFromFile: number; skipped: string[] };
 
 export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: unknown): Promise<AddPartLinesResult> {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
@@ -1190,12 +1176,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   const stockOn = stockTrackingOn(ctx);
   const jobNumberLabel = job.jobNumber ?? job.draftNumber;
 
-  const pasteRows = (input.bulkLines ?? "")
-    .split("\n")
-    .map((r) => r.trim())
-    .filter(Boolean)
-    .map(parseBulkPartRow)
-    .filter((r): r is ParsedPartLineRow => r !== null);
+  const { rows: pasteRows, skipped } = parsePartsPaste(input.bulkLines ?? "");
 
   let fileRows: ParsedPartLineRow[] = [];
   if (input.fileName && input.mimeType && input.contentBase64) {
@@ -1206,7 +1187,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   }
 
   const rows = [...pasteRows, ...fileRows];
-  if (rows.length === 0) return { addedFromPaste: 0, addedFromFile: 0 };
+  if (rows.length === 0) return { addedFromPaste: 0, addedFromFile: 0, skipped };
 
   await prisma.$transaction(async (tx) => {
     for (const row of rows) {
@@ -1385,7 +1366,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
     );
   }
 
-  return { addedFromPaste: pasteRows.length, addedFromFile: fileRows.length };
+  return { addedFromPaste: pasteRows.length, addedFromFile: fileRows.length, skipped };
 }
 
 // Asks for a received quantity — a delivery doesn't always match exactly.

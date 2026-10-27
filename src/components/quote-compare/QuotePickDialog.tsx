@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import { AlertCircle, Check, ChevronLeft, Download, Loader2, TriangleAlert, X } from "lucide-react";
 import {
   formatRand, isSuspiciouslyLow, joinList, lowestOfRow, percentOver, pickInsights, pickLowestPatch, pickSummary, pickSupplierPatch,
-  priceCount, shortSupplierName, supplierStats, togglePickPatch, type PickPatch, type PickRow, type PriceCell,
+  isInStockLead, priceCount, shortSupplierName, supplierStats, togglePickPatch, type PickPatch, type PickRow, type PriceCell,
 } from "./compare-model";
 
 export type PickSupplier = { quoteId: string; name: string };
@@ -96,7 +96,7 @@ export function QuotePickDialog(props: Props) {
                       const over = low && !isLowest && contested ? percentOver(cell.unit, low.min) : null;
                       return (
                         <div key={s.quoteId}>
-                          <button type="button" className={`qc-pick${on ? " is-on" : ""}`} aria-pressed={on} title={`${s.name}: ${formatRand(cell.unit)} × ${lineQty(line.quantity)} = ${formatRand(cell.unit * line.quantity)}`} onClick={() => props.onStage(togglePickPatch(line.pickedQuoteId, line.id, s.quoteId))}>
+                          <button type="button" className={`qc-pick${on ? " is-on" : ""}`} aria-pressed={on} title={`${s.name}: ${formatRand(cell.unit)} × ${lineQty(line.quantity)} = ${formatRand(cell.unit * line.quantity)}${cell.lead ? ` · ${cell.lead}` : ""}`} onClick={() => props.onStage(togglePickPatch(line.pickedQuoteId, line.id, s.quoteId))}>
                             <span className="qc-radio" aria-hidden="true" />
                             <span className="qc-pick-body">
                               <span className="qc-pick-price">{formatRand(cell.unit)}</span>
@@ -107,6 +107,7 @@ export function QuotePickDialog(props: Props) {
                               ) : over !== null ? (
                                 <span className="qc-pick-sub">+{over}%</span>
                               ) : null}
+                              {cell.lead ? <span className={`qc-pick-lead${isInStockLead(cell.lead) ? " is-stock" : ""}`} title={`Availability: ${cell.lead}`}>{cell.lead}</span> : null}
                             </span>
                           </button>
                         </div>
@@ -121,7 +122,7 @@ export function QuotePickDialog(props: Props) {
               <span><i className="qc-key" />Chosen for this line</span>
               <span className="is-low"><Check size={12} strokeWidth={3} />Lowest price on the line</span>
               <span className="is-check"><TriangleAlert size={12} strokeWidth={2.4} />Far below the other prices: worth confirming</span>
-              <span>Percentages show how much more than the lowest.</span>
+              <span>Percentages show how much more than the lowest. The line under a price is the supplier&apos;s availability, when given.</span>
             </div>
           </section>
 

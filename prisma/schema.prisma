@@ -2411,6 +2411,9 @@ model JobRfqQuoteLine {
   // comparison table can show "not quoted" instead of a misleading blank.
   available  Boolean     @default(true)
   notes      String?
+  // 2026-10-27, user request (Compare quotes): how soon the supplier can deliver this part, as a short phrase
+  // ("In stock", "7 days", "10-14 days"). Read from the quote file when it gives one; the person can edit it.
+  leadTime   String?
   // Manually chosen as "buy this part from this supplier" in the
   // comparison table — independent of (and doesn't have to agree with) the
   // automatic cheapest-price highlight. At most one JobRfqQuoteLine per

@@ -3,7 +3,8 @@
 // totals, "lowest on", suspicious prices, the best mix, the split by
 // supplier — can be unit tested on its own.
 
-export type PriceCell = { kind: "price"; unit: number } | { kind: "na" } | { kind: "none" };
+// `lead` is the supplier's lead time for the part ("In stock", "7 days", "10-14 days"), when one was given.
+export type PriceCell = { kind: "price"; unit: number; lead?: string } | { kind: "na" } | { kind: "none" };
 
 export type GridRow = { qty: number; cells: PriceCell[] };
 
@@ -37,19 +38,34 @@ export function sanitizePriceInput(value: string): string {
   return noSpaces.slice(0, firstDot + 1) + noSpaces.slice(firstDot + 1).replace(/\./g, "");
 }
 
-export function draftToCell(draft: { unitPrice: string; available: boolean } | undefined | null): PriceCell {
+/** Lead time text as typed or saved: trimmed, and undefined when blank so a cell without one stays as it was. */
+function leadOf(value: unknown): string | undefined {
+  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  return text === "" ? undefined : text;
+}
+
+/** True for the lead times that mean the supplier has it on the shelf ("In stock"). */
+export function isInStockLead(lead: string | null | undefined): boolean {
+  return /^in stock\b/i.test(String(lead ?? "").trim());
+}
+
+export function draftToCell(draft: { unitPrice: string; available: boolean; leadTime?: string } | undefined | null): PriceCell {
   if (!draft) return { kind: "none" };
   if (!draft.available) return { kind: "na" };
   const unit = parseDraftPrice(draft.unitPrice);
-  return unit === null ? { kind: "none" } : { kind: "price", unit };
+  if (unit === null) return { kind: "none" };
+  const lead = leadOf(draft.leadTime);
+  return lead ? { kind: "price", unit, lead } : { kind: "price", unit };
 }
 
-export function quoteLineToCell(line: { available?: boolean | null; unitPrice?: unknown } | undefined | null): PriceCell {
+export function quoteLineToCell(line: { available?: boolean | null; unitPrice?: unknown; leadTime?: string | null } | undefined | null): PriceCell {
   if (!line) return { kind: "none" };
   if (line.available === false) return { kind: "na" };
   if (line.unitPrice == null || line.unitPrice === "") return { kind: "none" };
   const unit = Number(line.unitPrice);
-  return Number.isFinite(unit) ? { kind: "price", unit } : { kind: "none" };
+  if (!Number.isFinite(unit)) return { kind: "none" };
+  const lead = leadOf(line.leadTime);
+  return lead ? { kind: "price", unit, lead } : { kind: "price", unit };
 }
 
 /** Lowest price in a row and every supplier index that has it. */
