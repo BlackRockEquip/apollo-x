@@ -3,10 +3,13 @@
 import { useRememberedListUrl } from "@/components/RememberListUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
-import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Pencil, Plus, Printer, RefreshCw, Save, Search, Star, Trash2, Unlink, Upload, X } from "lucide-react";
+import { ArrowLeft, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, Trash2, Unlink, X } from "lucide-react";
+import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
+import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
+import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
@@ -3363,6 +3366,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setQuoteNaCounts({});
     setQuoteImportNotes({});
     setQuoteAnalyzingId("");
+    setError("");
     setShowRfqPopup(false);
     setShowQuoteComparePopup(true);
   }
@@ -5302,190 +5306,83 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           </div>
           )}
 
-          {/* 2026-09-29 — user request: "move the import quote section to
-              its own place. Eg: add a 'Compare quotes' button next to
-              bulk update button which lets the user view the suppliers
-              requested from in table form next to each other, allow user
-              to import quote received for the respective supplier or
-              fill in amounts next to part number." This dialog replaces
-              the old single-supplier "Record quote" drawer and the
-              read-only "Quote comparison" section that both used to live
-              inside the Request quotes (RFQ) popup above — every
-              requested supplier is now its own editable column in one
-              table, so prices can be imported or typed in for any of
-              them without the others being out of view. The read-only
-              star-pick/cheapest-highlight comparison (once at least one
-              quote is actually saved) is kept below it, unchanged. */}
-          {showQuoteComparePopup && (
-          <div className="drawer-backdrop" role="dialog" aria-modal="true">
-          <aside className={`form-drawer compact-dialog job-editor-drawer quote-compare-dialog${quoteCompareMaximized ? " maximized" : ""}`} style={{ maxHeight: "90vh", overflowY: "auto" }}>
-            <header>
-              <div><h2>Compare quotes</h2><p>Every supplier asked to quote this job, side by side — import a received quote file or type prices in directly.</p></div>
-              {/* user request: "make the dialog be able to maximize the
-                  screen as to get a better view" */}
-              <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-                <button type="button" onClick={() => setQuoteCompareMaximized((v) => !v)} aria-label={quoteCompareMaximized ? "Restore dialog size" : "Maximize dialog"} title={quoteCompareMaximized ? "Restore" : "Maximize"}>
-                  {quoteCompareMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                </button>
-                <button type="button" onClick={closeQuoteCompare} aria-label="Close dialog"><X size={18} /></button>
-              </div>
-            </header>
+          {/* Compare quotes, redesigned 2026-10-27 (user: "I like B with C, the
+              look and flow look more professional and neatly tidied up"). Two
+              screens, both in src/components/quote-compare:
+                QuoteEntryDialog — suppliers down the left, one supplier's prices
+                  at a time on the right, each compared with the other suppliers.
+                  Replaces the one-column-per-supplier grid (2026-09-29 request:
+                  "move the import quote section to its own place ... import the
+                  quote received for the respective supplier or fill in amounts
+                  next to part number"). Same state and handlers as before: Save
+                  per supplier, Done saves every changed supplier (was OK),
+                  importing a file only fills blanks, a supplier that already has
+                  a quote file asks before it is replaced.
+                QuotePickDialog — "Compare Prices" (was "Saved quotes"): a click
+                  on a price stages it as the preferred one for that line (pending
+                  until Set preferred suppliers, was OK), or choose a whole
+                  supplier / the lowest on every line. Opens as its own dialog on
+                  top (2026-10-08 request) so it can stay open if the entry dialog
+                  behind it closes. */}
+          {showQuoteComparePopup && (() => {
+            const entrySuppliers: EntrySupplier[] = job.rfqRequests.map((request) => {
+              const requestId = String(request.id);
+              const status = String(request.status || "SKIPPED");
+              return {
+                id: requestId,
+                name: text(request.supplier.name),
+                statusLabel: RFQ_STATUS_LABELS[status] || status.replaceAll("_", " "),
+                statusTone: status === "QUOTED" ? "green" : status === "SENT" ? "blue" : status === "FAILED" ? "red" : "neutral",
+                savedFileName: request.quote?.fileName ? String(request.quote.fileName) : "",
+                pendingFileName: quoteFiles[requestId]?.name || "",
+                analyzing: quoteAnalyzingId === requestId,
+                saving: quoteSavingId === requestId,
+                dirty: quoteDraftDirty(request),
+                importNote: quoteImportNotes[requestId] || "",
+                notes: quoteNotesByRequest[requestId] || "",
+              };
+            });
+            const entryLines: EntryLine[] = job.partLines.map((line) => {
+              const qty = Number(line.quantity ?? 0);
+              return { id: String(line.id), partNumber: line.partNumber ? String(line.partNumber) : "", description: line.description ? String(line.description) : "", quantity: Number.isFinite(qty) ? qty : 0 };
+            });
+            return (
+              <QuoteEntryDialog
+                subtitle={`Job ${job.jobNumber || job.draftNumber || ""} · enter or import each supplier's prices, then compare`}
+                suppliers={entrySuppliers}
+                lines={entryLines}
+                drafts={quoteDrafts}
+                maximized={quoteCompareMaximized}
+                savingAll={savingAllQuotes}
+                anySaving={!!quoteSavingId}
+                canCompare={job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0}
+                error={error}
+                onToggleMaximize={() => setQuoteCompareMaximized((v) => !v)}
+                onPriceChange={(supplierId, lineId, unitPrice) => updateQuoteDraftLine(supplierId, lineId, { unitPrice })}
+                onNaChange={(supplierId, lineId, notAvailable) => updateQuoteDraftLine(supplierId, lineId, { available: !notAvailable })}
+                onNotesChange={(supplierId, notes) => setQuoteNotesByRequest((c) => ({ ...c, [supplierId]: notes }))}
+                onImportFile={async (supplierId, file) => {
+                  const request = job.rfqRequests.find((r) => String(r.id) === supplierId);
+                  if (!request) return;
+                  const savedQuoteFileName = request.quote?.fileName ? String(request.quote.fileName) : "";
+                  // 2026-10-12, user request: a supplier that already has an imported quote
+                  // is overridden only after confirming.
+                  if (savedQuoteFileName) {
+                    const ok = await confirm({ message: `${text(request.supplier.name)} already has a quote file (${savedQuoteFileName}). Replace it with ${file.name}? The earlier file and the prices for this supplier are replaced, and the new file is added to Attachments.`, tone: "warning", confirmLabel: "Replace quote" });
+                    if (!ok) return;
+                  }
+                  setQuoteFiles((c) => ({ ...c, [supplierId]: file }));
+                  void analyzeQuoteFileForRequest(supplierId, file, !!savedQuoteFileName);
+                }}
+                onViewFile={(supplierId) => void viewQuoteFile(supplierId)}
+                onSaveSupplier={(supplierId) => void saveQuoteForRequest(supplierId)}
+                onComparePrices={() => { setError(""); setPendingPreferred({}); setShowSavedQuotesCompare(true); }}
+                onCancel={closeQuoteCompare}
+                onDone={() => void saveAllQuotesAndClose()}
+              />
+            );
+          })()}
 
-            <div className="quote-compare-body">
-            {job.rfqRequests.length === 0 ? (
-              <p className="table-state compact-empty-state">No suppliers have been asked to quote this job yet — use &quot;Request quotes (RFQ)&quot; first.</p>
-            ) : job.partLines.length === 0 ? (
-              <p className="table-state compact-empty-state">This job has no parts to price yet.</p>
-            ) : (
-              <>
-                <div className="data-table-wrap">
-                  <table className="data-table quote-entry-table">
-                    {/* user request: "parts table is to far left aligned,
-                        space correctly as well as columns should be
-                        equally spaced" — fixed widths for Part/Qty, every
-                        supplier column shares the rest equally (see
-                        .quote-entry-table{{table-layout:fixed}} in
-                        globals.css). */}
-                    <colgroup>
-                      <col style={{ width: 170 }} />
-                      <col style={{ width: 64 }} />
-                      {job.rfqRequests.map((r) => <col key={r.id} />)}
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        {/* user request: "parts table does not show
-                            headers (Qty, Part number/Description, Unit,
-                            etc)" */}
-                        <th rowSpan={2}>Part</th>
-                        <th rowSpan={2} className="quote-entry-qty">Qty</th>
-                        {job.rfqRequests.map((request) => {
-                          const requestId = String(request.id);
-                          const status = String(request.status || "SKIPPED");
-                          const tone = status === "QUOTED" ? "tone-green" : status === "SENT" ? "tone-blue" : status === "FAILED" ? "tone-red" : "neutral";
-                          const analyzing = quoteAnalyzingId === requestId;
-                          const importedFile = quoteFiles[requestId];
-                          const savedQuoteFileName = request.quote?.fileName ? String(request.quote.fileName) : "";
-                          return (
-                            <th key={request.id} className="supplier-group-start quote-entry-head">
-                              <div className="quote-entry-head-inner">
-                                <strong>{text(request.supplier.name)}</strong>
-                                {/* user request: "move the save button next
-                                    to the status field" */}
-                                <div className="quote-entry-head-row">
-                                  <span className={`status-pill ${tone}`}>{RFQ_STATUS_LABELS[status] || status.replaceAll("_", " ")}</span>
-                                  <button type="button" className="table-action" disabled={quoteSavingId === requestId} onClick={() => void saveQuoteForRequest(requestId)}>{quoteSavingId === requestId ? <Loader2 className="spin" size={12} /> : <Save size={12} />} {quoteSavingId === requestId ? "Saving…" : "Save"}</button>
-                                </div>
-                                <label className="quote-entry-import">
-                                  <Upload size={12} />
-                                  <span>{importedFile ? importedFile.name : savedQuoteFileName ? "Replace quote file" : "Import quote file"}</span>
-                                  <input type="file" onChange={async (e) => {
-                                    const input = e.currentTarget;
-                                    const file = input.files?.[0] || null;
-                                    if (!file) return;
-                                    // 2026-10-12, user request: a supplier that already has an imported quote
-                                    // is overridden only after confirming.
-                                    if (savedQuoteFileName) {
-                                      const ok = await confirm({ message: `${text(request.supplier.name)} already has a quote file (${savedQuoteFileName}). Replace it with ${file.name}? The earlier file and the prices in this column are replaced, and the new file is added to Attachments.`, tone: "warning", confirmLabel: "Replace quote" });
-                                      if (!ok) { input.value = ""; return; }
-                                    }
-                                    setQuoteFiles((c) => ({ ...c, [requestId]: file }));
-                                    void analyzeQuoteFileForRequest(requestId, file, !!savedQuoteFileName);
-                                    input.value = "";
-                                  }} />
-                                </label>
-                                {savedQuoteFileName && <button type="button" className="table-action" title="Open the imported quote file" disabled={saving} onClick={() => void viewQuoteFile(requestId)}>View quote file</button>}
-                                {analyzing && <span className="muted small-line">Analyzing file for prices…</span>}
-                                {!analyzing && quoteImportNotes[requestId] && <span className="muted small-line">{quoteImportNotes[requestId]}</span>}
-                                <input className="quote-entry-notes" value={quoteNotesByRequest[requestId] || ""} onChange={(e) => setQuoteNotesByRequest((c) => ({ ...c, [requestId]: e.target.value }))} placeholder="Notes (optional)" />
-                              </div>
-                            </th>
-                          );
-                        })}
-                      </tr>
-                      {/* className so this row can be un-stuck in CSS —
-                          see .quote-entry-subhead in globals.css, user
-                          report: "the unit price header when scrolling
-                          goes over the supplier name". */}
-                      <tr className="quote-entry-subhead">
-                        {job.rfqRequests.map((request) => <th key={request.id} className="supplier-group-start">Unit price</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {job.partLines.map((line) => (
-                        <tr key={line.id}>
-                          <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
-                          <td className="quote-entry-qty">{text(line.quantity)}</td>
-                          {job.rfqRequests.map((request) => {
-                            const requestId = String(request.id);
-                            const draft = quoteDrafts[requestId]?.[String(line.id)] || { unitPrice: "", available: true, notes: "" };
-                            return (
-                              <td key={request.id} className="supplier-group-start">
-                                <div className="quote-entry-cell">
-                                  <input type="number" min="0" step="0.01" disabled={!draft.available} value={draft.unitPrice} onChange={(e) => updateQuoteDraftLine(requestId, String(line.id), { unitPrice: e.target.value })} placeholder="R0.00" />
-                                  <label className="inline-check quote-entry-unavailable" title="Not available from this supplier">
-                                    <input type="checkbox" checked={!draft.available} onChange={(e) => updateQuoteDraftLine(requestId, String(line.id), { available: !e.target.checked })} />
-                                    <span>N/A</span>
-                                  </label>
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan={2}><strong>Total (unsaved)</strong></td>
-                        {job.rfqRequests.map((request) => <td key={request.id} className="supplier-group-start"><strong>R{draftQuoteTotal(String(request.id)).toFixed(2)}</strong></td>)}
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-                <p className="muted small-line" style={{ marginTop: 8 }}>Prices are only saved once you click Save on that supplier&apos;s column — importing a file fills in blanks only, it never overwrites a price you&apos;ve already typed. Items without a price are set to N/A when you save.</p>
-              </>
-            )}
-
-            {/* user request: "move the saved quotes section behind a
-                button that says 'Compare Prices' which will then bring
-                up the table shown" — still only offered once at least one
-                quote has actually been saved. Follow-up: "when clicking
-                the compare Prices button, make that it opens its own
-                dialog" — see the separate popup below, rendered as a
-                sibling of this one, instead of expanding inline here. */}
-            </div>
-            {/* 2026-10-08, user report: "the compare prices button only shows
-                if the first column supplier is saved, if a second suppliers
-                data is received first it doesnt show the button" — it was
-                tucked under the entry table and only rendered once a quote
-                existed, so it could sit out of view (or be missing) while a
-                later supplier's column was being filled in. It now lives in
-                the dialog footer and is always there; it simply stays
-                disabled until at least one supplier's quote has been saved.
-                OK saves every changed supplier column and closes; Cancel
-                closes without saving (user request: "add a ok and cancel
-                button at the bottom right"). */}
-            <footer style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <button type="button" className="quiet-button" disabled={!(job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0)} title={job.rfqRequests.some((r) => r.quote) ? undefined : "Save at least one supplier's prices first"} onClick={() => { setPendingPreferred({}); setShowSavedQuotesCompare(true); }}>
-                <Columns3 size={14} /> Compare Prices
-              </button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" className="quiet-button" onClick={closeQuoteCompare} disabled={savingAllQuotes}>Cancel</button>
-                <button type="button" className="gold-button" onClick={() => void saveAllQuotesAndClose()} disabled={savingAllQuotes || !!quoteSavingId}>{savingAllQuotes && <Loader2 className="spin" size={14} />} OK</button>
-              </div>
-            </footer>
-          </aside>
-          </div>
-          )}
-
-          {/* user request: "when clicking the compare Prices button, make
-              that it opens its own dialog" — was an inline expand/collapse
-              section inside the Compare quotes dialog above; now its own
-              popup (same .drawer-backdrop/.form-drawer pattern as every
-              other dialog in this app), stacked on top so it gets its own
-              header and close button rather than sharing scroll space with
-              the entry table above it. Kept as its own conditional block
-              (not nested inside the dialog above) so it can stay open even
-              if the Compare quotes dialog behind it is later closed. */}
           {showSavedQuotesCompare && job.rfqRequests.some((r) => r.quote) && job.partLines.length > 0 && (() => {
             const quotedRequests = job.rfqRequests.filter((r) => r.quote);
             // Effective pick for a part line: the staged choice when there is one
@@ -5497,119 +5394,30 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               }
               return null;
             };
-            const isQuoted = (quoteLine: { available?: boolean | null; unitPrice?: unknown } | undefined) => !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
-            let preferredTotal = 0;
-            let pickedCount = 0;
-            for (const line of job.partLines) {
-              const pickId = effectivePickId(String(line.id));
-              if (!pickId) continue;
-              const request = quotedRequests.find((r) => String(r.quote!.id) === pickId);
-              const quoteLine = request?.quote!.lines.find((l) => l.partLineId === String(line.id));
-              if (!isQuoted(quoteLine)) continue;
-              const price = Number(quoteLine!.unitPrice);
-              if (Number.isNaN(price)) continue;
+            const pickSuppliers: PickSupplier[] = quotedRequests.map((r) => ({ quoteId: String(r.quote!.id), name: text(r.supplier.name) }));
+            const pickLines: PickLine[] = job.partLines.map((line) => {
               const qty = Number(line.quantity ?? 0);
-              preferredTotal += price * (Number.isNaN(qty) ? 0 : qty);
-              pickedCount += 1;
-            }
-            const pickLine = (partLineId: string, quoteId: string) => setPendingPreferred((c) => ({ ...c, [partLineId]: effectivePickId(partLineId) === quoteId ? null : quoteId }));
-            // 2026-10-08, user request: "create a star at the top by the supplier
-            // name that will select all from that supplier" — picks (or, when
-            // every priced line is already that supplier's, clears) all of this
-            // supplier's priced lines in one click.
-            const pickSupplierLines = (request: (typeof quotedRequests)[number]) => {
-              const quoteId = String(request.quote!.id);
-              const pricedLineIds = job.partLines.map((l) => String(l.id)).filter((id) => isQuoted(request.quote!.lines.find((l) => l.partLineId === id)));
-              const allPicked = pricedLineIds.length > 0 && pricedLineIds.every((id) => effectivePickId(id) === quoteId);
-              setPendingPreferred((c) => {
-                const next = { ...c };
-                for (const id of pricedLineIds) next[id] = allPicked ? null : quoteId;
-                return next;
-              });
-            };
+              return {
+                id: String(line.id),
+                partNumber: line.partNumber ? String(line.partNumber) : "",
+                description: line.description ? String(line.description) : "",
+                quantity: Number.isFinite(qty) ? qty : 0,
+                cells: quotedRequests.map((r) => quoteLineToCell(r.quote!.lines.find((l) => l.partLineId === String(line.id)))),
+                pickedQuoteId: effectivePickId(String(line.id)),
+              };
+            });
             return (
-              <div className="drawer-backdrop" role="dialog" aria-modal="true">
-                <aside className="form-drawer compact-dialog job-editor-drawer quote-compare-dialog" style={{ maxHeight: "90vh", overflowY: "auto" }}>
-                  <header>
-                    <div><h2>Saved quotes</h2><p>Every supplier with a saved quote on this job, compared side by side.</p></div>
-                    <button type="button" onClick={closeSavedQuotes} aria-label="Close dialog"><X size={18} /></button>
-                  </header>
-                  <div className="quote-compare-body">
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                      <button type="button" className="quiet-button" onClick={exportQuoteComparisonCsv}><Download size={14} /> Export CSV</button>
-                      <button type="button" className="quiet-button" onClick={() => void exportQuoteComparisonExcel()}><Download size={14} /> Export Excel</button>
-                    </div>
-                    <div className="data-table-wrap" style={{ marginTop: 12 }}><table className="data-table quote-comparison-table"><thead>
-                      <tr>
-                        <th rowSpan={2}>Part</th>
-                        <th rowSpan={2}>Qty</th>
-                        {quotedRequests.map((r) => {
-                          const quoteId = String(r.quote!.id);
-                          const pricedLineIds = job.partLines.map((l) => String(l.id)).filter((id) => isQuoted(r.quote!.lines.find((l) => l.partLineId === id)));
-                          const allPicked = pricedLineIds.length > 0 && pricedLineIds.every((id) => effectivePickId(id) === quoteId);
-                          return <th key={r.id} colSpan={2} className="supplier-group-start">
-                            <button type="button" className="table-action" disabled={pricedLineIds.length === 0} style={allPicked ? { fontWeight: 700 } : undefined} onClick={() => pickSupplierLines(r)} title={`Select all ${text(r.supplier.name)} prices`} aria-label={`Select all prices from ${text(r.supplier.name)}`}>
-                              <Star size={13} fill={allPicked ? "currentColor" : "none"} /> {text(r.supplier.name)}
-                            </button>
-                          </th>;
-                        })}
-                      </tr>
-                      <tr>
-                        {quotedRequests.map((r) => <Fragment key={r.id}><th className="supplier-group-start">Unit</th><th>Total</th></Fragment>)}
-                      </tr>
-                    </thead><tbody>
-                      {job.partLines.map((line) => {
-                        const cheapestQuoteId = cheapestRfqQuoteId(String(line.id), job.rfqRequests);
-                        const qty = Number(line.quantity ?? 0);
-                        return <tr key={line.id}>
-                          <td>{text(line.partNumber)}{line.description ? <div className="muted small-line">{text(line.description)}</div> : null}</td>
-                          <td>{decimalText(line.quantity)}</td>
-                          {quotedRequests.map((request) => {
-                            const quote = request.quote!;
-                            const quoteLine = quote.lines.find((l) => l.partLineId === String(line.id));
-                            const quoted = !!quoteLine && quoteLine.available !== false && quoteLine.unitPrice != null && quoteLine.unitPrice !== "";
-                            const isCheapest = quoted && String(quote.id) === cheapestQuoteId;
-                            const isPreferred = effectivePickId(String(line.id)) === String(quote.id);
-                            const unit = quoted ? Number(quoteLine!.unitPrice) : null;
-                            const cellStyle = isCheapest ? { background: "rgba(59,130,246,0.1)" } : undefined;
-                            return <Fragment key={request.id}>
-                              <td className="supplier-group-start" style={cellStyle}>
-                                {quoteLine && quoteLine.available === false ? <span className="muted small-line">Unavailable</span> : quoted ? (
-                                  <button type="button" className="table-action" style={isPreferred ? { fontWeight: 700 } : undefined} onClick={() => pickLine(String(line.id), String(quote.id))}>
-                                    <Star size={12} fill={isPreferred ? "currentColor" : "none"} /> R{unit!.toFixed(2)}
-                                  </button>
-                                ) : <span className="muted small-line">—</span>}
-                              </td>
-                              <td style={cellStyle}>{quoted ? `R${(unit! * qty).toFixed(2)}` : <span className="muted small-line">—</span>}</td>
-                            </Fragment>;
-                          })}
-                        </tr>;
-                      })}
-                    </tbody><tfoot>
-                      <tr>
-                        <td colSpan={2}><strong>Quote total</strong></td>
-                        {quotedRequests.map((request) => <Fragment key={request.id}><td className="supplier-group-start" /><td><strong>R{rfqQuoteTotal(request.quote!, job.partLines).toFixed(2)}</strong></td></Fragment>)}
-                      </tr>
-                      {/* 2026-09-15, user request: "add total field to compare
-                          parts table" — the per-supplier "Quote total" row
-                          above already existed; this adds the combined total
-                          across whichever supplier's price is picked per part
-                          (the star toggle), previously only shown as plain
-                          text below the table, now also as a row in the table
-                          itself. */}
-                      <tr>
-                        <td colSpan={2}><strong>Preferred total ({pickedCount} of {job.partLines.length} picked)</strong></td>
-                        <td colSpan={Math.max(1, quotedRequests.length * 2)}><strong>R{preferredTotal.toFixed(2)}</strong></td>
-                      </tr>
-                    </tfoot></table></div>
-                    <p className="muted small-line" style={{ marginTop: 8 }}>Click <Star size={11} style={{ verticalAlign: "-1px" }} /> a price to mark it preferred for that part, or the star by a supplier&apos;s name to pick everything they quoted — press OK to save; this also fills in each part&apos;s &quot;ordered from&quot; supplier.</p>
-                  </div>
-                  <footer>
-                    <button type="button" className="quiet-button" onClick={closeSavedQuotes} disabled={applyingPreferred}>Cancel</button>
-                    <button type="button" className="gold-button" onClick={() => void applyPendingPreferred()} disabled={applyingPreferred}>{applyingPreferred && <Loader2 className="spin" size={14} />} OK</button>
-                  </footer>
-                </aside>
-              </div>
+              <QuotePickDialog
+                suppliers={pickSuppliers}
+                lines={pickLines}
+                applying={applyingPreferred}
+                error={error}
+                onStage={(patch) => setPendingPreferred((c) => ({ ...c, ...patch }))}
+                onApply={() => void applyPendingPreferred()}
+                onCancel={closeSavedQuotes}
+                onExportCsv={exportQuoteComparisonCsv}
+                onExportExcel={() => void exportQuoteComparisonExcel()}
+              />
             );
           })()}
 
