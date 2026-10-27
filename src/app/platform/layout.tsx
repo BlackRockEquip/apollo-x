@@ -1,3 +1,4 @@
+import "./platform-theme.css";
 import { redirect } from "next/navigation";
 import { getRequestContext } from "@/lib/auth/session";
 import { PlatformShell } from "@/components/PlatformShell";
