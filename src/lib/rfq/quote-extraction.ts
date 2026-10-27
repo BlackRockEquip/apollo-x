@@ -53,26 +53,58 @@ export async function guessPricesFromFile(bytes: Buffer, fileName: string, partN
 // page ourselves instead: every text item keeps its position, items on the
 // same visual row are put in left-to-right order, and cells are separated by
 // a tab so the price/qty columns survive intact.
-type PdfTextItem = { str: string; transform: number[] };
+type PdfTextItem = { str: string; transform: number[]; width?: number };
 type PdfPageData = { getTextContent: (options?: Record<string, unknown>) => Promise<{ items: PdfTextItem[] }> };
+
+// 2026-10-27, user report: a Capital Equipment Parts (CEP) PDF quote read no prices at all. That PDF (made by
+// wkhtmltopdf) stores EVERY CHARACTER as its own text item, so the rendering above put a tab between every single
+// letter and digit ("4<tab>6<tab>9<tab>5...") and no part number or price survived as a whole word. Items that sit
+// right next to each other on a row (a gap under a fifth of the text size - far less than any gap between table
+// columns, which are many characters wide) are now joined back into one cell before the row is built. PDFs whose
+// items are already whole words or cells are unaffected, since their neighbours are further apart than that.
+const SAME_CELL_GAP_EM = 0.2;
+
+export function rowsFromTextItems(rawItems: PdfTextItem[]): string {
+  const items = rawItems
+    .filter((item) => item.str !== "")
+    .map((item) => ({
+      text: item.str,
+      x: item.transform[4],
+      y: item.transform[5],
+      width: typeof item.width === "number" ? item.width : 0,
+      size: Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 10,
+    }))
+    .sort((a, b) => b.y - a.y || a.x - b.x);
+
+  const rows: Array<{ y: number; items: typeof items }> = [];
+  for (const item of items) {
+    const row = rows.find((r) => Math.abs(r.y - item.y) <= 2);
+    if (row) row.items.push(item);
+    else rows.push({ y: item.y, items: [item] });
+  }
+
+  return rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) => {
+      const cells: Array<{ text: string; end: number; size: number }> = [];
+      for (const item of row.items.sort((a, b) => a.x - b.x)) {
+        const last = cells[cells.length - 1];
+        if (last && item.x - last.end <= last.size * SAME_CELL_GAP_EM) {
+          last.text += item.text;
+          last.end = Math.max(last.end, item.x + item.width);
+        } else {
+          cells.push({ text: item.text, end: item.x + item.width, size: item.size });
+        }
+      }
+      return cells.map((c) => c.text.replace(/\s+/g, " ").trim()).filter(Boolean).join("\t");
+    })
+    .filter(Boolean)
+    .join("\n");
+}
 
 async function renderPdfPageAsRows(pageData: PdfPageData): Promise<string> {
   const content = await pageData.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: true });
-  const items = content.items
-    .filter((item) => item.str.trim() !== "")
-    .map((item) => ({ text: item.str.trim(), x: item.transform[4], y: item.transform[5] }))
-    .sort((a, b) => b.y - a.y || a.x - b.x);
-
-  const rows: Array<{ y: number; cells: Array<{ text: string; x: number }> }> = [];
-  for (const item of items) {
-    const row = rows.find((r) => Math.abs(r.y - item.y) <= 2);
-    if (row) row.cells.push({ text: item.text, x: item.x });
-    else rows.push({ y: item.y, cells: [{ text: item.text, x: item.x }] });
-  }
-  return rows
-    .sort((a, b) => b.y - a.y)
-    .map((row) => row.cells.sort((a, b) => a.x - b.x).map((c) => c.text).join("\t"))
-    .join("\n");
+  return rowsFromTextItems(content.items);
 }
 
 async function extractPdfText(bytes: Buffer): Promise<string> {
@@ -146,7 +178,13 @@ function quantityCandidates(cells: string[], knownQuantity: number | undefined):
 function pickUnitPrice(prices: number[], quantities: number[]): number | null {
   const nonZero = prices.filter((p) => p > 0);
   if (nonZero.length === 0) return null;
-  if (nonZero.length === 1) return nonZero[0];
+  if (nonZero.length === 1) {
+    // 2026-10-27: a row that is "weight, 0.00, 0.00" (an item the supplier could not quote: unit price and line
+    // total both zero) has one non-zero amount - the weight - which must not be offered as a price.
+    const at = prices.findIndex((p) => p > 0);
+    if (prices.slice(at + 1).filter((p) => p === 0).length >= 2) return null;
+    return nonZero[0];
+  }
   for (let i = 0; i < prices.length; i++) {
     const value = prices[i];
     if (value <= 0) continue;
@@ -168,7 +206,9 @@ function splitCells(line: string): string[] {
   return wide.length >= 3 ? wide : line.split(/\s+/).filter(Boolean);
 }
 
-function guessFromText(text: string, partNumbers: string[], quantities: Record<string, number>): Record<string, number> {
+const NOT_QUOTED = /\b(?:unavailable|not available|out of stock|no quote|no bid|discontinued)\b/i;
+
+export function guessFromText(text: string, partNumbers: string[], quantities: Record<string, number>): Record<string, number> {
   const guesses: Record<string, number> = {};
   const lines = text.split(/\r?\n/);
 
@@ -181,18 +221,32 @@ function guessFromText(text: string, partNumbers: string[], quantities: Record<s
     // longer code". Tried second, so an exact match always wins when both
     // appear.
     const prefixed = loosePartNumberPattern(partNumber, true);
+    const wanted = quantities[partNumber];
 
     for (const pattern of [strict, prefixed]) {
       if (!pattern) continue;
-      let found: number | undefined;
+      // 2026-10-27: the same number can be quoted on more than one line (e.g. 1 off from stock and 6 off in 3 hours at
+      // different prices). A line whose price multiplies up to a total for the quantity on the parts list is taken in
+      // preference to the first priced line; otherwise the first priced line, as before.
+      let first: number | undefined;
+      let preferred: number | undefined;
       for (const line of lines) {
         if (!pattern.test(line)) continue;
+        if (NOT_QUOTED.test(line)) continue;
         // Strip the part number itself out first so a part number that
         // happens to contain digits is never mistaken for the price.
         const cells = splitCells(line.replace(new RegExp(pattern.source, "gi"), "\t"));
-        const price = pickUnitPrice(priceCandidates(cells), quantityCandidates(cells, quantities[partNumber]));
-        if (price !== null) { found = price; break; }
+        const prices = priceCandidates(cells);
+        const price = pickUnitPrice(prices, quantityCandidates(cells, wanted));
+        if (price === null) continue;
+        if (first === undefined) first = price;
+        if (wanted && wanted > 0) {
+          const expected = price * wanted;
+          const tolerance = Math.max(0.02, expected * 0.0005);
+          if (preferred === undefined && prices.slice(prices.indexOf(price) + 1).some((p) => Math.abs(p - expected) <= tolerance)) preferred = price;
+        }
       }
+      const found = preferred ?? first;
       if (found !== undefined) { guesses[partNumber] = found; break; }
     }
   }
