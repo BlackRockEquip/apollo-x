@@ -288,6 +288,8 @@ export const attachmentUploadInput = z.object({
   notes: optionalText,
   // 2026-10-06 — field jobs: what the photo shows (see JobAttachment.tag).
   tag: z.enum(["BEFORE", "AFTER", "FAULT", "SERIAL_PLATE", "OTHER"]).optional().nullable(),
+  // 2026-10-27: true when the file is added through the Photos section (images only).
+  isPhoto: z.boolean().optional(),
 });
 
 // 2026-09-15 — user request: "once a note is added [to an attachment],

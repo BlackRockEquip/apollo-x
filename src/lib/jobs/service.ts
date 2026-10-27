@@ -6,6 +6,7 @@ import { DOCUMENT_KINDS, documentBaseName, type DocumentKind } from "@/lib/docum
 import { getDocumentTitlesForCompany } from "@/lib/documents/titles-service";
 import { getCompanyLetterhead } from "@/lib/master-data/company-settings-service";
 import { sanitizeSegment } from "@/lib/attachments/blob-store";
+import { attachmentVisibleTo, photoTypeAllowed, uploadAsPhoto } from "@/lib/jobs/attachment-visibility";
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -393,7 +394,7 @@ async function getJobScoped(companyId: string, id: string) {
       // bytes down on every job load — the bytes themselves are only
       // fetched by the dedicated download route.
       attachments: {
-        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
+        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -791,7 +792,10 @@ export async function getJobById(ctx: RequestContext, id: string) {
   const previousPexJob = job.type === "PEX_SUPPLY" && job.previousJobNumber
     ? await prisma.job.findFirst({ where: { companyId, jobNumber: job.previousJobNumber }, select: { id: true, jobNumber: true } })
     : null;
-  return { ...job, customer, emailConfigured, previousPexJob };
+  // 2026-10-27, user request (Mechanic view): a mechanic sees only the photos on a job, never the Attachments (documents, saved
+  // job documents, supplier quotes ...). Removed from the payload itself, not just hidden by the page.
+  const attachments = ctx.tenantRole === "USER" ? job.attachments.filter((file) => file.isPhoto) : job.attachments;
+  return { ...job, attachments, customer, emailConfigured, previousPexJob };
 }
 
 export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
@@ -1936,9 +1940,11 @@ const ALLOWED_ATTACHMENT_MIME_TYPES = [
 ];
 const MAX_ATTACHMENT_BYTES = 8_000_000;
 
-async function getJobAttachmentScoped(companyId: string, jobId: string, attachmentId: string) {
+async function getJobAttachmentScoped(ctx: RequestContext, companyId: string, jobId: string, attachmentId: string) {
   const attachment = await prisma.jobAttachment.findFirst({ where: { id: attachmentId, companyId, jobId } });
   if (!attachment) notFound();
+  // 2026-10-27: a mechanic can only reach photos. Anything else answers "not found", same as a file that does not exist.
+  if (!attachmentVisibleTo(ctx, attachment)) notFound();
   return attachment;
 }
 
@@ -1950,16 +1956,19 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
   await getJobScoped(companyId, jobId);
 
   if (!ALLOWED_ATTACHMENT_MIME_TYPES.includes(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+  // A mechanic can only add photos; a file added through the Photos section must be an image.
+  const isPhoto = uploadAsPhoto(ctx, input.isPhoto);
+  if (isPhoto && !photoTypeAllowed(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
   const data = Buffer.from(input.contentBase64, "base64");
   if (data.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
   const fileName = input.fileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
 
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
-      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, tag: input.tag || null, createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, tag: input.tag || null, isPhoto, createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
-    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment uploaded: ${fileName}.`, { attachmentId: record.id, fileName });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `${isPhoto ? "Photo" : "Attachment"} uploaded: ${fileName}.`, { attachmentId: record.id, fileName, isPhoto });
     return record;
   });
 
@@ -1975,7 +1984,7 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
 // view/download it — same convention as getRfqQuoteFile.
 export async function getJobAttachmentFile(ctx: RequestContext, jobId: string, attachmentId: string) {
   const companyId = requireJobsRead(ctx);
-  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+  const attachment = await getJobAttachmentScoped(ctx, companyId, jobId, attachmentId);
   if (attachment.storedAttachmentId) {
     const stored = await readStoredBlob(companyId, attachment.storedAttachmentId);
     return { fileName: attachment.fileName, mimeType: attachment.mimeType, contentBase64: stored.data.toString("base64") };
@@ -2012,7 +2021,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
       data: { companyId, jobId, fileName, mimeType: "application/pdf", sizeBytes: pdf.length, data: pdf, notes: "Saved from the job page", createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Document saved: ${fileName}.`, { attachmentId: record.id, fileName, documentKind: kind });
     return record;
@@ -2020,7 +2029,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: pdf.length, documentKind: kind } });
   await offloadQuietly(offloadJobAttachment(attachment.id));
   // offload may have renamed on a storage-side name clash; report what is really stored.
-  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } } });
+  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } } });
   return stored ?? attachment;
 }
 
@@ -2052,12 +2061,12 @@ export async function renderJobDocumentForDownload(ctx: RequestContext, jobId: s
 export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: string, attachmentId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobAttachmentNotesUpdateInput.parse(raw);
-  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+  const attachment = await getJobAttachmentScoped(ctx, companyId, jobId, attachmentId);
   const updated = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.update({
       where: { id: attachment.id },
       data: { notes: input.notes || null },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment note updated: ${attachment.fileName}.`, { attachmentId: attachment.id, edited: true });
     return record;
@@ -2068,7 +2077,7 @@ export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: strin
 
 export async function deleteJobAttachment(ctx: RequestContext, jobId: string, attachmentId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  const attachment = await getJobAttachmentScoped(companyId, jobId, attachmentId);
+  const attachment = await getJobAttachmentScoped(ctx, companyId, jobId, attachmentId);
 
   await prisma.$transaction(async (tx) => {
     await tx.jobAttachment.delete({ where: { id: attachment.id } });

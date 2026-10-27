@@ -171,6 +171,9 @@ type JobAttachmentRow = Row & {
   mimeType?: string | null;
   sizeBytes?: unknown;
   notes?: string | null;
+  tag?: string | null;
+  // 2026-10-27: true for a file added through the Photos section; everything else is an Attachment.
+  isPhoto?: boolean | null;
   createdAt?: string | null;
   createdBy?: Row & { displayName?: string | null };
 };
@@ -651,7 +654,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [attachmentNotes, setAttachmentNotes] = useState("");
   // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / ...).
-  const [attachmentTag, setAttachmentTag] = useState("");
+  // 2026-10-27, user request (Mechanic view): Photos and Attachments are separate sections, each with its own upload form.
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoNotes, setPhotoNotes] = useState("");
+  const [photoTag, setPhotoTag] = useState("");
+  const [photoUploading, setPhotoUploading] = useState(false);
   // 2026-10-06 — field jobs: which of Parts list / Pick slips / Follow-up is open.
   // 2026-10-27, job screen redesign: the open tab lives in the URL hash (#tab=parts) so a refresh or a shared link lands on the same tab.
   // Read after mount (not in the initial state) so the server and first client render agree.
@@ -2483,24 +2490,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // uses the same fileToBase64 helper as the parts-list import / RFQ quote
   // file uploads above; view/download opens a data: URL in a new tab, same
   // convention as viewQuoteFile below.
-  async function uploadAttachment() {
-    if (!jobId || !attachmentFile) return;
-    setAttachmentUploading(true); setError("");
+  async function uploadAttachment(asPhoto = false) {
+    const file = asPhoto ? photoFile : attachmentFile;
+    if (!jobId || !file) return;
+    const setUploading = asPhoto ? setPhotoUploading : setAttachmentUploading;
+    setUploading(true); setError("");
     try {
-      const contentBase64 = await fileToBase64(attachmentFile);
+      const contentBase64 = await fileToBase64(file);
       const r = await fetch(`/api/v1/jobs/${jobId}/attachments`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileName: attachmentFile.name, mimeType: attachmentFile.type || "application/octet-stream", contentBase64, notes: attachmentNotes.trim() || null, tag: attachmentTag || null }),
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType: file.type || "application/octet-stream",
+          contentBase64,
+          notes: (asPhoto ? photoNotes : attachmentNotes).trim() || null,
+          tag: asPhoto ? photoTag || null : null,
+          isPhoto: asPhoto,
+        }),
       });
       const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || "Unable to upload attachment.");
-      setAttachmentFile(null); setAttachmentNotes(""); setAttachmentTag("");
+      if (!r.ok) throw new Error(b.error?.message || (asPhoto ? "Unable to upload the photo." : "Unable to upload attachment."));
+      if (asPhoto) { setPhotoFile(null); setPhotoNotes(""); setPhotoTag(""); }
+      else { setAttachmentFile(null); setAttachmentNotes(""); }
       await load(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to upload attachment.");
+      setError(e instanceof Error ? e.message : asPhoto ? "Unable to upload the photo." : "Unable to upload attachment.");
     } finally {
-      setAttachmentUploading(false);
+      setUploading(false);
     }
   }
 
@@ -4791,32 +4808,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           </section>
   ) : null;
 
-  const attachmentsSection = job ? (
-            <section className="detail-panel">
-              <header>
-                <div><h2>{fieldLayout ? "Photos & attachments" : "Attachments"}</h2><p>Photos, documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
-              </header>
-              <div className="drawer-fields">
-                <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
-                {fieldLayout && (
-                  <label><span>Tag</span>
-                    <select value={attachmentTag} onChange={(e) => setAttachmentTag(e.target.value)}>
-                      <option value="">—</option>
-                      {Object.entries(ATTACHMENT_TAG_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                  </label>
-                )}
-                <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
-                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment()}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
-              </div>
+  // 2026-10-27, user request (Mechanic view): Photos and Attachments are two separate sections. A mechanic only ever gets
+  // Photos (the server leaves the Attachments out of what it sends them as well).
+  const photoFiles = job ? job.attachments.filter((file) => Boolean(file.isPhoto)) : [];
+  const documentFiles = job ? job.attachments.filter((file) => !file.isPhoto) : [];
+  const fileRows = (files: JobAttachmentRow[], emptyText: string) => (
               <div className="record-list">
-                {job.attachments.length === 0 && <div className="table-state compact-empty-state">No attachments uploaded yet.</div>}
-                {job.attachments.map((file) => {
+                {files.length === 0 && <div className="table-state compact-empty-state">{emptyText}</div>}
+                {files.map((file) => {
                   const fileId = String(file.id);
                   const isEditingNote = editingAttachmentId === fileId;
                   return (
                   <article key={fileId}>
-                    <div className="record-icon"><FileText size={14} /></div>
+                    <div className="record-icon">{file.isPhoto ? <Camera size={14} /> : <FileText size={14} />}</div>
                     <div>
                       <strong><button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}>{text(file.fileName)}</button></strong>
                       {file.tag ? <span className="field-tag-chip">{ATTACHMENT_TAG_LABELS[String(file.tag)] || String(file.tag)}</span> : null}
@@ -4838,6 +4842,41 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   );
                 })}
               </div>
+  );
+
+  const photosSection = job ? (
+            <section className="detail-panel">
+              <header>
+                <div><h2>Photos</h2><p>Pictures of the job, such as the machine, the fault or the serial plate.</p></div>
+              </header>
+              <div className="drawer-fields">
+                <label><span>Add a photo (max 8MB)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} /></label>
+                {fieldLayout && (
+                  <label><span>Tag</span>
+                    <select value={photoTag} onChange={(e) => setPhotoTag(e.target.value)}>
+                      <option value="">—</option>
+                      {Object.entries(ATTACHMENT_TAG_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </label>
+                )}
+                <label><span>Notes (optional)</span><input value={photoNotes} onChange={(e) => setPhotoNotes(e.target.value)} placeholder="What does it show?" /></label>
+                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!photoFile || photoUploading} onClick={() => void uploadAttachment(true)}>{photoUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Add photo</button></label>
+              </div>
+              {fileRows(photoFiles as JobAttachmentRow[], "No photos added yet.")}
+            </section>
+  ) : null;
+
+  const attachmentsSection = job && tenantRole !== "USER" ? (
+            <section className="detail-panel">
+              <header>
+                <div><h2>Attachments</h2><p>Documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
+              </header>
+              <div className="drawer-fields">
+                <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
+                <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
+                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment(false)}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
+              </div>
+              {fileRows(documentFiles as JobAttachmentRow[], "No attachments uploaded yet.")}
             </section>
   ) : null;
 
@@ -5031,7 +5070,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const tabletHeadline = outstandingHeadline(partCounts);
   const tabletMachine = [form.machineMake, form.machineModel].filter(Boolean).join(" ") || String(form.component || "");
   const tabletFacts = buildTabletFacts({
-    machine: tabletMachine,
+    machine: form.machineMake,
+    model: form.machineModel,
+    component: form.component,
+    componentModel: form.componentModel,
     machineSerial: form.machineSerial,
     componentSerial: form.componentSerial,
     plantNumber: form.plantNumber,
@@ -5150,7 +5192,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     <div className="jt-bar">
       {partsEditable && <button type="button" className="jt-bar-primary" onClick={() => { setShowAddParts(true); setTabletSheet("addparts"); }}><Plus size={20} strokeWidth={2.5} />Add parts</button>}
       {showPickSlipsTab && <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("pickslips")}><ClipboardList size={20} />Pick slips{jobPickSlips.length > 0 ? <span>{jobPickSlips.length}</span> : null}</button>}
-      <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("photos")}><Camera size={20} />Photos{job.attachments.length > 0 ? <span>{job.attachments.length}</span> : null}</button>
+      <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("photos")}><Camera size={20} />Photos{photoFiles.length > 0 ? <span>{photoFiles.length}</span> : null}</button>
       <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("notes")}><StickyNote size={20} />Notes</button>
       {outworkSection && <button type="button" className="jt-bar-button" onClick={() => setTabletSheet("outwork")}><Truck size={20} />Outwork{job.outworkItems.length > 0 ? <span>{job.outworkItems.length}</span> : null}</button>}
       <span className="jt-spacer" />
@@ -5307,7 +5349,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </TabletSheet>
       )}
       {tabletSheet === "photos" && (
-        <TabletSheet title="Photos & attachments" size="large" onClose={() => setTabletSheet(null)}>{attachmentsSection}</TabletSheet>
+        <TabletSheet title="Photos" size="large" onClose={() => setTabletSheet(null)}>{photosSection}</TabletSheet>
       )}
       {tabletSheet === "notes" && (
         <TabletSheet title="Notes" size="large" onClose={() => setTabletSheet(null)}>{notesSection}</TabletSheet>
@@ -5825,7 +5867,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               side. The PEX panels (mutually exclusive: Send job to PEX / In PEX
               Inventory) moved up to sit directly beside Attachments; when
               neither applies Attachments simply fills the row. */}
-          {activeTab === "attachments" && attachmentsSection}
+          {activeTab === "attachments" && <div className="jw-panel">{photosSection}{attachmentsSection}</div>}
           {activeTab === "pex" && hasPexPanel && (
           <div className="job-pair-row">
             {/* 2026-10-06 — user request: simplified PEX Supply panel, beside

@@ -119,6 +119,10 @@ export function tabletSegments(counts: PartCounts): { key: PartFilter; label: st
 
 export type TabletFactsInput = {
   machine?: string;
+  // 2026-10-27: Model, Component and Component model sit right under the machine on the "This job" card.
+  model?: string;
+  component?: string;
+  componentModel?: string;
   machineSerial?: string;
   componentSerial?: string;
   plantNumber?: string;
@@ -132,6 +136,9 @@ export type TabletFactsInput = {
 export function buildTabletFacts(input: TabletFactsInput): { label: string; value: string }[] {
   const rows: [string, string | undefined][] = [
     ["Machine", input.machine],
+    ["Model", input.model],
+    ["Component", input.component],
+    ["Component model", input.componentModel],
     ["Machine serial", input.machineSerial],
     ["Component serial", input.componentSerial],
     ["Plant number", input.plantNumber],

@@ -64,6 +64,17 @@ describe("tablet summary", () => {
     ]);
     expect(buildTabletFacts({})).toEqual([]);
   });
+  it("shows Model, Component and Component model under the machine, in that order", () => {
+    expect(buildTabletFacts({ machine: "CAT", model: "C9", component: "Turbo", componentModel: " GT4082 ", machineSerial: "S1" })).toEqual([
+      { label: "Machine", value: "CAT" },
+      { label: "Model", value: "C9" },
+      { label: "Component", value: "Turbo" },
+      { label: "Component model", value: "GT4082" },
+      { label: "Machine serial", value: "S1" },
+    ]);
+    expect(buildTabletFacts({ model: "C9" }).map((f) => f.label)).toEqual(["Model"]);
+    expect(buildTabletFacts({ component: " ", componentModel: "" })).toEqual([]);
+  });
   it("adds field service facts only for field jobs", () => {
     expect(buildTabletFacts({ machine: "X", scheduled: "3 Nov 2026", technician: "Sam" }).map((f) => f.label)).toEqual(["Machine"]);
     expect(buildTabletFacts({ machine: "X", scheduled: "3 Nov 2026", technician: "Sam", fieldService: true }).map((f) => f.label)).toEqual(["Machine", "Scheduled", "Technician"]);

@@ -40,7 +40,7 @@ export function buildJobTabs(input: JobTabInput): JobTab[] {
   if (input.showFollowup) tabs.push({ key: "followup", label: "Follow-up", count: input.followupCount });
   if (input.showOutwork) tabs.push({ key: "outwork", label: "Outwork", count: input.outworkCount });
   if (input.showSpecifications) tabs.push({ key: "specifications", label: "Specifications" });
-  tabs.push({ key: "attachments", label: "Attachments", count: input.attachmentsCount });
+  tabs.push({ key: "attachments", label: "Photos & attachments", count: input.attachmentsCount });
   if (input.showPex) tabs.push({ key: "pex", label: "PEX" });
   if (input.showWarranty) tabs.push({ key: "warranty", label: "Warranty" });
   if (input.showActivity) tabs.push({ key: "activity", label: "Activity" });

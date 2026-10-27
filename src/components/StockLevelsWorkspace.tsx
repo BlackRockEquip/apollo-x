@@ -127,6 +127,9 @@ const BLANK_FORM: PartForm = {
 };
 
 type PickEntry = { partId: string; partNumber: string; description: string; binLocationLabel: string | null; quantityAvailable: number; quantity: number };
+// 2026-10-27, Mechanic view: a mechanic's request for a picking slip, as the Pick requests tab lists it.
+type PickRequestLine = { partNumber: string; description: string; quantity: string; available: number };
+type PickRequestRow = { id: string; jobId: string; jobNumber: string; customerName: string | null; requestedBy: string | null; createdAt: string; status: string; note: string | null; handledAt: string | null; declineReason: string | null; lines: PickRequestLine[] };
 type JobOption = { id: string; jobNumber: string; customerName: string | null };
 type PickSlipLineData = { partNumber: string; supersededNumbers?: string; description: string; quantity: string; binLocationLabel: string | null };
 type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; estimatedValue?: string | null; lines: PickSlipLineData[] };
@@ -275,6 +278,13 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const pickSlipsOn = pickSlipsAccess !== "DENIED";
   const pickSlipsWrite = pickSlipsAccess === "FULL";
   const mechanicReadOnly = tenantRole === "USER";
+  // 2026-10-27, user request (Mechanic view): "if a user selects parts in stock, allow a user to request a picking slip to be
+  // created." A mechanic cannot make the slip themselves (that issues stock), so they tick in-stock parts and send a request;
+  // everyone else with the Pick column makes the slip directly, and a store controller / manager / admin works the requests
+  // on the Pick requests tab (see src/lib/inventory/pick-requests.ts).
+  const canRequestPick = mechanicReadOnly && pickSlipsWrite && tenantPermissions.has("INVENTORY_ISSUE");
+  const showPickColumn = pickSlipsWrite || canRequestPick;
+  const canHandleRequests = pickSlipsWrite && !mechanicReadOnly && tenantPermissions.has("INVENTORY_ISSUE");
   const canManage = hasManage && !mechanicReadOnly;
   // 2026-10-02 — new Stock Take tab (user request: "Create a tab for Stock
   // take (Admins / Store Controller only)"). INVENTORY_RECONCILE already
@@ -300,7 +310,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   // lands on the same filtered page; the table's scroll position is restored
   // by <ScrollRestore> further down.
   const saved = useState(() => readListState("stock-levels", { tab: "stock", q: "", stockState: "ALL" }))[0];
-  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake">(saved.tab === "pickslips" && pickSlipsOn ? "pickslips" : "stock");
+  const [tab, setTab] = useState<"stock" | "pickslips" | "stocktake" | "requests">(saved.tab === "pickslips" && pickSlipsOn ? "pickslips" : "stock");
 
   const [data, setData] = useState<ListResponse>({ items: [], total: 0, page: 1, pageSize: 25, canViewCost: false, totalStockValue: null });
   const [q, setQ] = useState(saved.q);
@@ -370,6 +380,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
   const [pickError, setPickError] = useState("");
   const [pickResult, setPickResult] = useState<PickSlipData | null>(null);
   const [pickNotice, setPickNotice] = useState<{ pickedCount: number; backorderCount: number } | null>(null);
+  // Mechanic view: the optional note on a request, the "request sent" confirmation, and (for the store team) the Pick requests tab.
+  const [requestNote, setRequestNote] = useState("");
+  const [requestSent, setRequestSent] = useState<{ jobNumber: string; lineCount: number } | null>(null);
+  const [requests, setRequests] = useState<PickRequestRow[]>([]);
+  const [requestsStatus, setRequestsStatus] = useState<"PENDING" | "FULFILLED" | "DECLINED" | "ALL">("PENDING");
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsError, setRequestsError] = useState("");
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const [requestBusyId, setRequestBusyId] = useState<string | null>(null);
 
   // "Check stock" — multiple part number search box.
   const [checkOpen, setCheckOpen] = useState(false);
@@ -504,6 +523,46 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     finally { setHistoryLoading(false); }
   }, []);
   useEffect(() => { if (tab === "pickslips") void loadHistory(); }, [tab, loadHistory]);
+
+  // --- Pick requests (store team) ---------------------------------------
+  const loadRequests = useCallback(async (status: "PENDING" | "FULFILLED" | "DECLINED" | "ALL") => {
+    setRequestsLoading(true); setRequestsError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-requests?status=${status}&pageSize=50`, { cache: "no-store" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to load the picking slip requests.");
+      setRequests(body.items || []);
+      setPendingRequestCount(Number(body.pendingCount) || 0);
+    } catch (e) { setRequestsError(e instanceof Error ? e.message : "Unable to load the picking slip requests."); }
+    finally { setRequestsLoading(false); }
+  }, []);
+  // The tab's count is loaded as soon as the page opens, so a waiting request shows without opening the tab.
+  useEffect(() => { if (canHandleRequests) void loadRequests(tab === "requests" ? requestsStatus : "PENDING"); }, [canHandleRequests, tab, requestsStatus, loadRequests]);
+
+  async function fulfilRequest(row: PickRequestRow) {
+    setRequestBusyId(row.id); setRequestsError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-requests/${row.id}/fulfil`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to create the picking slip.");
+      if (body.pickSlip) setPickResult(body.pickSlip);
+      if (body.backorderCount > 0) setPickNotice({ pickedCount: body.pickedCount, backorderCount: body.backorderCount });
+      await loadRequests(requestsStatus);
+      void load(true);
+    } catch (e) { setRequestsError(e instanceof Error ? e.message : "Unable to create the picking slip."); await loadRequests(requestsStatus); }
+    finally { setRequestBusyId(null); }
+  }
+  async function declineRequest(row: PickRequestRow) {
+    if (!(await confirm({ message: `Decline the picking slip request for job ${row.jobNumber}? ${row.requestedBy ?? "The requester"} is told it was declined.`, tone: "danger", confirmLabel: "Decline" }))) return;
+    setRequestBusyId(row.id); setRequestsError("");
+    try {
+      const r = await fetch(`/api/v1/inventory/pick-requests/${row.id}/decline`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to decline the request.");
+      await loadRequests(requestsStatus);
+    } catch (e) { setRequestsError(e instanceof Error ? e.message : "Unable to decline the request."); await loadRequests(requestsStatus); }
+    finally { setRequestBusyId(null); }
+  }
 
   // 2026-10-02 — Stock Take: open a count for a location by snapshotting
   // every part that currently has stock there (reuses the same
@@ -857,6 +916,28 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
     finally { setPickSubmitting(false); }
   }
 
+  // Mechanic: send the ticked parts as a request. Nothing is issued here; the store team makes the slip.
+  async function submitPickRequest() {
+    if (!jobId) { setPickError("Choose the job this request is for."); return; }
+    setPickSubmitting(true); setPickError("");
+    try {
+      const lines = Array.from(pick.values()).map((p) => ({ partId: p.partId, quantity: String(p.quantity) }));
+      const r = await fetch("/api/v1/inventory/pick-requests", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId, lines, note: requestNote.trim() || null }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error?.message || "Unable to send the request.");
+      setPickBarOpen(false);
+      clearPick();
+      setRequestNote("");
+      setRequestSent({ jobNumber: String(body.jobNumber || ""), lineCount: Number(body.lineCount) || 0 });
+      await load(true);
+    } catch (e) { setPickError(e instanceof Error ? e.message : "Unable to send the request."); }
+    finally { setPickSubmitting(false); }
+  }
+
   // --- Check stock (multiple part number search) ---------------------
 
   function openCheck() { setCheckOpen(true); setCheckText(""); setCheckRows(null); setCheckError(""); }
@@ -946,6 +1027,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               on top of the existing !mechanicReadOnly wrapper — a Manager or
               other non-Mechanic role without that permission still sees
               Stock and Picking Slip History, just not this tab. */}
+          {canHandleRequests && <button type="button" className={tab === "requests" ? "active" : ""} onClick={() => setTab("requests")}>Pick requests{pendingRequestCount > 0 ? <span className="tab-count">{pendingRequestCount}</span> : null}</button>}
           {canStockTake && <button type="button" className={tab === "stocktake" ? "active" : ""} onClick={() => setTab("stocktake")}><ClipboardCheck size={13} style={{ marginRight: 4, verticalAlign: "text-bottom" }} />Stock Take</button>}
         </div>
       )}
@@ -982,7 +1064,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             <table id="stock-levels-table" className="data-table">
               <thead>
                 <tr>
-                  {pickSlipsWrite && <th className="no-print">Pick</th>}
+                  {showPickColumn && <th className="no-print">Pick</th>}
                   <th>Part</th>
                   <th>Description</th>
                   <th>Manufacturer</th>
@@ -1002,20 +1084,21 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (pickSlipsWrite ? 0 : 1)} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (showPickColumn ? 0 : 1)} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : data.items.length === 0 ? (
-                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (pickSlipsWrite ? 0 : 1)} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
+                  <tr><td colSpan={(data.canViewCost ? 12 : 10) - (showPickColumn ? 0 : 1)} className="table-state compact-empty-state"><span>No inventory items match the current filters.</span></td></tr>
                 ) : data.items.map((row) => {
                   const available = Number(row.quantityAvailable) || 0;
                   const pickEntry = pick.get(row.id);
                   return (
                     <tr key={row.id} className={row.active ? "" : "inactive"}>
-                      {pickSlipsWrite && <td>
+                      {showPickColumn && <td>
                         <div className="pick-cell">
                           <input
                             type="checkbox"
                             checked={!!pickEntry}
-                            title={available <= 0 ? "Out of stock — select to backorder for a job" : "Select for picking"}
+                            disabled={canRequestPick && available <= 0}
+                            title={canRequestPick ? (available <= 0 ? "Out of stock, so a picking slip cannot be requested" : "Select to request a picking slip") : available <= 0 ? "Out of stock — select to backorder for a job" : "Select for picking"}
                             onChange={(e) => togglePick({ partId: row.id, partNumber: row.partNumber, description: row.description, binLocationLabel: row.binLocationLabel, quantityAvailable: available }, e.target.checked)}
                           />
                           {pickEntry && (
@@ -1177,6 +1260,54 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
             </div>
           )}
         </section>
+      ) : tab === "requests" && canHandleRequests ? (
+        <section className="master-panel">
+          <div className="master-toolbar">
+            <p className="hint-text" style={{ margin: 0 }}>Picking slips asked for by mechanics. Create picking slip issues the stock exactly like a slip made on the Stock tab; nothing moves until you do.</p>
+            <label className="inline-select"><span className="sr-only">Show</span>
+              <select value={requestsStatus} onChange={(e) => setRequestsStatus(e.target.value as typeof requestsStatus)}>
+                <option value="PENDING">Waiting</option>
+                <option value="FULFILLED">Done</option>
+                <option value="DECLINED">Declined</option>
+                <option value="ALL">All</option>
+              </select>
+            </label>
+          </div>
+          {requestsError ? <div className="inline-error">{requestsError}</div> : null}
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead><tr><th>Job</th><th>Requested by</th><th>Requested</th><th>Parts</th><th>Status</th><th className="actions">Actions</th></tr></thead>
+              <tbody>
+                {requestsLoading && requests.length === 0 ? (
+                  <tr><td colSpan={6} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                ) : requests.length === 0 ? (
+                  <tr><td colSpan={6} className="table-state compact-empty-state"><span>{requestsStatus === "PENDING" ? "No picking slip requests are waiting." : "No requests to show."}</span></td></tr>
+                ) : requests.map((row) => (
+                  <tr key={row.id}>
+                    <td><Link href={`/jobs/${row.jobId}`}>{row.jobNumber}</Link>{row.customerName ? <><br /><span className="hint-text">{row.customerName}</span></> : null}</td>
+                    <td>{row.requestedBy || "—"}</td>
+                    <td>{new Date(row.createdAt).toLocaleString()}</td>
+                    <td>
+                      {row.lines.map((l, i) => (
+                        <div key={`${row.id}-${i}`}><span className="mono">{l.partNumber}</span> × {Number(l.quantity)}{l.available < Number(l.quantity) ? <span className="hint-text"> · only {l.available} available now</span> : null}</div>
+                      ))}
+                      {row.note ? <div className="hint-text">Note: {row.note}</div> : null}
+                    </td>
+                    <td>{row.status === "PENDING" ? "Waiting" : row.status === "FULFILLED" ? "Done" : "Declined"}{row.declineReason ? <><br /><span className="hint-text">{row.declineReason}</span></> : null}</td>
+                    <td className="actions">
+                      {row.status === "PENDING" && (
+                        <>
+                          <button type="button" className="table-action" disabled={requestBusyId === row.id} onClick={() => void fulfilRequest(row)}>{requestBusyId === row.id ? <Loader2 className="spin" size={14} /> : null} Create picking slip</button>
+                          <button type="button" className="table-action danger" disabled={requestBusyId === row.id} onClick={() => void declineRequest(row)}>Decline</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : (
         <section className="master-panel">
           {/* 2026-09-29 — user request: "deleted pickslips must delete
@@ -1234,7 +1365,15 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
         <div className="pick-bar">
           <span>{pickItems.length} part{pickItems.length === 1 ? "" : "s"} selected</span>
           {canManage && <button type="button" className="gold-button" onClick={openPickBar}>Create picking slip</button>}
+          {canRequestPick && <button type="button" className="gold-button" onClick={openPickBar}>Request picking slip</button>}
           <button type="button" className="quiet-button" onClick={clearPick}>Clear</button>
+        </div>
+      )}
+
+      {requestSent && (
+        <div className="pick-notice">
+          <p>Request sent for job {requestSent.jobNumber} ({requestSent.lineCount} part{requestSent.lineCount === 1 ? "" : "s"}). The store will create the picking slip and you will be told when it is done.</p>
+          <button type="button" aria-label="Dismiss" onClick={() => setRequestSent(null)}><X size={14} /></button>
         </div>
       )}
 
@@ -1249,9 +1388,11 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
       {pickBarOpen && (
         <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setPickBarOpen(false); }}>
           <aside className="form-drawer compact-dialog" aria-modal="true">
-            <header><div><p className="eyebrow">Stock Levels</p><h2>Create picking slip</h2></div><button aria-label="Close" onClick={() => setPickBarOpen(false)}><X size={18} /></button></header>
+            <header><div><p className="eyebrow">Stock Levels</p><h2>{canRequestPick ? "Request picking slip" : "Create picking slip"}</h2></div><button aria-label="Close" onClick={() => setPickBarOpen(false)}><X size={18} /></button></header>
             <div className="drawer-body">
-              <p className="hint-text">Link these parts to a job. A part with stock on hand at its bin location is picked immediately — stock is deducted right away. A part with nothing on hand is added to the job's parts list as a pending backorder instead.</p>
+              {canRequestPick
+                ? <p className="hint-text">Choose the job these parts are for. Nothing is taken from stock yet: the store team gets your request and creates the picking slip.</p>
+                : <p className="hint-text">Link these parts to a job. A part with stock on hand at its bin location is picked immediately — stock is deducted right away. A part with nothing on hand is added to the job's parts list as a pending backorder instead.</p>}
               <div className="pick-review">
                 <table className="data-table">
                   <thead><tr><th>Part</th><th className="numeric">Qty</th></tr></thead>
@@ -1282,11 +1423,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                   </ul>
                 ))}
               </div>
+              {canRequestPick && <label><span>Note for the store (optional)</span><input value={requestNote} maxLength={500} onChange={(e) => setRequestNote(e.target.value)} placeholder="Anything the store should know" /></label>}
               {pickError ? <div className="inline-error">{pickError}</div> : null}
             </div>
             <footer>
               <button type="button" className="quiet-button" onClick={() => setPickBarOpen(false)}>Cancel</button>
-              <button type="button" className="gold-button" disabled={pickSubmitting || !jobId} onClick={() => void submitPickSlip()}>{pickSubmitting ? <Loader2 className="spin" size={15} /> : null}{pickSubmitting ? "Creating…" : "Create picking slip"}</button>
+              <button type="button" className="gold-button" disabled={pickSubmitting || !jobId} onClick={() => void (canRequestPick ? submitPickRequest() : submitPickSlip())}>{pickSubmitting ? <Loader2 className="spin" size={15} /> : null}{canRequestPick ? (pickSubmitting ? "Sending…" : "Send request") : (pickSubmitting ? "Creating…" : "Create picking slip")}</button>
             </footer>
           </aside>
         </div>

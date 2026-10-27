@@ -388,6 +388,10 @@ enum NotificationType {
   // when the reporter themselves adds more — see notifyUser in
   // notifications/service.ts.
   SUPPORT_TICKET_REPLY
+  // 2026-10-27, user request: a mechanic selects in-stock parts and requests a picking slip. The store controller,
+  // managers and admins are told when a request comes in, and the mechanic is told when it has been dealt with.
+  PICK_SLIP_REQUESTED
+  PICK_SLIP_REQUEST_HANDLED
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
@@ -533,6 +537,8 @@ model UserIdentity {
   jobPartLinesUpdated JobPartLine[]            @relation("JobPartLineUpdatedBy")
   pickSlipsCreated    PickSlip[]               @relation("PickSlipCreatedBy")
   pickSlipsCancelled  PickSlip[]               @relation("PickSlipCancelledBy")
+  pickSlipRequestsMade    PickSlipRequest[]    @relation("PickSlipRequestBy")
+  pickSlipRequestsHandled PickSlipRequest[]    @relation("PickSlipRequestHandledBy")
   outworkItemsCreated OutworkItem[]            @relation("OutworkItemCreatedBy")
   outworkItemsUpdated OutworkItem[]            @relation("OutworkItemUpdatedBy")
   rfqRequestsCreated  JobRfqRequest[]          @relation("JobRfqRequestCreatedBy")
@@ -624,6 +630,7 @@ model Company {
   jobPartLines      JobPartLine[]
   outworkItems      OutworkItem[]
   pickSlips         PickSlip[]
+  pickSlipRequests  PickSlipRequest[]
   rfqRequests       JobRfqRequest[]
   generalRfqRequests GeneralRfqRequest[]
   jobAttachments    JobAttachment[]
@@ -1243,6 +1250,7 @@ model Part {
   stockCountLines        StockCountLine[]
   jobPartLines           JobPartLine[]
   pickSlipLines          PickSlipLine[]
+  pickSlipRequestLines   PickSlipRequestLine[]
   alternateNumbers      PartAlternateNumber[]
 
   @@unique([companyId, partNumberNormalized])
@@ -1785,6 +1793,7 @@ model Job {
   partLines           JobPartLine[]
   outworkItems        OutworkItem[]
   pickSlips           PickSlip[]
+  pickSlipRequests    PickSlipRequest[]
   rfqRequests         JobRfqRequest[]
   attachments         JobAttachment[]
   dimensionReports    JobDimensionReport[]
@@ -2114,6 +2123,55 @@ model JobPartLine {
 enum PickSlipStatus {
   ACTIVE
   CANCELLED
+}
+
+// 2026-10-27, user request (Mechanic view): "if a user selects parts in stock, allow a user to request a picking slip to be
+// created." A mechanic cannot issue stock themselves, so on Stock Levels they send a request: the job and the parts with
+// quantities. Nothing is issued by a request. A store controller / manager / admin turns it into a real PickSlip (the same
+// createPickSlip as always, which is what moves the stock) or declines it.
+enum PickSlipRequestStatus {
+  PENDING
+  FULFILLED
+  DECLINED
+}
+
+model PickSlipRequest {
+  id            String                @id @default(cuid())
+  companyId     String
+  jobId         String
+  requestedById String?
+  status        PickSlipRequestStatus @default(PENDING)
+  note          String?
+  createdAt     DateTime              @default(now())
+  handledAt     DateTime?
+  handledById   String?
+  declineReason String?
+  // The slip made from this request (plain id, no relation: a cancelled or removed slip must not touch the request).
+  pickSlipId    String?
+
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  requestedBy UserIdentity? @relation("PickSlipRequestBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  handledBy   UserIdentity? @relation("PickSlipRequestHandledBy", fields: [handledById], references: [id], onDelete: SetNull)
+  lines       PickSlipRequestLine[]
+
+  @@index([companyId, status, createdAt])
+  @@index([jobId])
+}
+
+model PickSlipRequestLine {
+  id          String   @id @default(cuid())
+  requestId   String
+  partId      String
+  partNumber  String
+  description String
+  quantity    Decimal  @db.Decimal(19, 4)
+
+  request PickSlipRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  part    Part            @relation(fields: [partId], references: [id], onDelete: Restrict)
+
+  @@index([requestId])
+  @@index([partId])
 }
 
 model PickSlip {
@@ -2447,6 +2505,9 @@ model JobAttachment {
   // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / FAULT /
   // SERIAL_PLATE / OTHER). Free text so other kinds of job can use it later.
   tag         String?
+  // 2026-10-27, user request (Mechanic view): Photos and Attachments are separate sections and a mechanic sees only the
+  // photos. True for a file added through the Photos section (images only); existing image files were marked by the migration.
+  isPhoto     Boolean       @default(false)
   // 2026-10-12 — set when this file is the copy of a supplier's quote kept for the job (made when a quote file is
   // imported in Compare quotes); importing a new file for the same supplier replaces it.
   rfqRequestId String?
