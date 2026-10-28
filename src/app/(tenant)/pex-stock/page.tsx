@@ -3,6 +3,8 @@ import { Search } from "lucide-react";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantPageAccess, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { listPexInventory, listPexScrapped } from "@/lib/pex/service";
+import { getPexStockColumns } from "@/lib/pex/stock-columns-service";
+import { PexStockColumnPicker } from "@/components/PexStockColumnPicker";
 import { PexStockWorkspace } from "@/components/PexStockWorkspace";
 import { PexScrappedWorkspace } from "@/components/PexScrappedWorkspace";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
@@ -63,6 +65,8 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
   const stockAll = await listPexInventory(ctx, { status, page: 1, pageSize: 200 });
   const serverSearch = stockAll.total > stockAll.items.length;
   const data = serverSearch && q ? await listPexInventory(ctx, { q, status, page: 1, pageSize: 200 }) : stockAll;
+  // 2026-10-28, user request: the user's own extra columns (Job #, Unit, Make, Model and Status are always there).
+  const columns = await getPexStockColumns(ctx);
   return <div>
     <header className="page-header compact"><div><p className="eyebrow">PEX</p><h1>PEX Stock</h1><p>Units that have physically come back from a client and aren&apos;t out on a job yet — what&apos;s on the shelf right now. For the full supply → return history of every unit, see PEX Tracking.</p></div></header>
     {tabs}
@@ -72,6 +76,7 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
         {/* 2026-10-22, user request: the status dropdown filters as soon as it is picked - no Apply button (AutoSubmitSelect submits the form). */}
         <AutoSubmitSelect name="status" defaultValue={status} form="pex-stock-filter-form"><option value="ALL">All</option><option value="READY">Ready to go</option><option value="TO_BE_REPAIRED">To be repaired</option></AutoSubmitSelect>
         <span>{data.totalCount} unit{data.totalCount === 1 ? "" : "s"}</span>
+        <PexStockColumnPicker selected={columns} />
         <TablePrintButton tableId="pex-stock-table" title="PEX Stock" noun="unit" />
         <TableColumnFilters tableId="pex-stock-table" storageKey="pex-stock" noun="unit" initialSearch={serverSearch ? "" : q} />
       </div>
@@ -81,7 +86,7 @@ export default async function PexStockPage({ searchParams }: { searchParams: Pro
         <article className="metric-card compact"><span>To be repaired</span><strong>{data.toBeRepairedCount}</strong></article>
         <article className="metric-card compact"><span>Ready to go</span><strong>{data.readyCount}</strong></article>
       </section>
-      <PexStockWorkspace initial={data} />
+      <PexStockWorkspace initial={data} columns={columns} />
     </section>
   </div>;
 }

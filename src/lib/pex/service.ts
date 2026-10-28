@@ -15,6 +15,7 @@ import {
   pexTrackingListQuery,
   pexUnlinkedReturnJobsQuery,
 } from "@/lib/pex/validation";
+import { sortPexStockNewestFirst } from "@/lib/pex/stock-order";
 
 type Tx = Prisma.TransactionClient;
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
@@ -738,6 +739,7 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
                 { returnJob: { jobNumber: contains } },
                 { returnJob: { machineMake: contains } },
                 { returnJob: { machineModel: contains } },
+                { returnJob: { componentModel: contains } },
                 { supplyJob: { jobNumber: contains } },
               ],
             } as Prisma.PexRecordWhereInput,
@@ -745,21 +747,27 @@ export async function listPexInventory(ctx: RequestContext, raw: unknown) {
         : []),
     ],
   };
-  const [items, total, readyCount, totalCount] = await prisma.$transaction([
+  // 2026-10-28, user request: "sort the table by Job# (newest job to oldest job)". A job number sorts as text in the database
+  // (BRE999 ahead of BRE1000), so the matching units are read and ordered here, then the page is cut from that order -
+  // see stock-order.ts. A PEX stock list is the units on the shelf, so reading them all is small.
+  const [allItems, readyCount, totalCount] = await prisma.$transaction([
     prisma.pexRecord.findMany({
       where,
       include: {
         supplyJob: { select: { id: true, jobNumber: true, draftNumber: true } },
-        returnJob: { select: { id: true, jobNumber: true, draftNumber: true, status: true, machineMake: true, machineModel: true, componentPartNumber: true } },
+        returnJob: {
+          select: {
+            id: true, jobNumber: true, draftNumber: true, status: true, machineMake: true, machineModel: true, componentModel: true,
+            machineSerial: true, component: true, componentType: true, componentSerial: true, componentPartNumber: true, description: true,
+          },
+        },
       },
-      orderBy: [{ updatedAt: "desc" }],
-      skip: (query.page - 1) * query.pageSize,
-      take: query.pageSize,
     }),
-    prisma.pexRecord.count({ where }),
     prisma.pexRecord.count({ where: { AND: [baseWhere, PEX_STOCK_READY_WHERE] } }),
     prisma.pexRecord.count({ where: baseWhere }),
   ]);
+  const total = allItems.length;
+  const items = sortPexStockNewestFirst(allItems).slice((query.page - 1) * query.pageSize, query.page * query.pageSize);
   return { items, total, page: query.page, pageSize: query.pageSize, readyCount, toBeRepairedCount: totalCount - readyCount, totalCount };
 }
 
