@@ -431,6 +431,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-16: "WIP View (View Only)" users see the whole job but every field, the stepper, parts, notes and outwork are locked (the server refuses writes as well).
   const viewOnly = tenantRole === "WIP_VIEWER";
   const mechanicFieldsLocked = tenantRole === "USER" || viewOnly;
+  // 2026-10-28, user request: the parts list bulk bar's "Send to Outwork" - same rule as the Outwork section itself (full access, not view-only).
+  const canSendToOutwork = outworkAccess === "FULL" && !viewOnly;
   // 2026-10-01, user request (system-wide): replaces every window.confirm()
   // in this file with the shared coloured confirm dialog — see
   // ConfirmDialog.tsx's own header comment. `dialog` is rendered once near
@@ -2340,6 +2342,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
+  // 2026-10-28, user request: "in job view, parts lists table, when clicking
+  // bulk update and selecting parts, add a button which is called 'send to
+  // Outwork' that adds the parts selected on an outwork sheet". Opens the
+  // Record outwork sheet with one line per selected part (part number -
+  // description, quantity) ready for a supplier and date. Lines already typed
+  // into that sheet are kept, and a part already listed there is not added twice.
+  function sendSelectedPartsToOutwork() {
+    if (!job || bulkSelectedIds.size === 0) return;
+    const picked = job.partLines.filter((line) => bulkSelectedIds.has(String(line.id)));
+    if (picked.length === 0) return;
+    const fresh = picked.map((line) => {
+      const partNumber = (line.partNumber || "").trim();
+      const description = (line.description || "").trim();
+      const qty = Number(line.quantity ?? 0);
+      return {
+        id: `part-${String(line.id)}`,
+        description: partNumber && description ? `${partNumber} - ${description}` : partNumber || description || "Part",
+        quantity: String(Math.max(1, Math.round(Number.isFinite(qty) ? qty : 1))),
+      };
+    });
+    setOutworkLines((rows) => {
+      const kept = rows.filter((row) => row.description.trim());
+      const have = new Set(kept.map((row) => row.description.trim()));
+      return [...kept, ...fresh.filter((row) => !have.has(row.description))];
+    });
+    setError("");
+    setShowOutworkPopup(true);
+    if (tabletLayout) setTabletSheet("outwork");
+    else selectTab("outwork");
+  }
+
   // Outwork — send components out to a supplier for outwork (machining,
   // sandblasting, etc.) and track them until they come back.
   function addOutworkRow() {
@@ -2413,6 +2446,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       if (!r.ok) throw new Error(b.error?.message || "Unable to record outwork.");
       setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1" }]);
       setShowOutworkPopup(false);
+      // Parts sent over from the Parts list's bulk bar ("Send to Outwork") are done with now.
+      setBulkSelectedIds(new Set()); setBulkEditMode(false);
       await load(true);
       // jobRef (not the `job` state var) — same pattern autosave uses
       // elsewhere on this page — so this reads load()'s just-fetched data
@@ -4310,6 +4345,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <div className="bulk-update-actions">
                   <button type="button" className="gold-button" disabled={bulkApplying || bulkSelectedIds.size === 0 || (!bulkOrderNumber.trim() && !bulkSupplierId)} onClick={() => void applyBulkPartUpdate()}>{bulkApplying ? "Applying…" : `Apply to ${bulkSelectedIds.size} selected`}</button>
                   <button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkMarkReceived()}>{bulkApplying ? "Applying…" : `Mark received (${bulkSelectedIds.size})`}</button>
+                  {canSendToOutwork && <button type="button" className="quiet-button" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={sendSelectedPartsToOutwork}><Truck size={14} /> Send to Outwork ({bulkSelectedIds.size})</button>}
                   <button type="button" className="quiet-button danger" disabled={bulkApplying || bulkSelectedIds.size === 0} onClick={() => void applyBulkDelete()}><Trash2 size={14} /> {bulkApplying ? "Applying…" : `Delete (${bulkSelectedIds.size})`}</button>
                 </div>
               </div>
