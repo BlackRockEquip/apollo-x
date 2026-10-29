@@ -1,6 +1,7 @@
 import { Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
+import { ItemsStatusBadge, itemsAreMixed } from "@/components/job-items/ItemsStatusBadge";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { RememberListUrl } from "@/components/RememberListUrl";
@@ -48,6 +49,8 @@ function fmtEnum(value: string | null | undefined): string {
 const FILTER_SEP = "|~|";
 function statusFilterValues(job: JobRow, build?: string | null): string {
   const values = [jobStatusLabel(job.status, job.returnedUnrepaired, build)];
+  // 2026-10-29, Engineering multi-item jobs: a job whose items are at different steps also answers to "Mixed".
+  if (itemsAreMixed(job.jobItems?.map((item) => item.status))) values.push("Mixed");
   if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
   if (job.breakdown) values.push("Breakdown");
   if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)) values.push("Pex");
@@ -76,7 +79,10 @@ function searchText(job: JobRow, canSearchCustomerName: boolean): string {
 function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | null, viewOnlyRows = false) {
   switch (columnId) {
     case "jobNumber":
-      return viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>;
+      return <>
+        {viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>}
+        {job.jobItems.length > 1 && <span className="ji-chip">{job.jobItems.length} items</span>}
+      </>;
     case "customerName":
       return job.customer.name;
     case "customerTradingName":
@@ -93,7 +99,9 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
       // ReturnUnrepairedPill/jobStatusLabel's own comments in
       // StatusPill.tsx.
       return <>
-        <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={build} />
+        {itemsAreMixed(job.jobItems?.map((item) => item.status))
+          ? <ItemsStatusBadge statuses={job.jobItems.map((item) => item.status)} jobType={job.type} build={build} size="compact" />
+          : <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={build} />}
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
         {job.breakdown && <> <BreakdownPill /></>}
         {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId) && <> <PexAllocatedPill /></>}

@@ -288,6 +288,10 @@ enum JobStatus {
 
 enum JobActivityType {
   JOB_CREATED
+  // 2026-10-29, Engineering multi-item jobs: an item added to, changed on or removed from a job.
+  ITEM_ADDED
+  ITEM_UPDATED
+  ITEM_REMOVED
   JOB_REGISTERED
   STATUS_CHANGED
   JOB_CLOSED
@@ -624,6 +628,7 @@ model Company {
   documentSequences DocumentNumberSequence[]
   jobs              Job[]
   jobComponents     JobComponent[]
+  jobItems          JobItem[]
   jobKits           JobKit[]
   mechanics         Mechanic[]
   salesRepresentatives SalesRepresentative[]
@@ -1794,6 +1799,8 @@ model Job {
   updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
   components          JobComponent[]
+  // 2026-10-29, Engineering multi-item jobs: one row per item the customer sent in. A job with no rows is a normal one-item job.
+  jobItems            JobItem[]
   partLines           JobPartLine[]
   outworkItems        OutworkItem[]
   pickSlips           PickSlip[]
@@ -1820,6 +1827,46 @@ model Job {
   @@index([companyId, type, createdAt])
   @@index([companyId, customerId, createdAt])
   presences           JobPresence[]
+}
+
+// 2026-10-29, user request (Engineering): a customer can send several items in at once (e.g. Blackrock sends 5 items to
+// Hi-Gear) and they are captured on ONE job. A job that has JobItem rows is a "multi-item job": each row is one item with its
+// own status, ETA and details; Job.status is then the least advanced item (the job shows "Mixed" while items differ). Job-level
+// fields (customer, PO, dates, transport, notes) stay on Job. A job with no rows is an ordinary one-item job that keeps its
+// machine / component fields on Job itself, so nothing already in the system changes. The item tag is the job number plus
+// "-" and the item's sequence (e.g. BRE1122-3). Item 1's machine / component fields are mirrored onto Job so lists, search and
+// printed documents keep working.
+model JobItem {
+  id                  String    @id @default(cuid())
+  companyId           String
+  jobId               String
+  sequence            Int
+  status              JobStatus @default(TO_BE_RECEIVED)
+  component           String?
+  componentModel      String?
+  componentSerial     String?
+  componentPartNumber String?
+  machineMake         String?
+  machineModel        String?
+  machineSerial       String?
+  plantNumber         String?
+  machineHours        Decimal?  @db.Decimal(19, 4)
+  workRequested       String?
+  conditionOnReceipt  String?
+  etaDate             DateTime?
+  mechanicEtaDate     DateTime?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  company             Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job                 Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, sequence])
+  @@unique([id, companyId])
+  @@index([companyId, jobId])
+  @@index([companyId, status])
 }
 
 model JobComponent {

@@ -360,3 +360,35 @@ export type EmailTableInput = z.infer<typeof emailTableInput>;
 
 // 2026-10-22: a Machine make typed on a job that is not yet a manufacturer (see addMachineMakeToManufacturers in service.ts).
 export const machineMakeInput = z.object({ name: z.string().trim().min(2).max(150) });
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, Engineering multi-item jobs (see JobItem in schema.prisma and lib/jobs/item-model.ts)
+// ----------------------------------------------------------------------------
+const itemText = z.string().trim().max(500).optional().nullable();
+const itemLongText = z.string().trim().max(4000).optional().nullable();
+
+// One item as typed on the New Job screen, or when an item is added to / edited on an existing job. The first item on the
+// screen also fills the job's own machine / component fields (see jobFieldsFromFirstItem).
+export const jobItemInput = z.object({
+  component: itemText,
+  componentModel: itemText,
+  componentSerial: itemText,
+  componentPartNumber: itemText,
+  machineMake: itemText,
+  machineModel: itemText,
+  machineSerial: itemText,
+  plantNumber: itemText,
+  machineHours: optionalDecimal,
+  workRequested: itemLongText,
+  conditionOnReceipt: itemLongText,
+  etaDate: optionalDate,
+  mechanicEtaDate: optionalDate,
+});
+
+export type JobItemInput = z.infer<typeof jobItemInput>;
+export const jobItemsInput = z.array(jobItemInput).min(1).max(200);
+
+// Editing an item: any of the fields above, and/or moving just that item to another step of the job's flow.
+export const jobItemUpdateInput = jobItemInput.partial().extend({
+  status: z.enum([...FLOW_JOB_STATUSES, "CANCELLED"] as [string, ...string[]]).optional(),
+});

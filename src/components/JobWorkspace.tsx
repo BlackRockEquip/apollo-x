@@ -19,6 +19,10 @@ import { QtyStepper } from "./job-screen/QtyStepper";
 import { buildTabletCard, buildTabletFacts, formatQty, latestNote, outstandingHeadline, tabletSegments } from "./job-screen/tablet-model";
 import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
+import { JobItemsEditor } from "./job-items/JobItemsEditor";
+import { JobItemsPanel, AddAnotherItem } from "./job-items/JobItemsPanel";
+import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
+import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
 import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
@@ -204,6 +208,8 @@ type JobDetail = Row & {
   fieldServiceReport?: Row | null;
   warranty?: Row | null;
   components: JobComponentRow[];
+  // 2026-10-29, Engineering multi-item jobs: the items on this job (none for an ordinary one-item job).
+  jobItems?: ItemRow[];
   pexAsSupply?: PexRecordSummary | null;
   pexAsReturn?: PexRecordSummary | null;
   pexConsumedBy?: PexRecordSummary | null;
@@ -906,6 +912,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     };
   }
 
+  // 2026-10-29, Engineering multi-item jobs: the items typed on the New Job screen (see JobItemsEditor).
+  const [newItems, setNewItems] = useState<ItemDraft[]>(() => [blankDraft()]);
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
     dateReceived: "",
@@ -1309,7 +1317,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Every scalar Job field the edit form itself can set — factored out of
   // submitDraft (2026-09-14) so the new autosave path below can build the
   // exact same payload shape without a second, drifting copy of this list.
+  // 2026-10-29, Engineering multi-item jobs: every Engineering job (except field service) takes its machine / component details as
+  // a list of items. One item is an ordinary job; several are saved on the one job.
+  function itemsBuildOn() { return industryBuild === "ENGINEERING" && form.type !== "FIELD_SERVICE"; }
+
   function buildJobPayload() {
+    const base = buildBaseJobPayload();
+    if (mode !== "create" || !itemsBuildOn()) return base;
+    const items = newItems.filter((item) => !isBlankDraft(item)).map(draftToPayload);
+    return items.length > 0 ? { ...base, items } : base;
+  }
+
+  function buildBaseJobPayload() {
     return {
       customerId: form.customerId,
       dateReceived: form.dateReceived || null,
@@ -4041,6 +4060,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </section>
   );
 
+  // 2026-10-29, user request (Engineering): several items on one job.
+  // New Job: the machine / component card is replaced by the "Items received" list.
+  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} />;
+  // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
+  // Machine / component card and offers "Add another item" beneath it.
+  const jobItemRows = job?.jobItems ?? [];
+  const itemsPanelSection = job && jobItemRows.length > 0 ? (
+    <JobItemsPanel
+      jobId={job.id}
+      jobNumber={job.jobNumber}
+      jobType={job.type}
+      build={industryBuild}
+      items={jobItemRows}
+      steps={statusStepsForJobType(job.type, industryBuild)}
+      statusLabels={statusLabels}
+      staffEtaLabel={machinist.eta}
+      canEdit={!mechanicFieldsLocked}
+      locked={["COMPLETE", "CLOSED", "CANCELLED"].includes(String(job.status))}
+      confirm={confirm}
+      onChanged={() => load(true)}
+      onError={setError}
+    />
+  ) : null;
+  const addAnotherItemSection = mode === "detail" && job && itemsBuildOn() && jobItemRows.length === 0 && !mechanicFieldsLocked && !["COMPLETE", "CLOSED", "CANCELLED"].includes(String(job.status))
+    ? <AddAnotherItem jobId={job.id} onChanged={() => load(true)} onError={setError} />
+    : null;
+  // The header status: "Mixed" with a colour bar while the items are at different steps, otherwise the ordinary pill.
+  const jobStatusBadge = job && itemsAreMixed(jobItemRows.map((item) => item.status))
+    ? <ItemsStatusBadge statuses={jobItemRows.map((item) => item.status)} jobType={job.type} build={industryBuild} />
+    : null;
+
   const commercialSection = (
     <section className="detail-panel wide-panel">
       <header><div><h2>Commercial &amp; logistics</h2></div></header>
@@ -4265,7 +4315,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             jobDetailsSection (above) stay split into their own consts
             since a role-specific order has come back before and may
             again. */}
-        {machineSection}
+        {mode === "create" && itemsBuildOn() ? itemsCreateSection : itemsPanelSection ?? machineSection}
+        {addAnotherItemSection}
         {jobDetailsSection}
         {commercialSection}
       </div>
@@ -5110,7 +5161,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <span>{[tabletMachine, typeLabels[(job.type || "STANDARD_REPAIR") as keyof typeof typeLabels]].filter(Boolean).join(" · ")}</span>
         </div>
         <div className="jt-pills">
-          <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />
+          {jobStatusBadge ?? <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />}
           {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
           {job.breakdown && <BreakdownPill />}
           {pexInStock && <PexAllocatedPill />}
@@ -5392,7 +5443,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
             <div className="header-actions-stack">
               <div className="header-actions">
-                <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : "Create job"}</button>
+                <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : itemsBuildOn() && newItems.filter((item) => !isBlankDraft(item)).length > 1 ? `Create job with ${newItems.filter((item) => !isBlankDraft(item)).length} items` : "Create job"}</button>
               </div>
             </div>
           </header>
@@ -5409,7 +5460,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <div className="header-title-row">
                 <h1>{title}</h1>
                 {/* The return-unrepaired pill shows next to the status pill until COMPLETE, where it folds into the status label (see StatusPill). */}
-                <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />
+                {jobStatusBadge ?? <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={industryBuild} />}
                 {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
                 {job.breakdown && <BreakdownPill />}
                 {pexInStock && <PexAllocatedPill />}

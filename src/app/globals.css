@@ -2352,3 +2352,80 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
   .pt-count { margin-left: 0; }
 }
 @media print { .pt-actions, .pt-toolbar, .pt-pager, .pt-link, .pt-back { display: none !important; } }
+
+/* ==========================================================================
+   2026-10-29, Engineering multi-item jobs (ji-): the "Items received" table on New Job, the item list on the job screen, the
+   "Mixed" status bar and the item-count chip on the Jobs list.
+   ========================================================================== */
+.ji-card > .ji-card-head { align-items: flex-start; gap: 12px; padding: 14px 18px; }
+.ji-card .ji-card-head h2 { margin: 0; font-size: 15px; }
+.ji-card .ji-card-head p { margin: 3px 0 0; color: #667085; font-size: 12px; }
+.ji-head-right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; }
+.ji-count { padding: 3px 10px; border-radius: 999px; background: #eef0f3; color: #475467; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 750; white-space: nowrap; }
+.ji-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ji-scroll { overflow-x: auto; }
+.ji-table { width: 100%; min-width: 980px; border-collapse: collapse; font-size: 13px; }
+.ji-table th { padding: 9px 8px; border-bottom: 1px solid var(--ink-150); background: #f8f9fb; color: var(--ink-500); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+.ji-table td { padding: 6px 8px; border-bottom: 1px solid var(--ink-100); vertical-align: middle; }
+.ji-table.readonly td { padding: 10px 8px; }
+.ji-table th:first-child, .ji-table td:first-child { padding-left: 18px; }
+.ji-table td input { width: 100%; min-width: 96px; padding: 7px 8px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; font-size: 13px; }
+.ji-table td input:focus, .ji-more-grid input:focus { border-color: var(--blue-600); outline: 2px solid #dbeafe; outline-offset: 0; }
+.ji-table .ji-num { width: 44px; }
+.ji-badge { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: #eef4fd; color: var(--blue-700); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 800; }
+.ji-actions-col { width: 1%; padding-right: 14px !important; text-align: right; white-space: nowrap; }
+.ji-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: #667085; cursor: pointer; }
+.ji-icon:hover:not(:disabled) { background: #f2f4f7; color: var(--ink-900); }
+.ji-icon.danger:hover:not(:disabled) { background: #fdebec; color: #a22c35; }
+.ji-icon:disabled { cursor: not-allowed; opacity: .4; }
+.ji-row.open td { background: #fbfcfe; }
+.ji-more td { background: #fbfcfe; }
+.ji-more-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; padding: 12px 8px 14px; }
+.ji-more-grid label span { display: block; margin-bottom: 4px; color: #475467; font-size: 11px; font-weight: 700; }
+.ji-more-grid input { width: 100%; padding: 7px 8px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; font-size: 13px; }
+.ji-more-grid .ji-wide { grid-column: span 2; }
+.ji-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 18px; border-top: 1px solid var(--ink-100); }
+.ji-several { display: inline-flex; align-items: center; gap: 6px; }
+.ji-several input { width: 58px; padding: 6px 8px; border: 1px solid var(--ink-150); border-radius: 6px; font-size: 13px; }
+.ji-note { margin: 0; color: #667085; font-size: 12px; }
+.ji-paste, .ji-add { margin: 0 18px 16px; padding: 14px 16px; border: 1px solid var(--ink-150); border-radius: 10px; background: #fbfcfe; }
+.ji-paste p { margin: 6px 0 10px; color: #667085; font-size: 12px; line-height: 18px; }
+.ji-paste textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--ink-150); border-radius: 6px; font: 12.5px/18px ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.ji-paste-head { display: flex; align-items: center; justify-content: space-between; }
+.ji-paste-actions, .ji-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ji-edit-actions { padding: 0 8px 12px; }
+.ji-add .ji-edit-actions { padding: 0; }
+.ji-foot { padding: 12px 18px 16px; border-top: 1px solid var(--ink-100); }
+.ji-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: #eef4fd; color: var(--blue-700); font: 700 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.ji-sub { display: block; max-width: 280px; margin-top: 2px; color: #667085; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ji-status-select { max-width: 190px; padding: 6px 8px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; font-size: 12.5px; font-weight: 650; }
+.ji-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 12px 18px; border-bottom: 1px solid var(--ink-100); list-style: none; }
+.ji-steps li { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--ink-150); border-radius: 999px; background: #fff; color: #98a2b3; font-size: 12px; }
+.ji-steps li b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.ji-steps li.has { border-color: #b2c7ee; background: #f3f7fe; color: var(--ink-900); }
+.ji-steps li.has b { color: var(--blue-700); }
+.ji-starter { padding: 0; }
+.ji-starter-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 18px; }
+.ji-starter-row p { margin: 0; color: #667085; font-size: 13px; }
+.ji-starter .ji-more-grid { padding: 12px 18px 6px; }
+.ji-starter .ji-edit-actions { padding: 4px 18px 16px; }
+/* The "Mixed" job status: a pill, a bar with one segment per item, and how many are ready. */
+.ji-mixed { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; vertical-align: middle; }
+.ji-mixed-pill { background: #e4e7ec; color: #344054; }
+.ji-bar { display: inline-flex; gap: 2px; width: 96px; height: 8px; }
+.ji-mixed.compact .ji-bar { width: 64px; height: 6px; }
+.ji-seg { flex: 1 1 0; min-width: 4px; border-radius: 2px; background: #c6cdd8; }
+.ji-seg.tone-green { background: #3d9a63; }
+.ji-seg.tone-blue { background: #2f6fd1; }
+.ji-seg.tone-purple { background: #8a55c4; }
+.ji-seg.tone-orange { background: #e08a3c; }
+.ji-seg.tone-amber { background: #e0b72e; }
+.ji-seg.tone-teal { background: #2a9d99; }
+.ji-seg.tone-red { background: #d1495b; }
+.ji-seg.tone-neutral { background: #c6cdd8; }
+.ji-ready { color: #667085; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 650; }
+.ji-mixed.compact .ji-ready { font-size: 11px; }
+.ji-chip { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #eef4fd; color: var(--blue-700); font-size: 11px; font-weight: 750; white-space: nowrap; }
+@media (max-width: 1100px) { .ji-more-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .ji-more-grid { grid-template-columns: minmax(0, 1fr); } .ji-more-grid .ji-wide { grid-column: auto; } .ji-card > .ji-card-head { flex-wrap: wrap; } }
+@media print { .ji-toolbar, .ji-paste, .ji-add, .ji-foot, .ji-actions-col { display: none !important; } }
