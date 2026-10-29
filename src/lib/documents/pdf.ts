@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { POWERED_BY_TEXT, POWERED_BY_URL_TEXT } from "@/lib/documents/powered-by";
+import { cleanDocText } from "@/lib/documents/doc-text";
 
 // Generic, dependency-light PDF renderer for the documents saved into a job's
 // folder (Job Card, Job History, Delivery Note, Pick Slip, Parts List …).
@@ -42,6 +43,9 @@ export type DocLetterhead = {
   logo?: { bytes: Uint8Array; mimeType: string } | null;
   /** True when the platform admin has switched off the "Powered by Flo X Integrations" footer for this company. */
   hidePoweredBy?: boolean;
+  /** 2026-10-29: the company's "Document header text" (top of every page, above the logo) and "Document footer text" (bottom of every page, above the page number). */
+  headerText?: string | null;
+  footerText?: string | null;
 };
 
 const PORTRAIT_W = 595.28;
@@ -83,8 +87,10 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
 
   let page: PDFPage = doc.addPage([PAGE_W, PAGE_H]);
   let y = PAGE_H - MARGIN;
-  const bottom = MARGIN + 18;
-  const newPage = () => { page = doc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN; };
+  // Where content starts / stops on every page; moved in from the edges once the header / footer text (below) has been measured.
+  let topY = PAGE_H - MARGIN;
+  let bottom = MARGIN + 18;
+  const newPage = () => { page = doc.addPage([PAGE_W, PAGE_H]); y = topY; };
   const ensure = (height: number) => { if (y - height < bottom) newPage(); };
 
   const wrap = (text: string, font: PDFFont, size: number, width: number): string[] => {
@@ -111,6 +117,15 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
     }
     return lines;
   };
+
+  // ---- company header / footer text (2026-10-29) ----------------------------
+  // Header: above the logo on every page. Footer: above the page number line on every page. Both leave the content room first.
+  const HEADER_SIZE = 8.5, HEADER_LEAD = 10.5, FOOTER_SIZE = 8, FOOTER_LEAD = 10;
+  const headerLines = letterhead?.headerText && cleanDocText(letterhead.headerText) ? wrap(cleanDocText(letterhead.headerText), regular, HEADER_SIZE, CONTENT_W) : [];
+  const footerLines = letterhead?.footerText && cleanDocText(letterhead.footerText) ? wrap(cleanDocText(letterhead.footerText), regular, FOOTER_SIZE, CONTENT_W) : [];
+  if (headerLines.length) topY = PAGE_H - MARGIN - (headerLines.length * HEADER_LEAD + 12);
+  if (footerLines.length) bottom = MARGIN + 14 + footerLines.length * FOOTER_LEAD;
+  y = topY;
 
   const text = (value: string, x: number, size: number, font: PDFFont, color = INK, align: "left" | "right" = "left", width = 0) => {
     const safeValue = safe(value);
@@ -336,6 +351,17 @@ export async function renderDocumentPdf(spec: DocSpec, letterhead: DocLetterhead
   const pages = doc.getPages();
   const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
   pages.forEach((p, i) => {
+    if (headerLines.length) {
+      const top = p.getHeight() - MARGIN;
+      headerLines.forEach((line, n) => p.drawText(line, { x: MARGIN, y: top - 8 - n * HEADER_LEAD, size: HEADER_SIZE, font: regular, color: INK }));
+      const ruleY = top - headerLines.length * HEADER_LEAD - 2;
+      p.drawLine({ start: { x: MARGIN, y: ruleY }, end: { x: p.getWidth() - MARGIN, y: ruleY }, thickness: 0.5, color: RULE });
+    }
+    if (footerLines.length) {
+      const ruleY = MARGIN + 8 + footerLines.length * FOOTER_LEAD;
+      p.drawLine({ start: { x: MARGIN, y: ruleY }, end: { x: p.getWidth() - MARGIN, y: ruleY }, thickness: 0.5, color: RULE });
+      footerLines.forEach((line, n) => p.drawText(line, { x: MARGIN, y: MARGIN + 8 + (footerLines.length - 1 - n) * FOOTER_LEAD, size: FOOTER_SIZE, font: regular, color: MUTED }));
+    }
     p.drawText(safe(`Page ${i + 1} of ${pages.length}`), { x: PAGE_W - MARGIN - 60, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
     p.drawText(safe(`Saved ${stamp} UTC`), { x: MARGIN, y: MARGIN - 6, size: 8, font: regular, color: MUTED });
     // 2026-10-20: "Powered by Flo X Integrations", centred on the footer line of every page.

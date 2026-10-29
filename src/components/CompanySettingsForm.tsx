@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ImagePlus, Loader2, RotateCcw, Save, Upload, Wifi, X } from "lucide-react";
+import { DocTextPreview, type DocTextPreviewCompany } from "@/components/DocTextPreview";
 
 type SettingsData = {
   internalCode: string;
@@ -227,6 +228,17 @@ export function CompanySettingsForm() {
 
   if (!data || !form) return <div className="table-state">{error || "Loading company settings…"}</div>;
 
+  // 2026-10-29: the sample page next to the header / footer boxes uses what is typed in this form right now, saved or not.
+  const previewCompany: DocTextPreviewCompany = {
+    name: (form.tradingName || form.legalName || "").trim(),
+    detailLines: [
+      [form.addressLine1, form.addressLine2, form.addressCity, form.addressProvince, form.addressPostalCode].map((v) => (v || "").trim()).filter(Boolean).join(", "),
+      [form.registrationNumber ? `Reg: ${form.registrationNumber}` : "", form.vatNumber ? `VAT: ${form.vatNumber}` : ""].filter(Boolean).join(" · "),
+      [form.mainTelephone, form.mainEmail].map((v) => (v || "").trim()).filter(Boolean).join(" · "),
+    ].filter(Boolean),
+    logoSrc: logoPreview,
+  };
+
   return (
     <div className="settings-grid company-settings-grid">
       <section className="detail-panel">
@@ -279,8 +291,22 @@ export function CompanySettingsForm() {
               <input className="color-picker-hex" value={form.backgroundColor} placeholder="#f5f7fa" onChange={(e) => setForm((current) => current ? { ...current, backgroundColor: e.target.value } : current)} />
             </div>
           </label>
-          <label className="wide"><span>Document header text</span><textarea rows={3} value={form.documentHeaderText} onChange={(e) => setForm((current) => current ? { ...current, documentHeaderText: e.target.value } : current)} /></label>
-          <label className="wide"><span>Document footer text</span><textarea rows={3} value={form.documentFooterText} onChange={(e) => setForm((current) => current ? { ...current, documentFooterText: e.target.value } : current)} /></label>
+          {/* 2026-10-29, user request: the header / footer text now prints (above the logo / above the page number, on every page of
+              delivery notes, job cards, pick slips, reports and saved PDFs), with a preview of the page next to each box. */}
+          <div className="wide dtp-row">
+            <label><span>Document header text</span>
+              <textarea rows={4} maxLength={500} value={form.documentHeaderText} placeholder="e.g. a tagline, or a notice that goes above your logo" onChange={(e) => setForm((current) => current ? { ...current, documentHeaderText: e.target.value } : current)} />
+              <small className="dtp-hint">Printed at the very top of every page, above the logo. Line breaks are kept. {form.documentHeaderText.length}/500</small>
+            </label>
+            <DocTextPreview part="top" header={form.documentHeaderText} footer={form.documentFooterText} company={previewCompany} />
+          </div>
+          <div className="wide dtp-row">
+            <label><span>Document footer text</span>
+              <textarea rows={4} maxLength={2000} value={form.documentFooterText} placeholder="e.g. banking details, terms of sale or a disclaimer" onChange={(e) => setForm((current) => current ? { ...current, documentFooterText: e.target.value } : current)} />
+              <small className="dtp-hint">Printed at the bottom of every page, above the page number. Line breaks are kept. {form.documentFooterText.length}/2000</small>
+            </label>
+            <DocTextPreview part="bottom" header={form.documentHeaderText} footer={form.documentFooterText} company={previewCompany} />
+          </div>
         </div>
       </section>
 
