@@ -43,10 +43,12 @@ import {
   jobItemInput,
   jobItemsInput,
   jobItemUpdateInput,
+  jobDeliveryNoteInput,
+  deliveryNotesListQuery,
   type JobItemInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
-import { MAX_ITEMS_PER_JOB, itemTag, jobFieldsFromFirstItem, summarizeItemStatuses } from "@/lib/jobs/item-model";
+import { MAX_ITEMS_PER_JOB, deliveryNoteItemCount, deliveryNoteNumber, itemTag, jobFieldsFromFirstItem, readDeliveryNoteLines, summarizeItemStatuses } from "@/lib/jobs/item-model";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
 import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relinkJobPartLineToActivePartTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
@@ -2315,4 +2317,141 @@ export async function removeJobItem(ctx: RequestContext, jobId: string, itemId: 
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobItem", entityId: existing.id, action: "DELETE", afterData: { jobId, sequence: existing.sequence } });
   return { ok: true };
+}
+
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, user request (Engineering): a register of delivery notes.
+//
+// Every job delivery note an Engineering company prints is recorded here when it is printed: a number that counts up per job
+// (BRE1122-DN1, -DN2 ...), the delivery date, the notes and the lines exactly as issued, so a note can be found again and
+// reprinted unchanged. Anyone who can see a job can print its delivery note, so recording needs only Jobs read access.
+// ----------------------------------------------------------------------------
+function requireDeliveryRegisterBuild(ctx: RequestContext) {
+  if (ctx.industryBuild !== "ENGINEERING") throw new Error("The delivery note register is only available to Engineering companies.");
+}
+
+export async function recordJobDeliveryNote(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobsRead(ctx);
+  requireDeliveryRegisterBuild(ctx);
+  const input = jobDeliveryNoteInput.parse(raw);
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
+  if (!job) throw new Error("Job not found.");
+  const lines = input.lines
+    .filter((line) => line.description.trim() || line.quantity.trim())
+    .map((line) => ({ description: line.description, quantity: line.quantity, ...(line.itemId ? { itemId: line.itemId } : {}) }));
+  if (lines.length === 0) throw new Error("Add at least one line to the delivery note.");
+  // A line tied to an item must name an item that is on this job.
+  const itemIds = [...new Set(lines.map((line) => line.itemId).filter((id): id is string => !!id))];
+  if (itemIds.length > 0) {
+    const found = await prisma.jobItem.count({ where: { id: { in: itemIds }, jobId, companyId } });
+    if (found !== itemIds.length) throw new Error("One of the items on this delivery note is not on this job.");
+  }
+  const deliveryDate = input.deliveryDate ?? new Date();
+  const label = job.jobNumber || job.draftNumber;
+  // The number counts up per job; if two notes are printed at the same moment the unique index refuses the second, so try again.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const note = await prisma.$transaction(async (tx) => {
+        const last = await tx.jobDeliveryNote.findFirst({ where: { jobId, companyId }, orderBy: { sequence: "desc" }, select: { sequence: true } });
+        const sequence = (last?.sequence ?? 0) + 1;
+        return tx.jobDeliveryNote.create({
+          data: {
+            companyId,
+            jobId,
+            sequence,
+            number: deliveryNoteNumber(label, sequence),
+            deliveryDate,
+            notes: input.notes ?? null,
+            lines,
+            itemCount: deliveryNoteItemCount(lines),
+            createdById: ctx.userId,
+          },
+        });
+      });
+      await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobDeliveryNote", entityId: note.id, action: "CREATE", afterData: { jobId, number: note.number } });
+      return { id: note.id, sequence: note.sequence, number: note.number, deliveryDate: note.deliveryDate, notes: note.notes, lines, itemCount: note.itemCount, createdAt: note.createdAt };
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && attempt < 2) continue;
+      throw error;
+    }
+  }
+  throw new Error("Unable to number the delivery note. Please try again.");
+}
+
+async function actorNames(ids: Array<string | null>) {
+  const unique = [...new Set(ids.filter((id): id is string => !!id))];
+  if (unique.length === 0) return new Map<string, string>();
+  const users = await prisma.userIdentity.findMany({ where: { id: { in: unique } }, select: { id: true, displayName: true } });
+  return new Map(users.map((user) => [user.id, user.displayName ?? ""]));
+}
+
+// The notes issued for one job, oldest first, with their lines (for the job screen's list and for reprinting).
+export async function listJobDeliveryNotes(ctx: RequestContext, jobId: string) {
+  const companyId = requireJobsRead(ctx);
+  requireDeliveryRegisterBuild(ctx);
+  const rows = await prisma.jobDeliveryNote.findMany({ where: { jobId, companyId }, orderBy: { sequence: "asc" } });
+  const names = await actorNames(rows.map((row) => row.createdById));
+  return rows.map((row) => ({
+    id: row.id,
+    sequence: row.sequence,
+    number: row.number,
+    deliveryDate: row.deliveryDate,
+    notes: row.notes,
+    lines: readDeliveryNoteLines(row.lines),
+    itemCount: row.itemCount,
+    createdAt: row.createdAt,
+    createdByName: row.createdById ? names.get(row.createdById) || null : null,
+  }));
+}
+
+// The register: every delivery note the company has issued, newest first. Search matches the note number, the job number and
+// (for people allowed to see customers) the customer's name; from / to limit the delivery date.
+export async function listDeliveryNoteRegister(ctx: RequestContext, raw: unknown) {
+  const companyId = requireJobsRead(ctx);
+  requireDeliveryRegisterBuild(ctx);
+  const query = deliveryNotesListQuery.parse(raw);
+  const canSeeCustomers = ctx.tenantPermissions.has("CUSTOMERS_VIEW");
+  const contains = query.q ? { contains: query.q, mode: "insensitive" as const } : null;
+  const where: Prisma.JobDeliveryNoteWhereInput = {
+    companyId,
+    ...(query.from || query.to ? { deliveryDate: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } } : {}),
+    ...(contains
+      ? {
+          OR: [
+            { number: contains },
+            { job: { is: { jobNumber: contains } } },
+            ...(canSeeCustomers ? [{ job: { is: { customer: { is: { OR: [{ name: contains }, { tradingName: contains }] } } } } }] : []),
+          ],
+        }
+      : {}),
+  };
+  const [total, rows] = await Promise.all([
+    prisma.jobDeliveryNote.count({ where }),
+    prisma.jobDeliveryNote.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+      include: { job: { select: { id: true, jobNumber: true, draftNumber: true, customer: { select: { name: true, tradingName: true } } } } },
+    }),
+  ]);
+  const names = await actorNames(rows.map((row) => row.createdById));
+  const items = rows.map((row) => {
+    const lines = readDeliveryNoteLines(row.lines);
+    return {
+      id: row.id,
+      number: row.number,
+      deliveryDate: row.deliveryDate,
+      createdAt: row.createdAt,
+      createdByName: row.createdById ? names.get(row.createdById) || null : null,
+      jobId: row.job.id,
+      jobNumber: row.job.jobNumber || row.job.draftNumber,
+      customerName: canSeeCustomers ? row.job.customer?.name ?? null : null,
+      itemCount: row.itemCount,
+      lineCount: lines.length,
+      summary: lines.map((line) => line.description).filter(Boolean).join("  |  ").slice(0, 200),
+    };
+  });
+  return { items, total, page: query.page, pageSize: query.pageSize };
 }

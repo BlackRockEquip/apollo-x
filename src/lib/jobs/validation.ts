@@ -392,3 +392,25 @@ export const jobItemsInput = z.array(jobItemInput).min(1).max(200);
 export const jobItemUpdateInput = jobItemInput.partial().extend({
   status: z.enum([...FLOW_JOB_STATUSES, "CANCELLED"] as [string, ...string[]]).optional(),
 });
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, Engineering delivery note register (see JobDeliveryNote in schema.prisma)
+// ----------------------------------------------------------------------------
+export const jobDeliveryNoteInput = z.object({
+  deliveryDate: z.coerce.date().optional().nullable(),
+  notes: longText,
+  lines: z.array(z.object({
+    description: z.string().trim().max(500),
+    quantity: z.string().trim().max(20),
+    itemId: z.string().cuid().optional().nullable(),
+  })).min(1).max(200),
+});
+
+const emptyToUndefined = (value: unknown) => (value === "" || value === null ? undefined : value);
+export const deliveryNotesListQuery = z.object({
+  q: z.string().trim().max(100).optional(),
+  from: z.preprocess(emptyToUndefined, z.coerce.date().optional()),
+  to: z.preprocess(emptyToUndefined, z.coerce.date().optional()),
+  page: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).default(1)),
+  pageSize: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(200).default(50)),
+});

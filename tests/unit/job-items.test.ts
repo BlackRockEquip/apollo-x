@@ -133,3 +133,23 @@ describe("delivery notes per item", () => {
     expect(deliveryNoteSuffix(deliverable, [])).toBeUndefined();
   });
 });
+
+import { deliveryNoteItemCount, deliveryNoteNumber, readDeliveryNoteLines } from "@/lib/jobs/item-model";
+
+describe("delivery note register", () => {
+  it("numbers notes per job", () => {
+    expect(deliveryNoteNumber("BRE1122", 1)).toBe("BRE1122-DN1");
+    expect(deliveryNoteNumber(" BRE1122 ", 12)).toBe("BRE1122-DN12");
+    expect(deliveryNoteNumber(null, 2)).toBe("JOB-DN2");
+  });
+  it("reads stored lines back safely", () => {
+    expect(readDeliveryNoteLines(null)).toEqual([]);
+    expect(readDeliveryNoteLines("nope")).toEqual([]);
+    expect(readDeliveryNoteLines([{ description: "Swing motor", quantity: 1, itemId: "a" }, 7, null, { description: " ", quantity: "" }, { description: "Loose line", quantity: "2" }]))
+      .toEqual([{ description: "Swing motor", quantity: "1", itemId: "a" }, { description: "Loose line", quantity: "2" }]);
+  });
+  it("counts the items on a note, not the typed lines", () => {
+    expect(deliveryNoteItemCount([{ description: "a", quantity: "1", itemId: "x" }, { description: "b", quantity: "1", itemId: "x" }, { description: "c", quantity: "1", itemId: "y" }, { description: "d", quantity: "1" }])).toBe(2);
+    expect(deliveryNoteItemCount([])).toBe(0);
+  });
+});

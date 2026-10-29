@@ -1,4 +1,4 @@
-import { Search, Plus } from "lucide-react";
+import { FileText, Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
 import { ItemsStatusBadge, itemsAreMixed } from "@/components/job-items/ItemsStatusBadge";
@@ -273,7 +273,11 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           <h1>Jobs & WIP</h1>
           <p>Create jobs (numbered and registered straight away) and work live status queues from one workspace.</p>
         </div>
-        {canCreate && <Link href="/jobs/new" className="gold-button"><Plus size={16} /> New job</Link>}
+        <div className="header-actions">
+          {/* 2026-10-29, Engineering: the register of every delivery note issued. */}
+          {ctx.industryBuild === "ENGINEERING" && !wipViewOnly && <Link href="/jobs/delivery-notes" className="quiet-button"><FileText size={14} /> Delivery notes</Link>}
+          {canCreate && <Link href="/jobs/new" className="gold-button"><Plus size={16} /> New job</Link>}
+        </div>
       </header>
 
       <section className="master-panel jobs-panel">

@@ -2443,3 +2443,11 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .ji-pick-options .ji-pick-mark { display: flex; align-items: center; gap: 8px; }
 .ji-pick-options .ji-pick-mark span { margin: 0; font-size: 12.5px; font-weight: 600; }
 .ji-pick-options .ji-pick-mark input { width: auto; }
+
+/* 2026-10-29, Engineering delivery note register (dn-) and the job's note list. */
+.dn-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+.dn-date { display: grid; gap: 3px; }
+.dn-date span { color: #667085; font-size: 11px; font-weight: 700; }
+.dn-date input { padding: 7px 8px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; font-size: 13px; }
+.dn-pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 1px solid var(--ink-100); color: #667085; font-size: 13px; }
+.ji-sub-inline { display: block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

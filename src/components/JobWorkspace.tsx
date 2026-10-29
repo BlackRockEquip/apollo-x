@@ -22,6 +22,7 @@ import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-co
 import { JobItemsEditor } from "./job-items/JobItemsEditor";
 import { JobItemsPanel, AddAnotherItem } from "./job-items/JobItemsPanel";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
+import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
 import { DELIVERED_STATUS, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks } from "@/lib/jobs/item-model";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
@@ -716,6 +717,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Print Delivery Note (the job's own delivery note): the line items and notes are edited here first, so what is printed and what is saved as a PDF are the same.
   // 2026-10-29, Engineering multi-item jobs: a line can belong to an item (itemId); deliveryDate is the date on this note and
   // markDelivered moves the ticked ready items to Delivered once it is printed.
+  // 2026-10-29, Engineering delivery note register: bumped after a note is recorded so the job's list of notes reloads.
+  const [dnRefresh, setDnRefresh] = useState(0);
   const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string; markDelivered?: boolean } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
@@ -1906,7 +1909,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const jobCardSpec = () => (job ? buildJobCardSpec({ title: documentTitles.JOB_CARD, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const fieldReportSpec = () => (job ? buildFieldReportSpec({ title: documentTitles.FIELD_REPORT, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const jobHistorySpec = () => (job ? buildJobHistorySpec({ title: documentTitles.JOB_HISTORY, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
-  const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string; deliveryDate?: string }) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes, ...(draft?.deliveryDate ? { deliveryDate: draft.deliveryDate } : {}) }) : null);
+  const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string; deliveryDate?: string }, noteNumber?: string) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes, ...(draft?.deliveryDate ? { deliveryDate: draft.deliveryDate } : {}), ...(noteNumber ? { noteNumber } : {}) }) : null);
   const partsListSpec = (scope?: PartsListScope) => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, scope }) : null);
   const pickSlipSpec = (slip: { lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
     buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
@@ -3218,7 +3221,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       return;
     }
     const description = [form.machineMake, form.machineModel, form.component, form.componentSerial].filter(Boolean).join(" · ");
-    setJobDnDraft({ items: [{ description, quantity: "1" }], notes: "" });
+    // Engineering records every note in the register, with the date it goes out: the job's delivery date, or today.
+    setJobDnDraft({ items: [{ description, quantity: "1" }], notes: "", ...(industryBuild === "ENGINEERING" ? { deliveryDate: form.deliveryDate || new Date().toISOString().slice(0, 10) } : {}) });
   }
 
   // Ticks / unticks an item on the delivery note: its line is added (in item order, ahead of any typed lines) or taken off.
@@ -3241,12 +3245,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // Prints the delivery note, offers to save it (named after its items so one note never replaces another), then - if asked -
   // moves the ready items on it to Delivered. A job without items prints exactly as before.
+  // Reprints a delivery note from the register exactly as it was issued (same number, date, lines and notes); nothing new is recorded.
+  function reprintDeliveryNote(note: JobDeliveryNoteRow) {
+    void printJobDeliveryNote({ items: note.lines, notes: note.notes ?? "", deliveryDate: String(note.deliveryDate).slice(0, 10) }, { number: note.number });
+  }
+
   async function printDeliveryNoteAndMove(draft: NonNullable<typeof jobDnDraft>) {
     const rows = job?.jobItems ?? [];
     const pickedIds = draft.items.map((line) => line.itemId).filter((id): id is string => !!id);
     const suffix = rows.length > 0 ? deliveryNoteSuffix(rows, pickedIds) : undefined;
-    const printed = await printJobDeliveryNote(draft);
-    await offerToSave(printed, "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft), suffix);
+    const issued: { number?: string } = {};
+    const printed = await printJobDeliveryNote(draft, issued);
+    await offerToSave(printed, "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft, issued.number), suffix);
     if (!printed || !draft.markDelivered || !jobId) return;
     const moving = itemsToMarkDelivered(rows, pickedIds);
     if (moving.length === 0) return;
@@ -3264,10 +3274,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await load(true);
   }
 
-  async function printJobDeliveryNote(draft: { items: Array<{ description: string; quantity: string }>; notes: string; deliveryDate?: string }): Promise<boolean> {
+  // 2026-10-29, Engineering delivery note register: `issued` carries the note's register number. Left empty, a new note is recorded
+  // first (it gets the next number for the job); with a number already in it (a reprint) nothing new is recorded and the note is
+  // printed as it was issued. If recording fails the window is closed and nothing is printed, so every printed note is in the register.
+  async function printJobDeliveryNote(draft: { items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string }, issued?: { number?: string }): Promise<boolean> {
     if (!job) return false;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the delivery note."); return false; }
+    if (industryBuild === "ENGINEERING" && issued && !issued.number) {
+      try {
+        const response = await fetch(`/api/v1/jobs/${job.id}/delivery-notes`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            deliveryDate: draft.deliveryDate || form.deliveryDate || null,
+            notes: draft.notes || null,
+            lines: draft.items.filter((line) => line.description.trim() || line.quantity.trim()).map((line) => ({ description: line.description, quantity: line.quantity, itemId: line.itemId ?? null })),
+          }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error?.message || "Unable to record the delivery note.");
+        issued.number = String(body.number);
+        setDnRefresh((value) => value + 1);
+      } catch (e) {
+        win.close();
+        setError(e instanceof Error ? e.message : "Unable to record the delivery note.");
+        return false;
+      }
+    }
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const jobLabel = job.jobNumber || job.draftNumber || "";
     const logoSrc = companyLogoImgSrc();
@@ -3346,6 +3380,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
+          ${issued?.number ? `<div class="date-captured">Delivery note ${escapeHtml(issued.number)}</div>` : ""}
           <div class="date-captured">Delivery date: ${fmt(draft.deliveryDate ?? form.deliveryDate)}</div>
         </div>
       </div>
@@ -4140,6 +4175,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
+  const deliveryNotesSection = mode === "detail" && job && industryBuild === "ENGINEERING"
+    ? <JobDeliveryNotes jobId={job.id} refreshKey={dnRefresh} onReprint={reprintDeliveryNote} />
+    : null;
   const addAnotherItemSection = mode === "detail" && job && itemsBuildOn() && jobItemRows.length === 0 && !mechanicFieldsLocked && !["COMPLETE", "CLOSED", "CANCELLED"].includes(String(job.status))
     ? <AddAnotherItem jobId={job.id} onChanged={() => load(true)} onError={setError} />
     : null;
@@ -4374,6 +4412,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             again. */}
         {mode === "create" && itemsBuildOn() ? itemsCreateSection : itemsPanelSection ?? machineSection}
         {addAnotherItemSection}
+        {deliveryNotesSection}
         {jobDetailsSection}
         {commercialSection}
       </div>

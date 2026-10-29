@@ -629,6 +629,7 @@ model Company {
   jobs              Job[]
   jobComponents     JobComponent[]
   jobItems          JobItem[]
+  jobDeliveryNotes  JobDeliveryNote[]
   jobKits           JobKit[]
   mechanics         Mechanic[]
   salesRepresentatives SalesRepresentative[]
@@ -1801,6 +1802,7 @@ model Job {
   components          JobComponent[]
   // 2026-10-29, Engineering multi-item jobs: one row per item the customer sent in. A job with no rows is a normal one-item job.
   jobItems            JobItem[]
+  deliveryNotes       JobDeliveryNote[]
   partLines           JobPartLine[]
   outworkItems        OutworkItem[]
   pickSlips           PickSlip[]
@@ -1867,6 +1869,32 @@ model JobItem {
   @@unique([id, companyId])
   @@index([companyId, jobId])
   @@index([companyId, status])
+}
+
+// 2026-10-29, user request (Engineering): a register of delivery notes. Every job delivery note an Engineering company prints is
+// recorded here with a number that counts up per job (BRE1122-DN1, -DN2 ...), the delivery date, the notes and the lines exactly as
+// issued (so it can be found again and reprinted unchanged). A multi-item job sends its items out in stages, one note per stage;
+// a line that belongs to an item carries that item's id.
+model JobDeliveryNote {
+  id           String   @id @default(cuid())
+  companyId    String
+  jobId        String
+  sequence     Int
+  number       String
+  deliveryDate DateTime @db.Date
+  notes        String?
+  lines        Json
+  itemCount    Int      @default(0)
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, sequence])
+  @@unique([companyId, number])
+  @@index([companyId, deliveryDate])
+  @@index([companyId, jobId])
 }
 
 model JobComponent {

@@ -167,3 +167,34 @@ export function deliveryNoteSuffix(items: readonly DeliveryItem[], pickedIds: re
   if (sequences.length === 0) return undefined;
   return `${sequences.length === 1 ? "Item" : "Items"} ${sequences.join(", ")}`;
 }
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, delivery note register (Engineering): every job delivery note is recorded when it is printed, with a number that
+// counts up per job (BRE1122-DN1, BRE1122-DN2 ...), so it can be found again and reprinted exactly as it was issued.
+// ----------------------------------------------------------------------------
+export function deliveryNoteNumber(jobNumber: string | null | undefined, sequence: number): string {
+  const number = (jobNumber ?? "").trim();
+  return `${number || "JOB"}-DN${sequence}`;
+}
+
+export type DeliveryNoteLine = { description: string; quantity: string; itemId?: string };
+
+// The lines are stored as JSON; read them back defensively so one odd row can never break the register or a reprint.
+export function readDeliveryNoteLines(value: unknown): DeliveryNoteLine[] {
+  if (!Array.isArray(value)) return [];
+  const lines: DeliveryNoteLine[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const description = typeof row.description === "string" ? row.description : "";
+    const quantity = typeof row.quantity === "string" ? row.quantity : typeof row.quantity === "number" ? String(row.quantity) : "";
+    if (!description.trim() && !quantity.trim()) continue;
+    lines.push({ description, quantity, ...(typeof row.itemId === "string" && row.itemId ? { itemId: row.itemId } : {}) });
+  }
+  return lines;
+}
+
+// How many job items are on a note (lines tied to an item), for the register's "Items" column.
+export function deliveryNoteItemCount(lines: readonly DeliveryNoteLine[]): number {
+  return new Set(lines.map((line) => line.itemId).filter(Boolean)).size;
+}
