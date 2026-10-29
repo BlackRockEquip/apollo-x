@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, Pencil, Plus, Printer, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import { itemLinkSummary, itemLinkTotal, itemTag, summarizeItemStatuses, type ItemLinkCounts } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
@@ -42,6 +43,11 @@ type Props = {
   onPrintTags?: () => void;
   /** The single item of an ordinary one-item job, built from the job's own fields: shown read-only; "Add item" makes it item 1. */
   virtual?: boolean;
+  /**
+   * 2026-10-29, user request: the item list sits ABOVE the item header and tabs, so it is on screen whatever tab is open. The selected
+   * item's detail card belongs to the Details tab, so it is drawn into this element (a portal) when one is given.
+   */
+  selectedSlot?: HTMLElement | null;
 };
 
 function fmtDate(value: string | null): string {
@@ -50,11 +56,13 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [adding, setAdding] = useState<ItemDraft | null>(null);
+  // The list can be folded away to give the tabs more room; it starts open.
+  const [collapsed, setCollapsed] = useState(false);
 
   const rollup = summarizeItemStatuses(items.map((item) => item.status), steps);
   const editable = canEdit && !locked && !virtual;
@@ -119,6 +127,39 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     <div><dt>{label}</dt><dd>{value === null || value === undefined || value === "" ? "-" : value}</dd></div>
   );
 
+  const selectedCard = selected ? (
+      <section className="detail-panel full-row ji-card ji-selected" aria-label={`Selected item ${selectedTag}`}>
+        <header className="ji-card-head">
+          <div>
+            <h2>Details of {selectedTag}</h2>
+            <p>The tabs below show only this item. Use the status steps above, or Change status, to move it.</p>
+          </div>
+          <div className="ji-head-right">
+            {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>}
+          </div>
+        </header>
+        <div className="ji-selected-body">
+          <dl className="ji-dl">
+            {detail("Component model", selected.componentModel)}
+            {detail("Component serial", selected.componentSerial)}
+            {detail("Part number", selected.componentPartNumber)}
+            {detail("Machine", selectedMachine)}
+            {detail("Machine serial", selected.machineSerial)}
+            {detail("Plant number", selected.plantNumber)}
+            {detail("Machine hours", selected.machineHours)}
+            {detail(staffEtaLabel, fmtDate(selected.mechanicEtaDate))}
+          </dl>
+          <div className="ji-work">
+            <span>Work requested</span>
+            <p>{selected.workRequested || "-"}</p>
+            <span>Condition on receipt</span>
+            <p>{selected.conditionOnReceipt || "-"}</p>
+            {links?.[selected.id] && itemLinkTotal(links[selected.id]) > 0 && <small className="ji-links-sub">On this item: {itemLinkSummary(links[selected.id])}</small>}
+          </div>
+        </div>
+      </section>
+  ) : null;
+
   return (
     <>
     <section className="detail-panel full-row ji-card">
@@ -135,10 +176,11 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
           {selected && onSelect && <button type="button" className="quiet-button" onClick={() => onSelect("")}>Show all items</button>}
           {onPrintTags && <button type="button" className="quiet-button" onClick={onPrintTags}><Printer size={13} /> Print tags</button>}
           {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
+          <button type="button" className={`quiet-button ji-fold${collapsed ? " is-closed" : ""}`} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} title={collapsed ? "Show the item list" : "Hide the item list"}><ChevronDown size={14} /> {collapsed ? "Show list" : "Hide list"}</button>
         </div>
       </header>
 
-      <div className="ji-scroll">
+      {!collapsed && <div className="ji-scroll">
         <table className="ji-table readonly">
           <thead>
             <tr>
@@ -214,9 +256,9 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
 
-      {canAdd && (
+      {canAdd && !collapsed && (
         <div className="ji-foot">
           {adding ? (
             <div className="ji-add">
@@ -246,38 +288,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
       )}
     </section>
 
-    {selected && (
-      <section className="detail-panel full-row ji-card ji-selected" aria-label={`Selected item ${selectedTag}`}>
-        <header className="ji-card-head">
-          <div>
-            <h2>Details of {selectedTag}</h2>
-            <p>The tabs below show only this item. Use the status steps above, or Change status, to move it.</p>
-          </div>
-          <div className="ji-head-right">
-            {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>}
-          </div>
-        </header>
-        <div className="ji-selected-body">
-          <dl className="ji-dl">
-            {detail("Component model", selected.componentModel)}
-            {detail("Component serial", selected.componentSerial)}
-            {detail("Part number", selected.componentPartNumber)}
-            {detail("Machine", selectedMachine)}
-            {detail("Machine serial", selected.machineSerial)}
-            {detail("Plant number", selected.plantNumber)}
-            {detail("Machine hours", selected.machineHours)}
-            {detail(staffEtaLabel, fmtDate(selected.mechanicEtaDate))}
-          </dl>
-          <div className="ji-work">
-            <span>Work requested</span>
-            <p>{selected.workRequested || "-"}</p>
-            <span>Condition on receipt</span>
-            <p>{selected.conditionOnReceipt || "-"}</p>
-            {links?.[selected.id] && itemLinkTotal(links[selected.id]) > 0 && <small className="ji-links-sub">On this item: {itemLinkSummary(links[selected.id])}</small>}
-          </div>
-        </div>
-      </section>
-    )}
+    {selectedCard && (selectedSlot ? createPortal(selectedCard, selectedSlot) : selectedCard)}
     </>
   );
 }

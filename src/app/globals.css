@@ -2584,3 +2584,8 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .dtp-modal-card { position: relative; width: min(800px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: #fff; border-radius: 12px; padding: 14px; }
 .dtp-close { position: sticky; top: 0; float: right; z-index: 2; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 999px; background: #eef1f5; cursor: pointer; }
 @media print { .dtp-modal { display: none; } }
+
+/* 2026-10-29, user request: the item list sits above the item header and tabs and can be folded away. */
+.ji-fold svg { transition: transform .15s ease; }
+.ji-fold.is-closed svg { transform: rotate(-90deg); }
+.job-workspace > .ji-card { margin: 0; }

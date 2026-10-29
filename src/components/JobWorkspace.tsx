@@ -660,6 +660,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-29, "link parts, specs, photos etc" to an item: the item picked for new parts / photos / files, the item filter on the
   // job's lists, and the item shown while an outwork line is being edited. Empty / "all" on a job with no items.
   const [itemFilter, setItemFilter] = useState("all");
+  // Where the selected item's detail card is drawn: inside the Details tab (the item list itself sits above the tabs).
+  const [selectedItemSlot, setSelectedItemSlot] = useState<HTMLElement | null>(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [partItemId, setPartItemId] = useState("");
   const [photoItemId, setPhotoItemId] = useState("");
@@ -4258,6 +4260,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       selectedId={selectedItem?.id ?? ""}
       onSelect={(id) => setItemFilter(id || "all")}
       onPrintTags={() => setTagsOpen(true)}
+      selectedSlot={selectedItemSlot}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
@@ -4493,7 +4496,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             jobDetailsSection (above) stay split into their own consts
             since a role-specific order has come back before and may
             again. */}
-        {mode === "create" && itemsBuildOn() ? itemsCreateSection : (<>{itemsPanelSection}{(!itemsPanelSection || jobItemRows.length === 0) && machineSection}</>)}
+        {mode === "create" && itemsBuildOn() ? itemsCreateSection : (<><div ref={setSelectedItemSlot} style={{ display: "contents" }} />{(!itemsPanelSection || jobItemRows.length === 0) && machineSection}</>)}
         {deliveryNotesSection}
         {jobDetailsSection}
         {commercialSection}
@@ -5789,6 +5792,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {tabletBar}
           {tabletSheets}
           {!tabletLayout && <JobFactsStrip items={factItems} />}
+          {/* 2026-10-29, user request: the item list sits above the item header and the tabs (as in the item mockup), so it is on screen whatever tab is open. */}
+          {!tabletLayout && itemsPanelSection}
           {!tabletLayout && itemsListOn && (
             <ItemHeader
               tag={selectedItem ? itemTag(job.jobNumber, selectedItem.sequence) : jobItemRows.length === 0 ? itemTag(job.jobNumber, 1) : `JOB ${job.jobNumber ?? job.draftNumber ?? ""}`}
