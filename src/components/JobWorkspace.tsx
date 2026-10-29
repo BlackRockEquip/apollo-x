@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
-import { ArrowLeft, Camera, ClipboardList, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Camera, CheckCircle2, ClipboardList, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "./job-screen/ActionMenu";
 import { JobFactsStrip } from "./job-screen/JobFactsStrip";
 import { JobTabBar } from "./job-screen/JobTabBar";
@@ -22,6 +22,7 @@ import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-co
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
 import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
+import { followupErrorOutcome, followupOutcome, type FollowupOutcome } from "@/lib/jobs/followup-outcome";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -812,7 +813,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const [pendingPreferred, setPendingPreferred] = useState<Record<string, string | null>>({});
   const [applyingPreferred, setApplyingPreferred] = useState(false);
   const [savingAllQuotes, setSavingAllQuotes] = useState(false);
-  const [partsFollowupResult, setPartsFollowupResult] = useState<{ sent: { supplierName: string }[]; skipped: { supplierName: string; reason: string }[] } | null>(null);
+  // 2026-10-29: the follow-up result (sent / not sent / error) opens in its own small window.
+  const [followupDialog, setFollowupDialog] = useState<FollowupOutcome | null>(null);
   const [jobKitQuery, setJobKitQuery] = useState("");
   const [jobKitOptions, setJobKitOptions] = useState<JobKitOption[]>([]);
   const [jobKitId, setJobKitId] = useState("");
@@ -3731,13 +3733,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     if (!jobId) return;
     // 2026-10-27, user request: "if mails are not setup, give error
     // confirmation when clicking follow up button". Said straight away (the
-    // server refuses too), instead of a per-supplier "skipped" note.
+    // server refuses too). 2026-10-29, user request: that message, and the
+    // result of every follow-up, now opens in a small window instead of a line
+    // of small text - success, partly sent, not sent, or an error.
     if (job?.emailConfigured === false) {
-      setPartsFollowupResult(null);
-      setError(EMAIL_NOT_SET_UP_MESSAGE);
+      setFollowupDialog(followupErrorOutcome(EMAIL_NOT_SET_UP_MESSAGE));
       return;
     }
-    setSaving(true); setError(""); setPartsFollowupResult(null);
+    setSaving(true); setError(""); setFollowupDialog(null);
     try {
       const r = await fetch(`/api/v1/jobs/${jobId}/parts-followup`, {
         method: "POST",
@@ -3745,10 +3748,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to send follow-up.");
-      setPartsFollowupResult({ sent: b.sent || [], skipped: b.skipped || [] });
+      setFollowupDialog(followupOutcome({ sent: b.sent || [], skipped: b.skipped || [] }));
       await load(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to send follow-up.");
+      setFollowupDialog(followupErrorOutcome(e instanceof Error ? e.message : "Unable to send follow-up."));
     } finally {
       setSaving(false);
     }
@@ -4710,17 +4713,6 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 miss after clicking a button down here) — repeated here,
                 bold and right next to the button that triggered it. */}
             {error && <p style={{ color: "var(--danger)", fontWeight: 700, marginTop: 8 }}>{error}</p>}
-            {partsFollowupResult && (
-              <div className="drawer-fields" style={{ marginTop: 8 }}>
-                {partsFollowupResult.sent.length > 0 && <p className="muted small-line wide">Sent to: {partsFollowupResult.sent.map((s) => s.supplierName).join(", ")}.</p>}
-                {partsFollowupResult.skipped.length > 0 && (
-                  <div className="wide" style={{ display: "grid", gap: 3 }}>
-                    {partsFollowupResult.skipped.map((s, idx) => <div key={idx} className="muted small-line">{s.supplierName}: {s.reason}</div>)}
-                  </div>
-                )}
-                {partsFollowupResult.sent.length === 0 && partsFollowupResult.skipped.length === 0 && <p className="muted small-line wide">No outstanding ordered parts on this job.</p>}
-              </div>
-            )}
           </section>
   ) : null;
 
@@ -5589,6 +5581,36 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </aside>
             </div>
           )}
+
+          {/* 2026-10-29, user request: the Parts follow-up result opens in a small window (sent / partly sent / not sent / error). */}
+          {followupDialog && (() => {
+            const tone = followupDialog.tone;
+            const colour = tone === "success" ? "#087a55" : tone === "warning" ? "#b26a00" : tone === "error" ? "var(--danger, #b3261e)" : "var(--ink-700)";
+            const Icon = tone === "success" ? CheckCircle2 : AlertTriangle;
+            return (
+              <div className="drawer-backdrop" role="alertdialog" aria-modal="true" aria-label={followupDialog.title} onMouseDown={(e) => { if (e.target === e.currentTarget) setFollowupDialog(null); }}>
+                <aside className="form-drawer compact-dialog" style={{ width: "min(480px, 94vw)" }}>
+                  <header>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Icon size={26} color={colour} />
+                      <div><p className="eyebrow">Parts follow-up</p><h2 style={{ color: colour }}>{followupDialog.title}</h2></div>
+                    </div>
+                    <button type="button" onClick={() => setFollowupDialog(null)} aria-label="Close dialog"><X size={18} /></button>
+                  </header>
+                  <div style={{ padding: "4px 0 14px", display: "grid", gap: 10, fontSize: 14 }}>
+                    <p style={{ margin: 0, fontWeight: 600 }}>{followupDialog.message}</p>
+                    {followupDialog.sent.length > 0 && (
+                      <div><strong style={{ fontSize: 12, color: "#087a55" }}>Sent to</strong><ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{followupDialog.sent.map((name, i) => <li key={i}>{name}</li>)}</ul></div>
+                    )}
+                    {followupDialog.skipped.length > 0 && (
+                      <div><strong style={{ fontSize: 12, color: "var(--danger, #b3261e)" }}>Not sent</strong><ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{followupDialog.skipped.map((item, i) => <li key={i}><strong>{item.supplierName}</strong>: {item.reason}</li>)}</ul></div>
+                    )}
+                  </div>
+                  <footer className="detail-actions"><button type="button" className="gold-button" autoFocus onClick={() => setFollowupDialog(null)}>OK</button></footer>
+                </aside>
+              </div>
+            );
+          })()}
 
           {activeTab === "parts" && partsPanel}
           {activeTab === "pickslips" && showPickSlipsTab && <fieldset disabled={pickSlipsAccess !== "FULL" || viewOnly} className="unstyled-fieldset">{pickSlipsSection}</fieldset>}
