@@ -86,7 +86,11 @@ const jobListSelect = {
   returnedUnrepaired: true,
   breakdown: true,
   // 2026-10-29, Engineering multi-item jobs: each item's status, so the list can show "Mixed" with a colour bar (empty for a one-item job).
-  jobItems: { select: { status: true }, orderBy: { sequence: "asc" as const } },
+  // The Jobs & WIP list also opens a multi-item job into its items (tag, component, machine, status, ETAs), so it needs more than the status.
+  jobItems: {
+    select: { id: true, sequence: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true },
+    orderBy: { sequence: "asc" as const },
+  },
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
   // (user request) for jobs directly allocated to PEX Inventory: a return
   // record that's not scrapped and not yet redeployed (consumedByJobId null)

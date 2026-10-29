@@ -2512,3 +2512,35 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .pt-preview-title { color: #667085; font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .pt-frame { max-width: 100%; border: 1px solid var(--ink-150); border-radius: 8px; background: #e9ecf1; }
 .jt-card-item { display: inline-block; width: fit-content; margin-top: 3px; padding: 1px 7px; border-radius: 6px; background: #eef4fd; color: var(--blue-700); font: 700 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* 2026-10-29, user request (Engineering): Jobs & WIP rows open into their items like the list mockup. The job row carries
+   data-expanded (JobsWipItemsToggle); the item list sits in one full-width cell of the row that follows it. */
+.jobs-chev { position: relative; z-index: 2; display: inline-grid; place-items: center; width: 22px; height: 22px; margin: 0 4px 0 -4px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--ink-500); vertical-align: middle; cursor: pointer; }
+.jobs-chev:hover { background: #eef4fd; color: var(--blue-700); }
+.jobs-chev svg { transition: transform .15s ease; }
+tr[data-expanded="1"] .jobs-chev svg { transform: rotate(90deg); }
+tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
+.jobs-items-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.data-table tr.jobs-item-row { display: none; }
+.data-table tr[data-expanded="1"] + tr.jobs-item-row { display: table-row; }
+/* A job hidden by the column filters or search takes its items with it. */
+.data-table tr[style*="display: none"] + tr.jobs-item-row { display: none !important; }
+.data-table tr.jobs-item-row:hover td { background: #fafbfc; }
+.data-table tr.jobs-item-row td.table-state.jobs-item-cell { display: table-cell; min-height: 0; padding: 0; background: #fafbfc; color: inherit; font-size: 13px; text-align: left; white-space: normal; border-bottom: 1px solid var(--line, #e5e9f0); }
+.jobs-item-list { list-style: none; margin: 0; padding: 4px 16px 8px 34px; position: relative; }
+.jobs-item-list::before { content: ""; position: absolute; left: 22px; top: 0; bottom: 18px; width: 2px; background: #d8e2f2; border-radius: 2px; }
+.jobs-item { position: relative; display: grid; grid-template-columns: 110px minmax(160px, 1.6fr) auto minmax(120px, 1fr) minmax(120px, auto); align-items: center; gap: 12px; padding: 7px 0; }
+.jobs-item::before { content: ""; position: absolute; left: -12px; top: 50%; width: 10px; height: 2px; background: #d8e2f2; }
+.jobs-item + .jobs-item { border-top: 1px solid #eef1f6; }
+.jobs-item-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-item-model { color: var(--ink-500); }
+.jobs-item-machine { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-500); }
+.jobs-item-eta { white-space: nowrap; color: var(--ink-500); font-variant-numeric: tabular-nums; }
+.jobs-item-eta.late { color: #c62828; font-weight: 700; }
+@media (max-width: 900px) {
+  .jobs-item { grid-template-columns: 1fr auto; }
+  .jobs-item-machine, .jobs-item-eta { grid-column: 1 / -1; }
+}
+@media print {
+  .data-table tr.jobs-item-row, .jobs-chev, .jobs-items-toggle { display: none !important; }
+}

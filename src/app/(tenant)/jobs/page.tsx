@@ -1,4 +1,5 @@
-import { FileText, Search, Plus } from "lucide-react";
+import { Fragment } from "react";
+import { ChevronRight, FileText, Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
 import { ItemsStatusBadge, itemsAreMixed } from "@/components/job-items/ItemsStatusBadge";
@@ -13,6 +14,8 @@ import { JobsWipColumnResize } from "@/components/JobsWipColumnResize";
 import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
 import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
+import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
+import { itemTag } from "@/lib/jobs/item-model";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
@@ -68,6 +71,8 @@ function searchText(job: JobRow, canSearchCustomerName: boolean): string {
     job.jobNumber, job.draftNumber, job.previousJobNumber, job.customerReference, job.customerPo,
     job.machineModel, job.machineSerial, job.component, job.componentModel, job.componentSerial, job.componentPartNumber, job.description,
     ...(canSearchCustomerName ? [job.customer.name, job.customer.tradingName, job.customer.accountCode] : []),
+    // 2026-10-29: a multi-item job is found by what its items are too (they sit in the rows under it).
+    ...(job.jobItems.length > 1 ? job.jobItems.flatMap((item) => [item.component, item.componentModel, item.componentSerial, item.componentPartNumber, item.machineMake, item.machineModel, item.plantNumber]) : []),
   ].filter(Boolean).join("\n").toLowerCase();
 }
 
@@ -80,6 +85,8 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
   switch (columnId) {
     case "jobNumber":
       return <>
+        {/* 2026-10-29, user request: a multi-item job opens into its items, like the list mockup (JobsWipItemsToggle flips the row). */}
+        {job.jobItems.length > 1 && <button type="button" className="jobs-chev" aria-expanded="false" aria-label={`Show the ${job.jobItems.length} items of job ${job.jobNumber || job.draftNumber}`} title="Show items"><ChevronRight size={15} strokeWidth={2.5} aria-hidden="true" /></button>}
         {viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>}
         {job.jobItems.length > 1 && <span className="ji-chip">{job.jobItems.length} items</span>}
       </>;
@@ -310,6 +317,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               than the dropdowns say. */}
           {!wipViewOnly && view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
+          <JobsWipItemsToggle tableId="jobs-wip-table" />
           {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
               viewer's role is entitled to) now travels down alongside
               `selected`, so e.g. a Mechanic never even sees "Customer" as a
@@ -346,13 +354,43 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
             </colgroup>
             <thead><tr>{showSelect && <th className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select-all" aria-label="Select all jobs shown" /></th>}{columns.map((id) => <th key={id}>{COLUMN_LABELS[id]}<span className="col-resize-handle" data-col-id={id} aria-hidden="true" /></th>)}{!wipViewOnly && <th className="jobs-no-print"></th>}</tr></thead>
             <tbody>
-              {data.items.map((job) => (
-                <tr key={job.id} className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()}>
-                  {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
-                  {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
-                  {!wipViewOnly && <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>}
-                </tr>
-              ))}
+              {data.items.map((job) => {
+                const multi = job.jobItems.length > 1;
+                const columnSpan = columns.length + (wipViewOnly ? 0 : 1) + (showSelect ? 1 : 0);
+                return (
+                  <Fragment key={job.id}>
+                    <tr className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
+                      {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
+                      {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
+                      {!wipViewOnly && <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>}
+                    </tr>
+                    {/* The items of a multi-item job: one cell across the table (so the column filters, print and email, which read
+                        ordinary rows, skip it), shown only while the job row above is expanded. */}
+                    {multi && (
+                      <tr className="jobs-item-row">
+                        <td className="table-state jobs-item-cell" colSpan={columnSpan}>
+                          <ul className="jobs-item-list" aria-label={`Items of job ${job.jobNumber || job.draftNumber}`}>
+                            {job.jobItems.map((item) => {
+                              const eta = item.etaDate ?? job.etaDate;
+                              const late = etaOverdueDays(eta, item.status);
+                              const machine = [item.machineMake, item.machineModel].filter(Boolean).join(" ") || job.machineModel || "";
+                              return (
+                                <li key={item.id} className="jobs-item">
+                                  <span className="ji-tag">{itemTag(job.jobNumber || job.draftNumber, item.sequence)}</span>
+                                  <span className="jobs-item-what"><strong>{item.component || job.component || "Item"}</strong>{item.componentModel ? <span className="jobs-item-model"> {item.componentModel}</span> : null}{item.componentSerial ? <span className="jobs-item-model"> · S/N {item.componentSerial}</span> : null}</span>
+                                  <StatusPill status={item.status} build={ctx.industryBuild} />
+                                  <span className="jobs-item-machine">{machine || "—"}</span>
+                                  <span className={`jobs-item-eta${late ? " late" : ""}`}>ETA {fmtDate(eta)}{late ? ` · ${late}d late` : ""}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {data.items.length === 0 && <tr><td colSpan={columns.length + (wipViewOnly ? 0 : 1) + (showSelect ? 1 : 0)} className="table-state compact-empty-state">No jobs match the current filters.</td></tr>}
             </tbody>
           </table>
