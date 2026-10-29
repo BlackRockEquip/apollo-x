@@ -3436,6 +3436,24 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     });
   }
 
+  // 2026-10-29, user request: "add a way to select all N/A if supplier did not quote". Marks every line that has no price typed
+  // as N/A (lines already priced are kept); with notAvailable false it takes N/A off every line again. Saving is still per supplier.
+  function markAllQuoteLinesNa(rfqRequestId: string, notAvailable: boolean) {
+    const lineIds = (job?.partLines || []).map((line) => String(line.id));
+    setQuoteDrafts((current) => {
+      const requestDrafts = { ...(current[rfqRequestId] || {}) };
+      for (const id of lineIds) {
+        const existing = requestDrafts[id] || { unitPrice: "", available: true, notes: "", leadTime: "" };
+        if (notAvailable) {
+          if (existing.available && existing.unitPrice.trim() === "") requestDrafts[id] = { ...existing, available: false };
+        } else if (!existing.available) {
+          requestDrafts[id] = { ...existing, available: true };
+        }
+      }
+      return { ...current, [rfqRequestId]: requestDrafts };
+    });
+  }
+
   // Best-effort price extraction — added 2026-09-09 (user request: "Prices
   // are typed in by hand, not extracted from uploaded files"). Runs as
   // soon as a file is attached (uploading it to recordRfqQuote, which both
@@ -5818,6 +5836,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 onToggleMaximize={() => setQuoteCompareMaximized((v) => !v)}
                 onPriceChange={(supplierId, lineId, unitPrice) => updateQuoteDraftLine(supplierId, lineId, { unitPrice })}
                 onNaChange={(supplierId, lineId, notAvailable) => updateQuoteDraftLine(supplierId, lineId, { available: !notAvailable })}
+                onNaAll={(supplierId, notAvailable) => markAllQuoteLinesNa(supplierId, notAvailable)}
                 onLeadTimeChange={(supplierId, lineId, leadTime) => updateQuoteDraftLine(supplierId, lineId, { leadTime })}
                 onNotesChange={(supplierId, notes) => setQuoteNotesByRequest((c) => ({ ...c, [supplierId]: notes }))}
                 onImportFile={async (supplierId, file) => {

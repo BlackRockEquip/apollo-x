@@ -8,8 +8,8 @@
 // professional and neatly tidied up".
 
 import { useMemo, useState, type KeyboardEvent } from "react";
-import { AlertCircle, Check, Columns3, FileText, Loader2, Maximize2, Minimize2, Save, Upload, X } from "lucide-react";
-import { bestMix, draftToCell, entryCompare, formatRand, parseDraftPrice, sanitizePriceInput, shortSupplierName, supplierStats, type GridRow } from "./compare-model";
+import { AlertCircle, Ban, Check, Columns3, FileText, Loader2, Maximize2, Minimize2, Save, Undo2, Upload, X } from "lucide-react";
+import { bestMix, draftToCell, entryCompare, formatRand, naBarCounts, parseDraftPrice, sanitizePriceInput, shortSupplierName, supplierStats, type GridRow } from "./compare-model";
 
 export type EntrySupplier = {
   id: string;
@@ -42,6 +42,8 @@ type Props = {
   onToggleMaximize: () => void;
   onPriceChange: (supplierId: string, lineId: string, unitPrice: string) => void;
   onNaChange: (supplierId: string, lineId: string, notAvailable: boolean) => void;
+  // 2026-10-29: mark every blank line N/A (the supplier did not quote), or clear all N/A again.
+  onNaAll: (supplierId: string, notAvailable: boolean) => void;
   onLeadTimeChange: (supplierId: string, lineId: string, leadTime: string) => void;
   onNotesChange: (supplierId: string, notes: string) => void;
   onImportFile: (supplierId: string, file: File) => Promise<void>;
@@ -122,6 +124,7 @@ export function QuoteEntryDialog(props: Props) {
   const pricedLines = selectedStat.priced;
   const naLines = selectedStat.answered - selectedStat.priced;
   const waiting = lines.length - selectedStat.answered;
+  const naBar = naBarCounts(rows.map((r) => r.cells[selectedIndex]));
 
   function pillFor(index: number): { text: string; tone: string } {
     const s = suppliers[index];
@@ -228,6 +231,19 @@ export function QuoteEntryDialog(props: Props) {
             ) : selected.importNote ? (
               <div className="qc-banner qc-pane-banner"><AlertCircle size={16} /><span>{selected.importNote}</span></div>
             ) : null}
+
+            {/* 2026-10-29, user request: "add a way to select all N/A if supplier did not quote". */}
+            <div className="qc-bulkbar">
+              <span>Did {selected.name} not quote this job?</span>
+              <button type="button" className="qc-btn is-small" disabled={naBar.blank === 0 || busy || selected.analyzing} title="Marks every line without a price as N/A. Lines you have already priced are kept." onClick={() => props.onNaAll(selected.id, true)}>
+                <Ban size={14} /> Mark all N/A{naBar.blank > 0 && naBar.blank < lines.length ? ` (${naBar.blank} blank)` : ""}
+              </button>
+              {naBar.na > 0 && (
+                <button type="button" className="qc-btn is-small" disabled={busy || selected.analyzing} title="Takes N/A off every line again so prices can be typed" onClick={() => props.onNaAll(selected.id, false)}>
+                  <Undo2 size={14} /> Clear all N/A ({naBar.na})
+                </button>
+              )}
+            </div>
 
             <div className="qc-cols qc-cols-head">
               <div>Part</div>

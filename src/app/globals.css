@@ -1702,6 +1702,9 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .qc-note { flex:1; min-width:180px; max-width:340px; height:30px; box-sizing:border-box; padding:0 10px; border:1px solid var(--ink-300,#c6cdd8); border-radius:8px; background:#fff; font-size:12.5px; }
 .qc-pane-head .qc-btn { flex:none; height:40px; padding:0 20px; font-size:13.5px; }
 .qc-pane-banner { flex:none; margin:14px 28px 0; }
+/* 2026-10-29: the "Mark all N/A" bar under the supplier header. */
+.qc-bulkbar { display:flex; flex:none; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 28px 0; font-size:12.5px; color:var(--ink-500,#6b7689); }
+.qc-btn.is-small { height:30px; padding:0 12px; gap:6px; font-size:12.5px; }
 
 .qc-cols { display:grid; grid-template-columns:minmax(140px,200px) 52px 202px 150px 112px minmax(0,1fr); align-items:center; box-sizing:border-box; padding:0 28px; }
 .qc-cols-head { flex:none; align-items:end; height:44px; margin-top:6px; padding-bottom:8px; font-size:11.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-500,#6b7689); }
@@ -1812,7 +1815,7 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
   .qc-cols > :nth-child(6) { display:none; }
   .qc-price { width:150px; }
   .qc-summary { width:auto; border-left:0; border-top:1px solid #e1e6ee; max-height:40%; }
-  .qc-head, .qc-pane-head, .qc-actions, .qc-cols { padding-left:16px; padding-right:16px; }
+  .qc-head, .qc-pane-head, .qc-actions, .qc-cols, .qc-bulkbar { padding-left:16px; padding-right:16px; }
   .qc-pane-head { flex-wrap:wrap; }
   .qc-actions { flex-wrap:wrap; gap:8px; padding-top:10px; padding-bottom:10px; }
   .qc-actions-note { flex-basis:100%; max-width:none; }

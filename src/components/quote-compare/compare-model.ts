@@ -285,3 +285,17 @@ export function shortSupplierName(name: string): string {
     .trim();
   return short || name;
 }
+
+// How many of one supplier's lines are blank (no price, not N/A), priced, or N/A -
+// drives the "Mark all N/A" bar in the Compare quotes entry dialog.
+export function naBarCounts(cells: PriceCell[]): { blank: number; na: number; priced: number } {
+  let blank = 0;
+  let na = 0;
+  let priced = 0;
+  for (const cell of cells) {
+    if (cell.kind === "na") na += 1;
+    else if (cell.kind === "price") priced += 1;
+    else blank += 1;
+  }
+  return { blank, na, priced };
+}
