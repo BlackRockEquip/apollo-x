@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { FileText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
-import { itemTag, summarizeItemStatuses } from "@/lib/jobs/item-model";
+import { itemLinkSummary, itemLinkTotal, itemTag, summarizeItemStatuses, type ItemLinkCounts } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
 import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } from "./item-draft";
 
@@ -30,6 +30,8 @@ type Props = {
   onDeliveryNote?: () => void;
   /** Asks "are all documents uploaded?" before an item moves to ready-to-deliver or later; false = stay where it is. */
   confirmDocuments?: (status: string) => Promise<boolean>;
+  /** What is tied to each item (parts, outwork, photos, files), by item id. */
+  links?: Record<string, ItemLinkCounts>;
 };
 
 function fmtDate(value: string | null): string {
@@ -38,7 +40,7 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
@@ -81,7 +83,9 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
   }
   async function removeItem(item: ItemRow) {
     const tag = itemTag(jobNumber, item.sequence);
-    if (!(await confirm({ message: `Remove item ${tag}${item.component ? ` (${item.component})` : ""} from this job? This cannot be undone.`, tone: "warning", confirmLabel: "Remove item" }))) return;
+    const tied = itemLinkTotal(links?.[item.id]);
+    const tiedNote = tied > 0 ? ` The ${tied} record${tied === 1 ? "" : "s"} tied to it (${itemLinkSummary(links?.[item.id])}) stay on the job, as whole-job records.` : "";
+    if (!(await confirm({ message: `Remove item ${tag}${item.component ? ` (${item.component})` : ""} from this job? This cannot be undone.${tiedNote}`, tone: "warning", confirmLabel: "Remove item" }))) return;
     await call(item.id, `${base}?itemId=${item.id}`, { method: "DELETE" });
   }
   async function saveNew() {
@@ -150,7 +154,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                   main={(
                     <tr className={isEditing ? "ji-row open" : "ji-row"}>
                       <td><span className="ji-tag">{tag}</span></td>
-                      <td>{item.component || "-"}{item.workRequested && <small className="ji-sub">{item.workRequested}</small>}</td>
+                      <td>{item.component || "-"}{item.workRequested && <small className="ji-sub">{item.workRequested}</small>}{links?.[item.id] && itemLinkTotal(links[item.id]) > 0 && <small className="ji-links-sub">{itemLinkSummary(links[item.id])}</small>}</td>
                       <td>{item.componentModel || "-"}</td>
                       <td>{item.componentSerial || "-"}</td>
                       <td>{machine || "-"}</td>

@@ -24,7 +24,8 @@ import { JobItemsPanel, AddAnotherItem } from "./job-items/JobItemsPanel";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
 import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
@@ -79,6 +80,8 @@ type PartLineRow = Row & {
   // 2026-10-12 — free-text note per part line (Notes column).
   notes?: string | null;
   orderedFromSupplier?: Row & { name?: string | null };
+  // 2026-10-29: the item of a multi-item job this line is for (null = the whole job).
+  itemId?: string | null;
   part?: (Row & { partNumber?: string | null; description?: string | null; unitOfMeasure?: string | null; stockBalances?: Array<{ quantityOnHand?: unknown; quantityReserved?: unknown }> }) | null;
 };
 // Outwork — new (see schema.prisma's OutworkItem comment). batchId groups
@@ -93,6 +96,8 @@ type OutworkItemRow = Row & {
   dateReceived?: string | null;
   batchId?: string | null;
   notes?: string | null;
+  // 2026-10-29: the item of a multi-item job this line is for (null = the whole job).
+  itemId?: string | null;
   // vatNumber/addresses added 2026-09-16 so the delivery note (see
   // printDeliveryNote) can print the supplier's full block, not just its
   // name — see the matching include added in jobs/service.ts.
@@ -185,6 +190,8 @@ type JobAttachmentRow = Row & {
   tag?: string | null;
   // 2026-10-27: true for a file added through the Photos section; everything else is an Attachment.
   isPhoto?: boolean | null;
+  // 2026-10-29: the item of a multi-item job this file is for (null = the whole job).
+  itemId?: string | null;
   createdAt?: string | null;
   createdBy?: Row & { displayName?: string | null };
 };
@@ -644,7 +651,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // so the option can show "Creating…" and disable itself mid-request.
   const [outworkCreatingSupplier, setOutworkCreatingSupplier] = useState(false);
   const [outworkDateSentOut, setOutworkDateSentOut] = useState("");
-  const [outworkLines, setOutworkLines] = useState<Array<{ id: string; description: string; quantity: string }>>([{ id: "row-1", description: "", quantity: "1" }]);
+  const [outworkLines, setOutworkLines] = useState<Array<{ id: string; description: string; quantity: string; itemId?: string }>>([{ id: "row-1", description: "", quantity: "1", itemId: "" }]);
+  // 2026-10-29, "link parts, specs, photos etc" to an item: the item picked for new parts / photos / files, the item filter on the
+  // job's lists, and the item shown while an outwork line is being edited. Empty / "all" on a job with no items.
+  const [itemFilter, setItemFilter] = useState("all");
+  const [partItemId, setPartItemId] = useState("");
+  const [photoItemId, setPhotoItemId] = useState("");
+  const [attachmentItemId, setAttachmentItemId] = useState("");
+  const [editOutworkItemId, setEditOutworkItemId] = useState("");
   const [editingOutworkId, setEditingOutworkId] = useState("");
   const [editOutworkSupplierQuery, setEditOutworkSupplierQuery] = useState("");
   const [editOutworkSupplierOptions, setEditOutworkSupplierOptions] = useState<SupplierOption[]>([]);
@@ -1659,7 +1673,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const r = await fetch(`/api/v1/jobs/${jobId}/parts`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bulkLines: bulkPartLines }),
+        body: JSON.stringify({ bulkLines: bulkPartLines, ...(partItemId ? { itemId: partItemId } : {}) }),
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to add part lines.");
@@ -1945,6 +1959,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return true;
   }
 
+  // 2026-10-29: a record tied to an item of a multi-item job prints that item's tag in front of its description ("[BRE1122-2] ...").
+  function describeForItem(itemId: unknown, description: unknown): string {
+    const item = itemId ? (job?.jobItems ?? []).find((entry) => entry.id === itemId) : undefined;
+    return withItemTag(item ? itemTag(job?.jobNumber ?? job?.draftNumber, item.sequence) : "", String(description || ""));
+  }
+
   // 2026-09-16 — user request: "Add a Print Parts List button which
   // prints the complete parts lists table, with all headings." Mirrors
   // printJobPickSlip's own print-window pattern, but for the whole Parts
@@ -1964,7 +1984,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         const status = partStatusLabel(String(line.status || ""), stockOn);
         return `<tr>
           <td>${esc(String(line.partNumber || ""))}</td>
-          <td>${esc(String(line.description || ""))}</td>
+          <td>${esc(describeForItem(line.itemId, line.description))}</td>
           <td class="qty">${esc(quantity)}</td>
           <td class="qty">${esc(received)}</td>
           <td>${esc(String(line.orderNumber || ""))}</td>
@@ -2009,7 +2029,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const header = ["Part number", "Description", "Qty", "Received", "Outstanding", "Order number", "Supplier", "Status", "Notes"];
     const rows = lines.map((line) => [
       String(line.partNumber || ""),
-      String(line.description || ""),
+      describeForItem(line.itemId, line.description),
       Number(line.quantity ?? 0),
       Number(line.receivedQuantity ?? 0),
       Math.max(0, Number(line.quantity ?? 0) - Number(line.receivedQuantity ?? 0)),
@@ -2388,6 +2408,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         id: `part-${String(line.id)}`,
         description: partNumber && description ? `${partNumber} - ${description}` : partNumber || description || "Part",
         quantity: String(Math.max(1, Math.round(Number.isFinite(qty) ? qty : 1))),
+        itemId: line.itemId ? String(line.itemId) : "",
       };
     });
     setOutworkLines((rows) => {
@@ -2404,12 +2425,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Outwork — send components out to a supplier for outwork (machining,
   // sandblasting, etc.) and track them until they come back.
   function addOutworkRow() {
-    setOutworkLines((rows) => [...rows, { id: `row-${rows.length + 1}-${Date.now()}`, description: "", quantity: "1" }]);
+    setOutworkLines((rows) => [...rows, { id: `row-${rows.length + 1}-${Date.now()}`, description: "", quantity: "1", itemId: rows[rows.length - 1]?.itemId ?? "" }]);
   }
   function removeOutworkRow(id: string) {
     setOutworkLines((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
   }
-  function updateOutworkRow(id: string, field: "description" | "quantity", value: string) {
+  function updateOutworkRow(id: string, field: "description" | "quantity" | "itemId", value: string) {
     setOutworkLines((rows) => rows.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
   }
 
@@ -2460,7 +2481,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   async function submitOutwork() {
     if (!jobId || !outworkSupplierId) return;
     const lines = outworkLines
-      .map((r) => ({ description: r.description.trim(), quantity: Math.max(1, parseInt(r.quantity, 10) || 1) }))
+      .map((r) => ({ description: r.description.trim(), quantity: Math.max(1, parseInt(r.quantity, 10) || 1), ...(r.itemId ? { itemId: r.itemId } : {}) }))
       .filter((r) => r.description);
     if (lines.length === 0) { setError("Add at least one item with a description."); return; }
     setSaving(true); setError("");
@@ -2472,7 +2493,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to record outwork.");
-      setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1" }]);
+      setOutworkSupplierId(""); setOutworkSupplierQuery(""); setOutworkSupplierOptions([]); setOutworkSupplierPickerOpen(false); setOutworkDateSentOut(""); setOutworkLines([{ id: "row-1", description: "", quantity: "1", itemId: "" }]);
       setShowOutworkPopup(false);
       // Parts sent over from the Parts list's bulk bar ("Send to Outwork") are done with now.
       setBulkSelectedIds(new Set()); setBulkEditMode(false);
@@ -2490,6 +2511,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     } finally {
       setSaving(false);
     }
+  }
+
+  // 2026-10-29: tie an existing part line / outwork line / photo or file to an item of the job, or back to the whole job.
+  async function linkRecordToItem(kind: ItemLinkKind, recordId: string, itemId: string) {
+    if (!jobId) return;
+    await postAction(`/api/v1/jobs/${jobId}/item-links`, { kind, recordId, itemId: itemId || null });
   }
 
   async function markOutworkReceived(itemId: string) {
@@ -2529,6 +2556,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           notes: (asPhoto ? photoNotes : attachmentNotes).trim() || null,
           tag: asPhoto ? photoTag || null : null,
           isPhoto: asPhoto,
+          ...((asPhoto ? photoItemId : attachmentItemId) ? { itemId: asPhoto ? photoItemId : attachmentItemId } : {}),
         }),
       });
       const b = await r.json();
@@ -2598,10 +2626,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     setEditOutworkDateSentOut(item.dateSentOut ? String(item.dateSentOut).slice(0, 10) : "");
     setEditOutworkDateReceived(item.dateReceived ? String(item.dateReceived).slice(0, 10) : "");
     setEditOutworkNotes(item.notes || "");
+    setEditOutworkItemId(item.itemId ? String(item.itemId) : "");
   }
 
   function cancelEditOutwork() {
-    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkDateReceived(""); setEditOutworkNotes("");
+    setEditingOutworkId(""); setEditOutworkSupplierId(""); setEditOutworkSupplierQuery(""); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); setEditOutworkDescription(""); setEditOutworkQuantity("1"); setEditOutworkDateSentOut(""); setEditOutworkDateReceived(""); setEditOutworkNotes(""); setEditOutworkItemId("");
   }
 
   async function saveOutworkEdit(itemId: string) {
@@ -2618,6 +2647,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           dateSentOut: editOutworkDateSentOut || null,
           dateReceived: editOutworkDateReceived || null,
           notes: editOutworkNotes.trim() || null,
+          ...((job?.jobItems ?? []).length > 0 ? { itemId: editOutworkItemId || null } : {}),
         }),
       });
       const b = await r.json();
@@ -2660,7 +2690,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       make: form.machineMake || "",
       model: form.machineModel || "",
       serial: form.machineSerial || "",
-      items: batchItems.map((i) => ({ description: i.description || "—", quantity: Number(i.quantity ?? 0) })),
+      items: batchItems.map((i) => {
+        const linked = i.itemId ? (job?.jobItems ?? []).find((entry) => entry.id === i.itemId) : undefined;
+        return { description: withItemTag(linked ? itemTag(job?.jobNumber, linked.sequence) : "", i.description || "—"), quantity: Number(i.quantity ?? 0) };
+      }),
     });
   }
 
@@ -3026,7 +3059,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const tag = (text: string, i: number) => `<span class="${i === 0 ? "tag" : "tag2"}">${escapeHtml(text)}</span>`;
     const partsRows = job.partLines.map((line) => `<tr>
         <td class="mono">${escapeHtml(String(line.partNumber || ""))}</td>
-        <td>${escapeHtml(String(line.description || ""))}</td>
+        <td>${escapeHtml(describeForItem(line.itemId, line.description))}</td>
         <td class="c">${escapeHtml(decimalText(line.quantity))}</td>
         <td class="c">${escapeHtml(decimalText(line.receivedQuantity ?? 0))}</td>
         <td class="mono">${escapeHtml(String(line.orderNumber || "—"))}</td>
@@ -3034,7 +3067,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <td><span class="st">${escapeHtml(partStatusLabel(String(line.status || ""), stockOn))}</span></td>
       </tr>`).join("");
     const outworkRows = job.outworkItems.map((item) => `<tr>
-        <td>${escapeHtml(String(item.description || ""))}</td>
+        <td>${escapeHtml(describeForItem(item.itemId, item.description))}</td>
         <td class="c">${escapeHtml(String(item.quantity ?? ""))}</td>
         <td>${escapeHtml(String(item.supplier?.name || "—"))}</td>
         <td>${fmt(String(item.dateSentOut || ""))}</td>
@@ -4156,6 +4189,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
   // Machine / component card and offers "Add another item" beneath it.
   const jobItemRows = job?.jobItems ?? [];
+  // The same items, for the "For item" pickers, tag chips and the filter on the Parts / Outwork / Photos / Attachments lists.
+  const linkItems = jobItemRows;
+  const activeItemFilter = normalizeItemFilter(itemFilter, linkItems.map((item) => item.id));
+  const itemLinkCounts = job ? countItemLinks({ parts: job.partLines, outwork: job.outworkItems, attachments: job.attachments }) : {};
+  const itemJobNumber = job ? (job.jobNumber ?? job.draftNumber) : null;
   const itemsPanelSection = job && jobItemRows.length > 0 ? (
     <JobItemsPanel
       jobId={job.id}
@@ -4172,6 +4210,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       onChanged={() => load(true)}
       onError={setError}
       onDeliveryNote={openJobDeliveryNoteDialog}
+      links={itemLinkCounts}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
@@ -4435,6 +4474,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     <div className="drawer-fields">
       <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setJobKitOptions([]))}><span>Apply job kit</span><div><Search size={15} /><input value={jobKitQuery} onChange={(e) => { setJobKitQuery(e.target.value); setJobKitId(""); }} placeholder="Search job kit name, make or model" /></div>{jobKitOptions.length > 0 && <div className="selector-results">{jobKitOptions.map((kit) => <button key={kit.id} type="button" onClick={() => { setJobKitId(kit.id); setJobKitQuery(`${kit.name}${kit.machineMake ? ` · ${kit.machineMake}` : ""}${kit.machineModel ? ` ${kit.machineModel}` : ""}`); setJobKitOptions([]); }}><strong>{kit.name}</strong><span>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "Reusable standard kit"}</span></button>)}</div>}</label>
       <label><span>&nbsp;</span><button type="button" className="quiet-button" disabled={saving || !jobKitId} onClick={() => void applyJobKit()}>Apply selected kit</button></label>
+      <ItemField items={linkItems} jobNumber={itemJobNumber} value={partItemId} onChange={setPartItemId} disabled={saving} label="For item" wide />
       <label className="wide"><span>Type or paste the parts required, one per line: part number, then quantity, then an optional description (e.g. &quot;PN-1001, 2, Hydraulic seal kit&quot;). Commas, tabs or spaces all work, and a line with only a part number adds 1.</span><textarea rows={6} value={bulkPartLines} onChange={(e) => setBulkPartLines(e.target.value)} placeholder={"PN-1001, 2, Hydraulic seal kit\nPN-2044 4\nPN-3010 x3"} /></label>
     </div>
     <footer className="detail-actions" style={{ justifyContent: "flex-start" }}><button type="button" className="section-action-button" disabled={saving || !bulkPartLines.trim()} onClick={() => void addParts()}><Plus size={15} /> Add parts</button></footer>
@@ -4490,6 +4530,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </div>
               </div>
             )}
+            {job.partLines.length > 0 && <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.partLines.filter((l) => matchesItemFilter(l.itemId, f)).length} />}
             {/* Design A: a one-line nudge that links straight to the Follow-up tab when ordered parts are still outstanding. */}
             {job.partLines.length > 0 && partCounts.outstanding > 0 && (
               <div className="jw-outstanding-strip">
@@ -4526,7 +4567,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {error ? <div className="inline-error" style={{ margin: "8px 14px" }}>{error}</div> : null}
             {(() => {
               const q = partSearchQuery.trim().toLowerCase();
-              const visiblePartLines = job.partLines.filter((line) => matchesPartFilter(line, partFilter) && (!q || (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q)));
+              const visiblePartLines = job.partLines.filter((line) => matchesItemFilter(line.itemId, activeItemFilter) && matchesPartFilter(line, partFilter) && (!q || (line.partNumber || "").toLowerCase().includes(q) || (line.description || "").toLowerCase().includes(q)));
               return (
             <>
               {/* 2026-10-22, user request: "Parts List table make the headers filterable like other tables" - the same Excel-style
@@ -4564,6 +4605,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <td data-filter-values={String(line.partNumber || "")}>
                     <strong>{text(line.partNumber)}</strong>
                     <div className="muted small-line">{line.description ? text(line.description) : <button type="button" className="quiet-button" onClick={() => void saveDescription(lineId)}>Add description</button>}</div>
+                    <ItemLinkControl items={linkItems} jobNumber={itemJobNumber} itemId={line.itemId} canEdit busy={saving} onChange={(next) => void linkRecordToItem("part", lineId, next)} subject={String(line.partNumber || "part")} />
                   </td>
                   <td data-filter-values={quantity}>
                     {quantity}
@@ -4903,6 +4945,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       {outworkLines.map((row) => <div key={row.id} style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
                         <input value={row.description} onChange={(e) => updateOutworkRow(row.id, "description", e.target.value)} placeholder="e.g. Compressor housing" style={{ flex: 1 }} />
                         <input type="number" min={1} value={row.quantity} onChange={(e) => updateOutworkRow(row.id, "quantity", e.target.value)} style={{ width: 80 }} />
+                        <ItemSelect items={linkItems} jobNumber={itemJobNumber} value={row.itemId ?? ""} onChange={(next) => updateOutworkRow(row.id, "itemId", next)} ariaLabel="Item this line is for" />
                         {outworkLines.length > 1 && <button type="button" className="table-action danger" onClick={() => removeOutworkRow(row.id)}>Remove</button>}
                       </div>)}
                     </div>
@@ -4915,12 +4958,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 immediately right of it — both added 2026-09-10 at the
                 user's request ("next to status field" / "next to Status on
                 the left side"), see outworkDaysOutstanding() above. */}
+            <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.outworkItems.filter((i) => matchesItemFilter(i.itemId, f)).length} />
             <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Description</th><th>Qty</th><th>Supplier</th><th>Sent / received</th><th>Days outstanding</th><th>Status</th><th>Notes</th><th></th></tr></thead><tbody>
-              {job.outworkItems.map((item) => {
+              {job.outworkItems.filter((item) => matchesItemFilter(item.itemId, activeItemFilter)).map((item) => {
                 const editing = editingOutworkId === String(item.id);
                 if (editing) {
                   return <tr key={item.id}>
-                    <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /></td>
+                    <td><input value={editOutworkDescription} onChange={(e) => setEditOutworkDescription(e.target.value)} /><ItemSelect items={linkItems} jobNumber={itemJobNumber} value={editOutworkItemId} onChange={setEditOutworkItemId} ariaLabel="Item this line is for" /></td>
                     <td><input type="number" min={1} value={editOutworkQuantity} onChange={(e) => setEditOutworkQuantity(e.target.value)} style={{ width: 70 }} /></td>
                     <td className="party-selector" onBlur={closeDropdownUnlessWithin(() => setEditOutworkSupplierPickerOpen(false))}><div><Search size={14} /><input value={editOutworkSupplierQuery} onChange={(e) => { setEditOutworkSupplierQuery(e.target.value); setEditOutworkSupplierId(""); setEditOutworkSupplierPickerOpen(true); }} onFocus={() => setEditOutworkSupplierPickerOpen(true)} placeholder="Search active supplier" /></div>{editOutworkSupplierPickerOpen && editOutworkSupplierQuery.trim().length >= 2 && <div className="selector-results">{editOutworkSupplierOptions.map((s) => <button key={s.id} type="button" onClick={() => { setEditOutworkSupplierId(s.id); setEditOutworkSupplierQuery(s.name); setEditOutworkSupplierOptions([]); setEditOutworkSupplierPickerOpen(false); }}><strong>{s.name}</strong></button>)}<button type="button" disabled={editOutworkCreatingSupplier} onClick={() => void createEditOutworkSupplier()}><Plus size={12} style={{ verticalAlign: "-2px" }} /> {editOutworkCreatingSupplier ? "Creating…" : `Create supplier "${editOutworkSupplierQuery.trim()}"`}</button></div>}</td>
                     {/* 2026-10-01, user request ("be able to edit receive
@@ -4946,7 +4990,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   </tr>;
                 }
                 return <tr key={item.id}>
-                  <td><strong>{text(item.description)}</strong></td>
+                  <td><ItemChip items={linkItems} jobNumber={itemJobNumber} itemId={item.itemId} /><strong>{text(item.description)}</strong></td>
                   <td>{decimalText(item.quantity)}</td>
                   <td>{text(item.supplier?.name)}</td>
                   <td>
@@ -4968,14 +5012,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 </tr>;
               })}
               {job.outworkItems.length === 0 && <tr><td colSpan={8} className="table-state compact-empty-state">No outwork recorded on this job yet.</td></tr>}
+              {job.outworkItems.length > 0 && !job.outworkItems.some((item) => matchesItemFilter(item.itemId, activeItemFilter)) && <tr><td colSpan={8} className="table-state compact-empty-state">No outwork for this item.</td></tr>}
             </tbody></table></div>
           </section>
   ) : null;
 
   // 2026-10-27, user request (Mechanic view): Photos and Attachments are two separate sections. A mechanic only ever gets
   // Photos (the server leaves the Attachments out of what it sends them as well).
-  const photoFiles = job ? job.attachments.filter((file) => Boolean(file.isPhoto)) : [];
-  const documentFiles = job ? job.attachments.filter((file) => !file.isPhoto) : [];
+  const photoFiles = job ? job.attachments.filter((file) => Boolean(file.isPhoto) && matchesItemFilter(file.itemId, activeItemFilter)) : [];
+  const documentFiles = job ? job.attachments.filter((file) => !file.isPhoto && matchesItemFilter(file.itemId, activeItemFilter)) : [];
   const fileRows = (files: JobAttachmentRow[], emptyText: string) => (
               <div className="record-list">
                 {files.length === 0 && <div className="table-state compact-empty-state">{emptyText}</div>}
@@ -4998,6 +5043,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                       ) : (
                         <span>{file.notes ? text(file.notes) : <em className="muted">No note</em>} <button type="button" className="table-action" title="Edit note" aria-label="Edit note" onClick={() => { setEditingAttachmentId(fileId); setEditingAttachmentNotes(file.notes ? String(file.notes) : ""); }}><Pencil size={12} /></button></span>
                       )}
+                      <ItemLinkControl items={linkItems} jobNumber={itemJobNumber} itemId={file.itemId} canEdit={!viewOnly && (!mechanicFieldsLocked || Boolean(file.isPhoto))} busy={saving} onChange={(next) => void linkRecordToItem("attachment", fileId, next)} subject={String(file.fileName)} />
                     </div>
                     <span>{file.createdAt ? new Date(String(file.createdAt)).toLocaleDateString("en-ZA") : "—"}</span>
                     <button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}><Download size={14} /> Download</button>
@@ -5013,7 +5059,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <header>
                 <div><h2>Photos</h2><p>Pictures of the job, such as the machine, the fault or the serial plate.</p></div>
               </header>
+              <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.attachments.filter((a) => a.isPhoto && matchesItemFilter(a.itemId, f)).length} />
               <div className="drawer-fields">
+                <ItemField items={linkItems} jobNumber={itemJobNumber} value={photoItemId} onChange={setPhotoItemId} disabled={photoUploading} label="For item" />
                 <label><span>Add a photo (max 8MB)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} /></label>
                 {fieldLayout && (
                   <label><span>Tag</span>
@@ -5035,7 +5083,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <header>
                 <div><h2>Attachments</h2><p>Documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
               </header>
+              <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.attachments.filter((a) => !a.isPhoto && matchesItemFilter(a.itemId, f)).length} />
               <div className="drawer-fields">
+                <ItemField items={linkItems} jobNumber={itemJobNumber} value={attachmentItemId} onChange={setAttachmentItemId} disabled={attachmentUploading} label="For item" />
                 <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
                 <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
                 <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment(false)}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
@@ -5090,6 +5140,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const specificationsAccess = accessOf("SPECIFICATIONS");
   const specificationsSection = job && specificationsAccess !== "DENIED" ? (
     <JobDimensionReports
+      items={linkItems}
+      jobNumber={itemJobNumber}
+      itemFilter={activeItemFilter}
+      onItemFilter={setItemFilter}
       jobId={job.id}
       jobLabel={String(job.jobNumber || job.draftNumber || "")}
       defaultComponent={String(form.component || "")}

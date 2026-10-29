@@ -27,6 +27,7 @@ import type {
 } from "@/lib/inventory/validation";
 import { deriveStockState } from "@/lib/inventory/stock-state";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
+import { itemTag, withItemTag } from "@/lib/jobs/item-model";
 import { normalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import { canSeePickSlipValue, estimatePickValue } from "@/lib/inventory/pick-slip-value";
@@ -2799,6 +2800,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
 
   const customerName = job.customer?.tradingName || job.customer?.name || null;
   const supersededByPart = await supersededNumbersByPart(ctx.companyId!, result.picked.map((l) => l.partId));
+  const itemOfLine = await itemTagsByPartLine(ctx.companyId!, result.picked.map((l) => l.jobPartLineId));
   return {
     pickSlip:
       result.pickSlipId == null
@@ -2809,7 +2811,7 @@ export async function createPickSlipForJob(ctx: RequestContext, jobId: string, o
             jobNumber: job.jobNumber ?? job.draftNumber,
             customerName,
             createdAt: new Date().toISOString(),
-            lines: result.picked.map((l) => ({ partNumber: l.partNumber, supersededNumbers: supersededByPart.get(l.partId) ?? "", description: l.description, quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
+            lines: result.picked.map((l) => ({ partNumber: l.partNumber, supersededNumbers: supersededByPart.get(l.partId) ?? "", description: pickSlipDescription(l.description, itemOfLine.get(l.jobPartLineId), job.jobNumber ?? job.draftNumber), quantity: l.quantity.toString(), binLocationLabel: l.binLocationLabel })),
           },
     pickedCount: result.picked.length,
     outstandingCount,
@@ -2986,6 +2988,20 @@ export async function cancelPickSlip(ctx: RequestContext, pickSlipId: string, in
 // scoped list, or Stock Levels' company-wide history) can show a
 // cancelled slip as cancelled rather than indistinguishable from an
 // active one, and hide its own "Cancel"/"Delete" action once it's gone.
+// 2026-10-29, Engineering multi-item jobs: a part line can be for one item of the job. The slip shows that item's tag in front of
+// the line's description ("[BRE1122-2] Seal kit") so the storeman knows which item each part is for. Lines of an ordinary job,
+// or a part line for the whole job, are unchanged.
+function pickSlipDescription(description: string, item: { sequence: number } | undefined, jobNumber: string | null | undefined): string {
+  return item ? withItemTag(itemTag(jobNumber, item.sequence), description) : description;
+}
+
+async function itemTagsByPartLine(companyId: string, partLineIds: Array<string | null | undefined>): Promise<Map<string, { sequence: number }>> {
+  const ids = [...new Set(partLineIds.filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.jobPartLine.findMany({ where: { id: { in: ids }, companyId, itemId: { not: null } }, select: { id: true, item: { select: { sequence: true } } } });
+  return new Map(rows.filter((row) => row.item).map((row) => [row.id, { sequence: row.item!.sequence }]));
+}
+
 export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof pickSlipQuery>) {
   requireInventory(ctx, "INVENTORY_VIEW", "READ");
   requirePickSlipsModule(ctx, "READ");
@@ -3002,6 +3018,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
     prisma.pickSlip.count({ where }),
   ]);
   const supersededByPart = await supersededNumbersByPart(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.partId)));
+  const itemOfLine = await itemTagsByPartLine(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.jobPartLineId)));
   // "Estimate Stock Price" column: only company admins, managers and stock controllers (who may see cost prices); a cancelled slip picked nothing.
   const viewCost = canSeePickSlipValue(ctx);
   return {
@@ -3019,7 +3036,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
       lines: ps.lines.map((l) => ({
         partNumber: l.partNumber,
         supersededNumbers: supersededByPart.get(l.partId) ?? "",
-        description: l.description,
+        description: pickSlipDescription(l.description, itemOfLine.get(l.jobPartLineId ?? ""), ps.job.jobNumber ?? ps.job.draftNumber),
         quantity: l.quantity.toString(),
         binLocationLabel: l.binLocation ? formatLocationLabel(l.binLocation.name, l.binLocation.code) : null,
       })),

@@ -192,6 +192,8 @@ export const jobWarrantyInput = z.object({
 // paste some lines AND import a file in the same request if they want to.
 export const jobPartLineBulkAddInput = z
   .object({
+    // 2026-10-29: the item of a multi-item job these parts are for (left out / null = the whole job).
+    itemId: z.string().cuid().optional().nullable(),
     bulkLines: z.string().trim().optional(),
     fileName: z.string().trim().min(1).max(160).optional().nullable(),
     mimeType: z.string().trim().min(3).max(120).optional().nullable(),
@@ -247,6 +249,8 @@ export const jobPartLineReceiveInput = z.object({
 export const outworkLineInput = z.object({
   description: z.string().trim().min(1).max(500),
   quantity: z.coerce.number().int().positive().default(1),
+  // 2026-10-29: the item of a multi-item job this line is for (left out / null = the whole job).
+  itemId: z.string().cuid().optional().nullable(),
 });
 
 export const outworkAddInput = z.object({
@@ -271,6 +275,8 @@ export const outworkEditInput = z.object({
   // next to each item sent out"). "" and null both mean "no note" — the
   // service layer normalizes either to null before saving.
   notes: z.string().trim().max(2000).nullish(),
+  // 2026-10-29: left out = leave the item link as it is; null = back to the whole job.
+  itemId: z.string().cuid().optional().nullable(),
 });
 
 export const outworkReceiveInput = z.object({
@@ -290,6 +296,8 @@ export const attachmentUploadInput = z.object({
   tag: z.enum(["BEFORE", "AFTER", "FAULT", "SERIAL_PLATE", "OTHER"]).optional().nullable(),
   // 2026-10-27: true when the file is added through the Photos section (images only).
   isPhoto: z.boolean().optional(),
+  // 2026-10-29: the item of a multi-item job this file is for (left out / null = the whole job).
+  itemId: z.string().cuid().optional().nullable(),
 });
 
 // 2026-09-15 — user request: "once a note is added [to an attachment],
@@ -414,3 +422,11 @@ export const deliveryNotesListQuery = z.object({
   page: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).default(1)),
   pageSize: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(200).default(50)),
 });
+
+// 2026-10-29, "link parts, specs, photos etc" to an item: move one existing record to an item of the job, or back to the whole job.
+export const itemLinkInput = z.object({
+  kind: z.enum(["part", "outwork", "attachment", "dimension"]),
+  recordId: z.string().cuid(),
+  itemId: z.string().cuid().nullable(),
+});
+export type ItemLinkInput = z.infer<typeof itemLinkInput>;

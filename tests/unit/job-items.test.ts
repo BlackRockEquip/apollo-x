@@ -153,3 +153,65 @@ describe("delivery note register", () => {
     expect(deliveryNoteItemCount([])).toBe(0);
   });
 });
+
+import { countItemLinks, ITEM_FILTER_ALL, ITEM_FILTER_JOB, itemLinkSummary, itemLinkTotal, itemOptionLabel, matchesItemFilter, normalizeItemFilter, withItemTag } from "@/lib/jobs/item-model";
+
+describe("item links", () => {
+  it("filters records by item", () => {
+    expect(matchesItemFilter("a", ITEM_FILTER_ALL)).toBe(true);
+    expect(matchesItemFilter(null, ITEM_FILTER_ALL)).toBe(true);
+    expect(matchesItemFilter(null, ITEM_FILTER_JOB)).toBe(true);
+    expect(matchesItemFilter("a", ITEM_FILTER_JOB)).toBe(false);
+    expect(matchesItemFilter("a", "a")).toBe(true);
+    expect(matchesItemFilter("b", "a")).toBe(false);
+    expect(matchesItemFilter(undefined, "a")).toBe(false);
+  });
+  it("drops a filter for an item that is gone", () => {
+    expect(normalizeItemFilter("a", ["a", "b"])).toBe("a");
+    expect(normalizeItemFilter("x", ["a", "b"])).toBe(ITEM_FILTER_ALL);
+    expect(normalizeItemFilter(ITEM_FILTER_JOB, [])).toBe(ITEM_FILTER_JOB);
+  });
+  it("labels an item for a select", () => {
+    expect(itemOptionLabel({ sequence: 2, component: "Gearbox", componentModel: "GB-9" }, "BRE1122")).toBe("BRE1122-2 · Gearbox GB-9");
+    expect(itemOptionLabel({ sequence: 3, component: null }, "BRE1122")).toBe("BRE1122-3");
+    expect(itemOptionLabel({ sequence: 1, component: "Pump" }, null)).toBe("#1 · Pump");
+  });
+  it("counts what is tied to each item and ignores whole-job records", () => {
+    const counts = countItemLinks({
+      parts: [{ itemId: "a" }, { itemId: "a" }, { itemId: "b" }, { itemId: null }],
+      outwork: [{ itemId: "a" }, {}],
+      attachments: [{ itemId: "a", isPhoto: true }, { itemId: "a", isPhoto: false }, { itemId: "b", isPhoto: true }, { itemId: null, isPhoto: true }],
+    });
+    expect(counts).toEqual({ a: { parts: 2, outwork: 1, photos: 1, files: 1 }, b: { parts: 1, outwork: 0, photos: 1, files: 0 } });
+    expect(itemLinkSummary(counts.a)).toBe("2 parts · 1 outwork · 1 photo · 1 file");
+    expect(itemLinkSummary(counts.b)).toBe("1 part · 1 photo");
+    expect(itemLinkSummary(undefined)).toBe("");
+    expect(itemLinkTotal(counts.a)).toBe(5);
+    expect(itemLinkTotal(undefined)).toBe(0);
+  });
+  it("puts the item tag in front of a line", () => {
+    expect(withItemTag("BRE1122-2", "Seal kit")).toBe("[BRE1122-2] Seal kit");
+    expect(withItemTag("BRE1122-2", " ")).toBe("[BRE1122-2]");
+    expect(withItemTag(null, "Seal kit")).toBe("Seal kit");
+    expect(withItemTag(undefined, null)).toBe("");
+  });
+});
+
+import { buildPartsListSpec, type JobDocJob } from "@/lib/documents/job-specs";
+
+describe("parts list with items", () => {
+  const job = {
+    type: "ENGINEERING", status: "IN_PROGRESS", jobNumber: "BRE1122", partLines: [
+      { id: "p1", partNumber: "PN-1", description: "Seal kit", quantity: 2, itemId: "i2", status: "PENDING" },
+      { id: "p2", partNumber: "PN-2", description: "Bearing", quantity: 1, itemId: null, status: "PENDING" },
+    ],
+    outworkItems: [],
+    jobItems: [{ id: "i1", sequence: 1 }, { id: "i2", sequence: 2 }],
+  } as unknown as JobDocJob;
+  it("puts the item tag in front of a part tied to an item", () => {
+    const spec = buildPartsListSpec({ title: "Parts list", jobLabel: "BRE1122", job });
+    const table = spec.blocks.find((block) => block.type === "table") as { rows: string[][] };
+    expect(table.rows[0][1]).toBe("[BRE1122-2] Seal kit");
+    expect(table.rows[1][1]).toBe("Bearing");
+  });
+});

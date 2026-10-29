@@ -1,4 +1,5 @@
 import type { DocBlock, DocSpec } from "@/lib/documents/pdf";
+import { itemTag, withItemTag } from "@/lib/jobs/item-model";
 
 // Builds the DocSpec (what the saved PDF contains) for each job document from
 // the same data the print views use — see the print functions in
@@ -35,6 +36,8 @@ export type JobDocJob = {
   customer?: { name?: string | null; tradingName?: string | null; addresses?: unknown[]; contacts?: unknown[] } | null;
   partLines: Rec[];
   outworkItems: Rec[];
+  /** Engineering multi-item jobs: the job's items, so a part or outwork line can print the tag of the item it is for. */
+  jobItems?: Rec[];
 };
 
 /** The job form's string fields (everything the print views read from `form`). */
@@ -79,10 +82,18 @@ const machineRows = (form: JobDocForm): [string, string][] => [
 const PART_HEADERS = ["Part number", "Description", "Qty", "Received", "Order number", "Supplier", "Status"];
 const PART_WIDTHS = [1.3, 3, 0.6, 0.9, 1.2, 1.5, 1.3];
 
-function partRows(lines: Rec[]) {
+// "BRE1122-2" for a line tied to an item of the job; nothing for a whole-job line (or a job with no items).
+function itemTagOf(job: JobDocJob, line: Rec): string {
+  const id = typeof line.itemId === "string" ? line.itemId : "";
+  if (!id) return "";
+  const item = (job.jobItems ?? []).find((entry) => entry.id === id);
+  return item ? itemTag(job.jobNumber ?? job.draftNumber, Number(item.sequence)) : "";
+}
+
+function partRows(lines: Rec[], job?: JobDocJob) {
   return lines.map((line) => [
     str(line.partNumber),
-    str(line.description),
+    withItemTag(job ? itemTagOf(job, line) : "", str(line.description)),
     decimal(line.quantity),
     decimal(line.receivedQuantity ?? 0),
     str(line.orderNumber) || "—",
@@ -260,7 +271,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
   });
   for (const extra of layout.extras) blocks.push({ type: "heading", text: extra.title }, { type: "kv", rows: extra.rows });
   blocks.push({ type: "pageBreak" }, { type: "heading", text: "Parts list" });
-  if (job.partLines.length > 0) blocks.push({ type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(job.partLines) });
+  if (job.partLines.length > 0) blocks.push({ type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(job.partLines, job) });
   else blocks.push({ type: "paragraph", text: "No parts on this job." });
   blocks.push({ type: "heading", text: "Outwork" });
   if (job.outworkItems.length > 0) {
@@ -270,7 +281,7 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
       widths: [3, 0.6, 1.6, 1.2, 1.2, 1.2],
       center: [1],
       rows: job.outworkItems.map((item) => [
-        str(item.description),
+        withItemTag(itemTagOf(job, item), str(item.description)),
         str(item.quantity),
         str((item.supplier as Rec | null | undefined)?.name) || "—",
         dateText(str(item.dateSentOut)),
@@ -380,7 +391,7 @@ function buildPartsListSpecRaw(input: { title: string; jobLabel: string; job: Jo
     rightLines: [`Printed: ${(input.printedAt ?? new Date()).toLocaleDateString("en-ZA")}`],
     blocks: [
       lines.length > 0
-        ? { type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(lines) }
+        ? { type: "table", headers: PART_HEADERS, widths: PART_WIDTHS, center: [2, 3], rows: partRows(lines, job) }
         : { type: "paragraph", text: outstanding && job.partLines.length > 0 ? "No outstanding parts on this job - everything has been received." : "No parts on this job." },
     ],
   };

@@ -45,6 +45,7 @@ import {
   jobItemUpdateInput,
   jobDeliveryNoteInput,
   deliveryNotesListQuery,
+  itemLinkInput,
   type JobItemInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
@@ -406,7 +407,7 @@ async function getJobScoped(companyId: string, id: string) {
       // bytes down on every job load — the bytes themselves are only
       // fetched by the dedicated download route.
       attachments: {
-        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
+        select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } },
         orderBy: { createdAt: "desc" },
       },
     },
@@ -425,6 +426,15 @@ async function getPartLineScoped(companyId: string, jobId: string, lineId: strin
 async function getOutworkItemScoped(companyId: string, jobId: string, itemId: string) {
   const item = await prisma.outworkItem.findFirst({ where: { id: itemId, companyId, jobId } });
   if (!item) notFound();
+  return item;
+}
+
+// 2026-10-29, "link parts, specs, photos etc" to an item: parts, outwork, photos / attachments and specification reports can be
+// tied to one item of a multi-item job (the itemId column; empty = the whole job). The item must belong to this job.
+async function resolveJobItem(client: Pick<Prisma.TransactionClient, "jobItem">, companyId: string, jobId: string, itemId: string | null | undefined) {
+  if (!itemId) return null;
+  const item = await client.jobItem.findFirst({ where: { id: itemId, jobId, companyId }, select: { id: true, sequence: true } });
+  if (!item) throw new Error("That item is not on this job.");
   return item;
 }
 
@@ -1234,6 +1244,9 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
   requireModule(ctx, "JOB_PARTS", "WRITE");
   const input = jobPartLineBulkAddInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
+  // The item these parts are for (null = the whole job). The same part for two different items stays two lines.
+  const linkedItem = await resolveJobItem(prisma, companyId, jobId, input.itemId);
+  const itemId = linkedItem?.id ?? null;
   const stockOn = stockTrackingOn(ctx);
   const jobNumberLabel = job.jobNumber ?? job.draftNumber;
 
@@ -1301,6 +1314,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
         where: {
           companyId,
           jobId,
+          itemId,
           status: { not: "RECEIVED" },
           OR: [...(part ? [{ partId: part.id }] : []), { partNumber }],
         },
@@ -1353,6 +1367,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
           quantity: new Prisma.Decimal(row.quantity),
           status: inStock ? "IN_STOCK" : "PENDING",
           partId: part?.id ?? null,
+          itemId,
           createdById: ctx.userId,
           updatedById: ctx.userId,
         },
@@ -1408,7 +1423,7 @@ export async function addPartLinesBulk(ctx: RequestContext, jobId: string, raw: 
     }
   }, { maxWait: 10000, timeout: 60000 });
 
-  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: jobId, action: "BULK_ADD", afterData: { jobId, count: rows.length } });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: jobId, action: "BULK_ADD", afterData: { jobId, count: rows.length, itemId } });
 
   // 2026-10-01 — user request: "when a mechanic user adds parts to a job,
   // notification should be sent to Admins/Managers." Same
@@ -1819,6 +1834,9 @@ export async function addOutworkItems(ctx: RequestContext, jobId: string, raw: u
   const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true } });
   if (!supplier) notFound();
 
+  // Each line can be for a different item of the job; every item named must really be on this job.
+  for (const itemId of new Set(input.lines.map((line) => line.itemId).filter((id): id is string => Boolean(id)))) await resolveJobItem(prisma, companyId, jobId, itemId);
+
   // One batchId per submission (not per line) — added 2026-09-09 so a
   // "View delivery note" on any historical item can show the whole group
   // of items sent together, the same way the transient note shown right
@@ -1835,6 +1853,7 @@ export async function addOutworkItems(ctx: RequestContext, jobId: string, raw: u
         supplierId: input.supplierId,
         description: line.description,
         quantity: line.quantity,
+        itemId: line.itemId || null,
         dateSentOut: input.dateSentOut,
         status: "SENT_OUT",
         batchId,
@@ -1884,6 +1903,8 @@ export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId
 
   const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true } });
   if (!supplier) notFound();
+  // Left out = the item link stays as it is; null = back to the whole job.
+  const linkedItem = await resolveJobItem(prisma, companyId, jobId, input.itemId);
 
   // 2026-10-01, user request ("be able to edit receive date like sent
   // date") — dateReceived is now editable here too, not just via the
@@ -1913,6 +1934,7 @@ export async function editOutworkItem(ctx: RequestContext, jobId: string, itemId
         dateReceived: input.dateReceived,
         notes: input.notes || null,
         updatedById: ctx.userId,
+        ...(input.itemId !== undefined ? { itemId: linkedItem?.id ?? null } : {}),
         ...(nextStatus ? { status: nextStatus } : {}),
       },
     });
@@ -2004,11 +2026,12 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
   const data = Buffer.from(input.contentBase64, "base64");
   if (data.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
   const fileName = input.fileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
+  const linkedItem = await resolveJobItem(prisma, companyId, jobId, input.itemId);
 
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
-      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, tag: input.tag || null, isPhoto, createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      data: { companyId, jobId, fileName, mimeType: input.mimeType, sizeBytes: data.length, data, notes: input.notes || null, tag: input.tag || null, isPhoto, itemId: linkedItem?.id ?? null, createdById: ctx.userId },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `${isPhoto ? "Photo" : "Attachment"} uploaded: ${fileName}.`, { attachmentId: record.id, fileName, isPhoto });
     return record;
@@ -2063,7 +2086,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   const attachment = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.create({
       data: { companyId, jobId, fileName, mimeType: "application/pdf", sizeBytes: pdf.length, data: pdf, notes: "Saved from the job page", createdById: ctx.userId },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Document saved: ${fileName}.`, { attachmentId: record.id, fileName, documentKind: kind });
     return record;
@@ -2071,7 +2094,7 @@ export async function saveJobDocument(ctx: RequestContext, jobId: string, raw: u
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "CREATE", afterData: { jobId, fileName, sizeBytes: pdf.length, documentKind: kind } });
   await offloadQuietly(offloadJobAttachment(attachment.id));
   // offload may have renamed on a storage-side name clash; report what is really stored.
-  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } } });
+  const stored = await prisma.jobAttachment.findUnique({ where: { id: attachment.id }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } } });
   return stored ?? attachment;
 }
 
@@ -2108,7 +2131,7 @@ export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: strin
     const record = await tx.jobAttachment.update({
       where: { id: attachment.id },
       data: { notes: input.notes || null },
-      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, createdAt: true, createdBy: { select: { displayName: true } } },
+      select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
     await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment note updated: ${attachment.fileName}.`, { attachmentId: attachment.id, edited: true });
     return record;
@@ -2454,4 +2477,54 @@ export async function listDeliveryNoteRegister(ctx: RequestContext, raw: unknown
     };
   });
   return { items, total, page: query.page, pageSize: query.pageSize };
+}
+
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, "link parts, specs, photos etc" to an item. Moves one existing record to an item of the job, or back to the whole
+// job. The same call serves every kind of record so the screens share one picker. Engineering companies only (only they have items).
+// ----------------------------------------------------------------------------
+export async function setJobRecordItem(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireItemsBuild(ctx);
+  const input = itemLinkInput.parse(raw);
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
+  if (!job) notFound();
+  const item = await resolveJobItem(prisma, companyId, jobId, input.itemId);
+
+  let label: string;
+  let before: string | null;
+  if (input.kind === "part") {
+    requireModule(ctx, "JOB_PARTS", "WRITE");
+    const line = await getPartLineScoped(companyId, jobId, input.recordId);
+    label = `Part ${line.partNumber}`;
+    before = line.itemId;
+  } else if (input.kind === "outwork") {
+    requireModule(ctx, "OUTWORK", "WRITE");
+    const row = await getOutworkItemScoped(companyId, jobId, input.recordId);
+    label = `Outwork "${row.description}"`;
+    before = row.itemId;
+  } else if (input.kind === "attachment") {
+    const file = await getJobAttachmentScoped(ctx, companyId, jobId, input.recordId);
+    label = `${file.isPhoto ? "Photo" : "File"} ${file.fileName}`;
+    before = file.itemId;
+  } else {
+    requireModule(ctx, "SPECIFICATIONS", "WRITE");
+    const report = await prisma.jobDimensionReport.findFirst({ where: { id: input.recordId, companyId, jobId }, select: { id: true, drawingNumber: true, component: true, itemId: true } });
+    if (!report) notFound();
+    label = `Specification report${report.drawingNumber || report.component ? ` ${report.drawingNumber || report.component}` : ""}`;
+    before = report.itemId;
+  }
+  if ((before ?? null) === (item?.id ?? null)) return { ok: true, itemId: item?.id ?? null };
+
+  const jobLabel = job.jobNumber ?? job.draftNumber;
+  await prisma.$transaction(async (tx) => {
+    if (input.kind === "part") await tx.jobPartLine.update({ where: { id: input.recordId }, data: { itemId: item?.id ?? null, updatedById: ctx.userId } });
+    else if (input.kind === "outwork") await tx.outworkItem.update({ where: { id: input.recordId }, data: { itemId: item?.id ?? null, updatedById: ctx.userId } });
+    else if (input.kind === "attachment") await tx.jobAttachment.update({ where: { id: input.recordId }, data: { itemId: item?.id ?? null } });
+    else await tx.jobDimensionReport.update({ where: { id: input.recordId }, data: { itemId: item?.id ?? null, updatedById: ctx.userId } });
+    await addActivity(tx, ctx, jobId, "ITEM_UPDATED", `${label} ${item ? `linked to item ${itemTag(jobLabel, item.sequence)}` : "moved to the whole job"}.`, { kind: input.kind, recordId: input.recordId, itemId: item?.id ?? null, previousItemId: before });
+  });
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobItemLink", entityId: input.recordId, action: "UPDATE", afterData: { jobId, kind: input.kind, itemId: item?.id ?? null } });
+  return { ok: true, itemId: item?.id ?? null };
 }

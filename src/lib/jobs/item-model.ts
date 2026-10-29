@@ -198,3 +198,68 @@ export function readDeliveryNoteLines(value: unknown): DeliveryNoteLine[] {
 export function deliveryNoteItemCount(lines: readonly DeliveryNoteLine[]): number {
   return new Set(lines.map((line) => line.itemId).filter(Boolean)).size;
 }
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, "link parts, specs, photos etc" to an item (Engineering multi-item jobs). Part lines, outwork, photos / attachments
+// and specification reports each carry an optional itemId: empty means the whole job (what everything already on file is),
+// otherwise it is the item the record is for. Pick slips follow the part lines on them.
+// ----------------------------------------------------------------------------
+export const ITEM_LINK_KINDS = ["part", "outwork", "attachment", "dimension"] as const;
+export type ItemLinkKind = (typeof ITEM_LINK_KINDS)[number];
+
+// The view filter on the job screen: every record, only the whole-job ones, or one item's.
+export const ITEM_FILTER_ALL = "all";
+export const ITEM_FILTER_JOB = "job";
+
+export function matchesItemFilter(itemId: string | null | undefined, filter: string): boolean {
+  if (filter === ITEM_FILTER_ALL) return true;
+  if (filter === ITEM_FILTER_JOB) return !itemId;
+  return itemId === filter;
+}
+
+// A filter that points at an item that is no longer there (removed in the meantime) falls back to showing everything.
+export function normalizeItemFilter(filter: string, itemIds: readonly string[]): string {
+  if (filter === ITEM_FILTER_ALL || filter === ITEM_FILTER_JOB) return filter;
+  return itemIds.includes(filter) ? filter : ITEM_FILTER_ALL;
+}
+
+// What the select shows for an item: its tag, then what it is.
+export function itemOptionLabel(item: { sequence: number; component?: string | null; componentModel?: string | null }, jobNumber: string | null | undefined): string {
+  const what = [item.component, item.componentModel].map((part) => (part ?? "").trim()).filter(Boolean).join(" ");
+  return what ? `${itemTag(jobNumber, item.sequence)} · ${what}` : itemTag(jobNumber, item.sequence);
+}
+
+export type ItemLinkCounts = { parts: number; outwork: number; photos: number; files: number };
+
+type Linked = { itemId?: string | null };
+
+// How many records are tied to each item, for the item list ("3 parts · 1 outwork"). Whole-job records are not counted.
+export function countItemLinks(records: { parts: readonly Linked[]; outwork: readonly Linked[]; attachments: ReadonlyArray<Linked & { isPhoto?: boolean | null }> }): Record<string, ItemLinkCounts> {
+  const counts: Record<string, ItemLinkCounts> = {};
+  const slot = (id: string) => (counts[id] ??= { parts: 0, outwork: 0, photos: 0, files: 0 });
+  for (const row of records.parts) if (row.itemId) slot(row.itemId).parts++;
+  for (const row of records.outwork) if (row.itemId) slot(row.itemId).outwork++;
+  for (const row of records.attachments) if (row.itemId) { if (row.isPhoto) slot(row.itemId).photos++; else slot(row.itemId).files++; }
+  return counts;
+}
+
+export function itemLinkSummary(counts: ItemLinkCounts | undefined): string {
+  if (!counts) return "";
+  const noun = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  return [
+    counts.parts ? noun(counts.parts, "part", "parts") : "",
+    counts.outwork ? `${counts.outwork} outwork` : "",
+    counts.photos ? noun(counts.photos, "photo", "photos") : "",
+    counts.files ? noun(counts.files, "file", "files") : "",
+  ].filter(Boolean).join(" · ");
+}
+
+export function itemLinkTotal(counts: ItemLinkCounts | undefined): number {
+  return counts ? counts.parts + counts.outwork + counts.photos + counts.files : 0;
+}
+
+// Pick slips and delivery notes print the item in front of the line's own text, e.g. "[BRE1122-2] Seal kit".
+export function withItemTag(tag: string | null | undefined, text: string | null | undefined): string {
+  const body = (text ?? "").trim();
+  return tag ? (body ? `[${tag}] ${body}` : `[${tag}]`) : body;
+}

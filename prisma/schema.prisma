@@ -1864,6 +1864,12 @@ model JobItem {
 
   company             Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job                 Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  // 2026-10-29, "link parts, specs, photos etc" to an item: the records that can be tied to one item of a multi-item job.
+  // Removing the item leaves them on the job (itemId is cleared), they are never deleted with it.
+  partLines           JobPartLine[]
+  outworkItems        OutworkItem[]
+  attachments         JobAttachment[]
+  dimensionReports    JobDimensionReport[]
 
   @@unique([jobId, sequence])
   @@unique([id, companyId])
@@ -2102,6 +2108,8 @@ model JobPartLine {
   id                    String          @id @default(cuid())
   companyId             String
   jobId                 String
+  // 2026-10-29: the item of a multi-item job this belongs to (null = the whole job).
+  itemId     String?
   partNumber            String
   description           String?
   quantity              Decimal         @db.Decimal(19, 4)
@@ -2156,6 +2164,7 @@ model JobPartLine {
 
   company               Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job                   Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item       JobItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   part                  Part?           @relation(fields: [partId], references: [id], onDelete: SetNull)
   orderedFromSupplier    Supplier?      @relation("JobPartLineOrderedFromSupplier", fields: [orderedFromSupplierId], references: [id], onDelete: SetNull)
   createdBy              UserIdentity?  @relation("JobPartLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -2166,6 +2175,7 @@ model JobPartLine {
   @@index([companyId, jobId])
   @@index([companyId, partId])
   @@index([companyId, orderedFromSupplierId])
+  @@index([companyId, itemId])
 }
 
 // New — added 2026-09-14 at the user's explicit request ("create a picking
@@ -2332,6 +2342,8 @@ model OutworkItem {
   id            String        @id @default(cuid())
   companyId     String
   jobId         String
+  // 2026-10-29: the item of a multi-item job this belongs to (null = the whole job).
+  itemId     String?
   supplierId    String
   description   String
   quantity      Int           @default(1)
@@ -2357,6 +2369,7 @@ model OutworkItem {
 
   company       Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job           Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item       JobItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   supplier      Supplier      @relation("OutworkItemSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
   createdBy     UserIdentity? @relation("OutworkItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy     UserIdentity? @relation("OutworkItemUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -2365,6 +2378,7 @@ model OutworkItem {
   @@index([companyId, supplierId])
   @@index([companyId, status])
   @@index([companyId, batchId])
+  @@index([companyId, itemId])
 }
 
 // ----------------------------------------------------------------------------
@@ -2576,6 +2590,8 @@ model JobAttachment {
   id          String        @id @default(cuid())
   companyId   String
   jobId       String
+  // 2026-10-29: the item of a multi-item job this belongs to (null = the whole job).
+  itemId     String?
   fileName    String
   mimeType    String
   sizeBytes   Int
@@ -2598,10 +2614,12 @@ model JobAttachment {
 
   company     Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item       JobItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   createdBy   UserIdentity? @relation("JobAttachmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([companyId, jobId])
   @@index([rfqRequestId])
+  @@index([companyId, itemId])
 }
 
 model JobNote {
@@ -3070,6 +3088,8 @@ model JobDimensionReport {
   id            String   @id @default(cuid())
   companyId     String
   jobId         String
+  // 2026-10-29: the item of a multi-item job this belongs to (null = the whole job).
+  itemId     String?
   reportDate    DateTime? @db.Date
   drawingNumber String?
   machine       String?
@@ -3088,10 +3108,12 @@ model JobDimensionReport {
 
   company       Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item       JobItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
   lines         JobDimensionLine[]
 
   @@unique([id, companyId])
   @@index([companyId, jobId])
+  @@index([companyId, itemId])
 }
 
 // One measured part row. Measured values are kept as typed text (a size, "N/A", a range...).

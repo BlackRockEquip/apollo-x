@@ -2451,3 +2451,12 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .dn-date input { padding: 7px 8px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; font-size: 13px; }
 .dn-pager { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 1px solid var(--ink-100); color: #667085; font-size: 13px; }
 .ji-sub-inline { display: block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 2026-10-29, "link parts, specs, photos etc" to an item (ji-link / ji-chip / ji-filter). */
+.ji-link-select { max-width: 100%; margin-top: 4px; padding: 3px 6px; border: 1px solid var(--ink-150); border-radius: 6px; background: #fff; color: var(--ink-700); font: inherit; font-size: 12px; font-weight: 600; }
+.ji-link-select:disabled { opacity: .6; }
+.ji-link-field { width: 100%; }
+.ji-chip { margin: 0 6px 0 0; vertical-align: middle; }
+.ji-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--ink-150); background: #fafbfd; }
+.ji-filter-label { color: var(--ink-500); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.ji-links-sub { display: block; margin-top: 2px; color: var(--ink-500); font-size: 11.5px; font-weight: 600; }

@@ -55,6 +55,8 @@ export const dimensionReportInput = z.object({
   operator: text(120),
   instrument: text(200),
   notes: text(2000),
+  // 2026-10-29: the item of a multi-item job this report is for. Left out = unchanged (whole job on a new report), null = whole job.
+  itemId: z.string().cuid().optional().nullable(),
   lines: z.array(dimensionLineInput).max(400).default([]),
 });
 
@@ -78,6 +80,14 @@ async function originalsFor(companyId: string, reports: { originalAttachmentId: 
   const ids = reports.map((report) => report.originalAttachmentId).filter((id): id is string => Boolean(id));
   const files = ids.length ? await prisma.jobAttachment.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, fileName: true, mimeType: true, sizeBytes: true } }) : [];
   return new Map(files.map((file) => [file.id, file]));
+}
+
+// The item must be one of this job's own items (a job with no items cannot have any link).
+async function requireItemOnJob(companyId: string, jobId: string, itemId: string | null | undefined) {
+  if (!itemId) return null;
+  const item = await prisma.jobItem.findFirst({ where: { id: itemId, jobId, companyId }, select: { id: true } });
+  if (!item) throw new Error("That item is not on this job.");
+  return item.id;
 }
 
 async function requireJob(companyId: string, jobId: string) {
@@ -118,10 +128,11 @@ export async function createJobDimensionReport(ctx: RequestContext, jobId: strin
   const companyId = requireWrite(ctx);
   const input = dimensionReportInput.parse(raw);
   await requireJob(companyId, jobId);
+  const itemId = await requireItemOnJob(companyId, jobId, input.itemId);
   const report = await prisma.$transaction(async (tx) => {
     const created = await tx.jobDimensionReport.create({
       data: {
-        companyId, jobId,
+        companyId, jobId, itemId,
         reportDate: input.reportDate ? new Date(`${input.reportDate}T00:00:00Z`) : null,
         drawingNumber: input.drawingNumber, machine: input.machine, component: input.component,
         measuredBy: input.measuredBy, operator: input.operator, instrument: input.instrument, notes: input.notes,
@@ -139,12 +150,14 @@ export async function createJobDimensionReport(ctx: RequestContext, jobId: strin
 export async function updateJobDimensionReport(ctx: RequestContext, reportId: string, raw: unknown) {
   const companyId = requireWrite(ctx);
   const input = dimensionReportInput.parse(raw);
-  const existing = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { id: true } });
+  const existing = await prisma.jobDimensionReport.findFirst({ where: { id: reportId, companyId }, select: { id: true, jobId: true } });
   if (!existing) notFound();
+  const itemId = input.itemId === undefined ? undefined : await requireItemOnJob(companyId, existing.jobId, input.itemId);
   const report = await prisma.$transaction(async (tx) => {
     await tx.jobDimensionReport.update({
       where: { id: reportId },
       data: {
+        ...(itemId !== undefined ? { itemId } : {}),
         reportDate: input.reportDate ? new Date(`${input.reportDate}T00:00:00Z`) : null,
         drawingNumber: input.drawingNumber, machine: input.machine, component: input.component,
         measuredBy: input.measuredBy, operator: input.operator, instrument: input.instrument, notes: input.notes,

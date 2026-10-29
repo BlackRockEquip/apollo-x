@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, FileText, Pencil, Plus, Printer, Trash2, Upload, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { withPoweredBy } from "@/lib/documents/powered-by";
+import { ITEM_FILTER_ALL, itemTag, matchesItemFilter, withItemTag } from "@/lib/jobs/item-model";
+import { ItemChip, ItemField, ItemFilterBar, type LinkItem } from "@/components/job-items/ItemLink";
 
 // 2026-10-16, Specifications module (Engineering Business): the Dimensional Size Report on a job. Mirrors the
 // paper form — a header (date, drawing number, machine, measured by, component, operator), a table of the
@@ -15,10 +17,10 @@ import { withPoweredBy } from "@/lib/documents/powered-by";
 type Phase = "ARRIVED" | "AFTER_MACHINING";
 type Line = { key: string; phase: Phase; partNumber: string; description: string; outerDiameter: string; innerDiameter: string; length: string; tolerance: string; additionalMeasured: string; accepted: boolean | null };
 type OriginalFile = { id: string; fileName: string; mimeType: string; sizeBytes: number };
-type Report = { id: string; reportDate: string; drawingNumber: string; machine: string; component: string; measuredBy: string; operator: string; instrument: string; notes: string; lines: Line[]; original: OriginalFile | null };
+type Report = { id: string; itemId: string; reportDate: string; drawingNumber: string; machine: string; component: string; measuredBy: string; operator: string; instrument: string; notes: string; lines: Line[]; original: OriginalFile | null };
 type FormSettings = { standardText: string | null; documentNumber: string | null; issueDate: string | null; revision: string | null; revisionDate: string | null };
 type ServerLine = { phase: Phase; partNumber: string | null; description: string | null; outerDiameter: string | null; innerDiameter: string | null; length: string | null; tolerance: string | null; additionalMeasured: string | null; accepted: boolean | null };
-type ServerReport = { id: string; reportDate: string | null; drawingNumber: string | null; machine: string | null; component: string | null; measuredBy: string | null; operator: string | null; instrument: string | null; notes: string | null; lines: ServerLine[]; original?: OriginalFile | null };
+type ServerReport = { id: string; itemId?: string | null; reportDate: string | null; drawingNumber: string | null; machine: string | null; component: string | null; measuredBy: string | null; operator: string | null; instrument: string | null; notes: string | null; lines: ServerLine[]; original?: OriginalFile | null };
 
 let keyCounter = 0;
 const nextKey = () => `l${Date.now().toString(36)}${keyCounter++}`;
@@ -31,6 +33,7 @@ function blankLine(phase: Phase): Line {
 function fromServer(report: ServerReport): Report {
   return {
     id: report.id,
+    itemId: report.itemId ?? "",
     reportDate: report.reportDate ?? "",
     drawingNumber: report.drawingNumber ?? "",
     machine: report.machine ?? "",
@@ -49,6 +52,7 @@ function payloadOf(report: Report) {
   void _id; void _original;
   return {
     ...header,
+    itemId: header.itemId || null,
     reportDate: header.reportDate || null,
     // A completely empty row is not saved.
     lines: lines.filter((line) => lineHasContent(line)).map(({ key: _key, ...rest }) => { void _key; return rest; }),
@@ -100,7 +104,22 @@ const formatSize = (bytes: number) => (bytes >= 1_000_000 ? `${(bytes / 1_000_00
 
 type DialogState = { mode: "create" | "edit" | "view"; draft: Report; pendingFile: File | null; removeOriginal: boolean };
 
-export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit, canManageForm }: { jobId: string; jobLabel: string; defaultComponent: string; canEdit: boolean; canManageForm: boolean }) {
+type Props = {
+  jobId: string;
+  jobLabel: string;
+  defaultComponent: string;
+  canEdit: boolean;
+  canManageForm: boolean;
+  /** Engineering multi-item jobs: the job's items, so a report can be for one of them (empty on an ordinary job). */
+  items?: LinkItem[];
+  jobNumber?: string | null;
+  /** The item filter shared with the job's other lists ("all", "job" or an item id). */
+  itemFilter?: string;
+  onItemFilter?: (filter: string) => void;
+};
+
+export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit, canManageForm, items = [], jobNumber = null, itemFilter = ITEM_FILTER_ALL, onItemFilter }: Props) {
+  const tagOf = (itemId: string) => { const item = items.find((entry) => entry.id === itemId); return item ? itemTag(jobNumber, item.sequence) : ""; };
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [reports, setReports] = useState<Report[]>([]);
   const [settings, setSettings] = useState<FormSettings>({ standardText: null, documentNumber: null, issueDate: null, revision: null, revisionDate: null });
@@ -146,7 +165,9 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
 
   function openCreate() {
     setDialogError(""); setNote("");
-    const blank: Report = { id: "", reportDate: todayIso(), drawingNumber: "", machine: "", component: defaultComponent || "", measuredBy: "", operator: "", instrument: "", notes: "", lines: [], original: null };
+    // Opened while one item is shown: the new report is for that item.
+    const forItem = items.some((item) => item.id === itemFilter) ? itemFilter : "";
+    const blank: Report = { id: "", itemId: forItem, reportDate: todayIso(), drawingNumber: "", machine: "", component: (forItem && items.find((item) => item.id === forItem)?.component) || defaultComponent || "", measuredBy: "", operator: "", instrument: "", notes: "", lines: [], original: null };
     setDialog({ mode: "create", draft: withBlankRows(blank), pendingFile: null, removeOriginal: false });
   }
 
@@ -322,7 +343,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
         </table>
         <table>
           <tr><td>Measured by:</td><td>${escapeHtml(report.measuredBy)}</td></tr>
-          <tr><td>Component:</td><td>${escapeHtml(report.component)}</td></tr>
+          <tr><td>Component:</td><td>${escapeHtml(withItemTag(tagOf(report.itemId), report.component))}</td></tr>
           <tr><td>Operator:</td><td>${escapeHtml(report.operator)}</td></tr>
         </table>
       </div>
@@ -409,6 +430,12 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
             {dialogError && <div className="inline-error" style={{ marginTop: 10 }}>{dialogError}</div>}
             <fieldset disabled={readOnly || saving} className="unstyled-fieldset">
               <div className="drawer-fields" style={{ marginTop: 8 }}>
+                <ItemField items={items} jobNumber={jobNumber} value={draft.itemId} label="For item" wide
+                  onChange={(id) => {
+                    // Picking an item fills the component name when it is still empty.
+                    const component = items.find((item) => item.id === id)?.component;
+                    set({ itemId: id, ...(!draft.component.trim() && component ? { component } : {}) });
+                  }} />
                 <label><span>Date</span><input type="date" value={draft.reportDate} onChange={(e) => set({ reportDate: e.target.value })} /></label>
                 <label><span>Drawing number</span><input value={draft.drawingNumber} onChange={(e) => set({ drawingNumber: e.target.value })} /></label>
                 <label><span>Machine</span><input value={draft.machine} onChange={(e) => set({ machine: e.target.value })} /></label>
@@ -492,19 +519,24 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
         )}
         <datalist id={datalistId}>{staff.map((name) => <option key={name} value={name} />)}</datalist>
         {loading && <div className="table-state">Loading…</div>}
+        {!loading && onItemFilter && (
+          <div style={{ marginTop: 12 }}>
+            <ItemFilterBar items={items} jobNumber={jobNumber} value={itemFilter} onChange={onItemFilter} count={(f) => reports.filter((report) => matchesItemFilter(report.itemId, f)).length} />
+          </div>
+        )}
         {!loading && (
           <div className="data-table-wrap" style={{ marginTop: 12 }}>
             <table className="data-table">
               <thead><tr><th>Date</th><th>Drawing number</th><th>Component</th><th>Machine</th><th>Measured by</th><th>Measurements</th><th>Original</th><th style={{ textAlign: "right" }}>Actions</th></tr></thead>
               <tbody>
-                {reports.map((report) => {
+                {reports.filter((report) => matchesItemFilter(report.itemId, itemFilter)).map((report) => {
                   const arrived = totals(report.lines.filter((line) => line.phase === "ARRIVED"));
                   const after = totals(report.lines.filter((line) => line.phase === "AFTER_MACHINING"));
                   return (
                     <tr key={report.id}>
                       <td>{report.reportDate || "—"}</td>
                       <td>{report.drawingNumber || "—"}</td>
-                      <td>{report.component || "—"}</td>
+                      <td><ItemChip items={items} jobNumber={jobNumber} itemId={report.itemId} />{report.component || "—"}</td>
                       <td>{report.machine || "—"}</td>
                       <td>{report.measuredBy || "—"}</td>
                       <td>{arrived.measured} on arrival · {after.measured} after machining{after.rejected + arrived.rejected > 0 ? ` · ${arrived.rejected + after.rejected} rejected` : ""}</td>
@@ -519,6 +551,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
                   );
                 })}
                 {reports.length === 0 && <tr><td colSpan={8} className="table-state compact-empty-state">No dimensional reports on this job yet.{canEdit ? " Use Add report to start one." : ""}</td></tr>}
+                {reports.length > 0 && !reports.some((report) => matchesItemFilter(report.itemId, itemFilter)) && <tr><td colSpan={8} className="table-state compact-empty-state">No reports for this item yet.</td></tr>}
               </tbody>
             </table>
           </div>
