@@ -105,3 +105,31 @@ describe("parseItemsPaste", () => {
     expect(parseItemsPaste(text)).toHaveLength(MAX_ITEMS_PER_JOB);
   });
 });
+
+import { DELIVERED_STATUS, defaultDeliveryPicks, deliveryNoteSuffix, itemDeliveryLine, itemsToMarkDelivered } from "@/lib/jobs/item-model";
+
+const deliverable = [
+  { id: "a", sequence: 1, status: "TO_BE_DELIVERED", component: "Final drive gearbox", componentModel: "PC400-8", componentSerial: "SN-1", machineMake: "Komatsu", machineModel: "PC400" },
+  { id: "b", sequence: 2, status: "WORK_IN_PROGRESS", component: "Swing motor" },
+  { id: "c", sequence: 3, status: "TO_BE_DELIVERED", component: "Idler wheel", componentSerial: "  " },
+  { id: "d", sequence: 4, status: DELIVERED_STATUS, component: "Drive shaft" },
+];
+
+describe("delivery notes per item", () => {
+  it("writes the line with the tag first and leaves out what is empty", () => {
+    expect(itemDeliveryLine(deliverable[0], "BRE1122")).toBe("BRE1122-1 · Final drive gearbox · PC400-8 · S/N SN-1 · Komatsu PC400");
+    expect(itemDeliveryLine(deliverable[2], "BRE1122")).toBe("BRE1122-3 · Idler wheel");
+  });
+  it("ticks only items that are ready and not yet delivered", () => {
+    expect(defaultDeliveryPicks(deliverable)).toEqual(["a", "c"]);
+  });
+  it("moves on only the ticked items that were ready", () => {
+    expect(itemsToMarkDelivered(deliverable, ["a", "b", "d"])).toEqual(["a"]);
+    expect(itemsToMarkDelivered(deliverable, [])).toEqual([]);
+  });
+  it("names the saved note after the items on it", () => {
+    expect(deliveryNoteSuffix(deliverable, ["c", "a"])).toBe("Items 1, 3");
+    expect(deliveryNoteSuffix(deliverable, ["b"])).toBe("Item 2");
+    expect(deliveryNoteSuffix(deliverable, [])).toBeUndefined();
+  });
+});

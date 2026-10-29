@@ -124,3 +124,46 @@ export function parseItemsPaste(text: string): PastedItem[] {
     .filter((item) => PASTE_COLUMNS.some((key) => item[key].length > 0))
     .slice(0, MAX_ITEMS_PER_JOB);
 }
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, per-item delivery notes: a customer's items are rarely ready on the same day, so a delivery note lists only the
+// items going out on it. Each delivery is its own note (own date, own item lines); items that go out on it are then moved to
+// Delivered / Await payment, so the next note starts from the items still waiting.
+// ----------------------------------------------------------------------------
+export const READY_TO_DELIVER_STATUS = "TO_BE_DELIVERED";
+export const DELIVERED_STATUS = "DELIVERED_AWAITING_PAYMENT";
+
+export type DeliveryItem = ItemMachineFields & { id: string; sequence: number; status: string };
+
+// The line a delivery note shows for an item: its tag, then what it is. Empty parts are left out.
+export function itemDeliveryLine(item: DeliveryItem, jobNumber: string | null | undefined): string {
+  const machine = [item.machineMake, item.machineModel].map((part) => (part ?? "").trim()).filter(Boolean).join(" ");
+  const serial = (item.componentSerial ?? "").trim();
+  return [
+    itemTag(jobNumber, item.sequence),
+    (item.component ?? "").trim(),
+    (item.componentModel ?? "").trim(),
+    serial ? `S/N ${serial}` : "",
+    machine,
+  ].filter(Boolean).join(" · ");
+}
+
+// Items to tick when a delivery note opens: the ones ready to go out and not yet delivered.
+export function defaultDeliveryPicks(items: readonly DeliveryItem[]): string[] {
+  return items.filter((item) => item.status === READY_TO_DELIVER_STATUS).map((item) => item.id);
+}
+
+// After the note is printed, only the ticked items that were ready are moved on to Delivered. A ticked item that was not ready
+// (e.g. goes out early on the customer's say-so) stays where it is.
+export function itemsToMarkDelivered(items: readonly DeliveryItem[], pickedIds: readonly string[]): string[] {
+  const picked = new Set(pickedIds);
+  return items.filter((item) => picked.has(item.id) && item.status === READY_TO_DELIVER_STATUS).map((item) => item.id);
+}
+
+// Added to the saved PDF's name so one delivery note does not replace another, e.g. "Items 1, 3".
+export function deliveryNoteSuffix(items: readonly DeliveryItem[], pickedIds: readonly string[]): string | undefined {
+  const picked = new Set(pickedIds);
+  const sequences = items.filter((item) => picked.has(item.id)).map((item) => item.sequence).sort((a, b) => a - b);
+  if (sequences.length === 0) return undefined;
+  return `${sequences.length === 1 ? "Item" : "Items"} ${sequences.join(", ")}`;
+}

@@ -282,7 +282,8 @@ function buildJobHistorySpecRaw(input: { title: string; jobLabel: string; job: J
   return { title: `${title} — full job record`, rightLines: [`Job ${jobLabel}`, layout.tags.join(" · ")], blocks };
 }
 
-function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; items?: Array<{ description: string; quantity: string }>; notes?: string }): DocSpec {
+// 2026-10-29: `deliveryDate` is the date on THIS note (a multi-item job delivers in stages); left out, the job's own delivery date is used.
+function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; items?: Array<{ description: string; quantity: string }>; notes?: string; deliveryDate?: string | null }): DocSpec {
   const { title, jobLabel, job, form } = input;
   const address = (job.customer?.addresses || [])[0] as Rec | undefined;
   const addressLines = address ? [address.line1, address.line2, address.city, address.province, address.postalCode].filter((v) => v && String(v).trim()).map(String) : [];
@@ -300,7 +301,7 @@ function buildJobDeliveryNoteSpecRaw(input: { title: string; jobLabel: string; j
     title,
     jobLabel,
     dateLabel: "Delivery date",
-    date: form.deliveryDate,
+    date: input.deliveryDate !== undefined ? input.deliveryDate : form.deliveryDate,
     partyHeading: "Customer details",
     partyLines: [str(job.customer?.name) || "—", str(job.customer?.tradingName), ...addressLines, contact],
     rightHeading: "Commercial & logistics",

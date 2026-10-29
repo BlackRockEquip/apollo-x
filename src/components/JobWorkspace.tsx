@@ -23,6 +23,7 @@ import { JobItemsEditor } from "./job-items/JobItemsEditor";
 import { JobItemsPanel, AddAnotherItem } from "./job-items/JobItemsPanel";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
+import { DELIVERED_STATUS, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks } from "@/lib/jobs/item-model";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
 import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
@@ -713,7 +714,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // field on the printed note (same underlying date, just relabeled).
   const [deliveryNote, setDeliveryNote] = useState<{ jobNumber: string; supplierName: string; supplierAddressLines: string[]; supplierVat: string | null; dateCaptured: string | null; make: string; model: string; serial: string; items: Array<{ description: string; quantity: number }> } | null>(null);
   // Print Delivery Note (the job's own delivery note): the line items and notes are edited here first, so what is printed and what is saved as a PDF are the same.
-  const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string }>; notes: string } | null>(null);
+  // 2026-10-29, Engineering multi-item jobs: a line can belong to an item (itemId); deliveryDate is the date on this note and
+  // markDelivered moves the ticked ready items to Delivered once it is printed.
+  const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string; markDelivered?: boolean } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
   // once its normal-flow position reaches the pinned offset) still visibly
@@ -1903,7 +1906,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const jobCardSpec = () => (job ? buildJobCardSpec({ title: documentTitles.JOB_CARD, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const fieldReportSpec = () => (job ? buildFieldReportSpec({ title: documentTitles.FIELD_REPORT, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
   const jobHistorySpec = () => (job ? buildJobHistorySpec({ title: documentTitles.JOB_HISTORY, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, labels: jobDocLabels() }) : null);
-  const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string }) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes }) : null);
+  const jobDeliveryNoteSpec = (draft?: { items: Array<{ description: string; quantity: string }>; notes: string; deliveryDate?: string }) => (job ? buildJobDeliveryNoteSpec({ title: documentTitles.JOB_DELIVERY_NOTE, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, form, items: draft?.items, notes: draft?.notes, ...(draft?.deliveryDate ? { deliveryDate: draft.deliveryDate } : {}) }) : null);
   const partsListSpec = (scope?: PartsListScope) => (job ? buildPartsListSpec({ title: documentTitles.PARTS_LIST, jobLabel: jobDocLabel, job: job as unknown as JobDocJob, scope }) : null);
   const pickSlipSpec = (slip: { lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[] }) =>
     buildPickSlipSpec({ title: documentTitles.PICK_SLIP, jobLabel: jobDocLabel, lines: slip.lines });
@@ -3205,11 +3208,63 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // go to the print window and to the saved PDF.
   function openJobDeliveryNoteDialog() {
     if (!job) return;
+    // 2026-10-29, Engineering multi-item jobs: the note lists the items going out on it. The ones that are ready to deliver are
+    // ticked; the date is today (each delivery is its own note); printing moves the ready ones on to Delivered.
+    const rows = job.jobItems ?? [];
+    if (rows.length > 0) {
+      const picks = defaultDeliveryPicks(rows);
+      const lines = rows.filter((row) => picks.includes(row.id)).map((row) => ({ description: itemDeliveryLine(row, job.jobNumber), quantity: "1", itemId: row.id }));
+      setJobDnDraft({ items: lines.length > 0 ? lines : [{ description: "", quantity: "1" }], notes: "", deliveryDate: new Date().toISOString().slice(0, 10), markDelivered: !mechanicFieldsLocked });
+      return;
+    }
     const description = [form.machineMake, form.machineModel, form.component, form.componentSerial].filter(Boolean).join(" · ");
     setJobDnDraft({ items: [{ description, quantity: "1" }], notes: "" });
   }
 
-  async function printJobDeliveryNote(draft: { items: Array<{ description: string; quantity: string }>; notes: string }): Promise<boolean> {
+  // Ticks / unticks an item on the delivery note: its line is added (in item order, ahead of any typed lines) or taken off.
+  function toggleDeliveryItem(row: ItemRow) {
+    setJobDnDraft((draft) => {
+      if (!draft || !job) return draft;
+      const rows = job.jobItems ?? [];
+      const picked = new Set(draft.items.map((line) => line.itemId).filter((id): id is string => !!id));
+      if (picked.has(row.id)) picked.delete(row.id); else picked.add(row.id);
+      const itemLines = rows.filter((r) => picked.has(r.id)).map((r) => ({
+        description: draft.items.find((line) => line.itemId === r.id)?.description ?? itemDeliveryLine(r, job.jobNumber),
+        quantity: draft.items.find((line) => line.itemId === r.id)?.quantity ?? "1",
+        itemId: r.id,
+      }));
+      const typedLines = draft.items.filter((line) => !line.itemId && (line.description.trim() || line.quantity.trim() !== "1"));
+      const lines = [...itemLines, ...typedLines];
+      return { ...draft, items: lines.length > 0 ? lines : [{ description: "", quantity: "1" }] };
+    });
+  }
+
+  // Prints the delivery note, offers to save it (named after its items so one note never replaces another), then - if asked -
+  // moves the ready items on it to Delivered. A job without items prints exactly as before.
+  async function printDeliveryNoteAndMove(draft: NonNullable<typeof jobDnDraft>) {
+    const rows = job?.jobItems ?? [];
+    const pickedIds = draft.items.map((line) => line.itemId).filter((id): id is string => !!id);
+    const suffix = rows.length > 0 ? deliveryNoteSuffix(rows, pickedIds) : undefined;
+    const printed = await printJobDeliveryNote(draft);
+    await offerToSave(printed, "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft), suffix);
+    if (!printed || !draft.markDelivered || !jobId) return;
+    const moving = itemsToMarkDelivered(rows, pickedIds);
+    if (moving.length === 0) return;
+    if (needsDocumentCheck(industryBuild, DELIVERED_STATUS) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
+    setError("");
+    try {
+      for (const itemId of moving) {
+        const response = await fetch(`/api/v1/jobs/${jobId}/items?itemId=${itemId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: DELIVERED_STATUS }) });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error?.message || "Unable to move the items to delivered.");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to move the items to delivered.");
+    }
+    await load(true);
+  }
+
+  async function printJobDeliveryNote(draft: { items: Array<{ description: string; quantity: string }>; notes: string; deliveryDate?: string }): Promise<boolean> {
     if (!job) return false;
     const win = window.open("", "_blank");
     if (!win) { setError("Enable pop-ups to print the delivery note."); return false; }
@@ -3291,7 +3346,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           <img class="logo" src="${logoSrc}" alt="" onerror="this.style.display='none'" />
           ${orgDetailsHtml}
           <div class="job-number">Job ${escapeHtml(String(jobLabel))}</div>
-          <div class="date-captured">Delivery date: ${fmt(form.deliveryDate)}</div>
+          <div class="date-captured">Delivery date: ${fmt(draft.deliveryDate ?? form.deliveryDate)}</div>
         </div>
       </div>
       <div class="two-col">
@@ -4081,6 +4136,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       confirm={confirm}
       onChanged={() => load(true)}
       onError={setError}
+      onDeliveryNote={openJobDeliveryNoteDialog}
+      confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
   const addAnotherItemSection = mode === "detail" && job && itemsBuildOn() && jobItemRows.length === 0 && !mechanicFieldsLocked && !["COMPLETE", "CLOSED", "CANCELLED"].includes(String(job.status))
@@ -6137,6 +6194,32 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <aside className="form-drawer compact-dialog delivery-note-dialog">
                 <header><div><p className="eyebrow">Job {jobDocLabel}</p><h2>{documentTitles.JOB_DELIVERY_NOTE}</h2><p className="muted small-line">Add or change line items, then print.</p></div><button type="button" onClick={() => setJobDnDraft(null)} aria-label="Close dialog"><X size={18} /></button></header>
                 <div className="drawer-fields">
+                  {(job?.jobItems ?? []).length > 0 && (
+                    <div className="wide ji-pick">
+                      <p className="ji-pick-title">Items on this delivery</p>
+                      <ul>
+                        {(job?.jobItems ?? []).filter((row) => row.status !== "CANCELLED").map((row) => (
+                          <li key={row.id}>
+                            <label>
+                              <input type="checkbox" checked={jobDnDraft.items.some((line) => line.itemId === row.id)} onChange={() => toggleDeliveryItem(row)} />
+                              <span className="ji-tag">{itemTag(job?.jobNumber, row.sequence)}</span>
+                              <span className="ji-pick-name">{row.component || "Item"}</span>
+                              <StatusPill status={row.status} build={industryBuild} />
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="ji-pick-options">
+                        <label><span>Delivery date</span><input type="date" value={jobDnDraft.deliveryDate ?? ""} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, deliveryDate: e.target.value } : d))} /></label>
+                        {!mechanicFieldsLocked && (
+                          <label className="ji-pick-mark">
+                            <input type="checkbox" checked={!!jobDnDraft.markDelivered} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, markDelivered: e.target.checked } : d))} />
+                            <span>When printed, move the ready items on this note to {statusLabels.DELIVERED_AWAITING_PAYMENT}</span>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <div className="data-table-wrap wide"><table className="data-table"><thead><tr><th>Description</th><th style={{ width: 90 }}>Qty</th><th style={{ width: 40 }} /></tr></thead><tbody>
                     {jobDnDraft.items.map((item, idx) => (
                       <tr key={idx}>
@@ -6150,7 +6233,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   <label className="wide"><span>Notes</span><textarea rows={3} value={jobDnDraft.notes} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, notes: e.target.value } : d))} /></label>
                 </div>
                 <footer className="detail-actions">
-                  <button type="button" className="gold-button" onClick={() => { const draft = jobDnDraft; setJobDnDraft(null); void offerToSave(printJobDeliveryNote(draft), "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft)); }}>Print</button>
+                  <button type="button" className="gold-button" onClick={() => { const draft = jobDnDraft; setJobDnDraft(null); void printDeliveryNoteAndMove(draft); }}>Print</button>
                   <button type="button" className="quiet-button" onClick={() => setJobDnDraft(null)}>Close</button>
                 </footer>
               </aside>

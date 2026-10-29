@@ -2429,3 +2429,17 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 @media (max-width: 1100px) { .ji-more-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .ji-more-grid { grid-template-columns: minmax(0, 1fr); } .ji-more-grid .ji-wide { grid-column: auto; } .ji-card > .ji-card-head { flex-wrap: wrap; } }
 @media print { .ji-toolbar, .ji-paste, .ji-add, .ji-foot, .ji-actions-col { display: none !important; } }
+
+/* 2026-10-29, per-item delivery notes: the item picker at the top of the Delivery note window. */
+.ji-pick { padding: 12px 14px; border: 1px solid var(--ink-150); border-radius: 10px; background: #fbfcfe; }
+.ji-pick-title { margin: 0 0 8px; color: #475467; font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.ji-pick ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ji-pick li label { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.ji-pick li label:hover { background: #f3f7fe; }
+.ji-pick li input { width: auto; flex: none; }
+.ji-pick-name { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.ji-pick-options { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 20px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ink-100); }
+.ji-pick-options label span { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 700; }
+.ji-pick-options .ji-pick-mark { display: flex; align-items: center; gap: 8px; }
+.ji-pick-options .ji-pick-mark span { margin: 0; font-size: 12.5px; font-weight: 600; }
+.ji-pick-options .ji-pick-mark input { width: auto; }

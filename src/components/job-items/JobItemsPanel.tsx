@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { FileText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import { itemTag, summarizeItemStatuses } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
@@ -26,6 +26,10 @@ type Props = {
   confirm: (options: { message: string; tone?: "warning" | "danger" | "neutral"; confirmLabel?: string }) => Promise<boolean>;
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
+  /** Opens the delivery note for this job with the items to send out ticked. */
+  onDeliveryNote?: () => void;
+  /** Asks "are all documents uploaded?" before an item moves to ready-to-deliver or later; false = stay where it is. */
+  confirmDocuments?: (status: string) => Promise<boolean>;
 };
 
 function fmtDate(value: string | null): string {
@@ -34,7 +38,7 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
@@ -72,6 +76,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
   }
   async function moveItem(item: ItemRow, status: string) {
     if (status === item.status) return;
+    if (confirmDocuments && !(await confirmDocuments(status))) return;
     await call(item.id, `${base}?itemId=${item.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
   }
   async function removeItem(item: ItemRow) {
@@ -104,6 +109,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             ? <ItemsStatusBadge statuses={items.map((item) => item.status)} jobType={jobType} build={build} />
             : rollup.status && <StatusPill status={rollup.status} build={build} />}
           <span className="ji-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
+          {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
         </div>
       </header>
 
