@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flo X Integrations – workshop and engineering management software</title>
+<meta name="description" content="Flo X Integrations is a modular management system for workshops and engineering businesses: job cards, parts and RFQs, stock, PEX tracking, outwork, specifications and reports in one place.">
+<meta property="og:title" content="Flo X Integrations">
+<meta property="og:description" content="Run jobs, parts, stock and reports in one modular system built for workshops and engineering businesses.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://floxintegrations.co.za/">
+<meta name="theme-color" content="#07111f">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23155fca'/%3E%3Ctext x='32' y='43' font-family='Arial,sans-serif' font-size='28' font-weight='700' text-anchor='middle' fill='%23fff'%3EFX%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --navy-950:#07111f; --navy-900:#0c1a2c; --navy-800:#12263f;
+  --blue-700:#155fca; --blue-600:#2674df; --blue-100:#e6f0fd;
+  --gold-500:#d6a83b; --gold-100:#fbf3df;
+  --ink-900:#172033; --ink-700:#3f4b60; --ink-500:#6b7689; --ink-300:#c6cdd8; --ink-150:#e2e6ec; --ink-100:#edf0f4;
+  --white:#fff; --canvas:#f6f8fb;
+  --radius:14px; --maxw:1120px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink-900);background:var(--canvas);line-height:1.6;-webkit-font-smoothing:antialiased}
+img,svg{max-width:100%}
+a{color:var(--blue-700)}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+h1,h2,h3{line-height:1.15;margin:0 0 .5em;letter-spacing:-.02em}
+h1{font-size:clamp(2.2rem,5vw,3.6rem)}
+h2{font-size:clamp(1.7rem,3.4vw,2.4rem)}
+h3{font-size:1.1rem;letter-spacing:-.01em}
+p{margin:0 0 1em}
+.eyebrow{font-size:.78rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-500);margin-bottom:.8rem;display:block}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.8rem 1.25rem;border-radius:10px;font-weight:600;text-decoration:none;border:1px solid transparent;cursor:pointer;font-size:1rem;font-family:inherit;transition:transform .15s,background .15s}
+.btn:hover{transform:translateY(-1px)}
+.btn:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--gold-500);outline-offset:2px}
+.btn-primary{background:var(--blue-700);color:#fff}
+.btn-primary:hover{background:var(--blue-600)}
+.btn-ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.35)}
+.btn-ghost:hover{background:rgba(255,255,255,.08)}
+.btn-gold{background:var(--gold-500);color:var(--navy-950)}
+.btn-gold:hover{background:#e2b94e}
+.btn-demo{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.35)}
+.btn-demo:hover{background:rgba(255,255,255,.18)}
+.btn-demo .dot,.demo-card .dot{width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.25);flex:none}
+.card.demo-card{border-color:var(--gold-500);background:var(--gold-100)}
+.demo-card .btn{margin-top:6px}
+
+/* header */
+header.site{position:sticky;top:0;z-index:50;background:rgba(7,17,31,.92);backdrop-filter:blur(10px);border-bottom:1px solid rgba(255,255,255,.08)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:68px;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;color:#fff;text-decoration:none;font-weight:700;letter-spacing:-.01em}
+.brand-mark{width:34px;height:34px;border-radius:9px;background:var(--blue-700);display:grid;place-items:center;font-size:.9rem;font-weight:800}
+.brand small{display:block;font-size:.65rem;color:var(--gold-500);letter-spacing:.14em;text-transform:uppercase;font-weight:700;margin-top:-2px}
+.nav-links{display:flex;align-items:center;gap:26px}
+.nav-links a{color:#c9d3e3;text-decoration:none;font-size:.95rem;font-weight:500}
+.nav-links a:hover{color:#fff}
+.nav-links .btn{color:#fff;padding:.55rem 1rem}
+.menu-btn{display:none;background:none;border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:.45rem .7rem;font-size:1rem;cursor:pointer}
+
+/* hero */
+.hero{background:radial-gradient(1200px 500px at 85% -10%,rgba(38,116,223,.35),transparent 60%),radial-gradient(800px 400px at 0% 100%,rgba(214,168,59,.12),transparent 60%),var(--navy-950);color:#fff;padding:72px 0 96px;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center}
+.hero p.lead{font-size:1.15rem;color:#c9d3e3;max-width:34rem}
+.hero .actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 22px}
+.hero .trust{display:flex;flex-wrap:wrap;gap:8px 22px;color:#9fb0c8;font-size:.9rem;padding:0;list-style:none;margin:0}
+.hero .trust li::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gold-500);margin-right:8px}
+
+/* product mock */
+.mock{background:var(--navy-900);border:1px solid rgba(255,255,255,.12);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.45);overflow:hidden}
+.mock-bar{display:flex;gap:6px;padding:12px 14px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.08)}
+.mock-bar i{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.2)}
+.mock-body{display:grid;grid-template-columns:120px 1fr;min-height:320px}
+.mock-side{background:rgba(0,0,0,.18);padding:14px 10px;display:flex;flex-direction:column;gap:6px;font-size:.72rem;color:#8fa2bd}
+.mock-side span{padding:7px 9px;border-radius:7px}
+.mock-side span.on{background:var(--blue-700);color:#fff}
+.mock-main{padding:16px}
+.mock-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.mock-card{background:rgba(255,255,255,.06);border-radius:10px;padding:10px 12px}
+.mock-card b{display:block;font-size:1.25rem;color:#fff}
+.mock-card span{font-size:.68rem;color:#8fa2bd}
+.mock-card.warn b{color:var(--gold-500)}
+.mock-table{width:100%;border-collapse:collapse;font-size:.72rem;color:#c9d3e3}
+.mock-table th{text-align:left;font-weight:600;color:#8fa2bd;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.1)}
+.mock-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:.64rem;font-weight:600}
+.pill.a{background:rgba(38,116,223,.25);color:#8dbaff}
+.pill.b{background:rgba(214,168,59,.2);color:var(--gold-500)}
+.pill.c{background:rgba(70,200,130,.18);color:#7ee0ab}
+
+/* sections */
+section{padding:84px 0}
+.section-head{max-width:40rem;margin-bottom:44px}
+.section-head p{color:var(--ink-700);font-size:1.05rem}
+.grid{display:grid;gap:20px}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:#fff;border:1px solid var(--ink-150);border-radius:var(--radius);padding:24px;transition:box-shadow .2s,transform .2s}
+.card:hover{box-shadow:0 14px 34px rgba(23,32,51,.08);transform:translateY(-2px)}
+.icon{width:42px;height:42px;border-radius:11px;background:var(--blue-100);color:var(--blue-700);display:grid;place-items:center;margin-bottom:14px}
+.icon svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.card p{color:var(--ink-700);margin:0;font-size:.97rem}
+
+.band{background:#fff;border-block:1px solid var(--ink-150)}
+.industry{border-radius:var(--radius);padding:32px;color:#fff;position:relative;overflow:hidden}
+.industry.w{background:linear-gradient(135deg,var(--navy-900),var(--blue-700))}
+.industry.e{background:linear-gradient(135deg,var(--navy-900),#3a4a66)}
+.industry h3{font-size:1.4rem}
+.industry ul{padding:0;list-style:none;margin:16px 0 0;display:grid;gap:8px}
+.industry li{padding-left:26px;position:relative;color:#dbe5f5}
+.industry li::before{content:"";position:absolute;left:0;top:.45em;width:14px;height:14px;border-radius:50%;background:var(--gold-500)}
+.industry p{color:#c9d3e3}
+.tag{display:inline-block;background:rgba(255,255,255,.14);padding:3px 10px;border-radius:99px;font-size:.75rem;font-weight:600;margin-bottom:14px}
+
+.steps{counter-reset:s;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.step{position:relative;padding-top:54px}
+.step::before{counter-increment:s;content:counter(s);position:absolute;top:0;left:0;width:40px;height:40px;border-radius:50%;background:var(--navy-950);color:var(--gold-500);display:grid;place-items:center;font-weight:700}
+.step p{color:var(--ink-700)}
+
+.security{background:var(--navy-950);color:#fff}
+.security .section-head p{color:#b6c4da}
+.security .card{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
+.security .card p{color:#b6c4da}
+.security .icon{background:rgba(214,168,59,.15);color:var(--gold-500)}
+.security h2{color:#fff}
+
+details{background:#fff;border:1px solid var(--ink-150);border-radius:12px;padding:0;margin-bottom:12px}
+summary{cursor:pointer;padding:18px 22px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font-size:1.3rem;color:var(--blue-700);line-height:1}
+details[open] summary::after{content:"–"}
+details p{padding:0 22px 20px;margin:0;color:var(--ink-700)}
+
+.cta{background:linear-gradient(135deg,var(--blue-700),var(--navy-900));color:#fff;border-radius:22px;padding:56px 36px;text-align:center}
+.cta p{color:#d3def0;max-width:34rem;margin:0 auto 24px}
+
+form.contact{min-width:0;display:grid;gap:14px;background:#fff;border:1px solid var(--ink-150);border-radius:var(--radius);padding:26px}
+.row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+label{display:grid;gap:6px;font-weight:600;font-size:.9rem}
+input,textarea,select{width:100%;min-width:0;font:inherit;padding:.7rem .85rem;border:1px solid var(--ink-300);border-radius:9px;background:#fff;color:var(--ink-900)}
+textarea{min-height:110px;resize:vertical}
+.note{font-size:.85rem;color:var(--ink-500);margin:0}
+.contact-side{display:grid;gap:16px;align-content:start}
+.contact-side .card{padding:20px}
+.hp{position:absolute;left:-9999px;opacity:0;height:0;width:0}
+.btn[disabled]{opacity:.65;cursor:wait}
+.thanks{text-align:center;padding:30px 10px}
+.thanks .tick{width:56px;height:56px;border-radius:50%;background:#e7f6ee;color:#14633a;display:grid;place-items:center;margin:0 auto 14px;font-size:1.6rem}
+
+footer.site{background:var(--navy-950);color:#9fb0c8;padding:40px 0;font-size:.9rem}
+.foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;align-items:center}
+.foot a{color:#c9d3e3;text-decoration:none;margin-left:18px}
+.foot a:first-child{margin-left:0}
+
+@media (max-width:900px){
+  .hero-grid,.g2{grid-template-columns:1fr}
+  .g3,.steps{grid-template-columns:1fr 1fr}
+  .mock{max-width:520px}
+}
+@media (max-width:680px){
+  section{padding:60px 0}
+  .g3,.steps,.row2{grid-template-columns:1fr}
+  .menu-btn{display:block}
+  .nav-links{display:none;position:absolute;top:68px;left:0;right:0;background:var(--navy-950);flex-direction:column;align-items:stretch;gap:0;padding:10px 20px 20px;border-bottom:1px solid rgba(255,255,255,.1)}
+  .nav-links.open{display:flex}
+  .nav-links a{padding:12px 0}
+  .nav-links .btn{justify-content:center;margin-top:8px}
+  .mock-body{grid-template-columns:1fr}
+  .mock-side{display:none}
+  .cta{padding:40px 22px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn,.card{transition:none}}
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="Flo X Integrations home">
+      <span class="brand-mark">FX</span>
+      <span>Flo X<small>Integrations</small></span>
+    </a>
+    <button class="menu-btn" id="menuBtn" aria-expanded="false" aria-controls="navLinks">Menu</button>
+    <nav class="nav-links" id="navLinks" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#industries">Industries</a>
+      <a href="#how">How it works</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+      <a href="#contact">Contact</a>
+      <a href="https://demo.floxintegrations.co.za" data-demo>Live demo</a>
+      <a class="btn btn-primary" href="https://app.floxintegrations.co.za" data-login>Log in</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<!-- HERO -->
+<div class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Management software for workshops and engineers</span>
+      <h1>Every job, part and component in one place.</h1>
+      <p class="lead">Flo X Integrations is a modular management system. Track jobs from job card to delivery, order parts and RFQs, control stock, follow PEX units and report on what matters — and switch on only the modules your business needs.</p>
+      <div class="actions">
+        <a class="btn btn-gold" href="https://demo.floxintegrations.co.za" data-demo>Try the live demo →</a>
+        <a class="btn btn-demo" href="#contact">Request a walk-through</a>
+      </div>
+      <p style="color:#9fb0c8;font-size:.9rem;margin:-10px 0 18px">No sign-up needed. Explore a sample workshop as an admin, manager or mechanic. <a href="https://app.floxintegrations.co.za" data-login style="color:#fff">Already a customer? Log in →</a></p>
+      <ul class="trust">
+        <li>Built for South African workshops</li>
+        <li>Each company's data kept separate</li>
+        <li>Pay for the modules you use</li>
+      </ul>
+    </div>
+
+    <!-- illustrative product mock (not real data) -->
+    <div class="mock" role="img" aria-label="Illustration of the Flo X jobs dashboard">
+      <div class="mock-bar"><i></i><i></i><i></i></div>
+      <div class="mock-body">
+        <div class="mock-side"><span class="on">Dashboard</span><span>Jobs &amp; WIP</span><span>Parts</span><span>Stock</span><span>PEX</span><span>Outwork</span><span>Reports</span></div>
+        <div class="mock-main">
+          <div class="mock-cards">
+            <div class="mock-card"><b>38</b><span>Jobs in progress</span></div>
+            <div class="mock-card warn"><b>6</b><span>ETA this week</span></div>
+            <div class="mock-card"><b>94%</b><span>On-time delivery</span></div>
+          </div>
+          <table class="mock-table">
+            <thead><tr><th>Job</th><th>Customer</th><th>Status</th><th>ETA</th></tr></thead>
+            <tbody>
+              <tr><td>J00231</td><td>Northern Mining</td><td><span class="pill a">In workshop</span></td><td>12 Oct</td></tr>
+              <tr><td>J00232</td><td>Karoo Haulage</td><td><span class="pill b">Awaiting parts</span></td><td>14 Oct</td></tr>
+              <tr><td>J00233</td><td>Delta Agri</td><td><span class="pill a">Quoted</span></td><td>16 Oct</td></tr>
+              <tr><td>J00234</td><td>Coastal Plant</td><td><span class="pill c">Ready</span></td><td>9 Oct</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow" style="color:var(--blue-700)">What it does</span>
+      <h2>The whole job, from the first call to the delivery note.</h2>
+      <p>Each part of the business is its own module. They share the same customers, parts and jobs, so nothing is typed twice.</p>
+    </div>
+    <div class="grid g3">
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M9 4h6a2 2 0 0 1 2 2v1H7V6a2 2 0 0 1 2-2z"/><rect x="5" y="7" width="14" height="14" rx="2"/><path d="M9 12h6M9 16h4"/></svg></div>
+        <h3>Jobs &amp; WIP</h3>
+        <p>Job cards, status steps, notes, attachments and a full history. Print the job card, delivery note and pick slip as clean PDFs.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M3 7h13v10H3zM16 10h3l2 3v4h-5"/><circle cx="7" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg></div>
+        <h3>Parts &amp; ordering</h3>
+        <p>Build a parts list on every job, see what is outstanding, apply reusable job kits and follow up with suppliers.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg></div>
+        <h3>RFQs &amp; supplier quotes</h3>
+        <p>Send requests for quotation by email, import supplier replies and compare quotes side by side.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M3 9l9-5 9 5v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 20v-7h6v7"/></svg></div>
+        <h3>Stock &amp; pick slips</h3>
+        <p>Stock levels by bin and location, stock counts, reservations and pick slips that issue parts from the shelf to a job.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5l2 2"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5l-2-2"/><path d="M4 20v-5h5"/></svg></div>
+        <h3>PEX exchange tracking</h3>
+        <p>Supply and return jobs, units on the shelf, quarantine and scrap — with the full history of every unit.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
+        <h3>Reports &amp; ratios</h3>
+        <p>Jobs per customer, warranty, monthly trends, on-time delivery, turnaround and repeat-customer rates.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></div>
+        <h3>Outwork</h3>
+        <p>Send components to other shops, record when they leave and return, and keep the paperwork on the job.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/></svg></div>
+        <h3>Field service</h3>
+        <p>Plan who is going where, record what was done on site and print the field report.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M4 20 20 4M7 17l2 2M10 14l2 2M13 11l2 2M16 8l2 2"/></svg></div>
+        <h3>Specifications</h3>
+        <p>For engineering businesses: dimensional size reports recorded on arrival and after machining, with the original handwritten sheet kept on file.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- INDUSTRIES -->
+<section id="industries" class="band">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow" style="color:var(--blue-700)">Industry builds</span>
+      <h2>Starts with the right modules for your business.</h2>
+      <p>Choose a build when your company is set up. You can switch individual modules on or off later as the business changes.</p>
+    </div>
+    <div class="grid g2">
+      <article class="industry w">
+        <span class="tag">Workshop Business</span>
+        <h3>Repair, rebuild and field service workshops</h3>
+        <p>For workshops that quote parts, issue pick slips and track components through the shop.</p>
+        <ul>
+          <li>Jobs, components, delivery notes and mechanics</li>
+          <li>Parts ordering with RFQs and supplier quotes</li>
+          <li>Stock, pick slips and PEX inventory</li>
+          <li>Outwork and field service</li>
+        </ul>
+      </article>
+      <article class="industry e">
+        <span class="tag">Engineering Business</span>
+        <h3>Engineering and machining shops</h3>
+        <p>The same job flow, without PEX, supplier RFQs or field service, plus recorded dimensions.</p>
+        <ul>
+          <li>Jobs, pick slips and delivery notes</li>
+          <li>Specifications and dimensional size reports</li>
+          <li>Stock and outwork</li>
+          <li>Reports on turnaround and delivery</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow" style="color:var(--blue-700)">How it works</span>
+      <h2>Up and running without a long project.</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><h3>We set up your company</h3><p>Your company is created with its own branding, logo, numbering and the modules that fit your business.</p></div>
+      <div class="step"><h3>Add your people and data</h3><p>Invite users with the right role, and import customers, suppliers and parts from Excel or CSV.</p></div>
+      <div class="step"><h3>Run your jobs</h3><p>Create jobs, order parts, issue stock and keep customers informed. Switch on more modules whenever you are ready.</p></div>
+    </div>
+    <div class="grid g3" style="margin-top:44px">
+      <article class="card"><h3>Roles and permissions</h3><p>Administrators, managers, mechanics, store controllers and sales each see what they need. Modules can also be switched off per user.</p></article>
+      <article class="card"><h3>Your branding</h3><p>Your logo and colours appear in the system and on printed documents such as job cards and delivery notes.</p></article>
+      <article class="card"><h3>Import and export</h3><p>Bring customers, suppliers, jobs and parts in from spreadsheets, and export your data back out when you need it.</p></article>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY -->
+<section id="security" class="security">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">Security</span>
+      <h2>Your data stays yours.</h2>
+      <p>Flo X serves many companies from one platform, so keeping each company's information apart is built into every part of the system.</p>
+    </div>
+    <div class="grid g3">
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>Separate by company</h3>
+        <p>Every record belongs to one company and cannot be seen from another.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h3>Protected sign-in</h3>
+        <p>Passwords are stored securely, repeated failed sign-ins are locked out, and password reset links expire.</p>
+      </article>
+      <article class="card">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M7 4h8l4 4v12H7z"/><path d="M15 4v4h4M10 13h6M10 17h4"/></svg></div>
+        <h3>Audit trail</h3>
+        <p>Important actions are recorded with who did them and when, so you can see what changed.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <div class="wrap" style="max-width:820px">
+    <div class="section-head">
+      <span class="eyebrow" style="color:var(--blue-700)">Questions</span>
+      <h2>Frequently asked</h2>
+    </div>
+    <details><summary>Do I have to use every module?</summary><p>No. Each part of Flo X is a separate module. Your company starts with the modules for its build and you can switch others on or off as your needs change.</p></details>
+    <details><summary>Can different staff see different things?</summary><p>Yes. Roles control what each person can do, and individual modules can be switched off for a single user.</p></details>
+    <details><summary>Can I bring my existing customers, suppliers and parts?</summary><p>Yes. Customers, suppliers, jobs and parts can be imported from Excel or CSV files, and exported again at any time.</p></details>
+    <details><summary>Will it show my company's name and logo?</summary><p>Yes. Your logo and colours are used throughout the system and on printed documents like job cards, delivery notes and pick slips.</p></details>
+    <details><summary>Can I try it before talking to anyone?</summary><p>Yes. Open the <a href="https://demo.floxintegrations.co.za" data-demo>live demo</a> to explore a sample workshop with real-looking jobs, parts and stock. You can switch between roles such as admin, manager and mechanic. Nothing you do there is saved.</p></details>
+    <details><summary>Where do I log in?</summary><p>Use the Log in button at the top of this page. If you do not have an account yet, ask your company administrator, or contact us below.</p></details>
+    <details><summary>How is pricing worked out?</summary><p>Pricing depends on the modules your company uses. Get in touch and we will put a proposal together.</p></details>
+  </div>
+</section>
+
+<!-- CTA + CONTACT -->
+<section id="contact" style="padding-top:0">
+  <div class="wrap">
+    <div class="cta" style="margin-bottom:56px">
+      <h2>Already using Flo X?</h2>
+      <p>Sign in to your company's workspace to carry on where you left off.</p>
+      <a class="btn btn-gold" href="https://app.floxintegrations.co.za" data-login>Log in to Flo X →</a>
+    </div>
+
+    <div class="grid g2" style="align-items:start">
+      <div>
+        <span class="eyebrow" style="color:var(--blue-700)">Get in touch</span>
+        <h2>Request a demo</h2>
+        <p style="color:var(--ink-700)">Tell us a little about your business. We will reply by email, usually within one working day, to arrange a walk-through.</p>
+        <div class="contact-side">
+          <div class="card demo-card" style="margin-bottom:16px"><h3 style="display:flex;align-items:center;gap:8px"><span class="dot"></span>See it live first</h3><p style="margin:0 0 6px">Open the live demo and click around a sample workshop. No sign-up, nothing to install.</p><a class="btn btn-gold" href="https://demo.floxintegrations.co.za" data-demo>Open the live demo →</a></div>
+          <div class="card"><h3>Email</h3><p><a href="mailto:sales@floxintegrations.co.za" data-email>sales@floxintegrations.co.za</a></p></div>
+        </div>
+      </div>
+      <form class="contact" id="contactForm" novalidate>
+        <div class="row2">
+          <label>Your name<input name="name" autocomplete="name" required></label>
+          <label>Company<input name="company" autocomplete="organization"></label>
+        </div>
+        <div class="row2">
+          <label>Email<input name="email" type="email" autocomplete="email" required></label>
+          <label>Phone<input name="phone" type="tel" autocomplete="tel"></label>
+        </div>
+        <label>Type of business
+          <select name="type">
+            <option>Workshop (repair, rebuild, field service)</option>
+            <option>Engineering / machining</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <label>Message<textarea name="message" placeholder="What would you like to manage better?"></textarea></label>
+        <input class="hp" type="text" name="botcheck" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button class="btn btn-primary" type="submit" id="sendBtn">Send request</button>
+        <p class="note" id="formNote" role="status">We only use your details to reply to this request.</p>
+      </form>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site">
+  <div class="wrap foot">
+    <div>© <span id="yr">2026</span> Flo X Integrations. All rights reserved.</div>
+    <div><a href="#features">Features</a><a href="#faq">FAQ</a><a href="#contact">Contact</a><a href="https://app.floxintegrations.co.za" data-login>Log in</a></div>
+  </div>
+</footer>
+
+<script>
+// Where the Log in buttons go. Change this one line if the system address changes.
+var LOGIN_URL = "https://app.floxintegrations.co.za";
+// Where the live demo buttons go (view-only demo, no login).
+var DEMO_URL = "https://demo.floxintegrations.co.za";
+// Where the contact form's email is addressed.
+var CONTACT_EMAIL = "sales@floxintegrations.co.za";
+
+document.querySelectorAll("[data-login]").forEach(function (a) { a.href = LOGIN_URL; });
+document.querySelectorAll("[data-demo]").forEach(function (a) { a.href = DEMO_URL; });
+document.querySelectorAll("[data-email]").forEach(function (a) { a.href = "mailto:" + CONTACT_EMAIL; a.textContent = CONTACT_EMAIL; });
+document.getElementById("yr").textContent = new Date().getFullYear();
+
+var menuBtn = document.getElementById("menuBtn"), navLinks = document.getElementById("navLinks");
+menuBtn.addEventListener("click", function () {
+  var open = navLinks.classList.toggle("open");
+  menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+});
+navLinks.addEventListener("click", function (e) { if (e.target.tagName === "A") { navLinks.classList.remove("open"); menuBtn.setAttribute("aria-expanded", "false"); } });
+
+// The request goes to the Flo X app, which emails it to CONTACT_EMAIL.
+var DEMO_ENDPOINT = LOGIN_URL + "/api/v1/public/demo-request";
+document.getElementById("contactForm").addEventListener("submit", function (e) {
+  e.preventDefault();
+  var f = e.target, note = document.getElementById("formNote"), btn = document.getElementById("sendBtn");
+  if (!f.name.value.trim() || !/^\S+@\S+\.\S+$/.test(f.email.value.trim())) {
+    note.textContent = "Please enter your name and a valid email address.";
+    return;
+  }
+  var payload = { name: f.name.value.trim(), company: f.company.value.trim(), email: f.email.value.trim(), phone: f.phone.value.trim(),
+                  business_type: f.type.value, message: f.message.value.trim(), botcheck: f.botcheck.value };
+  btn.disabled = true; btn.textContent = "Sending…";
+  fetch(DEMO_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+    .then(function (r) { if (!r.ok) { return r.json().catch(function () { return {}; }).then(function (b) { var m = b && b.error && b.error.message; throw new Error(m || "send failed"); }); } return r.json(); })
+    .then(function () {
+      f.innerHTML = '<div class="thanks" role="status"><div class="tick">&#10003;</div><h3>Thank you \u2013 request sent</h3><p class="note">We will reply to the email address you gave us.</p></div>';
+    })
+    .catch(function (err) {
+      note.textContent = (err && err.message && err.message !== "send failed" && err.message !== "Failed to fetch") ? err.message : "Sorry, that did not send. Please email " + CONTACT_EMAIL + " directly.";
+      btn.disabled = false; btn.textContent = "Send request";
+    });
+});
+</script>
+</body>
+</html>

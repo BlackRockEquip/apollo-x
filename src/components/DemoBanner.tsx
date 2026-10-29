@@ -1,18 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
 import { ArrowRight, Eye } from "lucide-react";
 import { DEMO_READ_ONLY_MESSAGE, DEMO_VIEWS } from "@/lib/demo/mode";
 
 // 2026-10-29: public view-only demo (src/lib/demo/mode.ts). Shown at the top of every page when DEMO_MODE=true.
 // - says plainly that this is a live demo with sample data and that changes are switched off;
-// - "Viewing as" lets a visitor see the system as another role (Manager, Mechanic, ...) via /demo?as=...;
+// - "Viewing as" lets a visitor see the system as another role (Manager, Mechanic, ...) via /demo?as=..., landing on that role's start page;
 // - "Request a demo" goes to the Flo X contact form (DEMO_CTA_URL);
 // - any save the visitor tries is refused by the server; this shows one friendly note instead of each screen's own error.
 
 export function DemoBanner({ viewKey, ctaUrl }: { viewKey: string; ctaUrl: string }) {
-  const pathname = usePathname();
   const [notice, setNotice] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -39,9 +37,10 @@ export function DemoBanner({ viewKey, ctaUrl }: { viewKey: string; ctaUrl: strin
     };
   }, []);
 
+  // 2026-10-29, user report: switching role showed an error page. The switch used to keep the visitor on the same page,
+  // but the new role is not always allowed there (e.g. Store controller on Jobs). It now opens the role's own start page.
   function switchView(key: string) {
-    const next = pathname && pathname !== "/" ? `&next=${encodeURIComponent(pathname)}` : "";
-    window.location.href = `/demo?as=${encodeURIComponent(key)}${next}`;
+    window.location.href = `/demo?as=${encodeURIComponent(key)}`;
   }
 
   return (

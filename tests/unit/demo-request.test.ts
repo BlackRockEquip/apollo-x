@@ -46,7 +46,7 @@ describe("demo request: email content", () => {
   });
   it("is sent to the admin mailbox with the visitor as reply-to", async () => {
     await sendDemoRequestEmail(demoRequestSchema.parse({ name: "Anna", email: "anna@example.com", message: "Hello" }), {} as NodeJS.ProcessEnv);
-    expect(sendPlatformEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "floxadmin@floxintegrations.co.za", replyTo: "anna@example.com" }));
+    expect(sendPlatformEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "sales@floxintegrations.co.za", replyTo: "anna@example.com" }));
     expect(sendPlatformEmail.mock.calls[0][0].text).toContain("Hello");
     expect(sendPlatformEmail.mock.calls[0][0].html).toBeUndefined();
   });

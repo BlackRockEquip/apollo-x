@@ -68,10 +68,12 @@ describe("demo entry helpers", () => {
     expect(safeDemoNext(null)).toBeNull();
   });
   it("maps views and roles", () => {
-    expect(demoViewFor("mechanic").email).toBe("mechanic@testdemo.example");
+    expect(demoViewFor("mechanic").email).toBe("mechanic@ridgelineplant.example");
+    expect(demoViewFor("finance").key).toBe("admin"); // Finance is not offered
     expect(demoViewFor("nope").key).toBe("admin");
     expect(demoViewKeyForRole("STORE_CONTROLLER")).toBe("stores");
     expect(demoViewKeyForRole("WIP_VIEWER")).toBe("admin");
+    expect(demoViewKeyForRole("FINANCE")).toBe("admin");
   });
 });
 

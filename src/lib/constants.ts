@@ -54,7 +54,9 @@ const ENGINEERING_ROLE_LABELS: Partial<Record<TenantRole, string>> = {
   WIP_VIEWER: "WIP View (View Only)",
 };
 export const ENGINEERING_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "STORE_CONTROLLER", "USER", "WIP_VIEWER"];
-export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "FINANCE", "WIP_VIEWER"];
+// 2026-10-29, user request: Finance is not offered as a user type yet (there is no finance module). Anyone who already
+// has the Finance type keeps working; it is just not offered for new users, same rule as the Engineering list above.
+export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "WIP_VIEWER"];
 
 export function tenantRoleLabelsFor(build?: string | null): Record<TenantRole, string> {
   return build === "ENGINEERING" ? { ...TENANT_ROLE_LABELS, ...ENGINEERING_ROLE_LABELS } as Record<TenantRole, string> : TENANT_ROLE_LABELS;

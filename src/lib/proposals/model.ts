@@ -104,7 +104,7 @@ export function defaultPriceList(): PriceList {
     vatPercent: 15,
     validDays: 30,
     preparedBy: "Mornay Rossouw",
-    preparedByEmail: "floxadmin@floxintegrations.co.za",
+    preparedByEmail: "sales@floxintegrations.co.za",
     letter: DEFAULT_LETTER,
     terms: DEFAULT_TERMS,
   };

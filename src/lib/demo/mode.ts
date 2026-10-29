@@ -3,7 +3,7 @@
 //
 // Demo mode is switched on ONLY on a separate Render web service with its own database (see docs/demo-site.md),
 // never on the live app. When DEMO_MODE=true:
-//   - /demo signs a visitor straight into the "Test Demo" company (scripts/seed-demo-company.ts) with no password;
+//   - /demo signs a visitor straight into the demo company, "Ridgeline Plant Services" (scripts/seed-demo-company.ts) with no password;
 //   - every request that could change something (POST/PUT/PATCH/DELETE: saves, uploads, emails, deletes) is refused
 //     in src/proxy.ts before it reaches any route;
 //   - the database client refuses writes as a second safety net (src/lib/prisma.ts), except sign-in sessions;
@@ -12,7 +12,7 @@
 // This file is imported by src/proxy.ts, so it must stay free of database / Node-only imports.
 
 export const DEMO_COMPANY_CODE = "TEST_DEMO";
-export const DEMO_EMAIL_DOMAIN = "testdemo.example";
+export const DEMO_EMAIL_DOMAIN = "ridgelineplant.example"; // must match EMAIL_DOMAIN in scripts/seed-demo-company.ts
 
 export const DEMO_READ_ONLY_CODE = "DEMO_READ_ONLY";
 export const DEMO_READ_ONLY_MESSAGE = "This is a view-only demo. Saving, uploading, emailing and deleting are switched off.";
@@ -23,7 +23,6 @@ export const DEMO_VIEWS = [
   { key: "manager", label: "Manager / Foreman", email: `manager@${DEMO_EMAIL_DOMAIN}` },
   { key: "sales", label: "Sales", email: `sales@${DEMO_EMAIL_DOMAIN}` },
   { key: "stores", label: "Store controller", email: `stores@${DEMO_EMAIL_DOMAIN}` },
-  { key: "finance", label: "Finance", email: `finance@${DEMO_EMAIL_DOMAIN}` },
   { key: "mechanic", label: "Mechanic", email: `mechanic@${DEMO_EMAIL_DOMAIN}` },
 ] as const;
 
@@ -34,7 +33,7 @@ export function demoViewFor(key: string | null | undefined) {
 }
 
 const VIEW_BY_ROLE: Record<string, DemoViewKey> = {
-  COMPANY_ADMIN: "admin", MANAGER: "manager", SALES: "sales", STORE_CONTROLLER: "stores", FINANCE: "finance", USER: "mechanic",
+  COMPANY_ADMIN: "admin", MANAGER: "manager", SALES: "sales", STORE_CONTROLLER: "stores", USER: "mechanic",
 };
 
 /** Which demo view the signed-in demo user is (for the banner's "Viewing as" picker). */

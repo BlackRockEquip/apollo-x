@@ -1,4 +1,4 @@
-// Creates (or resets) the "Test Demo" company: a fully populated workshop that a
+// Creates (or resets) the demo company ("Ridgeline Plant Services", internal code TEST_DEMO): a fully populated workshop that a
 // salesperson can use to demonstrate Apollo X to prospective clients.
 //
 // What it builds: the company with every module switched on, numbering, six
@@ -9,12 +9,12 @@
 // saved quotes, outwork, a field service report, a warranty claim, a PEX supply
 // and a picking slip).
 //
-// Only the "Test Demo" company is ever touched. Nothing is emailed: the demo
+// Only the demo company (TEST_DEMO) is ever touched. Nothing is emailed: the demo
 // company has no SMTP settings and every address uses example.com.
 //
 // Run with:
 //   npx tsx scripts/seed-demo-company.ts            (creates it; stops if it already exists)
-//   npx tsx scripts/seed-demo-company.ts --reset    (wipes Test Demo and rebuilds it fresh)
+//   npx tsx scripts/seed-demo-company.ts --reset    (wipes the demo company and rebuilds it fresh)
 //
 // Optional: DEMO_PASSWORD=... sets the password used by all demo logins.
 import { ModuleKey, TenantRole } from "@prisma/client";
@@ -40,8 +40,9 @@ import {
 import { recordRfqQuote, requestRfqFromSupplier, saveRfqQuoteLines, setPreferredQuoteLine } from "../src/lib/rfq/service";
 
 const COMPANY_CODE = "TEST_DEMO";
-const COMPANY_NAME = "Test Demo";
-const EMAIL_DOMAIN = "testdemo.example";
+// 2026-10-29: renamed from "Test Demo" for the public live demo (docs/demo-site.md). Fictional company and people.
+const COMPANY_NAME = "Ridgeline Plant Services (Pty) Ltd";
+const EMAIL_DOMAIN = "ridgelineplant.example"; // must match DEMO_EMAIL_DOMAIN in src/lib/demo/mode.ts
 const PASSWORD = process.env.DEMO_PASSWORD || "Demo#2026!";
 const RESET = process.argv.includes("--reset");
 
@@ -76,7 +77,7 @@ async function step<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Reset: removes every row that belongs to the Test Demo company (and only it).
+// Reset: removes every row that belongs to the demo company (and only it).
 // ---------------------------------------------------------------------------
 async function wipeCompany(companyId: string) {
   const memberships = await prisma.companyMembership.findMany({ where: { companyId }, select: { userId: true } });
@@ -162,8 +163,8 @@ const CUSTOMERS: Array<{ name: string; code: string; city: string; province: str
   { name: "Platinum Ridge Mining", code: "CUS-PLR", city: "Steelpoort", province: "Limpopo", contact: "Johan Swanepoel", phone: "013 555 0208" },
 ];
 
-const MECHANICS = ["Mike Mechanic", "Thabo Mokoena", "Pieter Venter", "Sipho Dlamini"];
-const SALES_REPS = ["Sam Sales", "Priya Naidoo", "Johan Botha"];
+const MECHANICS = ["Bongani Nkosi", "Thabo Mokoena", "Pieter Venter", "Sipho Dlamini"];
+const SALES_REPS = ["Ruan Smit", "Priya Naidoo", "Johan Botha"];
 
 type PartSeed = { pn: string; desc: string; mfr: string | null; cost: number; price: number; bin: string; stock: number; min?: number; cat: string };
 const PARTS: PartSeed[] = [
@@ -227,23 +228,23 @@ type JobSeed = {
 };
 
 const JOBS: JobSeed[] = [
-  { key: "pump", type: "STANDARD_REPAIR", customer: "Karoo Quarries (Pty) Ltd", make: "Caterpillar", model: "349F", serial: "CAT0349FJ7K00412", component: "Main hydraulic pump", description: "Main hydraulic pump has lost pressure under load. Strip, inspect and rebuild with new kit and bearings.", notes: "Customer reports the machine slows down when digging and swinging together. Pump to be pressure tested after the rebuild.", status: "STRIPPING", receivedDaysAgo: 9, etaInDays: 6, po: "KQ-45811", parts: [["HP-A8V107", 1], ["HP-SK349", 3], ["DT-BRG-22220", 2], ["DT-OILSEAL-90", 4]], mechanic: "Mike Mechanic", rep: "Sam Sales" },
+  { key: "pump", type: "STANDARD_REPAIR", customer: "Karoo Quarries (Pty) Ltd", make: "Caterpillar", model: "349F", serial: "CAT0349FJ7K00412", component: "Main hydraulic pump", description: "Main hydraulic pump has lost pressure under load. Strip, inspect and rebuild with new kit and bearings.", notes: "Customer reports the machine slows down when digging and swinging together. Pump to be pressure tested after the rebuild.", status: "STRIPPING", receivedDaysAgo: 9, etaInDays: 6, po: "KQ-45811", parts: [["HP-A8V107", 1], ["HP-SK349", 3], ["DT-BRG-22220", 2], ["DT-OILSEAL-90", 4]], mechanic: "Bongani Nkosi", rep: "Ruan Smit" },
   { key: "undercarriage", type: "STANDARD_REPAIR", customer: "Bushveld Earthmoving", make: "Komatsu", model: "PC300LC-8", serial: "KMT-PC300-88231", component: "Undercarriage", description: "Full undercarriage rebuild: rollers, idlers and sprockets. Quote required before work starts.", status: "QUOTE_IN_PROGRESS", receivedDaysAgo: 5, etaInDays: 12, po: "BE-2210", parts: [["UC-ROLLER-T", 10], ["UC-IDLER", 2], ["UC-LINK-SET", 2], ["UC-SPROCKET", 2]], mechanic: "Thabo Mokoena", rep: "Priya Naidoo" },
   { key: "swing", type: "STANDARD_REPAIR", customer: "Sunrise Civils", make: "Volvo Construction Equipment", model: "EC210B", serial: "VCE-EC210-30458", component: "Swing motor", description: "Swing motor leaking from the shaft seal and noisy on start-up. Quote sent, waiting for customer go-ahead.", status: "AWAITING_GO_AHEAD", receivedDaysAgo: 7, etaInDays: 10, parts: [["DT-SWING-MTR", 1], ["DT-BRG-6316", 2], ["DT-OILSEAL-90", 2]], mechanic: "Pieter Venter", rep: "Johan Botha" },
-  { key: "injectors", type: "PARTIAL_REPAIR", customer: "Platinum Ridge Mining", make: "Cummins", model: "QSK19", serial: "CUM-QSK19-5521", component: "Engine top end", description: "Replace injectors and recondition cylinder head. Head sent out for machining.", notes: "Matching seal kit also being fitted to the boom cylinder while the machine is in.", status: "ASSEMBLY", receivedDaysAgo: 12, etaInDays: 3, po: "PRM-9904", parts: [["EN-INJ-QSK", 6], ["EN-GASKET-SET", 1], ["HP-SK349", 3], ["EN-OIL-FILT", 2]], mechanic: "Sipho Dlamini", rep: "Sam Sales" },
-  { key: "cylinder", type: "STANDARD_REPAIR", customer: "Eastern Cape Plant Hire", make: "Hitachi", model: "ZX350LC-5", serial: "HIT-ZX350-77102", component: "Stick cylinder", description: "Stick cylinder rod scored. Re-chrome the rod, reseal and pressure test.", status: "TESTING", receivedDaysAgo: 14, etaInDays: 1, parts: [["HP-SK300", 1], ["HP-CYL-ROD", 1], ["MS-GREASE-CART", 1]], mechanic: "Mike Mechanic", rep: "Priya Naidoo" },
-  { key: "transmission", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Caterpillar", model: "966H", serial: "CAT0966HK5J01877", component: "Transmission", description: "Transmission slipping in 3rd gear. Replaced clutch pack and discs, tested and ready for delivery.", status: "TO_BE_DELIVERED", receivedDaysAgo: 18, etaInDays: 0, po: "NAM-7730", parts: [["DT-TRANS-966", 1], ["DT-CLUTCH-DISC", 4], ["DT-OILSEAL-90", 3]], mechanic: "Thabo Mokoena", rep: "Sam Sales" },
+  { key: "injectors", type: "PARTIAL_REPAIR", customer: "Platinum Ridge Mining", make: "Cummins", model: "QSK19", serial: "CUM-QSK19-5521", component: "Engine top end", description: "Replace injectors and recondition cylinder head. Head sent out for machining.", notes: "Matching seal kit also being fitted to the boom cylinder while the machine is in.", status: "ASSEMBLY", receivedDaysAgo: 12, etaInDays: 3, po: "PRM-9904", parts: [["EN-INJ-QSK", 6], ["EN-GASKET-SET", 1], ["HP-SK349", 3], ["EN-OIL-FILT", 2]], mechanic: "Sipho Dlamini", rep: "Ruan Smit" },
+  { key: "cylinder", type: "STANDARD_REPAIR", customer: "Eastern Cape Plant Hire", make: "Hitachi", model: "ZX350LC-5", serial: "HIT-ZX350-77102", component: "Stick cylinder", description: "Stick cylinder rod scored. Re-chrome the rod, reseal and pressure test.", status: "TESTING", receivedDaysAgo: 14, etaInDays: 1, parts: [["HP-SK300", 1], ["HP-CYL-ROD", 1], ["MS-GREASE-CART", 1]], mechanic: "Bongani Nkosi", rep: "Priya Naidoo" },
+  { key: "transmission", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Caterpillar", model: "966H", serial: "CAT0966HK5J01877", component: "Transmission", description: "Transmission slipping in 3rd gear. Replaced clutch pack and discs, tested and ready for delivery.", status: "TO_BE_DELIVERED", receivedDaysAgo: 18, etaInDays: 0, po: "NAM-7730", parts: [["DT-TRANS-966", 1], ["DT-CLUTCH-DISC", 4], ["DT-OILSEAL-90", 3]], mechanic: "Thabo Mokoena", rep: "Ruan Smit" },
   { key: "turbo", type: "STANDARD_REPAIR", customer: "Coastline Construction", make: "Caterpillar", model: "D6R", serial: "CAT00D6RK2H00339", component: "Turbocharger", description: "Turbocharger replaced and engine run tested. Delivered, invoice outstanding.", status: "DELIVERED_AWAITING_PAYMENT", receivedDaysAgo: 22, parts: [["EN-TURBO-3406", 1], ["EN-GASKET-SET", 1]], mechanic: "Pieter Venter", rep: "Johan Botha" },
-  { key: "done", type: "STANDARD_REPAIR", customer: "Drakensberg Logistics", make: "Volvo Construction Equipment", model: "A40E", serial: "VCE-A40E-12044", component: "Axle seals", description: "Rear axle seals and bushes replaced.", status: "COMPLETE", receivedDaysAgo: 35, parts: [["UC-BUSH-KIT", 4], ["DT-OILSEAL-90", 6]], mechanic: "Sipho Dlamini", rep: "Sam Sales" },
-  { key: "closed", type: "STANDARD_REPAIR", customer: "Karoo Quarries (Pty) Ltd", make: "Caterpillar", model: "772G", serial: "CAT0772GJ4F00911", component: "Bucket and teeth", description: "Bucket pins and bushes replaced, new teeth fitted.", status: "CLOSED", receivedDaysAgo: 48, parts: [["UC-BUCKET-PIN", 4], ["UC-TOOTH", 8]], mechanic: "Mike Mechanic", rep: "Priya Naidoo" },
+  { key: "done", type: "STANDARD_REPAIR", customer: "Drakensberg Logistics", make: "Volvo Construction Equipment", model: "A40E", serial: "VCE-A40E-12044", component: "Axle seals", description: "Rear axle seals and bushes replaced.", status: "COMPLETE", receivedDaysAgo: 35, parts: [["UC-BUSH-KIT", 4], ["DT-OILSEAL-90", 6]], mechanic: "Sipho Dlamini", rep: "Ruan Smit" },
+  { key: "closed", type: "STANDARD_REPAIR", customer: "Karoo Quarries (Pty) Ltd", make: "Caterpillar", model: "772G", serial: "CAT0772GJ4F00911", component: "Bucket and teeth", description: "Bucket pins and bushes replaced, new teeth fitted.", status: "CLOSED", receivedDaysAgo: 48, parts: [["UC-BUCKET-PIN", 4], ["UC-TOOTH", 8]], mechanic: "Bongani Nkosi", rep: "Priya Naidoo" },
   { key: "incoming", type: "STANDARD_REPAIR", customer: "Bushveld Earthmoving", make: "Komatsu", model: "WA470-6", serial: "KMT-WA470-20917", component: "Final drive", description: "Final drive to be collected from site for inspection and reseal.", status: "TO_BE_COLLECTED", etaInDays: 2, parts: [["DT-FD-PC300", 1]], rep: "Johan Botha" },
-  { key: "waitingparts", type: "STANDARD_REPAIR", customer: "Sunrise Civils", make: "Hitachi", model: "ZX200-5", serial: "HIT-ZX200-44018", component: "Starter and alternator", description: "No-start condition. New starter ordered; alternator tested and replaced.", status: "ASSEMBLY", receivedDaysAgo: 6, etaInDays: 4, parts: [["EN-STARTER-24", 1], ["EN-ALT-24V", 1]], mechanic: "Pieter Venter", rep: "Sam Sales" },
+  { key: "waitingparts", type: "STANDARD_REPAIR", customer: "Sunrise Civils", make: "Hitachi", model: "ZX200-5", serial: "HIT-ZX200-44018", component: "Starter and alternator", description: "No-start condition. New starter ordered; alternator tested and replaced.", status: "ASSEMBLY", receivedDaysAgo: 6, etaInDays: 4, parts: [["EN-STARTER-24", 1], ["EN-ALT-24V", 1]], mechanic: "Pieter Venter", rep: "Ruan Smit" },
   { key: "pexsupply", type: "PEX_SUPPLY", customer: "Karoo Quarries (Pty) Ltd", make: "Caterpillar", model: "3406E", serial: "CAT-3406E-8FF", component: "3406E engine (PEX exchange)", description: "Supply an exchange 3406E engine. Customer's old engine to come back as the core.", status: "TO_BE_DELIVERED", receivedDaysAgo: 3, etaInDays: 1, po: "KQ-45902", rep: "Priya Naidoo" },
   { key: "field1", type: "FIELD_SERVICE", customer: "Sunrise Civils", make: "Volvo Construction Equipment", model: "L120H", serial: "VCE-L120H-70115", component: "Loader - hydraulic fault", description: "Breakdown on site: loader loses lift power when warm.", status: "IN_PROGRESS", receivedDaysAgo: 1, etaInDays: 1, parts: [["HP-HOSE-1", 2], ["EL-SENSOR-PRS", 1]], mechanic: "Thabo Mokoena", rep: "Johan Botha" },
-  { key: "field2", type: "FIELD_SERVICE", customer: "Eastern Cape Plant Hire", make: "Komatsu", model: "D65PX-16", serial: "KMT-D65-31288", component: "Dozer - service", description: "2000 hour service and track tension adjustment on site.", status: "AWAIT_PAYMENT", receivedDaysAgo: 8, parts: [["EN-OIL-FILT", 2], ["EN-FUEL-FILT", 2], ["MS-GREASE-CART", 1]], mechanic: "Mike Mechanic", rep: "Priya Naidoo" },
-  { key: "warranty", type: "WARRANTY", customer: "Coastline Construction", make: "Hitachi", model: "ZX250LC-6", serial: "HIT-ZX250-90177", component: "Swing bearing", description: "Swing bearing failed within the warranty period. Claim lodged with the supplier.", status: "AWAITING_GO_AHEAD", receivedDaysAgo: 10, etaInDays: 14, parts: [["DT-BRG-22220", 1], ["MS-STUD-KIT", 1]], mechanic: "Sipho Dlamini", rep: "Sam Sales" },
+  { key: "field2", type: "FIELD_SERVICE", customer: "Eastern Cape Plant Hire", make: "Komatsu", model: "D65PX-16", serial: "KMT-D65-31288", component: "Dozer - service", description: "2000 hour service and track tension adjustment on site.", status: "AWAIT_PAYMENT", receivedDaysAgo: 8, parts: [["EN-OIL-FILT", 2], ["EN-FUEL-FILT", 2], ["MS-GREASE-CART", 1]], mechanic: "Bongani Nkosi", rep: "Priya Naidoo" },
+  { key: "warranty", type: "WARRANTY", customer: "Coastline Construction", make: "Hitachi", model: "ZX250LC-6", serial: "HIT-ZX250-90177", component: "Swing bearing", description: "Swing bearing failed within the warranty period. Claim lodged with the supplier.", status: "AWAITING_GO_AHEAD", receivedDaysAgo: 10, etaInDays: 14, parts: [["DT-BRG-22220", 1], ["MS-STUD-KIT", 1]], mechanic: "Sipho Dlamini", rep: "Ruan Smit" },
   { key: "sale", type: "OUTRIGHT_SALE", customer: "Platinum Ridge Mining", description: "Parts supply: filters and consumables for the site workshop.", status: "TO_BE_DELIVERED", receivedDaysAgo: 2, etaInDays: 1, po: "PRM-9951", parts: [["EN-OIL-FILT", 10], ["EN-FUEL-FILT", 10], ["HP-FILT-HY", 6], ["MS-GASKET-SIL", 6]], rep: "Johan Botha" },
-  { key: "enquiry", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Komatsu", model: "HD465-7", component: "Brake pack", description: "Enquiry for a wet brake pack rebuild. Machine details still to be confirmed.", status: "TO_BE_COLLECTED", rep: "Sam Sales" },
+  { key: "enquiry", type: "STANDARD_REPAIR", customer: "Northern Aggregate Mining", make: "Komatsu", model: "HD465-7", component: "Brake pack", description: "Enquiry for a wet brake pack rebuild. Machine details still to be confirmed.", status: "TO_BE_COLLECTED", rep: "Ruan Smit" },
 ];
 
 async function main() {
@@ -265,7 +266,7 @@ async function main() {
     data: {
       internalCode: COMPANY_CODE,
       legalName: COMPANY_NAME,
-      tradingName: "Test Demo Workshop",
+      tradingName: "Ridgeline Plant Services",
       defaultCurrencyCode: "ZAR",
       defaultGracePeriodDays: 30,
       settings: {
@@ -273,7 +274,7 @@ async function main() {
           themeColor: "#0f766e",
           mainTelephone: "011 555 0100",
           mainEmail: `info@${EMAIL_DOMAIN}`,
-          website: "www.testdemo.example",
+          website: "www.ridgelineplant.example",
           registrationNumber: "2020/123456/07",
           vatNumber: "4123456789",
           quoteValidityDays: 30,
@@ -302,12 +303,11 @@ async function main() {
   log("Creating demo logins...");
   const passwordHash = await hashPassword(PASSWORD);
   const USERS: Array<{ email: string; name: string; role: TenantRole; label: string }> = [
-    { email: `admin@${EMAIL_DOMAIN}`, name: "Demo Admin", role: "COMPANY_ADMIN", label: "Company admin (sees everything, settings and users)" },
-    { email: `manager@${EMAIL_DOMAIN}`, name: "Maria Manager", role: "MANAGER", label: "Manager" },
-    { email: `sales@${EMAIL_DOMAIN}`, name: "Sam Sales", role: "SALES", label: "Sales" },
-    { email: `stores@${EMAIL_DOMAIN}`, name: "Stella Stores", role: "STORE_CONTROLLER", label: "Store controller" },
-    { email: `finance@${EMAIL_DOMAIN}`, name: "Fiona Finance", role: "FINANCE", label: "Finance" },
-    { email: `mechanic@${EMAIL_DOMAIN}`, name: "Mike Mechanic", role: "USER", label: "Mechanic (can only edit notes, parts and outwork on a job)" },
+    { email: `admin@${EMAIL_DOMAIN}`, name: "Nadia Fourie", role: "COMPANY_ADMIN", label: "Company admin (sees everything, settings and users)" },
+    { email: `manager@${EMAIL_DOMAIN}`, name: "Werner du Plessis", role: "MANAGER", label: "Manager" },
+    { email: `sales@${EMAIL_DOMAIN}`, name: "Ruan Smit", role: "SALES", label: "Sales" },
+    { email: `stores@${EMAIL_DOMAIN}`, name: "Charmaine Jacobs", role: "STORE_CONTROLLER", label: "Store controller" },
+    { email: `mechanic@${EMAIL_DOMAIN}`, name: "Bongani Nkosi", role: "USER", label: "Mechanic (can only edit notes, parts and outwork on a job)" },
   ];
   let adminId = "";
   for (const u of USERS) {
@@ -322,7 +322,7 @@ async function main() {
 
   const ctx: RequestContext = {
     userId: adminId,
-    displayName: "Demo Admin",
+    displayName: "Nadia Fourie",
     companyId,
     companyInternalCode: COMPANY_CODE,
     companyName: COMPANY_NAME,
@@ -573,7 +573,7 @@ async function main() {
     jobs: await prisma.job.count({ where: { companyId } }),
   };
   console.log("");
-  console.log(`Test Demo is ready: ${counts.customers} customers, ${counts.suppliers} suppliers, ${counts.parts} parts, ${counts.jobs} jobs.`);
+  console.log(`${COMPANY_NAME} is ready: ${counts.customers} customers, ${counts.suppliers} suppliers, ${counts.parts} parts, ${counts.jobs} jobs.`);
   console.log("");
   console.log("Logins (all use the same password):");
   for (const u of USERS) console.log(`  ${u.email.padEnd(32)} ${u.label}`);

@@ -16,7 +16,7 @@ import { sendPlatformEmail } from "@/lib/email";
 // The per-IP limit uses X-Forwarded-For, which a client can fake, so the per-email and overall caps are what really
 // protect the inbox.
 
-export const DEFAULT_DEMO_RECIPIENT = "floxadmin@floxintegrations.co.za";
+export const DEFAULT_DEMO_RECIPIENT = "sales@floxintegrations.co.za";
 export const DEFAULT_ALLOWED_ORIGINS = ["https://floxintegrations.co.za", "https://www.floxintegrations.co.za"];
 
 export const BUSINESS_TYPES = ["Workshop (repair, rebuild, field service)", "Engineering / machining", "Other"] as const;
