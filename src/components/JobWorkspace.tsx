@@ -20,11 +20,12 @@ import { buildTabletCard, buildTabletFacts, formatQty, latestNote, outstandingHe
 import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
 import { JobItemsEditor } from "./job-items/JobItemsEditor";
-import { JobItemsPanel, AddAnotherItem } from "./job-items/JobItemsPanel";
+import { JobItemsPanel } from "./job-items/JobItemsPanel";
+import { ItemsStepper } from "./job-items/ItemsStepper";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, activityMatchesItemFilter, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
 import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
@@ -4194,13 +4195,35 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const activeItemFilter = normalizeItemFilter(itemFilter, linkItems.map((item) => item.id));
   const itemLinkCounts = job ? countItemLinks({ parts: job.partLines, outwork: job.outworkItems, attachments: job.attachments }) : {};
   const itemJobNumber = job ? (job.jobNumber ?? job.draftNumber) : null;
-  const itemsPanelSection = job && jobItemRows.length > 0 ? (
+  // An ordinary one-item Engineering job shows the same item list with its one item, built from the job's own fields.
+  const itemsListOn = mode === "detail" && !!job && itemsBuildOn();
+  const virtualItem = job && itemsListOn && jobItemRows.length === 0 ? {
+    id: "job-item-1",
+    sequence: 1,
+    status: String(job.status),
+    component: (job.component as string | null) ?? null,
+    componentModel: (job.componentModel as string | null) ?? null,
+    componentSerial: (job.componentSerial as string | null) ?? null,
+    componentPartNumber: (job.componentPartNumber as string | null) ?? null,
+    machineMake: (job.machineMake as string | null) ?? null,
+    machineModel: (job.machineModel as string | null) ?? null,
+    machineSerial: (job.machineSerial as string | null) ?? null,
+    plantNumber: (job.plantNumber as string | null) ?? null,
+    machineHours: (job.machineHours as string | number | null) ?? null,
+    workRequested: (job.description as string | null) ?? null,
+    conditionOnReceipt: null,
+    etaDate: (job.etaDate as string | null) ?? null,
+    mechanicEtaDate: (job.mechanicEtaDate as string | null) ?? null,
+  } : null;
+  const selectedItem = jobItemRows.find((item) => item.id === activeItemFilter) ?? null;
+  const itemsPanelSection = job && itemsListOn && (jobItemRows.length > 0 || virtualItem) ? (
     <JobItemsPanel
       jobId={job.id}
       jobNumber={job.jobNumber}
       jobType={job.type}
       build={industryBuild}
-      items={jobItemRows}
+      items={jobItemRows.length > 0 ? jobItemRows : virtualItem ? [virtualItem] : []}
+      virtual={jobItemRows.length === 0}
       steps={statusStepsForJobType(job.type, industryBuild)}
       statusLabels={statusLabels}
       staffEtaLabel={machinist.eta}
@@ -4211,14 +4234,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       onError={setError}
       onDeliveryNote={openJobDeliveryNoteDialog}
       links={itemLinkCounts}
+      selectedId={selectedItem?.id ?? ""}
+      onSelect={(id) => setItemFilter(id || "all")}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
   const deliveryNotesSection = mode === "detail" && job && industryBuild === "ENGINEERING"
     ? <JobDeliveryNotes jobId={job.id} refreshKey={dnRefresh} onReprint={reprintDeliveryNote} />
-    : null;
-  const addAnotherItemSection = mode === "detail" && job && itemsBuildOn() && jobItemRows.length === 0 && !mechanicFieldsLocked && !["COMPLETE", "CLOSED", "CANCELLED"].includes(String(job.status))
-    ? <AddAnotherItem jobId={job.id} onChanged={() => load(true)} onError={setError} />
     : null;
   // The header status: "Mixed" with a colour bar while the items are at different steps, otherwise the ordinary pill.
   const jobStatusBadge = job && itemsAreMixed(jobItemRows.map((item) => item.status))
@@ -4449,8 +4471,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             jobDetailsSection (above) stay split into their own consts
             since a role-specific order has come back before and may
             again. */}
-        {mode === "create" && itemsBuildOn() ? itemsCreateSection : itemsPanelSection ?? machineSection}
-        {addAnotherItemSection}
+        {mode === "create" && itemsBuildOn() ? itemsCreateSection : (<>{itemsPanelSection}{(!itemsPanelSection || jobItemRows.length === 0) && machineSection}</>)}
         {deliveryNotesSection}
         {jobDetailsSection}
         {commercialSection}
@@ -5101,7 +5122,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <button type="button" className="section-action-button" onClick={() => setShowActivityHistory((v) => !v)}>{showActivityHistory ? "Hide" : "View activity history"}</button>
             </header>
             {showActivityHistory && (
-              <div className="history-list">{job.activities.map((activity) => <article key={activity.id}><strong>{text(activity.description)}</strong><span>{text(activity.type).replaceAll("_", " ")} · {activity.actor?.displayName || "System"}</span><time>{new Date(String(activity.createdAt)).toLocaleString("en-ZA")}</time></article>)}
+              <div className="history-list">{job.activities.filter((activity) => activityMatchesItemFilter(activity.metadata, activeItemFilter)).map((activity) => <article key={activity.id}><strong>{text(activity.description)}</strong><span>{text(activity.type).replaceAll("_", " ")} · {activity.actor?.displayName || "System"}</span><time>{new Date(String(activity.createdAt)).toLocaleString("en-ZA")}</time></article>)}
               {job.activities.length === 0 && <p className="table-state compact-empty-state">No activity recorded yet.</p>}</div>
             )}
           </section>
@@ -5272,6 +5293,34 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
   const headerMachineLine = [[form.machineMake, form.machineModel].filter(Boolean).join(" ") || String(form.component || ""), form.machineSerial ? `S/N ${form.machineSerial}` : ""].filter(Boolean).join(" · ");
+
+  // 2026-10-29, user request (Engineering): the header stepper shows where the items are, and a click moves the selected item (or,
+  // with no item selected on a job with several, every item after a question).
+  const itemsStepperOn = itemsListOn;
+  const stepperItemStatuses = jobItemRows.length > 0 ? jobItemRows.map((item) => String(item.status)) : job ? [String(job.status)] : [];
+  async function moveFromItemsStepper(step: string) {
+    if (!job) return;
+    if (needsDocumentCheck(industryBuild, step) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
+    const stepLabel = step === "TO_BE_RECEIVED" ? "To be received/collected" : ((statusLabels as Record<string, string>)[step] ?? step);
+    if (selectedItem) {
+      if (String(selectedItem.status) === step) return;
+      setSaving(true); setError("");
+      try {
+        const response = await fetch(`/api/v1/jobs/${job.id}/items?itemId=${selectedItem.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: step }) });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body?.error?.message || "Unable to move the item.");
+        await load(true);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Unable to move the item.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    const live = jobItemRows.filter((item) => item.status !== "CANCELLED").length;
+    if (live > 1 && !(await confirm({ message: `Move all ${live} items to "${stepLabel}"? Select an item first to move just that one.`, tone: "warning", confirmLabel: "Move all items" }))) return;
+    await postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null });
+  }
 
   // Status stepper: TO_BE_COLLECTED is merged into TO_BE_RECEIVED and WAITING_FOR_PARTS into AWAIT_OUTWORK for display (see the comments at the stepper below).
   const stepperSteps = job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
@@ -5647,8 +5696,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           <div className="job-header-stepper jw-status-card">
             <div className="jw-status-top">
-              <span className="jw-status-title">Job status{stepNumber > 0 && !["CLOSED", "CANCELLED"].includes(job.status) ? <em> · Step {stepNumber} of {stepperSteps.length}</em> : null}</span>
-              {!["CLOSED", "CANCELLED"].includes(job.status) && <span className="jw-status-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office team." : "Click a stage to move the job straight there — saves immediately."}</span>}
+              <span className="jw-status-title">{itemsStepperOn ? "Where the items are" : "Job status"}{!itemsStepperOn && stepNumber > 0 && !["CLOSED", "CANCELLED"].includes(job.status) ? <em> · Step {stepNumber} of {stepperSteps.length}</em> : null}</span>
+              {!["CLOSED", "CANCELLED"].includes(job.status) && <span className="jw-status-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office team." : itemsStepperOn ? (selectedItem ? `Click a step to move ${itemTag(job.jobNumber, selectedItem.sequence)} straight there. The number is how many items are on that step.` : jobItemRows.length > 1 ? "The number is how many items are on each step. Select an item to move just that one; clicking a step now moves all of them." : "Click a stage to move the job straight there — saves immediately.") : "Click a stage to move the job straight there — saves immediately."}</span>}
               {/* 2026-10-20, user request: a Breakdown button which adds a red "Breakdown" pill to the job's status (Job.breakdown). Press it again to clear.
                   Not offered to a Mechanic or the view-only user, and only while the job is still open (it can always be cleared). */}
               {!mechanicFieldsLocked && !viewOnly && (job.breakdown || !jobEnded) && (
@@ -5659,6 +5708,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}){mechanicFieldsLocked ? "." : " — use Reopen above to bring it back onto the stepper."}
               </p>
+            ) : itemsStepperOn ? (
+              <ItemsStepper
+                steps={stepperSteps as string[]}
+                labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" } as Record<string, string>}
+                statuses={stepperItemStatuses}
+                selectedStatus={selectedItem ? String(selectedItem.status) : null}
+                disabled={saving || mechanicFieldsLocked}
+                onSelect={(step) => void moveFromItemsStepper(step)}
+              />
             ) : (
               <StatusStepper
                 // TO_BE_COLLECTED is left OUT of `steps` only — the "Initial status" / "Reopen to status" dropdowns still offer it. A job actually in

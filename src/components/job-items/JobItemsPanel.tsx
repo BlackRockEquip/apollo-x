@@ -9,7 +9,10 @@ import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } 
 
 // 2026-10-29, user request (Engineering): the job screen's item list. One job holds every item the customer sent in; each item is
 // listed here with its own status and ETA, and can be moved, edited or removed on its own. The job's status follows the least
-// advanced item (the job shows "Mixed" while they differ). Parts, outwork and specification reports are still job-wide.
+// advanced item (the job shows "Mixed" while they differ). Click an item to select it: the Parts, Outwork, Photos, Files,
+// Specifications and Activity tabs then show that item's records, and the status stepper in the header moves that item.
+// An ordinary one-item job shows the same list with its single item (`virtual`); the first extra item turns it into a real
+// multi-item job.
 type Props = {
   jobId: string;
   jobNumber: string | null | undefined;
@@ -32,6 +35,11 @@ type Props = {
   confirmDocuments?: (status: string) => Promise<boolean>;
   /** What is tied to each item (parts, outwork, photos, files), by item id. */
   links?: Record<string, ItemLinkCounts>;
+  /** The selected item's id ("" = every item). */
+  selectedId?: string;
+  onSelect?: (itemId: string) => void;
+  /** The single item of an ordinary one-item job, built from the job's own fields: shown read-only; "Add item" makes it item 1. */
+  virtual?: boolean;
 };
 
 function fmtDate(value: string | null): string {
@@ -40,14 +48,16 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, virtual = false }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [adding, setAdding] = useState<ItemDraft | null>(null);
 
   const rollup = summarizeItemStatuses(items.map((item) => item.status), steps);
-  const editable = canEdit && !locked;
+  const editable = canEdit && !locked && !virtual;
+  const canAdd = canEdit && !locked;
+  const selected = virtual ? undefined : items.find((item) => item.id === selectedId);
   const base = `/api/v1/jobs/${jobId}/items`;
 
   async function call(key: string, url: string, init: RequestInit): Promise<boolean> {
@@ -101,33 +111,29 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     </label>
   );
 
+  const selectedTag = selected ? itemTag(jobNumber, selected.sequence) : "";
+  const selectedMachine = selected ? [selected.machineMake, selected.machineModel].filter(Boolean).join(" ") : "";
+  const detail = (label: string, value: string | number | null | undefined) => (
+    <div><dt>{label}</dt><dd>{value === null || value === undefined || value === "" ? "-" : value}</dd></div>
+  );
+
   return (
+    <>
     <section className="detail-panel full-row ji-card">
       <header className="ji-card-head">
         <div>
           <h2>Items on this job</h2>
-          <p>Each item has its own status and ETA. The job follows the least advanced item.</p>
+          <p>{virtual ? "This job has one item. Add another if the customer sent more." : "Select an item to see its details, parts, outwork and history. The job follows the least advanced item."}</p>
         </div>
         <div className="ji-head-right">
           {itemsAreMixed(items.map((item) => item.status))
             ? <ItemsStatusBadge statuses={items.map((item) => item.status)} jobType={jobType} build={build} />
             : rollup.status && <StatusPill status={rollup.status} build={build} />}
           <span className="ji-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
+          {selected && onSelect && <button type="button" className="quiet-button" onClick={() => onSelect("")}>Show all items</button>}
           {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
         </div>
       </header>
-
-      <ul className="ji-steps" aria-label="Where the items are">
-        {steps.map((step) => {
-          const count = rollup.counts.find((entry) => entry.status === step)?.count ?? 0;
-          return (
-            <li key={step} className={count > 0 ? "has" : undefined}>
-              <b>{count}</b>
-              <span>{statusLabels[step] ?? step}</span>
-            </li>
-          );
-        })}
-      </ul>
 
       <div className="ji-scroll">
         <table className="ji-table readonly">
@@ -135,12 +141,10 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             <tr>
               <th>Tag</th>
               <th>Component</th>
-              <th>Component model</th>
-              <th>Serial</th>
               <th>Machine</th>
               <th>Status</th>
               <th>ETA</th>
-              <th>{staffEtaLabel}</th>
+              <th>Linked</th>
               {editable && <th className="ji-actions-col"><span className="ji-sr">Actions</span></th>}
             </tr>
           </thead>
@@ -149,15 +153,20 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
               const tag = itemTag(jobNumber, item.sequence);
               const machine = [item.machineMake, item.machineModel].filter(Boolean).join(" ");
               const isEditing = editing === item.id && draft;
+              const isSelected = !virtual && selectedId === item.id;
               return (
-                <ItemRowView key={item.id} isEditing={!!isEditing} columns={editable ? 9 : 8}
+                <ItemRowView key={item.id} isEditing={!!isEditing} columns={editable ? 7 : 6}
                   main={(
-                    <tr className={isEditing ? "ji-row open" : "ji-row"}>
+                    <tr className={`ji-row${isEditing ? " open" : ""}${isSelected ? " selected" : ""}${onSelect && !virtual ? " pickable" : ""}`} aria-selected={isSelected || undefined}
+                      onClick={(event) => { if (!onSelect || virtual || (event.target as HTMLElement).closest("button, select, input, a")) return; onSelect(isSelected ? "" : item.id); }}>
                       <td><span className="ji-tag">{tag}</span></td>
-                      <td>{item.component || "-"}{item.workRequested && <small className="ji-sub">{item.workRequested}</small>}{links?.[item.id] && itemLinkTotal(links[item.id]) > 0 && <small className="ji-links-sub">{itemLinkSummary(links[item.id])}</small>}</td>
-                      <td>{item.componentModel || "-"}</td>
-                      <td>{item.componentSerial || "-"}</td>
-                      <td>{machine || "-"}</td>
+                      <td>
+                        {onSelect && !virtual
+                          ? <button type="button" className="ji-pick" onClick={() => onSelect(isSelected ? "" : item.id)} aria-pressed={isSelected}><strong>{item.component || "-"}</strong></button>
+                          : <strong>{item.component || "-"}</strong>}
+                        <small className="ji-sub">{[item.componentModel, item.componentSerial ? `S/N ${item.componentSerial}` : ""].filter(Boolean).join(" · ") || "No model or serial"}</small>
+                      </td>
+                      <td>{machine || "-"}{item.plantNumber && <small className="ji-sub">Plant {item.plantNumber}</small>}</td>
                       <td>
                         {editable ? (
                           <select className="ji-status-select" value={item.status} disabled={busy === item.id} aria-label={`Status of ${tag}`} onChange={(e) => void moveItem(item, e.target.value)}>
@@ -166,8 +175,8 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                           </select>
                         ) : <StatusPill status={item.status} build={build} />}
                       </td>
-                      <td>{fmtDate(item.etaDate)}</td>
-                      <td>{fmtDate(item.mechanicEtaDate)}</td>
+                      <td>{fmtDate(item.etaDate)}<small className="ji-sub">{staffEtaLabel} {fmtDate(item.mechanicEtaDate)}</small></td>
+                      <td>{links?.[item.id] && itemLinkTotal(links[item.id]) > 0 ? <span className="ji-links-sub">{itemLinkSummary(links[item.id])}</span> : <span className="ji-none">-</span>}</td>
                       {editable && (
                         <td className="ji-actions-col">
                           <button type="button" className="ji-icon" onClick={() => (isEditing ? (setEditing(null), setDraft(null)) : startEdit(item))} aria-label={`Edit ${tag}`} title="Edit item"><Pencil size={15} /></button>
@@ -204,7 +213,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
         </table>
       </div>
 
-      {editable && (
+      {canAdd && (
         <div className="ji-foot">
           {adding ? (
             <div className="ji-add">
@@ -233,6 +242,50 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
         </div>
       )}
     </section>
+
+    {selected && (
+      <section className="detail-panel full-row ji-card ji-selected" aria-label={`Selected item ${selectedTag}`}>
+        <header className="ji-card-head">
+          <div>
+            <span className="ji-tag">{selectedTag}</span>
+            <h2>{selected.component || "Item"}</h2>
+            <p>The Parts, Outwork, Photos, Files, Specifications and Activity tabs below show only this item. Use the status steps above to move it.</p>
+          </div>
+          <div className="ji-head-right">
+            <StatusPill status={selected.status} build={build} />
+            {editable && (
+              <>
+                <select className="ji-status-select" value={selected.status} disabled={busy === selected.id} aria-label={`Change status of ${selectedTag}`} onChange={(e) => void moveItem(selected, e.target.value)}>
+                  {steps.map((step) => <option key={step} value={step}>{statusLabels[step] ?? step}</option>)}
+                  <option value="CANCELLED">{statusLabels.CANCELLED ?? "Cancelled"}</option>
+                </select>
+                <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>
+              </>
+            )}
+          </div>
+        </header>
+        <div className="ji-selected-body">
+          <dl className="ji-dl">
+            {detail("Component model", selected.componentModel)}
+            {detail("Component serial", selected.componentSerial)}
+            {detail("Part number", selected.componentPartNumber)}
+            {detail("Machine", selectedMachine)}
+            {detail("Machine serial", selected.machineSerial)}
+            {detail("Plant number", selected.plantNumber)}
+            {detail("Machine hours", selected.machineHours)}
+            {detail(staffEtaLabel, fmtDate(selected.mechanicEtaDate))}
+          </dl>
+          <div className="ji-work">
+            <span>Work requested</span>
+            <p>{selected.workRequested || "-"}</p>
+            <span>Condition on receipt</span>
+            <p>{selected.conditionOnReceipt || "-"}</p>
+            {links?.[selected.id] && itemLinkTotal(links[selected.id]) > 0 && <small className="ji-links-sub">On this item: {itemLinkSummary(links[selected.id])}</small>}
+          </div>
+        </div>
+      </section>
+    )}
+    </>
   );
 }
 
@@ -243,64 +296,5 @@ function ItemRowView({ main, editor, isEditing, columns }: { main: React.ReactNo
       {main}
       {isEditing && <tr className="ji-more"><td colSpan={columns}>{editor}</td></tr>}
     </>
-  );
-}
-
-// 2026-10-29: an ordinary one-item Engineering job offers "Add another item" under its Machine / component card. The first extra
-// item turns the job into a multi-item job: the machine / component details already on the job become item 1.
-export function AddAnotherItem({ jobId, onChanged, onError }: { jobId: string; onChanged: () => Promise<void> | void; onError: (message: string) => void }) {
-  const [draft, setDraft] = useState<ItemDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    if (!draft) return;
-    setBusy(true); onError("");
-    try {
-      const response = await fetch(`/api/v1/jobs/${jobId}/items`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(draftToPayload(draft)) });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.error?.message || "Unable to add the item.");
-      setDraft(null);
-      await onChanged();
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "Unable to add the item.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const set = (key: keyof ItemDraft, label: string, wide?: boolean) => (
-    <label className={wide ? "ji-wide" : undefined}><span>{label}</span><input value={draft?.[key] ?? ""} onChange={(e) => setDraft((current) => (current ? { ...current, [key]: e.target.value } : current))} /></label>
-  );
-
-  return (
-    <section className="detail-panel full-row ji-card ji-starter">
-      {draft ? (
-        <>
-          <header className="ji-card-head">
-            <div><h2>Add another item</h2><p>The machine / component details above become item 1. The job then tracks each item on its own.</p></div>
-            <button type="button" className="ji-icon" onClick={() => setDraft(null)} aria-label="Cancel adding an item"><X size={15} /></button>
-          </header>
-          <div className="ji-more-grid">
-            {set("component", "Component")}
-            {set("componentModel", "Component model")}
-            {set("componentSerial", "Component serial")}
-            {set("componentPartNumber", "Part number")}
-            {set("machineMake", "Machine make")}
-            {set("machineModel", "Machine model")}
-            {set("workRequested", "Work requested", true)}
-            {set("conditionOnReceipt", "Condition on receipt", true)}
-          </div>
-          <div className="ji-edit-actions">
-            <button type="button" className="gold-button" disabled={busy} onClick={() => void save()}>Add item</button>
-            <button type="button" className="quiet-button" onClick={() => setDraft(null)}>Cancel</button>
-          </div>
-        </>
-      ) : (
-        <div className="ji-starter-row">
-          <p>Did the customer send more than one item? Add them to this same job.</p>
-          <button type="button" className="section-action-button" onClick={() => setDraft(blankDraft())}><Plus size={14} /> Add another item</button>
-        </div>
-      )}
-    </section>
   );
 }

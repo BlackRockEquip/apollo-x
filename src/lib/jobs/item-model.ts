@@ -263,3 +263,51 @@ export function withItemTag(tag: string | null | undefined, text: string | null 
   const body = (text ?? "").trim();
   return tag ? (body ? `[${tag}] ${body}` : `[${tag}]`) : body;
 }
+
+// ----------------------------------------------------------------------------
+// 2026-10-29, user request: the job screen's status stepper shows "where the items are". One circle per step with the number of
+// items sitting on it; steps before the least advanced item are complete. The display folds two statuses the way the old
+// stepper did (TO_BE_COLLECTED shows on TO_BE_RECEIVED, WAITING_FOR_PARTS on AWAIT_OUTWORK).
+// ----------------------------------------------------------------------------
+export function stepperDisplayStatus(status: string): string {
+  if (status === "WAITING_FOR_PARTS") return "AWAIT_OUTWORK";
+  if (status === "TO_BE_COLLECTED") return "TO_BE_RECEIVED";
+  return status;
+}
+
+export type StepperNodeState = "done" | "current" | "ahead" | "idle";
+export type StepperNode = {
+  step: string;
+  /** Items on this step. */
+  count: number;
+  /** done = before the least advanced item; current = the least advanced item's step; ahead = a later step that has items; idle = empty. */
+  state: StepperNodeState;
+  /** The step the selected item is on (when one is selected). */
+  selected: boolean;
+};
+
+export function buildStepperNodes(steps: readonly string[], statuses: readonly string[], selectedStatus?: string | null): StepperNode[] {
+  const shown = statuses.filter((status) => status !== "CANCELLED").map(stepperDisplayStatus);
+  const counts = new Map<string, number>();
+  for (const status of shown) counts.set(status, (counts.get(status) ?? 0) + 1);
+  const lowest = shown.reduce((best, status) => {
+    const index = steps.indexOf(status);
+    return index === -1 ? best : best === -1 || index < best ? index : best;
+  }, -1);
+  const chosen = selectedStatus ? stepperDisplayStatus(selectedStatus) : null;
+  return steps.map((step, index) => {
+    const count = counts.get(step) ?? 0;
+    const state: StepperNodeState = lowest === -1 ? "idle" : index < lowest ? "done" : index === lowest ? "current" : count > 0 ? "ahead" : "idle";
+    return { step, count, state, selected: chosen === step };
+  });
+}
+
+// Activity entries that belong to one item carry its id in their metadata; the rest are about the whole job. With an item selected
+// its own entries and the job-wide ones show; "whole job" shows only the job-wide ones.
+export function activityMatchesItemFilter(metadata: unknown, filter: string): boolean {
+  if (filter === ITEM_FILTER_ALL) return true;
+  const itemId = metadata && typeof metadata === "object" ? (metadata as { itemId?: unknown }).itemId : undefined;
+  const own = typeof itemId === "string" && itemId ? itemId : null;
+  if (filter === ITEM_FILTER_JOB) return !own;
+  return !own || own === filter;
+}

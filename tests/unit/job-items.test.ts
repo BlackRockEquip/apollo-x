@@ -215,3 +215,63 @@ describe("parts list with items", () => {
     expect(table.rows[1][1]).toBe("Bearing");
   });
 });
+
+// 2026-10-29: the "Where the items are" stepper and the per-item activity filter.
+import { activityMatchesItemFilter, buildStepperNodes, stepperDisplayStatus } from "@/lib/jobs/item-model";
+
+describe("where the items are (stepper)", () => {
+  const steps = ENGINEERING_STATUS_STEPS as unknown as string[];
+
+  it("counts items per step and marks steps before the least advanced item as done", () => {
+    const nodes = buildStepperNodes(steps, ["AWAIT_ASSESSMENT", "AWAIT_ASSESSMENT", "WORK_IN_PROGRESS", "TO_BE_DELIVERED"]);
+    const byStep = Object.fromEntries(nodes.map((node) => [node.step, node]));
+    expect(byStep.AWAIT_ASSESSMENT.count).toBe(2);
+    expect(byStep.AWAIT_ASSESSMENT.state).toBe("current");
+    expect(byStep.TO_BE_RECEIVED.state).toBe("done");
+    expect(byStep.WORK_IN_PROGRESS.state).toBe("ahead");
+    expect(byStep.QUOTE_IN_PROGRESS.count).toBe(0);
+    expect(nodes.every((node) => node.count === 0 || node.state !== "done")).toBe(true);
+  });
+
+  it("ignores cancelled items", () => {
+    const nodes = buildStepperNodes(steps, ["CANCELLED", "WORK_IN_PROGRESS"]);
+    expect(nodes.find((node) => node.state === "current")?.step).toBe("WORK_IN_PROGRESS");
+    expect(nodes.reduce((sum, node) => sum + node.count, 0)).toBe(1);
+  });
+
+  it("shows an empty flow when nothing is live", () => {
+    expect(buildStepperNodes(steps, []).every((node) => node.state === "idle" && node.count === 0)).toBe(true);
+    expect(buildStepperNodes(steps, ["CANCELLED"]).every((node) => node.state === "idle")).toBe(true);
+  });
+
+  it("folds the two merged statuses onto their stepper step and rings the selected item's step", () => {
+    expect(stepperDisplayStatus("WAITING_FOR_PARTS")).toBe("AWAIT_OUTWORK");
+    expect(stepperDisplayStatus("TO_BE_COLLECTED")).toBe("TO_BE_RECEIVED");
+    expect(stepperDisplayStatus("QUOTE_IN_PROGRESS")).toBe("QUOTE_IN_PROGRESS");
+    const nodes = buildStepperNodes(steps, ["WAITING_FOR_PARTS", "WORK_IN_PROGRESS"], "WAITING_FOR_PARTS");
+    expect(nodes.find((node) => node.selected)?.step).toBe("AWAIT_OUTWORK");
+    expect(nodes.find((node) => node.step === "AWAIT_OUTWORK")?.count).toBe(1);
+  });
+
+  it("a one-item job puts its single item on the job's step", () => {
+    const nodes = buildStepperNodes(steps, ["QUOTE_IN_PROGRESS"]);
+    expect(nodes.find((node) => node.step === "QUOTE_IN_PROGRESS")).toMatchObject({ count: 1, state: "current" });
+  });
+});
+
+describe("activity follows the selected item", () => {
+  it("shows everything for all items", () => {
+    expect(activityMatchesItemFilter({ itemId: "a" }, ITEM_FILTER_ALL)).toBe(true);
+    expect(activityMatchesItemFilter(null, ITEM_FILTER_ALL)).toBe(true);
+  });
+  it("shows the item's own entries and the job-wide ones for a selected item", () => {
+    expect(activityMatchesItemFilter({ itemId: "a" }, "a")).toBe(true);
+    expect(activityMatchesItemFilter({ itemId: "b" }, "a")).toBe(false);
+    expect(activityMatchesItemFilter(null, "a")).toBe(true);
+    expect(activityMatchesItemFilter({ from: "X" }, "a")).toBe(true);
+  });
+  it("shows only job-wide entries for the whole-job filter", () => {
+    expect(activityMatchesItemFilter({ itemId: "a" }, ITEM_FILTER_JOB)).toBe(false);
+    expect(activityMatchesItemFilter(undefined, ITEM_FILTER_JOB)).toBe(true);
+  });
+});
