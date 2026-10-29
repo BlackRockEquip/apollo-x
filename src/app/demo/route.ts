@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
   }
 
   const destination = next ?? (context ? defaultTenantDestination(context.tenantPermissions, context.moduleAccess) : "/dashboard");
-  const response = NextResponse.redirect(new URL(destination, request.url), 303);
-  response.headers.set("cache-control", "no-store");
-  return response;
+  // 2026-10-29 fix: a relative Location. On Render the app sees its own address as http://localhost:10000 (it sits
+  // behind Render's proxy), so building an absolute URL from request.url sent visitors to localhost.
+  return new NextResponse(null, { status: 303, headers: { location: destination, "cache-control": "no-store" } });
 }
