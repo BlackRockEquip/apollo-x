@@ -3,7 +3,8 @@
 import type { KeyboardEvent } from "react";
 import type { JobTab, JobTabKey } from "./job-tabs";
 
-export function JobTabBar({ tabs, active, onSelect }: { tabs: JobTab[]; active: JobTabKey; onSelect: (key: JobTabKey) => void }) {
+// `variant="item"` (Engineering item view, 2026-10-29): the white tab strip that sits directly under the item header card.
+export function JobTabBar({ tabs, active, onSelect, variant }: { tabs: JobTab[]; active: JobTabKey; onSelect: (key: JobTabKey) => void; variant?: "item" }) {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     const index = tabs.findIndex((tab) => tab.key === active);
@@ -14,7 +15,7 @@ export function JobTabBar({ tabs, active, onSelect }: { tabs: JobTab[]; active: 
     requestAnimationFrame(() => document.getElementById(`jw-tab-${next.key}`)?.focus());
   };
   return (
-    <div className="jw-tabs" role="tablist" aria-label="Job sections" onKeyDown={onKeyDown}>
+    <div className={variant === "item" ? "jw-tabs jw-tabs-item" : "jw-tabs"} role="tablist" aria-label="Job sections" onKeyDown={onKeyDown}>
       {tabs.map((tab) => (
         <button
           key={tab.key}

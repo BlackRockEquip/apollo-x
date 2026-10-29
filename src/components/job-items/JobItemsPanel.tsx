@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, Pencil, Plus, Trash2, X } from "lucide-react";
+import { FileText, Pencil, Plus, Printer, Trash2, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import { itemLinkSummary, itemLinkTotal, itemTag, summarizeItemStatuses, type ItemLinkCounts } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
@@ -38,6 +38,8 @@ type Props = {
   /** The selected item's id ("" = every item). */
   selectedId?: string;
   onSelect?: (itemId: string) => void;
+  /** Opens the Print job tags window. */
+  onPrintTags?: () => void;
   /** The single item of an ordinary one-item job, built from the job's own fields: shown read-only; "Add item" makes it item 1. */
   virtual?: boolean;
 };
@@ -48,7 +50,7 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, virtual = false }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
@@ -131,6 +133,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             : rollup.status && <StatusPill status={rollup.status} build={build} />}
           <span className="ji-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
           {selected && onSelect && <button type="button" className="quiet-button" onClick={() => onSelect("")}>Show all items</button>}
+          {onPrintTags && <button type="button" className="quiet-button" onClick={onPrintTags}><Printer size={13} /> Print tags</button>}
           {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
         </div>
       </header>
@@ -247,21 +250,11 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
       <section className="detail-panel full-row ji-card ji-selected" aria-label={`Selected item ${selectedTag}`}>
         <header className="ji-card-head">
           <div>
-            <span className="ji-tag">{selectedTag}</span>
-            <h2>{selected.component || "Item"}</h2>
-            <p>The Parts, Outwork, Photos, Files, Specifications and Activity tabs below show only this item. Use the status steps above to move it.</p>
+            <h2>Details of {selectedTag}</h2>
+            <p>The tabs below show only this item. Use the status steps above, or Change status, to move it.</p>
           </div>
           <div className="ji-head-right">
-            <StatusPill status={selected.status} build={build} />
-            {editable && (
-              <>
-                <select className="ji-status-select" value={selected.status} disabled={busy === selected.id} aria-label={`Change status of ${selectedTag}`} onChange={(e) => void moveItem(selected, e.target.value)}>
-                  {steps.map((step) => <option key={step} value={step}>{statusLabels[step] ?? step}</option>)}
-                  <option value="CANCELLED">{statusLabels.CANCELLED ?? "Cancelled"}</option>
-                </select>
-                <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>
-              </>
-            )}
+            {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>}
           </div>
         </header>
         <div className="ji-selected-body">

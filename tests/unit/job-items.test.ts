@@ -181,13 +181,17 @@ describe("item links", () => {
       parts: [{ itemId: "a" }, { itemId: "a" }, { itemId: "b" }, { itemId: null }],
       outwork: [{ itemId: "a" }, {}],
       attachments: [{ itemId: "a", isPhoto: true }, { itemId: "a", isPhoto: false }, { itemId: "b", isPhoto: true }, { itemId: null, isPhoto: true }],
+      reports: [{ itemId: "a" }, { itemId: "a" }, { itemId: null }],
     });
-    expect(counts).toEqual({ a: { parts: 2, outwork: 1, photos: 1, files: 1 }, b: { parts: 1, outwork: 0, photos: 1, files: 0 } });
-    expect(itemLinkSummary(counts.a)).toBe("2 parts · 1 outwork · 1 photo · 1 file");
+    expect(counts).toEqual({ a: { parts: 2, outwork: 1, photos: 1, files: 1, reports: 2 }, b: { parts: 1, outwork: 0, photos: 1, files: 0, reports: 0 } });
+    expect(itemLinkSummary(counts.a)).toBe("2 parts · 1 outwork · 2 reports · 1 photo · 1 file");
     expect(itemLinkSummary(counts.b)).toBe("1 part · 1 photo");
     expect(itemLinkSummary(undefined)).toBe("");
-    expect(itemLinkTotal(counts.a)).toBe(5);
+    expect(itemLinkTotal(counts.a)).toBe(7);
     expect(itemLinkTotal(undefined)).toBe(0);
+  });
+  it("still counts when no reports are passed", () => {
+    expect(countItemLinks({ parts: [{ itemId: "a" }], outwork: [], attachments: [] })).toEqual({ a: { parts: 1, outwork: 0, photos: 0, files: 0, reports: 0 } });
   });
   it("puts the item tag in front of a line", () => {
     expect(withItemTag("BRE1122-2", "Seal kit")).toBe("[BRE1122-2] Seal kit");
@@ -273,5 +277,128 @@ describe("activity follows the selected item", () => {
   it("shows only job-wide entries for the whole-job filter", () => {
     expect(activityMatchesItemFilter({ itemId: "a" }, ITEM_FILTER_JOB)).toBe(false);
     expect(activityMatchesItemFilter(undefined, ITEM_FILTER_JOB)).toBe(true);
+  });
+});
+
+// 2026-10-29: job tags, printers, tabs in item view, tablet card tag, job card with every item.
+import { code128Modules, code128Svg } from "@/lib/labels/code128";
+import { DEFAULT_LABEL_SIZE_ID, LABEL_SIZES, buildJobTagLabels, expandCopies, labelSizeById, renderTagsHtml } from "@/lib/labels/job-tags";
+import { LABEL_PRINTERS, labelPrinterById, parseLabelPrintSettings } from "@/lib/printing/label-printers";
+import { jobCardItemsTable } from "@/lib/documents/job-specs";
+import { buildJobTabs } from "@/components/job-screen/job-tabs";
+import { buildTabletCard } from "@/components/job-screen/tablet-model";
+
+describe("Code 128 barcode", () => {
+  it("encodes in code set B with the standard checksum (references from the python-barcode library)", () => {
+    expect(code128Modules("BRE12-2")).toBe("1101001000010001011000110001011101000110100010011100110110011100101001101110011001110010101000111101100011101011");
+    expect(code128Modules("HG1-3")).toBe("110100100001100010100011010001000100111001101001101110011001011100100011001001100011101011");
+  });
+  it("is 11 modules per symbol plus the 13-module stop", () => {
+    expect(code128Modules("A").length).toBe(11 * 3 + 13);
+    expect(code128Modules("BRE1122-12").length).toBe(11 * 12 + 13);
+  });
+  it("rejects characters it cannot show and empty values", () => {
+    expect(() => code128Modules("")).toThrow();
+    expect(() => code128Modules("café")).toThrow();
+  });
+  it("draws an SVG with one rect per bar", () => {
+    const svg = code128Svg("BRE1122-2");
+    expect(svg.startsWith("<svg")).toBe(true);
+    expect(svg).toContain("<rect");
+    expect(svg).not.toContain("<script");
+  });
+});
+
+describe("job tags", () => {
+  const items = [
+    { sequence: 2, component: "Planetary Housing", componentModel: "AD30", componentSerial: "SN-2", machineMake: "Cat", machineModel: "AD30", plantNumber: "P12" },
+    { sequence: 1, component: "Housing", componentModel: "AD30" },
+  ];
+  it("builds one label per item in item order with the tag, lines and position", () => {
+    const labels = buildJobTagLabels({ jobNumber: "HG00001", customerName: " Black Rock ", received: "2026-10-29T08:00:00Z", items });
+    expect(labels.map((label) => label.tag)).toEqual(["HG00001-1", "HG00001-2"]);
+    expect(labels[1]).toMatchObject({ component: "Planetary Housing", componentLine: "AD30 · S/N SN-2", machineLine: "Cat AD30 · Plant P12", customer: "Black Rock", position: "Item 2 of 2" });
+    expect(labels[0].machineLine).toBe("");
+    expect(labels[0].received).not.toBe("");
+  });
+  it("uses the whole job's item count for the position when only some items are printed", () => {
+    const labels = buildJobTagLabels({ jobNumber: "HG00001", items: [items[0]], totalItems: 5 });
+    expect(labels[0].position).toBe("Item 2 of 5");
+  });
+  it("repeats each label for the copies asked (1 to 20)", () => {
+    const labels = buildJobTagLabels({ jobNumber: "HG00001", items });
+    expect(expandCopies(labels, 3)).toHaveLength(6);
+    expect(expandCopies(labels, 0)).toHaveLength(2);
+    expect(expandCopies(labels, 99)).toHaveLength(40);
+    expect(expandCopies(labels, Number.NaN)).toHaveLength(2);
+  });
+  it("renders a page per label sized to the label, escaping text", () => {
+    const labels = buildJobTagLabels({ jobNumber: "HG00001", customerName: "A & <B>", items });
+    const html = renderTagsHtml(labels, labelSizeById("76x51"), { autoPrint: true });
+    expect(html).toContain("@page{size:76mm 51mm;margin:0}");
+    expect(html.match(/class="label"/g)).toHaveLength(2);
+    expect(html).toContain("A &amp; &lt;B&gt;");
+    expect(html).toContain("window.print()");
+    expect(renderTagsHtml(labels, labelSizeById("76x51"))).not.toContain("window.print()");
+  });
+  it("knows its label sizes and falls back to the default", () => {
+    expect(LABEL_SIZES.length).toBeGreaterThan(1);
+    expect(labelSizeById("nope").id).toBe(DEFAULT_LABEL_SIZE_ID);
+  });
+});
+
+describe("label printers", () => {
+  it("lists the browser printer and falls back to it", () => {
+    expect(LABEL_PRINTERS.map((printer) => printer.id)).toContain("browser");
+    expect(labelPrinterById("zebra-not-installed").id).toBe("browser");
+  });
+  it("reads saved settings safely", () => {
+    expect(parseLabelPrintSettings(null)).toEqual({ printerId: "browser", sizeId: DEFAULT_LABEL_SIZE_ID });
+    expect(parseLabelPrintSettings("{not json")).toEqual({ printerId: "browser", sizeId: DEFAULT_LABEL_SIZE_ID });
+    expect(parseLabelPrintSettings(JSON.stringify({ printerId: "browser", sizeId: "100x150" }))).toEqual({ printerId: "browser", sizeId: "100x150" });
+    expect(parseLabelPrintSettings(JSON.stringify({ printerId: "gone", sizeId: "gone" }))).toEqual({ printerId: "browser", sizeId: DEFAULT_LABEL_SIZE_ID });
+  });
+});
+
+describe("tabs in the item view", () => {
+  const base = { showParts: true, showPickSlips: false, showFollowup: false, showOutwork: true, showSpecifications: true, showPex: false, showWarranty: false, showActivity: true, partsCount: 3, pickSlipsCount: 0, followupCount: 0, outworkCount: 0, attachmentsCount: 2 };
+  it("keeps the usual names and counts without the item view", () => {
+    const tabs = buildJobTabs(base);
+    expect(tabs.map((tab) => tab.label)).toEqual(["Overview", "Parts list", "Outwork", "Specifications", "Photos & attachments", "Activity"]);
+    expect(tabs.find((tab) => tab.key === "specifications")?.count).toBeUndefined();
+  });
+  it("names the tabs like the item mockup and counts reports and activity", () => {
+    const tabs = buildJobTabs({ ...base, itemView: true, reportsCount: 1, activityCount: 3 });
+    expect(tabs.map((tab) => tab.label)).toEqual(["Details", "Parts", "Outwork", "Specifications", "Photos & files", "Activity"]);
+    expect(tabs.find((tab) => tab.key === "specifications")?.count).toBe(1);
+    expect(tabs.find((tab) => tab.key === "activity")?.count).toBe(3);
+    expect(tabs.find((tab) => tab.key === "outwork")?.count).toBe(0);
+  });
+});
+
+describe("tablet card item tag", () => {
+  it("carries the item tag, blank for a whole-job part", () => {
+    expect(buildTabletCard({ id: "1", partNumber: "P1", quantity: 1, itemTag: " BRE1122-2 " }).itemTag).toBe("BRE1122-2");
+    expect(buildTabletCard({ id: "2", partNumber: "P2", quantity: 1 }).itemTag).toBe("");
+  });
+});
+
+describe("job card with every item", () => {
+  const base = { type: "STANDARD_REPAIR", status: "TO_BE_RECEIVED", jobNumber: "BRE1122", partLines: [], outworkItems: [] };
+  it("is not used for a one-item job", () => {
+    expect(jobCardItemsTable(base)).toBeNull();
+    expect(jobCardItemsTable({ ...base, jobItems: [{ sequence: 1 }] })).toBeNull();
+  });
+  it("lists every item in order with its tag, component, machine and work", () => {
+    const table = jobCardItemsTable({
+      ...base,
+      jobItems: [
+        { sequence: 2, component: "Gearbox", componentModel: "GB-9", componentSerial: "S2", machineMake: "Cat", machineModel: "D9", plantNumber: "P7", workRequested: "Reseal" },
+        { sequence: 1, component: "Pump", workRequested: null },
+      ],
+    });
+    expect(table?.headers).toHaveLength(5);
+    expect(table?.rows[0]).toEqual(["BRE1122-1", "Pump", "—", "—", "—"]);
+    expect(table?.rows[1]).toEqual(["BRE1122-2", "Gearbox", "GB-9 · S/N S2", "Cat D9 · Plant P7", "Reseal"]);
   });
 });

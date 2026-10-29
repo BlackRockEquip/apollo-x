@@ -15,6 +15,8 @@ export type TabletLine = {
   status?: string | null;
   supplierName?: string | null;
   orderNumber?: string | null;
+  /** Engineering multi-item jobs: the tag of the item this part is for (BRE1122-2), blank for a whole-job part. */
+  itemTag?: string | null;
 };
 
 export type TabletCard = {
@@ -26,6 +28,7 @@ export type TabletCard = {
   statusLabel: string;
   note: string;
   outstanding: number;
+  itemTag: string;
   action: { kind: TabletActionKind; label: string } | null;
 };
 
@@ -97,6 +100,7 @@ export function buildTabletCard(line: TabletLine): TabletCard {
     statusLabel: statusLabelOf(line.status),
     note: noteParts.join(" · "),
     outstanding,
+    itemTag: (line.itemTag ?? "").trim(),
     action,
   };
 }

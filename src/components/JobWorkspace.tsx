@@ -22,10 +22,12 @@ import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-co
 import { JobItemsEditor } from "./job-items/JobItemsEditor";
 import { JobItemsPanel } from "./job-items/JobItemsPanel";
 import { ItemsStepper } from "./job-items/ItemsStepper";
+import { ItemHeader } from "./job-items/ItemHeader";
+import { PrintTagsDialog } from "./job-items/PrintTagsDialog";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, activityMatchesItemFilter, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, activityMatchesItemFilter, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
 import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
@@ -43,7 +45,7 @@ import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { DEFAULT_DOCUMENT_TITLES, type DocumentKind, type DocumentTitles } from "@/lib/documents/titles";
 import type { DocSpec } from "@/lib/documents/pdf";
-import { buildFieldReportSpec, buildJobCardSpec, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, partLinesForScope, type PartsListScope, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
+import { buildFieldReportSpec, buildJobCardSpec, jobCardItemsTable, jobCardLayout, jobHistoryLayout, numberAndDate, buildJobDeliveryNoteSpec, buildJobHistorySpec, buildOutworkDeliveryNoteSpec, buildPartsListSpec, partLinesForScope, type PartsListScope, buildPickSlipSpec, type JobDocJob } from "@/lib/documents/job-specs";
 import { withPoweredBy } from "@/lib/documents/powered-by";
 
 type Row = Record<string, unknown> & { id: string };
@@ -220,6 +222,8 @@ type JobDetail = Row & {
   components: JobComponentRow[];
   // 2026-10-29, Engineering multi-item jobs: the items on this job (none for an ordinary one-item job).
   jobItems?: ItemRow[];
+  // Only the item of each specification report, so the item list and tabs can show how many reports each item has.
+  dimensionReports?: Array<{ id: string; itemId: string | null }>;
   pexAsSupply?: PexRecordSummary | null;
   pexAsReturn?: PexRecordSummary | null;
   pexConsumedBy?: PexRecordSummary | null;
@@ -656,6 +660,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-29, "link parts, specs, photos etc" to an item: the item picked for new parts / photos / files, the item filter on the
   // job's lists, and the item shown while an outwork line is being edited. Empty / "all" on a job with no items.
   const [itemFilter, setItemFilter] = useState("all");
+  const [tagsOpen, setTagsOpen] = useState(false);
   const [partItemId, setPartItemId] = useState("");
   const [photoItemId, setPhotoItemId] = useState("");
   const [attachmentItemId, setAttachmentItemId] = useState("");
@@ -1812,7 +1817,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .note-left{display:flex;flex-direction:column;align-items:flex-start}
       .note-right{text-align:right}
       .logo{max-height:50px;max-width:170px;object-fit:contain;margin-bottom:5px;display:block}
-      .org-details{text-align:left}
+      .org-details{text-align:right}
       .org-details .org-name{font-weight:bold;font-size:11px;color:#111;margin:0 0 2px}
       .org-details p{font-size:9.5px;color:#444;margin:0;line-height:1.4}
       .job-number{font-size:15px;font-weight:bold}
@@ -2806,7 +2811,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       h1{font-size:18px;margin:0 0 12px}
       .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
       .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
-      .org-details{text-align:left;margin-bottom:6px}
+      .org-details{text-align:right;margin-bottom:6px}
       .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
       .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
@@ -2912,6 +2917,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const fmt = (value: string) => value ? new Date(value).toLocaleDateString("en-ZA") : "—";
     const kv = (pairs: Array<[string, string]>, mono: string[] = []) => pairs.map(([label, value]) => `<div class="kv"><span>${escapeHtml(label)}</span><em${mono.includes(label) ? ' class="mono"' : ""}>${escapeHtml(value || "—")}</em></div>`).join("");
     const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
+    // A multi-item job lists every item (tag, component, machine, work requested) instead of item 1's machine / component only.
+    const itemsTable = jobCardItemsTable(job as unknown as JobDocJob);
+    const machineHtml = itemsTable
+      ? `<div class="block"><div class="sec"><b>Items (${itemsTable.rows.length})</b><i></i></div><table class="items"><thead><tr>${itemsTable.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${itemsTable.rows.map((row) => `<tr>${row.map((cell, index) => `<td${index === 0 ? ' class="mono tg"' : ""}>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+      : `<div class="block">
+        <div class="sec"><b>Machine / component</b><i></i></div>
+        <div class="cols">
+          <div class="col">${kv([["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]], ["Machine serial"])}</div>
+          <div class="col">${kv([["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]], ["Component serial", "Part number"])}</div>
+        </div>
+      </div>`;
     const extraHtml = layout.extra ? `<div class="block"><div class="sec"><b>${escapeHtml(layout.extra.title)}</b><i></i></div><div class="cols"><div class="col">${kv(layout.extra.rows)}</div><div class="col"></div></div></div>` : "";
     const findingsHtml = layout.findingsHeading ? `<div class="block grow"><div class="sec"><b>${escapeHtml(layout.findingsHeading)}</b><i></i><span class="hint">${escapeHtml(layout.findingsHint)}</span></div><div class="lined"></div></div>` : "";
     win.document.write(withPoweredBy(`<!doctype html><html><head><title>${escapeHtml(`${jobLabel} - ${documentTitles.JOB_CARD}`)}</title><meta charset="utf-8" /><style>
@@ -2956,7 +2972,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       .line{display:flex;gap:6px;align-items:flex-end}
       .line span{flex:1;border-bottom:1px solid #555;height:12px;display:block}
       .stamp{font-size:10.5px;color:#555;white-space:nowrap}
-    </style></head><body><div class="sheet">
+      .sheet.multi{height:auto;min-height:296mm}
+      .items{width:100%;border-collapse:collapse;font-size:11.5px}
+      .items th{background:#f1f1f1;text-align:left;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#444;padding:4px 6px;border:1px solid #c8c8c8;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .items td{padding:5px 6px;border:1px solid #c8c8c8;vertical-align:top}
+      .items td.tg{font-weight:700;white-space:nowrap}
+      .items tr{break-inside:avoid}
+    </style></head><body><div class="sheet${itemsTable ? " multi" : ""}">
       <div class="head">
         <div class="brand">
           <img src="${escapeHtml(logoSrc)}" alt="" onerror="this.style.display='none'" />
@@ -2973,13 +2995,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         <div><div class="lab">Previous job</div><div class="val mono">${escapeHtml(form.previousJobNumber || "—")}</div></div>
         <div><div class="lab">Customer ref / PO</div><div class="val mono">${escapeHtml(customerRef || "—")}</div></div>
       </div>
-      <div class="block">
-        <div class="sec"><b>Machine / component</b><i></i></div>
-        <div class="cols">
-          <div class="col">${kv([["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]], ["Machine serial"])}</div>
-          <div class="col">${kv([["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]], ["Component serial", "Part number"])}</div>
-        </div>
-      </div>
+      ${machineHtml}
       ${extraHtml}
       <div class="block descblock"><div class="sec"><b>${escapeHtml(layout.descriptionHeading)}</b><i></i></div><div class="text desc">${escapeHtml(form.description || "—")}</div></div>
       <div class="block"><div class="sec"><b>Notes</b><i></i></div><div class="text notes">${escapeHtml(form.notes || "—")}</div></div>
@@ -3380,7 +3396,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       h2{font-size:13px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:#555}
       .note-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
       .logo{max-height:80px;max-width:240px;object-fit:contain;margin-bottom:2px}
-      .org-details{text-align:left;margin-bottom:6px}
+      .org-details{text-align:right;margin-bottom:6px}
       .org-details .org-name{font-weight:bold;font-size:13px;color:#111;margin:0 0 2px}
       .org-details p{font-size:11px;color:#444;margin:1px 0}
       .job-number{font-size:16px;font-weight:bold;text-align:right}
@@ -4193,7 +4209,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // The same items, for the "For item" pickers, tag chips and the filter on the Parts / Outwork / Photos / Attachments lists.
   const linkItems = jobItemRows;
   const activeItemFilter = normalizeItemFilter(itemFilter, linkItems.map((item) => item.id));
-  const itemLinkCounts = job ? countItemLinks({ parts: job.partLines, outwork: job.outworkItems, attachments: job.attachments }) : {};
+  const itemLinkCounts = job ? countItemLinks({ parts: job.partLines, outwork: job.outworkItems, attachments: job.attachments, reports: job.dimensionReports ?? [] }) : {};
   const itemJobNumber = job ? (job.jobNumber ?? job.draftNumber) : null;
   // An ordinary one-item Engineering job shows the same item list with its one item, built from the job's own fields.
   const itemsListOn = mode === "detail" && !!job && itemsBuildOn();
@@ -4216,6 +4232,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     mechanicEtaDate: (job.mechanicEtaDate as string | null) ?? null,
   } : null;
   const selectedItem = jobItemRows.find((item) => item.id === activeItemFilter) ?? null;
+  // The tag (BRE1122-2) of the item a record is for; blank for a whole-job record or a job without items.
+  const itemTagOf = (itemId: unknown) => {
+    const row = itemId ? jobItemRows.find((entry) => entry.id === itemId) : undefined;
+    return row ? itemTag(job?.jobNumber, row.sequence) : "";
+  };
   const itemsPanelSection = job && itemsListOn && (jobItemRows.length > 0 || virtualItem) ? (
     <JobItemsPanel
       jobId={job.id}
@@ -4236,6 +4257,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       links={itemLinkCounts}
       selectedId={selectedItem?.id ?? ""}
       onSelect={(id) => setItemFilter(id || "all")}
+      onPrintTags={() => setTagsOpen(true)}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
@@ -5115,15 +5137,25 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </section>
   ) : null;
 
+  // 2026-10-29, Engineering item view: the Activity tab reads like the item mockup - "Today 09:12 / 29 Oct" in a left column, the
+  // entry beside it - and follows the selected item (its own entries plus the job-wide ones), always open.
+  const activityWhen = (value: unknown) => {
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return "";
+    const now = new Date();
+    if (date.toDateString() === now.toDateString()) return `Today ${date.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+    return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+  };
+  const visibleActivities = job ? job.activities.filter((activity) => activityMatchesItemFilter(activity.metadata, activeItemFilter)) : [];
   const activitySection = job && !mechanicFieldsLocked ? (
           <section className="detail-panel">
             <header>
-              <div><h2>Activity history</h2><p>Chronological workflow history from the Jobs service.</p></div>
-              <button type="button" className="section-action-button" onClick={() => setShowActivityHistory((v) => !v)}>{showActivityHistory ? "Hide" : "View activity history"}</button>
+              <div><h2>Activity history</h2><p>{itemsListOn && selectedItem ? `Entries for ${itemTag(job.jobNumber, selectedItem.sequence)} and the whole job.` : "Chronological workflow history from the Jobs service."}</p></div>
+              {!itemsListOn && <button type="button" className="section-action-button" onClick={() => setShowActivityHistory((v) => !v)}>{showActivityHistory ? "Hide" : "View activity history"}</button>}
             </header>
-            {showActivityHistory && (
-              <div className="history-list">{job.activities.filter((activity) => activityMatchesItemFilter(activity.metadata, activeItemFilter)).map((activity) => <article key={activity.id}><strong>{text(activity.description)}</strong><span>{text(activity.type).replaceAll("_", " ")} · {activity.actor?.displayName || "System"}</span><time>{new Date(String(activity.createdAt)).toLocaleString("en-ZA")}</time></article>)}
-              {job.activities.length === 0 && <p className="table-state compact-empty-state">No activity recorded yet.</p>}</div>
+            {(showActivityHistory || itemsListOn) && (
+              <div className={itemsListOn ? "history-list jw-activity" : "history-list"}>{visibleActivities.map((activity) => <article key={activity.id}><strong>{text(activity.description)}</strong><span>{itemsListOn ? (activity.actor?.displayName || "System") : `${text(activity.type).replaceAll("_", " ")} · ${activity.actor?.displayName || "System"}`}</span><time title={new Date(String(activity.createdAt)).toLocaleString("en-ZA")}>{itemsListOn ? activityWhen(activity.createdAt) : new Date(String(activity.createdAt)).toLocaleString("en-ZA")}</time></article>)}
+              {visibleActivities.length === 0 && <p className="table-state compact-empty-state">No activity recorded yet.</p>}</div>
             )}
           </section>
   ) : null;
@@ -5170,6 +5202,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       defaultComponent={String(form.component || "")}
       canEdit={specificationsAccess === "FULL" && tenantPermissions.has("JOBS_EDIT")}
       canManageForm={specificationsAccess === "FULL" && tenantPermissions.has("COMPANY_SETTINGS_EDIT")}
+      onChanged={() => void load(true)}
     />
   ) : null;
 
@@ -5240,11 +5273,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     showPex: hasPexPanel,
     showWarranty: !!job && job.type === "WARRANTY",
     showActivity: !!activitySection,
-    partsCount: job?.partLines.length ?? 0,
+    // With items, the counts follow the selected item (all items = everything), like the item mockup's tabs.
+    partsCount: job ? job.partLines.filter((line) => matchesItemFilter(line.itemId, activeItemFilter)).length : 0,
     pickSlipsCount: jobPickSlips.length,
     followupCount: partsFollowupGroups.length,
-    outworkCount: job?.outworkItems.length ?? 0,
-    attachmentsCount: job?.attachments.length ?? 0,
+    outworkCount: job ? job.outworkItems.filter((row) => matchesItemFilter(row.itemId, activeItemFilter)).length : 0,
+    attachmentsCount: job ? job.attachments.filter((file) => matchesItemFilter(file.itemId, activeItemFilter)).length : 0,
+    itemView: itemsListOn,
+    reportsCount: job ? (job.dimensionReports ?? []).filter((report) => matchesItemFilter(report.itemId, activeItemFilter)).length : 0,
+    activityCount: job ? job.activities.filter((activity) => activityMatchesItemFilter(activity.metadata, activeItemFilter)).length : 0,
   });
   const deskTab = resolveActiveTab(requestedTab, jobTabs);
   // "none" on the tablet layout, so none of the desktop tab panels render there.
@@ -5277,6 +5314,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       : { key: "job-card", label: "Job card", onSelect: () => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec) },
     { key: "job-history", label: "Job history", onSelect: () => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec) },
     { key: "delivery-note", label: "Delivery note", onSelect: openJobDeliveryNoteDialog },
+    ...(itemsListOn ? [{ key: "job-tags", label: "Job tags", onSelect: () => setTagsOpen(true) }] : []),
   ] : [];
   // Every item here changes job status, so they are hidden together with the stepper for a Mechanic / view-only user
   // (the server rejects them too — requireNotMechanicRestricted in jobs/service.ts).
@@ -5430,7 +5468,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <div className="jt-cards">
                 {tabletCardLines.map((line) => {
                   const lineId = String(line.id);
-                  const card = buildTabletCard({ id: lineId, partNumber: line.partNumber, description: line.description, quantity: line.quantity, receivedQuantity: line.receivedQuantity, pickedQuantity: line.pickedQuantity, status: line.status, supplierName: line.orderedFromSupplier?.name ? String(line.orderedFromSupplier.name) : "", orderNumber: line.orderNumber });
+                  const card = buildTabletCard({ id: lineId, partNumber: line.partNumber, description: line.description, quantity: line.quantity, receivedQuantity: line.receivedQuantity, pickedQuantity: line.pickedQuantity, status: line.status, supplierName: line.orderedFromSupplier?.name ? String(line.orderedFromSupplier.name) : "", orderNumber: line.orderNumber, itemTag: itemTagOf(line.itemId) });
                   return (
                     <TabletPartCard
                       key={lineId}
@@ -5751,7 +5789,20 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {tabletBar}
           {tabletSheets}
           {!tabletLayout && <JobFactsStrip items={factItems} />}
-          {!tabletLayout && <JobTabBar tabs={jobTabs} active={deskTab} onSelect={selectTab} />}
+          {!tabletLayout && itemsListOn && (
+            <ItemHeader
+              tag={selectedItem ? itemTag(job.jobNumber, selectedItem.sequence) : jobItemRows.length === 0 ? itemTag(job.jobNumber, 1) : `JOB ${job.jobNumber ?? job.draftNumber ?? ""}`}
+              title={selectedItem ? (selectedItem.component || "Item") : jobItemRows.length === 0 ? (String(job.component || "") || "Item") : "All items"}
+              subtitle={selectedItem || jobItemRows.length === 0 ? undefined : `${jobItemRows.length} items. Select one in the list above to focus its parts, outwork, photos and history.`}
+              steps={stepperSteps as string[]}
+              labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" } as Record<string, string>}
+              status={selectedItem ? stepperDisplayStatus(String(selectedItem.status)) : jobItemRows.length === 0 ? stepperDisplayStatus(String(job.status)) : null}
+              canChange={!mechanicFieldsLocked && !jobEnded && (!!selectedItem || jobItemRows.length < 2)}
+              disabled={saving}
+              onChangeStatus={(step) => void moveFromItemsStepper(step)}
+            />
+          )}
+          {!tabletLayout && <JobTabBar tabs={jobTabs} active={deskTab} onSelect={selectTab} variant={itemsListOn ? "item" : undefined} />}
 
           {/* Always mounted (just hidden on other tabs) so a field you were typing in keeps its state when you flip tabs. */}
           {!tabletLayout && (
@@ -6338,6 +6389,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               </div>
             </section>}
           </div>
+          )}
+
+          {tagsOpen && job && (
+            <PrintTagsDialog
+              jobNumber={job.jobNumber ?? job.draftNumber}
+              customerName={job.customer?.name}
+              received={form.dateReceived || null}
+              items={jobItemRows.length > 0 ? jobItemRows : virtualItem ? [virtualItem] : []}
+              selectedId={selectedItem?.id ?? ""}
+              onClose={() => setTagsOpen(false)}
+              onError={setError}
+            />
           )}
 
           {jobDnDraft && (

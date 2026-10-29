@@ -306,6 +306,8 @@ async function getJobScoped(companyId: string, id: string) {
       components: true,
       // 2026-10-29, Engineering multi-item jobs: the job's items (empty for an ordinary one-item job).
       jobItems: { orderBy: { sequence: "asc" } },
+      // Specification (dimension) reports: only their item, so the item list and tab counts can show how many each item has.
+      dimensionReports: { select: { id: true, itemId: true } },
       // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink
       // includes above — see schema.prisma's PexRecord comment. A job is
       // linked on at most one of these three legs at a time.

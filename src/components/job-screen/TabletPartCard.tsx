@@ -7,6 +7,7 @@ export function TabletPartCard({ card, disabled, canEdit, onOpen, onAction }: { 
       <button type="button" className="jt-card-top" onClick={onOpen} aria-label={`Details for ${card.partNumber}`}>
         <span className="jt-card-names">
           <span className="jt-card-pn">{card.partNumber}</span>
+          {card.itemTag ? <span className="jt-card-item">{card.itemTag}</span> : null}
           <span className="jt-card-desc">{card.description || "No description"}</span>
         </span>
         <span className="jt-card-qty">{card.qtyLabel}</span>

@@ -29,21 +29,26 @@ export type JobTabInput = {
   followupCount: number;
   outworkCount: number;
   attachmentsCount: number;
+  /** 2026-10-29, Engineering item view: tabs are named like the item mockup and the counts follow the selected item. */
+  itemView?: boolean;
+  reportsCount?: number;
+  activityCount?: number;
 };
 
 export const JOB_TAB_KEYS: JobTabKey[] = ["overview", "parts", "pickslips", "followup", "outwork", "specifications", "attachments", "pex", "warranty", "activity"];
 
 export function buildJobTabs(input: JobTabInput): JobTab[] {
-  const tabs: JobTab[] = [{ key: "overview", label: "Overview" }];
-  if (input.showParts) tabs.push({ key: "parts", label: "Parts list", count: input.partsCount });
+  const itemView = !!input.itemView;
+  const tabs: JobTab[] = [{ key: "overview", label: itemView ? "Details" : "Overview" }];
+  if (input.showParts) tabs.push({ key: "parts", label: itemView ? "Parts" : "Parts list", count: input.partsCount });
   if (input.showPickSlips) tabs.push({ key: "pickslips", label: "Pick slips", count: input.pickSlipsCount });
   if (input.showFollowup) tabs.push({ key: "followup", label: "Follow-up", count: input.followupCount });
   if (input.showOutwork) tabs.push({ key: "outwork", label: "Outwork", count: input.outworkCount });
-  if (input.showSpecifications) tabs.push({ key: "specifications", label: "Specifications" });
-  tabs.push({ key: "attachments", label: "Photos & attachments", count: input.attachmentsCount });
+  if (input.showSpecifications) tabs.push({ key: "specifications", label: "Specifications", ...(itemView && typeof input.reportsCount === "number" ? { count: input.reportsCount } : {}) });
+  tabs.push({ key: "attachments", label: itemView ? "Photos & files" : "Photos & attachments", count: input.attachmentsCount });
   if (input.showPex) tabs.push({ key: "pex", label: "PEX" });
   if (input.showWarranty) tabs.push({ key: "warranty", label: "Warranty" });
-  if (input.showActivity) tabs.push({ key: "activity", label: "Activity" });
+  if (input.showActivity) tabs.push({ key: "activity", label: "Activity", ...(itemView && typeof input.activityCount === "number" ? { count: input.activityCount } : {}) });
   return tabs;
 }
 

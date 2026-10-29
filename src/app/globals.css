@@ -2474,7 +2474,6 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .ji-pick { padding: 0; border: 0; background: transparent; color: var(--ink-900); cursor: pointer; font: inherit; text-align: left; }
 .ji-pick:hover { color: var(--blue-700); }
 .ji-none { color: #98a2b3; }
-.ji-selected .ji-card-head h2 { margin: 4px 0 0; font-size: 18px; }
 .ji-selected-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 32px; padding: 6px 18px 18px; }
 .ji-dl { display: grid; margin: 0; gap: 9px; align-content: start; font-size: 13px; }
 .ji-dl > div { display: flex; justify-content: space-between; gap: 12px; }
@@ -2490,3 +2489,26 @@ a.disabled, .quiet-button.disabled, .gold-button.disabled, .primary-button.disab
 .delivery-note-dialog .drawer-fields .data-table-wrap { max-height: none; min-height: min-content; overflow-y: visible; }
 .delivery-note-dialog .drawer-fields .data-table-wrap .data-table thead th { position: static; }
 .delivery-note-dialog .drawer-fields .data-table td input { min-height: 36px; }
+
+/* 2026-10-29: item header card + tab strip like the item mockup, Print job tags window, tag chip on tablet cards, activity rows. */
+.jw-itemhead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 20px; padding: 20px 24px 12px; border: 1px solid var(--ink-150); border-bottom: 0; border-radius: 14px 14px 0 0; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.jw-itemhead-tag { color: #667085; font: 700 12px/16px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.jw-itemhead h2 { margin: 2px 0 0; font-size: 20px; line-height: 26px; font-weight: 750; }
+.jw-itemhead p { margin: 4px 0 0; color: #667085; font-size: 13px; }
+.jw-itembtn { height: 36px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 9px; background: #fff; color: #344054; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.jw-itembtn:hover:not(:disabled) { background: #f2f4f7; }
+.jw-itembtn:disabled { cursor: not-allowed; opacity: .6; }
+.jw-tabs.jw-tabs-item { margin-bottom: 0; padding: 0 24px; gap: 4px; border: 1px solid var(--ink-150); border-top: 0; border-radius: 0 0 14px 14px; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.jw-tabs-item .jw-tab { padding: 11px 14px; border-bottom-width: 2px; color: #667085; font-size: 14px; font-weight: 700; }
+.jw-tabs-item .jw-tab:hover { color: var(--ink-900); }
+.jw-tabs-item .jw-tab.active { border-bottom-color: var(--gold-600); color: var(--ink-900); }
+.jw-tabs-item .jw-tab-count, .jw-tabs-item .jw-tab.active .jw-tab-count { min-width: 22px; height: 20px; background: #eef0f3; color: #475467; font-size: 11px; font-weight: 700; }
+.history-list.jw-activity article { grid-template-columns: 110px minmax(0, 1fr); grid-template-areas: "when text" "when meta"; gap: 2px 14px; padding: 12px 6px; font-size: 14px; }
+.history-list.jw-activity article strong { grid-area: text; font-weight: 500; color: var(--ink-900); }
+.history-list.jw-activity article span { grid-area: meta; color: #98a2b3; font-size: 12px; }
+.history-list.jw-activity article time { grid-area: when; padding-top: 2px; color: #667085; font-size: 12px; }
+.print-tags-dialog { width: min(560px, 94vw); }
+.pt-preview { display: grid; gap: 6px; }
+.pt-preview-title { color: #667085; font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.pt-frame { max-width: 100%; border: 1px solid var(--ink-150); border-radius: 8px; background: #e9ecf1; }
+.jt-card-item { display: inline-block; width: fit-content; margin-top: 3px; padding: 1px 7px; border-radius: 6px; background: #eef4fd; color: var(--blue-700); font: 700 12px/18px ui-monospace, SFMono-Regular, Menlo, monospace; }

@@ -229,17 +229,18 @@ export function itemOptionLabel(item: { sequence: number; component?: string | n
   return what ? `${itemTag(jobNumber, item.sequence)} · ${what}` : itemTag(jobNumber, item.sequence);
 }
 
-export type ItemLinkCounts = { parts: number; outwork: number; photos: number; files: number };
+export type ItemLinkCounts = { parts: number; outwork: number; photos: number; files: number; reports: number };
 
 type Linked = { itemId?: string | null };
 
 // How many records are tied to each item, for the item list ("3 parts · 1 outwork"). Whole-job records are not counted.
-export function countItemLinks(records: { parts: readonly Linked[]; outwork: readonly Linked[]; attachments: ReadonlyArray<Linked & { isPhoto?: boolean | null }> }): Record<string, ItemLinkCounts> {
+export function countItemLinks(records: { parts: readonly Linked[]; outwork: readonly Linked[]; attachments: ReadonlyArray<Linked & { isPhoto?: boolean | null }>; reports?: readonly Linked[] }): Record<string, ItemLinkCounts> {
   const counts: Record<string, ItemLinkCounts> = {};
-  const slot = (id: string) => (counts[id] ??= { parts: 0, outwork: 0, photos: 0, files: 0 });
+  const slot = (id: string) => (counts[id] ??= { parts: 0, outwork: 0, photos: 0, files: 0, reports: 0 });
   for (const row of records.parts) if (row.itemId) slot(row.itemId).parts++;
   for (const row of records.outwork) if (row.itemId) slot(row.itemId).outwork++;
   for (const row of records.attachments) if (row.itemId) { if (row.isPhoto) slot(row.itemId).photos++; else slot(row.itemId).files++; }
+  for (const row of records.reports ?? []) if (row.itemId) slot(row.itemId).reports++;
   return counts;
 }
 
@@ -249,13 +250,14 @@ export function itemLinkSummary(counts: ItemLinkCounts | undefined): string {
   return [
     counts.parts ? noun(counts.parts, "part", "parts") : "",
     counts.outwork ? `${counts.outwork} outwork` : "",
+    counts.reports ? noun(counts.reports, "report", "reports") : "",
     counts.photos ? noun(counts.photos, "photo", "photos") : "",
     counts.files ? noun(counts.files, "file", "files") : "",
   ].filter(Boolean).join(" · ");
 }
 
 export function itemLinkTotal(counts: ItemLinkCounts | undefined): number {
-  return counts ? counts.parts + counts.outwork + counts.photos + counts.files : 0;
+  return counts ? counts.parts + counts.outwork + counts.photos + counts.files + (counts.reports ?? 0) : 0;
 }
 
 // Pick slips and delivery notes print the item in front of the line's own text, e.g. "[BRE1122-2] Seal kit".

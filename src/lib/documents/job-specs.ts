@@ -164,18 +164,42 @@ export function jobCardLayout(job: JobDocJob, form: JobDocForm, labels: JobDocLa
   return layout;
 }
 
+// 2026-10-29, user request: the job card lists every item of a multi-item job (it used to show item 1 only, because item 1's machine
+// and component are mirrored onto the job). Null for an ordinary one-item job, which keeps the Machine / component block.
+export function jobCardItemsTable(job: JobDocJob): { headers: string[]; rows: string[][] } | null {
+  const items = (job.jobItems ?? []) as Rec[];
+  if (items.length < 2) return null;
+  const jobNumber = job.jobNumber || job.draftNumber || null;
+  const join = (...parts: string[]) => parts.filter((part) => part && part.trim()).join(" · ");
+  return {
+    headers: ["Item", "Component", "Model / serial / part no.", "Machine", "Work requested"],
+    rows: [...items].sort((a, b) => Number(a.sequence ?? 0) - Number(b.sequence ?? 0)).map((item) => [
+      itemTag(jobNumber, Number(item.sequence ?? 0)),
+      str(item.component) || "—",
+      join(str(item.componentModel), str(item.componentSerial) ? `S/N ${str(item.componentSerial)}` : "", str(item.componentPartNumber) ? `P/N ${str(item.componentPartNumber)}` : "") || "—",
+      join(join(str(item.machineMake), str(item.machineModel)).replace(" · ", " "), str(item.plantNumber) ? `Plant ${str(item.plantNumber)}` : "") || "—",
+      str(item.workRequested) || "—",
+    ]),
+  };
+}
+
 function buildJobCardSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; labels: JobDocLabels }): DocSpec {
   const { title, jobLabel, job, form, labels } = input;
   const layout = jobCardLayout(job, form, labels);
+  const itemsTable = jobCardItemsTable(job);
   const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
   const blocks: DocBlock[] = [
     { type: "table", headers: ["Date in", "Previous job", "Customer ref / PO"], rows: [[dateText(form.dateReceived), form.previousJobNumber || "—", customerRef || "—"]] },
-    { type: "heading", text: "Machine / component" },
-    {
-      type: "twoCol",
-      left: [{ type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]] }],
-      right: [{ type: "kv", rows: [["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]] }],
-    },
+    ...(itemsTable
+      ? [{ type: "heading", text: `Items (${itemsTable.rows.length})` } as DocBlock, { type: "table", headers: itemsTable.headers, rows: itemsTable.rows } as DocBlock]
+      : [
+        { type: "heading", text: "Machine / component" } as DocBlock,
+        {
+          type: "twoCol",
+          left: [{ type: "kv", rows: [["Machine make", form.machineMake], ["Machine model", form.machineModel], ["Machine serial", form.machineSerial], ["Plant number", form.plantNumber]] }],
+          right: [{ type: "kv", rows: [["Component model", form.componentModel], ["Component", form.component], ["Component serial", form.componentSerial], ["Part number", form.componentPartNumber], ["Machine hours", form.machineHours]] }],
+        } as DocBlock,
+      ]),
   ];
   if (layout.extra) blocks.push({ type: "heading", text: layout.extra.title }, { type: "kv", rows: layout.extra.rows });
   blocks.push(

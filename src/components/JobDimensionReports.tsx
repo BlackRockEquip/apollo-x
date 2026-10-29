@@ -116,9 +116,11 @@ type Props = {
   /** The item filter shared with the job's other lists ("all", "job" or an item id). */
   itemFilter?: string;
   onItemFilter?: (filter: string) => void;
+  /** Called after a report is saved or deleted, so the job screen can refresh its report counts. */
+  onChanged?: () => void;
 };
 
-export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit, canManageForm, items = [], jobNumber = null, itemFilter = ITEM_FILTER_ALL, onItemFilter }: Props) {
+export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit, canManageForm, items = [], jobNumber = null, itemFilter = ITEM_FILTER_ALL, onItemFilter, onChanged }: Props) {
   const tagOf = (itemId: string) => { const item = items.find((entry) => entry.id === itemId); return item ? itemTag(jobNumber, item.sequence) : ""; };
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const [reports, setReports] = useState<Report[]>([]);
@@ -221,6 +223,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
     } catch (e) {
       // The report itself is saved: switch the window to that report so a retry does not add a second one.
       await load();
+      onChanged?.();
       setDialog((current) => (current ? { ...current, mode: "edit", draft: { ...current.draft, id: savedId } } : current));
       setDialogError(`The report was saved, but the original document was not: ${e instanceof Error ? e.message : "upload failed."}`);
       setSaving(false);
@@ -230,6 +233,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
     setSaving(false);
     setDialog(null);
     setNote("Report saved.");
+    onChanged?.();
   }
 
   async function removeReport(report: Report) {
@@ -240,6 +244,7 @@ export function JobDimensionReports({ jobId, jobLabel, defaultComponent, canEdit
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to delete the report.");
       setReports((current) => current.filter((row) => row.id !== report.id));
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to delete the report.");
     } finally {
