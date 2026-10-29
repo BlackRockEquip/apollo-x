@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/constants";
+import { DEMO_READ_ONLY_CODE, DEMO_READ_ONLY_MESSAGE, demoProxyDecision, isDemoMode } from "@/lib/demo/mode";
 
 // 2026-09-22 — user reports: "Favicon when not logged in must stay as
 // Apollo X or the default, must not show any organization logo" and "logos
@@ -52,7 +53,28 @@ const PUBLIC_PATHS = [
   "/api/v1/storage-files",
 ];
 
+// 2026-10-29: public view-only demo (src/lib/demo/mode.ts, docs/demo-site.md). Only when DEMO_MODE=true, which is set
+// on the separate demo service and never on the live app: writes of any kind are refused here, before any route runs,
+// and signed-out visitors are signed in through /demo instead of seeing the login screen.
+function demoProxy(request: NextRequest) {
+  const { pathname, search } = request.nextUrl;
+  const decision = demoProxyDecision(request.method, pathname, search, request.cookies.has(SESSION_COOKIE));
+  let response: NextResponse;
+  if (decision.kind === "block-write") {
+    response = NextResponse.json({ error: { code: DEMO_READ_ONLY_CODE, message: DEMO_READ_ONLY_MESSAGE } }, { status: 403 });
+    response.headers.set("x-demo-read-only", "1");
+  } else if (decision.kind === "redirect") {
+    response = NextResponse.redirect(new URL(decision.location, request.url));
+  } else {
+    response = NextResponse.next();
+  }
+  // Keep the demo out of search results.
+  response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  return response;
+}
+
 export function proxy(request: NextRequest) {
+  if (isDemoMode()) return demoProxy(request);
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
   if (!isPublic && !request.cookies.has(SESSION_COOKIE)) {

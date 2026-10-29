@@ -27,3 +27,7 @@ Phase 2 adds tenant-scoped customers (branches, contacts and typed addresses), s
 6. Run `npm run dev`.
 
 The integration test suite requires a disposable PostgreSQL database in `DATABASE_URL_TEST` whose schema has been migrated. Never point it at production.
+
+## Public live demo
+
+A separate, view-only copy of the app with sample data that anyone can open without a login (`DEMO_MODE=true` on its own Render service and database). Setup and safety notes: `docs/demo-site.md`.

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
-import { AlertTriangle, ArrowLeft, Camera, CheckCircle2, ClipboardList, Columns3, Download, FileText, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Camera, CheckCircle2, ClipboardList, Columns3, Download, FileText, Info, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X, XCircle } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "./job-screen/ActionMenu";
 import { JobFactsStrip } from "./job-screen/JobFactsStrip";
 import { JobTabBar } from "./job-screen/JobTabBar";
@@ -219,7 +219,8 @@ type JobDetail = Row & {
   emailConfigured?: boolean;
 };
 
-const EMAIL_NOT_SET_UP_MESSAGE = "Email isn't set up for this company yet, so no follow-up was sent. Add the SMTP email details under Settings > Company / Branding first.";
+const EMAIL_NOT_SET_UP_MESSAGE = "Email isn't set up for this company yet, so no follow-up was sent.";
+const EMAIL_NOT_SET_UP_DETAIL = "Add the SMTP email details under Settings > Company / Branding first, then try again.";
 
 const JOB_TYPES = Object.entries(JOB_TYPE_LABELS);
 
@@ -3737,7 +3738,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     // result of every follow-up, now opens in a small window instead of a line
     // of small text - success, partly sent, not sent, or an error.
     if (job?.emailConfigured === false) {
-      setFollowupDialog(followupErrorOutcome(EMAIL_NOT_SET_UP_MESSAGE));
+      setFollowupDialog(followupErrorOutcome(EMAIL_NOT_SET_UP_MESSAGE, EMAIL_NOT_SET_UP_DETAIL));
       return;
     }
     setSaving(true); setError(""); setFollowupDialog(null);
@@ -5584,30 +5585,80 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           {/* 2026-10-29, user request: the Parts follow-up result opens in a small window (sent / partly sent / not sent / error). */}
           {followupDialog && (() => {
+            // Look agreed from the 2026-10-29 mockup ("Parts Follow-up Result Dialog"): icon tile, blue label, bold title,
+            // a card per supplier under "Sent to" / "Not sent", grey footer with the gold OK button.
             const tone = followupDialog.tone;
-            const colour = tone === "success" ? "#087a55" : tone === "warning" ? "#b26a00" : tone === "error" ? "var(--danger, #b3261e)" : "var(--ink-700)";
-            const Icon = tone === "success" ? CheckCircle2 : AlertTriangle;
+            const palette = tone === "success"
+              ? { fg: "#087a55", tile: "#e3f5ec", card: "#f3fbf7", edge: "#cdeedd" }
+              : tone === "warning"
+                ? { fg: "#9a5b00", tile: "#fff1d6", card: "#fff8ea", edge: "#f3dca7" }
+                : tone === "error"
+                  ? { fg: "#b3261e", tile: "#fdecea", card: "#fff6f5", edge: "#f6d3cf" }
+                  : { fg: "#2b6fd6", tile: "#e8f0fc", card: "#f4f8fe", edge: "#cfdff7" };
+            const Icon = tone === "success" ? CheckCircle2 : tone === "info" ? Info : AlertTriangle;
+            const hasLists = followupDialog.sent.length > 0 || followupDialog.skipped.length > 0;
+            const message = <p style={{ margin: "4px 0 0", fontSize: 14, lineHeight: "20px", color: "#475467" }}>{followupDialog.message}</p>;
+            const sectionLabel = (label: string, count: number, fg: string, bg: string) => (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, lineHeight: "16px", fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: fg }}>{label}</span>
+                <span style={{ minWidth: 18, padding: "1px 6px", boxSizing: "border-box", borderRadius: 999, background: bg, color: fg, fontSize: 11, lineHeight: "16px", fontWeight: 700, textAlign: "center" }}>{count}</span>
+              </div>
+            );
             return (
               <div className="drawer-backdrop" role="alertdialog" aria-modal="true" aria-label={followupDialog.title} onMouseDown={(e) => { if (e.target === e.currentTarget) setFollowupDialog(null); }}>
-                <aside className="form-drawer compact-dialog" style={{ width: "min(480px, 94vw)" }}>
-                  <header>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Icon size={26} color={colour} />
-                      <div><p className="eyebrow">Parts follow-up</p><h2 style={{ color: colour }}>{followupDialog.title}</h2></div>
+                <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: "min(480px, 94vw)", maxHeight: "90vh", overflow: "auto", boxSizing: "border-box", background: "#fff", borderRadius: 16, boxShadow: "0 24px 64px rgba(16,24,40,.3), 0 2px 8px rgba(16,24,40,.12)" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "24px 24px 18px" }}>
+                    <div style={{ flex: "none", width: 44, height: 44, borderRadius: 12, background: palette.tile, color: palette.fg, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={22} /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, lineHeight: "14px", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#2b6fd6" }}>Parts follow-up</div>
+                      <h2 style={{ margin: "3px 0 0", fontSize: 20, lineHeight: "26px", fontWeight: 700, color: "#101828" }}>{followupDialog.title}</h2>
+                      {(hasLists || tone === "info") && message}
                     </div>
-                    <button type="button" onClick={() => setFollowupDialog(null)} aria-label="Close dialog"><X size={18} /></button>
-                  </header>
-                  <div style={{ padding: "4px 0 14px", display: "grid", gap: 10, fontSize: 14 }}>
-                    <p style={{ margin: 0, fontWeight: 600 }}>{followupDialog.message}</p>
-                    {followupDialog.sent.length > 0 && (
-                      <div><strong style={{ fontSize: 12, color: "#087a55" }}>Sent to</strong><ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{followupDialog.sent.map((name, i) => <li key={i}>{name}</li>)}</ul></div>
-                    )}
-                    {followupDialog.skipped.length > 0 && (
-                      <div><strong style={{ fontSize: 12, color: "var(--danger, #b3261e)" }}>Not sent</strong><ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>{followupDialog.skipped.map((item, i) => <li key={i}><strong>{item.supplierName}</strong>: {item.reason}</li>)}</ul></div>
-                    )}
+                    <button type="button" onClick={() => setFollowupDialog(null)} aria-label="Close dialog" style={{ flex: "none", width: 32, height: 32, margin: "-4px -6px 0 0", border: 0, borderRadius: 8, background: "transparent", color: "#667085", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
                   </div>
-                  <footer className="detail-actions"><button type="button" className="gold-button" autoFocus onClick={() => setFollowupDialog(null)}>OK</button></footer>
-                </aside>
+                  {(hasLists || (tone !== "info" && !hasLists)) && (
+                    <div style={{ padding: "0 24px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
+                      {!hasLists && (
+                        <div style={{ padding: "14px 16px", borderRadius: 10, background: palette.card, border: `1px solid ${palette.edge}` }}>
+                          <p style={{ margin: 0, fontSize: 14, lineHeight: "21px", fontWeight: 600, color: "#101828" }}>{followupDialog.message}</p>
+                          {followupDialog.detail && <p style={{ margin: "6px 0 0", fontSize: 13, lineHeight: "19px", color: "#475467" }}>{followupDialog.detail}</p>}
+                        </div>
+                      )}
+                      {followupDialog.sent.length > 0 && (
+                        <div>
+                          {sectionLabel("Sent to", followupDialog.sent.length, "#087a55", "#e3f5ec")}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {followupDialog.sent.map((name, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, background: "#f3fbf7", border: "1px solid #cdeedd" }}>
+                                <CheckCircle2 size={16} color="#087a55" style={{ flex: "none" }} />
+                                <div style={{ fontSize: 14, lineHeight: "20px", fontWeight: 600, color: "#101828" }}>{name}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {followupDialog.skipped.length > 0 && (
+                        <div>
+                          {sectionLabel("Not sent", followupDialog.skipped.length, "#b3261e", "#fdecea")}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {followupDialog.skipped.map((item, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 14px", borderRadius: 10, background: "#fff6f5", border: "1px solid #f6d3cf" }}>
+                                <XCircle size={16} color="#b3261e" style={{ flex: "none", marginTop: 2 }} />
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 14, lineHeight: "20px", fontWeight: 600, color: "#101828" }}>{item.supplierName}</div>
+                                  <div style={{ marginTop: 2, fontSize: 13, lineHeight: "19px", color: "#475467" }}>{item.reason}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "14px 24px", background: "#f8f9fb", borderTop: "1px solid #eaecf0", borderRadius: "0 0 16px 16px" }}>
+                    <button type="button" autoFocus onClick={() => setFollowupDialog(null)} style={{ minWidth: 96, height: 40, padding: "0 22px", border: "1px solid #b8871f", borderRadius: 10, background: "linear-gradient(180deg, #e6bd4f 0%, #cb9a2c 100%)", color: "#1c1405", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 1px 2px rgba(16,24,40,.12)" }}>OK</button>
+                  </div>
+                </div>
               </div>
             );
           })()}

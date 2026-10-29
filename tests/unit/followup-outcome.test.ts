@@ -34,5 +34,7 @@ describe("parts follow-up result window", () => {
     expect(o.title).toBe("Follow-up failed");
     expect(o.message).toBe("Email isn't set up for this company yet.");
     expect(followupErrorOutcome("").message).toBe("Unable to send the follow-up.");
+    expect(followupErrorOutcome("a", "b").detail).toBe("b");
+    expect(followupErrorOutcome("a").detail).toBeUndefined();
   });
 });

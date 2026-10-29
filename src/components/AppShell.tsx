@@ -17,6 +17,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { SupportRequestDialog } from "@/components/SupportRequestDialog";
 import { BroadcastBanner } from "@/components/BroadcastBanner";
 import { SidebarAd } from "@/components/SidebarAd";
+import { DemoBanner } from "@/components/DemoBanner";
 import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavModuleReadOnly, settingsNavPermissionAllowed } from "@/lib/settings-nav";
 
 // 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
@@ -131,7 +132,9 @@ const NAV_GROUPS: NavGroup[] = [
   { key: "settings", label: "Settings", icon: Settings, footer: true, items: SETTINGS_NAV_ITEMS.map((item) => ({ ...item, icon: SETTINGS_ICONS[item.key] ?? Settings })) },
 ];
 
-export function AppShell({ context, companyName, logoSrc: initialLogoSrc, children }: { context: RequestContext; companyName: string; logoSrc?: string | null; children: React.ReactNode }) {
+// 2026-10-29: `demo` is set only on the public view-only demo (DEMO_MODE=true, src/lib/demo/mode.ts): it shows the demo
+// banner and hides Support, Change password and Sign out, which make no sense for an anonymous visitor.
+export function AppShell({ context, companyName, logoSrc: initialLogoSrc, demo = null, children }: { context: RequestContext; companyName: string; logoSrc?: string | null; demo?: { viewKey: string; ctaUrl: string } | null; children: React.ReactNode }) {
   const pathname = usePathname();
   // 2026-10-26, user request: a sidebar section can be opened or closed by clicking it even when it holds the current screen.
   // The section of the current screen starts open; a click overrides that for this page only (the choice resets on navigation,
@@ -192,6 +195,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
             popsup)." Same placement as the support-banner above — always
             visible, at the top of every tenant page — so it reads as a
             popup regardless of which page the recipient happens to be on. */}
+        {demo && <DemoBanner viewKey={demo.viewKey} ctaUrl={demo.ctaUrl} />}
         <BroadcastBanner />
         <header className="topbar"><div style={{ display: "flex", alignItems: "center" }}><button type="button" className="mobile-nav-toggle" aria-label={mobileNavOpen ? "Close menu" : "Open menu"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((v) => !v)}><Menu size={18} /></button><div style={{ display: "grid" }}><strong>{companyName}</strong><span>{context.tenantRole ? tenantRoleLabelsFor(context.industryBuild)[context.tenantRole] : "Platform support"}</span></div></div>{/* 2026-09-19, user request: bell icon next to the Support link, always
     visible from every page — AppShell renders on every tenant page, so
@@ -200,7 +204,7 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, childr
     2026-10-01 — Support is now SupportRequestDialog (a quick popup to log
     a problem) rather than a plain Link straight to /support; see its own
     comment for why. */}
-<div className="topbar-user"><NotificationBell /><SupportRequestDialog /><span>{context.displayName}</span><ChangePasswordButton /><LogoutButton /></div></header>
+<div className="topbar-user"><NotificationBell />{!demo && <SupportRequestDialog />}<span>{context.displayName}</span>{!demo && <ChangePasswordButton />}{!demo && <LogoutButton />}</div></header>
         <main className="page-content"><PermissionsContext.Provider value={{ tenantRole: context.tenantRole, tenantPermissions: context.tenantPermissions, moduleAccess: context.moduleAccess, industryBuild: context.industryBuild ?? null }}>{children}</PermissionsContext.Provider></main>
       </div>
     </div>

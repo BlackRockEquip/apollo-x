@@ -8,6 +8,8 @@ export type FollowupOutcome = {
   tone: "success" | "warning" | "error" | "info";
   title: string;
   message: string;
+  // Optional second line under the message (what to do about it).
+  detail?: string;
   sent: string[];
   skipped: { supplierName: string; reason: string }[];
 };
@@ -29,6 +31,6 @@ export function followupOutcome(result: FollowupResult): FollowupOutcome {
   return { tone: "info", title: "Nothing to follow up", message: "There are no outstanding ordered parts on this job.", sent, skipped };
 }
 
-export function followupErrorOutcome(message: string): FollowupOutcome {
-  return { tone: "error", title: "Follow-up failed", message: message || "Unable to send the follow-up.", sent: [], skipped: [] };
+export function followupErrorOutcome(message: string, detail?: string): FollowupOutcome {
+  return { tone: "error", title: "Follow-up failed", message: message || "Unable to send the follow-up.", ...(detail ? { detail } : {}), sent: [], skipped: [] };
 }
