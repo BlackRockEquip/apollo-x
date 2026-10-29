@@ -114,7 +114,7 @@ export const taxInput = z.object({ code: z.string().trim().min(1).max(30), descr
 export const termInput = z.object({ type: z.enum(["PAYMENT","QUOTE_VALIDITY","DELIVERY","STANDARD_TEXT"]), code: z.string().trim().min(1).max(30), label: z.string().trim().min(1).max(150), days: z.number().int().min(0).max(3650).optional().nullable(), termsText: z.string().trim().max(10000).optional().nullable(), active: z.boolean().default(true) });
 export const sequenceInput = z.object({ type: z.enum(["JOB","PEX_JOB","QUOTE","SALES_ORDER","INVOICE","PAYMENT_RECEIPT","PROCUREMENT_RFQ"]), prefix: z.string().trim().max(20), padding: z.number().int().min(1).max(12), nextValue: z.union([z.string(), z.number().int().positive()]).transform(BigInt), includeFinancialYear: z.boolean().default(false), financialYearStartMonth: z.number().int().min(1).max(12).default(3), active: z.boolean().default(true) });
 
-export const listQuery = z.object({ q: z.string().trim().max(100).default(""), status: z.enum(["all","active","inactive"]).default("active"), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) });
+export const listQuery = z.object({ q: z.string().trim().max(100).default(""), status: z.enum(["all","active","inactive"]).default("active"), page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25), activity: z.enum(["all","open"]).default("all") });
 export function normalized(value: string | null | undefined) { return value?.trim().toLocaleUpperCase("en-ZA") || null; }
 // 2026-10-01 — user request: "when adding part numbers, the cross check with
 // stock does not pickup 3j1907 but does pickup 3J-1907... it should check

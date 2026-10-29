@@ -1,9 +1,6 @@
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantPageAccess, requireNotMechanicPage, requireTenantModulePage } from "@/lib/auth/page-guard";
 import { MasterDataRoute } from "@/components/MasterDataRoute";
-import { masterConfigs } from "@/lib/master-data/ui-config";
-
-const config = masterConfigs["suppliers"];
 
 // 2026-10-05 — the Outwork and RFQs tabs moved out to their own sidebar items
 // (Outwork, and Parts > RFQs), so the tab bar is gone and this is just the
@@ -26,8 +23,6 @@ export default async function Page() {
   requireTenantPageAccess(ctx, "SUPPLIERS_VIEW");
   requireTenantModulePage(ctx, "SUPPLIERS");
   requireNotMechanicPage(ctx);
-  return <>
-    <header className="page-header compact"><div><p className="eyebrow">{config.eyebrow}</p><h1>{config.title}</h1><p>{config.description}</p></div></header>
-    <MasterDataRoute kind="suppliers" hideHeader />
-  </>;
+  // 2026-10-29 — the redesigned list (PartyListView) draws its own heading, tiles and actions, so this page no longer renders a heading above it.
+  return <MasterDataRoute kind="suppliers" />;
 }
