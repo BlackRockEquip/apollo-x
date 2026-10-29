@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FocusEvent } from "react";
 import type { ModuleKey } from "@prisma/client";
-import { AlertTriangle, ArrowLeft, Camera, CheckCircle2, ClipboardList, Columns3, Download, FileText, Info, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Camera, CheckCircle2, ClipboardList, Columns3, Download, FileText, Info as InfoIcon, Loader2, Mail, Pencil, Plus, Printer, RefreshCw, Save, Search, StickyNote, Trash2, Truck, Unlink, X, XCircle } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "./job-screen/ActionMenu";
 import { JobFactsStrip } from "./job-screen/JobFactsStrip";
 import { JobTabBar } from "./job-screen/JobTabBar";
@@ -5595,7 +5595,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 : tone === "error"
                   ? { fg: "#b3261e", tile: "#fdecea", card: "#fff6f5", edge: "#f6d3cf" }
                   : { fg: "#2b6fd6", tile: "#e8f0fc", card: "#f4f8fe", edge: "#cfdff7" };
-            const Icon = tone === "success" ? CheckCircle2 : tone === "info" ? Info : AlertTriangle;
+            const Icon = tone === "success" ? CheckCircle2 : tone === "info" ? InfoIcon : AlertTriangle;
             const hasLists = followupDialog.sent.length > 0 || followupDialog.skipped.length > 0;
             const message = <p style={{ margin: "4px 0 0", fontSize: 14, lineHeight: "20px", color: "#475467" }}>{followupDialog.message}</p>;
             const sectionLabel = (label: string, count: number, fg: string, bg: string) => (
