@@ -1857,6 +1857,10 @@ model JobItem {
   conditionOnReceipt  String?
   etaDate             DateTime?
   mechanicEtaDate     DateTime?
+  // 2026-10-30, user request: an item can have its own Machinist 'Assess' / 'Final' (Job.stripMechanicId / buildMechanicId are per job).
+  // null = the item follows the job's machinist.
+  stripMechanicId     String?
+  buildMechanicId     String?
   createdById         String?
   updatedById         String?
   createdAt           DateTime  @default(now())
@@ -1864,6 +1868,8 @@ model JobItem {
 
   company             Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   job                 Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stripMechanic       Mechanic? @relation("JobItemStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
+  buildMechanic       Mechanic? @relation("JobItemBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
   // 2026-10-29, "link parts, specs, photos etc" to an item: the records that can be tied to one item of a multi-item job.
   // Removing the item leaves them on the job (itemId is cleared), they are never deleted with it.
   partLines           JobPartLine[]
@@ -1875,6 +1881,8 @@ model JobItem {
   @@unique([id, companyId])
   @@index([companyId, jobId])
   @@index([companyId, status])
+  @@index([stripMechanicId])
+  @@index([buildMechanicId])
 }
 
 // 2026-10-29, user request (Engineering): a register of delivery notes. Every job delivery note an Engineering company prints is
@@ -1943,6 +1951,8 @@ model Mechanic {
   company        Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   jobsStrip      Job[]   @relation("JobStripMechanic")
   jobsBuild      Job[]   @relation("JobBuildMechanic")
+  itemsStrip     JobItem[] @relation("JobItemStripMechanic")
+  itemsBuild     JobItem[] @relation("JobItemBuildMechanic")
 
   @@unique([companyId, name])
   @@index([companyId, active])

@@ -56,7 +56,7 @@ import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { parsePartsPaste, type ParsedPartLineRow } from "@/lib/jobs/parts-paste";
-import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, statusStepsForJobType } from "@/lib/jobs/ui";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, machinistFieldLabels, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
@@ -85,10 +85,13 @@ const jobListSelect = {
   // app/(tenant)/jobs/page.tsx.
   returnedUnrepaired: true,
   breakdown: true,
+  // 2026-10-30: the job's own machinists, shown on items that have none of their own when a multi-item job is opened in the list.
+  stripMechanic: { select: { name: true } },
+  buildMechanic: { select: { name: true } },
   // 2026-10-29, Engineering multi-item jobs: each item's status, so the list can show "Mixed" with a colour bar (empty for a one-item job).
   // The Jobs & WIP list also opens a multi-item job into its items (tag, component, machine, status, ETAs), so it needs more than the status.
   jobItems: {
-    select: { id: true, sequence: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true },
+    select: { id: true, sequence: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true, stripMechanic: { select: { name: true } }, buildMechanic: { select: { name: true } } },
     orderBy: { sequence: "asc" as const },
   },
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
@@ -693,6 +696,7 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
   const rawItems = (raw as { items?: unknown } | null)?.items;
   const itemsInput = ctx.industryBuild === "ENGINEERING" && input.type !== "FIELD_SERVICE" && rawItems !== undefined && rawItems !== null ? jobItemsInput.parse(rawItems) : null;
   const multiItems = itemsInput && itemsInput.length >= 2 ? itemsInput : null;
+  if (multiItems) for (const item of multiItems) await checkItemMachinists(companyId, item);
   if (itemsInput) Object.assign(input, jobFieldsFromFirstItem(itemsInput[0]), { machineHours: itemsInput[0].machineHours ?? null });
   const job = await prisma.$transaction(async (tx) => {
     // Numbered immediately at creation, matching ModApp's nextJobNumber.
@@ -801,6 +805,9 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
           // An item with no date of its own follows the job's ETA.
           etaDate: item.etaDate ?? input.etaDate ?? null,
           mechanicEtaDate: item.mechanicEtaDate ?? input.mechanicEtaDate ?? null,
+          // 2026-10-30: the item's own machinists; blank = follows the job's.
+          stripMechanicId: item.stripMechanicId || null,
+          buildMechanicId: item.buildMechanicId || null,
           createdById: ctx.userId,
           updatedById: ctx.userId,
         })),
@@ -2189,7 +2196,15 @@ function itemData(item: JobItemInput) {
     conditionOnReceipt: item.conditionOnReceipt,
     etaDate: item.etaDate,
     mechanicEtaDate: item.mechanicEtaDate,
+    stripMechanicId: item.stripMechanicId,
+    buildMechanicId: item.buildMechanicId,
   };
+}
+
+// 2026-10-30: an item's own machinists must be machinists of this company. undefined = not given (left as it is); null / "" = follow the job.
+async function checkItemMachinists(companyId: string, item: { stripMechanicId?: string | null; buildMechanicId?: string | null }) {
+  if (item.stripMechanicId) await getMechanicOrNull(companyId, item.stripMechanicId);
+  if (item.buildMechanicId) await getMechanicOrNull(companyId, item.buildMechanicId);
 }
 
 // The job's own machine / component fields always mirror the first item still on the job.
@@ -2231,6 +2246,7 @@ export async function addJobItem(ctx: RequestContext, jobId: string, raw: unknow
   requireNotMechanicRestricted(ctx);
   requireItemsBuild(ctx);
   const input = jobItemInput.parse(raw);
+  await checkItemMachinists(companyId, input);
   const existing = await getJobScoped(companyId, jobId);
   if (ITEM_LOCKED_JOB_STATUSES.includes(existing.status)) throw new Error("Reopen the job before adding items to it.");
   if (existing.jobItems.length >= MAX_ITEMS_PER_JOB) throw new Error(`A job can hold at most ${MAX_ITEMS_PER_JOB} items.`);
@@ -2272,6 +2288,8 @@ export async function addJobItem(ctx: RequestContext, jobId: string, raw: unknow
         ...itemData(input),
         etaDate: input.etaDate ?? existing.etaDate ?? null,
         mechanicEtaDate: input.mechanicEtaDate ?? existing.mechanicEtaDate ?? null,
+        stripMechanicId: input.stripMechanicId || null,
+        buildMechanicId: input.buildMechanicId || null,
         createdById: ctx.userId,
         updatedById: ctx.userId,
       },
@@ -2297,6 +2315,7 @@ export async function updateJobItem(ctx: RequestContext, jobId: string, itemId: 
   requireNotMechanicRestricted(ctx);
   requireItemsBuild(ctx);
   const input = jobItemUpdateInput.parse(raw);
+  await checkItemMachinists(companyId, input);
   const existing = await getJobItemScoped(companyId, jobId, itemId);
   if (ITEM_LOCKED_JOB_STATUSES.includes(existing.job.status) && input.status !== undefined) throw new Error("Reopen the job before moving its items.");
   if (input.status !== undefined) {
@@ -2317,8 +2336,22 @@ export async function updateJobItem(ctx: RequestContext, jobId: string, itemId: 
     const tag = itemTag(existing.job.jobNumber, existing.sequence);
     if (status !== undefined && status !== existing.status) {
       await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} status changed from ${existing.status} to ${status}.`, { itemId: existing.id, sequence: existing.sequence, from: existing.status, to: status });
-    } else if (Object.keys(fields).length > 0) {
+    } else if (Object.keys(fields).some((key) => key !== "stripMechanicId" && key !== "buildMechanicId")) {
       await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} details updated.`, { itemId: existing.id, sequence: existing.sequence });
+    }
+    // 2026-10-30: who is working on the item is its own history line ("Item BRE12-2 Machinist 'Assess': Piet -> Sipho").
+    const machinistChanges: string[] = [];
+    const wasStrip = existing.stripMechanicId ?? null;
+    const wasBuild = existing.buildMechanicId ?? null;
+    const nowStrip = fields.stripMechanicId === undefined ? wasStrip : (fields.stripMechanicId || null);
+    const nowBuild = fields.buildMechanicId === undefined ? wasBuild : (fields.buildMechanicId || null);
+    if (nowStrip !== wasStrip || nowBuild !== wasBuild) {
+      const names = new Map((await tx.mechanic.findMany({ where: { companyId, id: { in: [wasStrip, nowStrip, wasBuild, nowBuild].filter((id): id is string => Boolean(id)) } }, select: { id: true, name: true } })).map((m) => [m.id, m.name]));
+      const label = (id: string | null) => (id ? names.get(id) ?? "unknown" : "same as the job");
+      const labels = machinistFieldLabels(ctx.industryBuild);
+      if (nowStrip !== wasStrip) machinistChanges.push(`${labels.strip}: ${label(wasStrip)} -> ${label(nowStrip)}`);
+      if (nowBuild !== wasBuild) machinistChanges.push(`${labels.build}: ${label(wasBuild)} -> ${label(nowBuild)}`);
+      await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} machinist changed. ${machinistChanges.join("; ")}.`, { itemId: existing.id, sequence: existing.sequence, stripMechanicId: nowStrip, buildMechanicId: nowBuild });
     }
     const first = await tx.jobItem.findFirst({ where: { jobId: existing.jobId }, orderBy: { sequence: "asc" }, select: { id: true } });
     if (first?.id === existing.id) await mirrorFirstItemTx(tx, existing.jobId);

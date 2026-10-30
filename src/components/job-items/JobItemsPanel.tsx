@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, X } from "lucide-react";
+import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, UserCog, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
-import { itemLinkSummary, itemLinkTotal, itemTag, summarizeItemStatuses, type ItemLinkCounts } from "@/lib/jobs/item-model";
+import { itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeItemStatuses, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
 import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } from "./item-draft";
 
@@ -48,6 +48,13 @@ type Props = {
    * item's detail card belongs to the Details tab, so it is drawn into this element (a portal) when one is given.
    */
   selectedSlot?: HTMLElement | null;
+  /**
+   * 2026-10-30, user request: an item can have its own Machinist 'Assess' / 'Final' (a blank one follows the job's). The company's
+   * machinists, the Engineering field names, and the job's own two machinists (what a blank item follows).
+   */
+  mechanics?: Array<{ id: string; label: string }>;
+  machinistLabels?: { strip: string; build: string };
+  jobMachinists?: MachinistRefs;
 };
 
 function fmtDate(value: string | null): string {
@@ -56,13 +63,20 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {} }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [adding, setAdding] = useState<ItemDraft | null>(null);
   // The list can be folded away to give the tabs more room; it starts open.
   const [collapsed, setCollapsed] = useState(false);
+  // "Reassign machinist" on the selected item: the two choices being made, before they are saved.
+  const [reassign, setReassign] = useState<{ id: string; strip: string; build: string } | null>(null);
+  const mechanicName = (id: string | null | undefined) => (id ? mechanics.find((m) => m.id === id)?.label ?? "" : "");
+  const machinistsOf = (item: ItemRow) => {
+    const m = itemMachinists(item, jobMachinists);
+    return { ...m, stripName: mechanicName(m.strip), buildName: mechanicName(m.build) };
+  };
 
   const rollup = summarizeItemStatuses(items.map((item) => item.status), steps);
   const editable = canEdit && !locked && !virtual;
@@ -84,6 +98,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     } finally {
       setBusy(null);
     }
+  }
+
+  async function saveReassign() {
+    if (!reassign) return;
+    const ok = await call(reassign.id, `${base}?itemId=${reassign.id}`, { method: "PATCH", body: JSON.stringify({ stripMechanicId: reassign.strip || null, buildMechanicId: reassign.build || null }) });
+    if (ok) setReassign(null);
   }
 
   function startEdit(item: ItemRow) {
@@ -135,6 +155,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             <p>The tabs below show only this item. Use the status steps above, or Change status, to move it.</p>
           </div>
           <div className="ji-head-right">
+            {editable && mechanics.length > 0 && <button type="button" className="quiet-button" onClick={() => setReassign(reassign?.id === selected.id ? null : { id: selected.id, strip: selected.stripMechanicId ?? "", build: selected.buildMechanicId ?? "" })} aria-expanded={reassign?.id === selected.id}><UserCog size={13} /> Reassign machinist</button>}
             {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>}
           </div>
         </header>
@@ -148,6 +169,15 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             {detail("Plant number", selected.plantNumber)}
             {detail("Machine hours", selected.machineHours)}
             {detail(staffEtaLabel, fmtDate(selected.mechanicEtaDate))}
+            {(() => {
+              const m = machinistsOf(selected);
+              return (
+                <>
+                  {detail(machinistLabels.strip, m.stripName ? `${m.stripName}${m.stripInherited ? " (from the job)" : ""}` : "")}
+                  {detail(machinistLabels.build, m.buildName ? `${m.buildName}${m.buildInherited ? " (from the job)" : ""}` : "")}
+                </>
+              );
+            })()}
           </dl>
           <div className="ji-work">
             <span>Work requested</span>
@@ -157,6 +187,17 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
             {links?.[selected.id] && itemLinkTotal(links[selected.id]) > 0 && <small className="ji-links-sub">On this item: {itemLinkSummary(links[selected.id])}</small>}
           </div>
         </div>
+        {reassign && reassign.id === selected.id && (
+          <div className="ji-reassign" role="group" aria-label={`Reassign the machinists of ${selectedTag}`}>
+            <p>Who works on {selectedTag}? Leave a box on &quot;Same as the job&quot; and the item follows the job&apos;s machinist{jobMachinists.stripMechanicId || jobMachinists.buildMechanicId ? ` (${machinistLabels.strip}: ${mechanicName(jobMachinists.stripMechanicId) || "-"}, ${machinistLabels.build}: ${mechanicName(jobMachinists.buildMechanicId) || "-"})` : ""}.</p>
+            <label><span>{machinistLabels.strip}</span><select value={reassign.strip} onChange={(e) => setReassign({ ...reassign, strip: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+            <label><span>{machinistLabels.build}</span><select value={reassign.build} onChange={(e) => setReassign({ ...reassign, build: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+            <div className="ji-edit-actions">
+              <button type="button" className="gold-button" disabled={busy === selected.id} onClick={() => void saveReassign()}>Save machinists</button>
+              <button type="button" className="quiet-button" onClick={() => setReassign(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
       </section>
   ) : null;
 
@@ -189,6 +230,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
               <th>Machine</th>
               <th>Status</th>
               <th>ETA</th>
+              <th>Machinists</th>
               <th>Linked</th>
               {editable && <th className="ji-actions-col"><span className="ji-sr">Actions</span></th>}
             </tr>
@@ -200,7 +242,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
               const isEditing = editing === item.id && draft;
               const isSelected = !virtual && selectedId === item.id;
               return (
-                <ItemRowView key={item.id} isEditing={!!isEditing} columns={editable ? 7 : 6}
+                <ItemRowView key={item.id} isEditing={!!isEditing} columns={editable ? 8 : 7}
                   main={(
                     <tr className={`ji-row${isEditing ? " open" : ""}${isSelected ? " selected" : ""}${onSelect && !virtual ? " pickable" : ""}`} aria-selected={isSelected || undefined}
                       onClick={(event) => { if (!onSelect || virtual || (event.target as HTMLElement).closest("button, select, input, a")) return; onSelect(isSelected ? "" : item.id); }}>
@@ -221,6 +263,13 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                         ) : <StatusPill status={item.status} build={build} />}
                       </td>
                       <td>{fmtDate(item.etaDate)}<small className="ji-sub">{staffEtaLabel} {fmtDate(item.mechanicEtaDate)}</small></td>
+                      <td>{(() => {
+                        const m = machinistsOf(item);
+                        const text = machinistSummary(m.stripName, m.buildName);
+                        if (!text) return <span className="ji-none">-</span>;
+                        const own = !m.stripInherited || !m.buildInherited;
+                        return <span className={own ? "ji-mach" : "ji-mach ji-inherit"} title={`${machinistLabels.strip}: ${m.stripName || "-"}${m.stripInherited ? " (from the job)" : ""}\n${machinistLabels.build}: ${m.buildName || "-"}${m.buildInherited ? " (from the job)" : ""}`}>{text}</span>;
+                      })()}</td>
                       <td>{links?.[item.id] && itemLinkTotal(links[item.id]) > 0 ? <span className="ji-links-sub">{itemLinkSummary(links[item.id])}</span> : <span className="ji-none">-</span>}</td>
                       {editable && (
                         <td className="ji-actions-col">
@@ -243,6 +292,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                       {field(draft, setDraft, "machineHours", "Machine hours", { type: "number" })}
                       {field(draft, setDraft, "etaDate", "ETA date", { type: "date" })}
                       {field(draft, setDraft, "mechanicEtaDate", staffEtaLabel, { type: "date" })}
+                      {!virtual && mechanics.length > 0 && (
+                        <>
+                          <label><span>{machinistLabels.strip}</span><select value={draft.stripMechanicId} onChange={(e) => setDraft({ ...draft, stripMechanicId: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+                          <label><span>{machinistLabels.build}</span><select value={draft.buildMechanicId} onChange={(e) => setDraft({ ...draft, buildMechanicId: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+                        </>
+                      )}
                       {field(draft, setDraft, "workRequested", "Work requested", { wide: true })}
                       {field(draft, setDraft, "conditionOnReceipt", "Condition on receipt", { wide: true })}
                       <div className="ji-wide ji-edit-actions">

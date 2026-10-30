@@ -55,6 +55,8 @@ export type JobDocLabels = {
   buildLabel?: string;
   /** Display label of the job's PEX status (e.g. "Awaiting core"), when it has a PEX record. */
   pexStatus?: string;
+  /** 2026-10-30: who works on an item (its own machinists, else the job's), as text for the job card's items table. */
+  itemMachinists?: (item: Record<string, unknown>) => string;
 };
 
 function customerAddressLine(job: JobDocJob) {
@@ -166,18 +168,20 @@ export function jobCardLayout(job: JobDocJob, form: JobDocForm, labels: JobDocLa
 
 // 2026-10-29, user request: the job card lists every item of a multi-item job (it used to show item 1 only, because item 1's machine
 // and component are mirrored onto the job). Null for an ordinary one-item job, which keeps the Machine / component block.
-export function jobCardItemsTable(job: JobDocJob): { headers: string[]; rows: string[][] } | null {
+export function jobCardItemsTable(job: JobDocJob, options?: { machinistHeader?: string; machinistsOf?: (item: Rec) => string }): { headers: string[]; rows: string[][] } | null {
   const items = (job.jobItems ?? []) as Rec[];
   if (items.length < 2) return null;
   const jobNumber = job.jobNumber || job.draftNumber || null;
   const join = (...parts: string[]) => parts.filter((part) => part && part.trim()).join(" · ");
   return {
-    headers: ["Item", "Component", "Model / serial / part no.", "Machine", "Work requested"],
+    // 2026-10-30: each item can have its own machinists; the card lists who works on which item.
+    headers: ["Item", "Component", "Model / serial / part no.", "Machine", ...(options?.machinistsOf ? [options.machinistHeader || "Machinists"] : []), "Work requested"],
     rows: [...items].sort((a, b) => Number(a.sequence ?? 0) - Number(b.sequence ?? 0)).map((item) => [
       itemTag(jobNumber, Number(item.sequence ?? 0)),
       str(item.component) || "—",
       join(str(item.componentModel), str(item.componentSerial) ? `S/N ${str(item.componentSerial)}` : "", str(item.componentPartNumber) ? `P/N ${str(item.componentPartNumber)}` : "") || "—",
       join(join(str(item.machineMake), str(item.machineModel)).replace(" · ", " "), str(item.plantNumber) ? `Plant ${str(item.plantNumber)}` : "") || "—",
+      ...(options?.machinistsOf ? [options.machinistsOf(item) || "—"] : []),
       str(item.workRequested) || "—",
     ]),
   };
@@ -186,7 +190,7 @@ export function jobCardItemsTable(job: JobDocJob): { headers: string[]; rows: st
 function buildJobCardSpecRaw(input: { title: string; jobLabel: string; job: JobDocJob; form: JobDocForm; labels: JobDocLabels }): DocSpec {
   const { title, jobLabel, job, form, labels } = input;
   const layout = jobCardLayout(job, form, labels);
-  const itemsTable = jobCardItemsTable(job);
+  const itemsTable = jobCardItemsTable(job, labels.itemMachinists ? { machinistsOf: labels.itemMachinists, machinistHeader: "Machinists" } : undefined);
   const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
   const blocks: DocBlock[] = [
     { type: "table", headers: ["Date in", "Previous job", "Customer ref / PO"], rows: [[dateText(form.dateReceived), form.previousJobNumber || "—", customerRef || "—"]] },

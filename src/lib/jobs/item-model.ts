@@ -313,3 +313,29 @@ export function activityMatchesItemFilter(metadata: unknown, filter: string): bo
   if (filter === ITEM_FILTER_JOB) return !own;
   return !own || own === filter;
 }
+
+// ----------------------------------------------------------------------------
+// 2026-10-30, user request: each item can have its own Machinist 'Assess' / 'Final'. A blank one follows the job's.
+// ----------------------------------------------------------------------------
+export type MachinistRefs = { stripMechanicId?: string | null; buildMechanicId?: string | null };
+export type ItemMachinists = { strip: string | null; build: string | null; stripInherited: boolean; buildInherited: boolean };
+
+/** The machinist ids that apply to an item: its own, else the job's. `*Inherited` says which one came from the job. */
+export function itemMachinists(item: MachinistRefs, job: MachinistRefs): ItemMachinists {
+  const ownStrip = item.stripMechanicId || null;
+  const ownBuild = item.buildMechanicId || null;
+  return {
+    strip: ownStrip ?? (job.stripMechanicId || null),
+    build: ownBuild ?? (job.buildMechanicId || null),
+    stripInherited: !ownStrip,
+    buildInherited: !ownBuild,
+  };
+}
+
+/** "Piet / Sipho" for the lists and the job card: Assess then Final, left out when nobody is set. */
+export function machinistSummary(strip: string | null | undefined, build: string | null | undefined): string {
+  const names = [strip, build].map((name) => (name ?? "").trim());
+  if (!names[0] && !names[1]) return "";
+  if (names[0] && names[1] && names[0] === names[1]) return names[0];
+  return [names[0], names[1]].filter(Boolean).join(" / ");
+}

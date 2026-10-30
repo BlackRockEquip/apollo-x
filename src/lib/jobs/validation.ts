@@ -391,6 +391,9 @@ export const jobItemInput = z.object({
   conditionOnReceipt: itemLongText,
   etaDate: optionalDate,
   mechanicEtaDate: optionalDate,
+  // 2026-10-30: this item's own Machinist 'Assess' / 'Final' (left out / null = follows the job's).
+  stripMechanicId: optionalId,
+  buildMechanicId: optionalId,
 });
 
 export type JobItemInput = z.infer<typeof jobItemInput>;

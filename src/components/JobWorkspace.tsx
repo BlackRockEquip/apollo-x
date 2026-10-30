@@ -27,7 +27,7 @@ import { PrintTagsDialog } from "./job-items/PrintTagsDialog";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, activityMatchesItemFilter, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, activityMatchesItemFilter, itemMachinists, machinistSummary, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
 import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
@@ -1913,7 +1913,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   }
 
   const jobDocLabel = job ? job.jobNumber || job.draftNumber || "" : "";
+  // 2026-10-30: who works on an item (its own machinists, else the job's), for the item tables on the printed job card and its PDF.
+  const itemMachinistText = (item: Record<string, unknown>) => {
+    const m = itemMachinists(item as { stripMechanicId?: string | null; buildMechanicId?: string | null }, { stripMechanicId: (job?.stripMechanicId as string | null) ?? form.stripMechanicId, buildMechanicId: (job?.buildMechanicId as string | null) ?? form.buildMechanicId });
+    return machinistSummary(mechanics.find((x) => x.id === m.strip)?.label, mechanics.find((x) => x.id === m.build)?.label);
+  };
   const jobDocLabels = () => ({
+    itemMachinists: itemMachinistText,
     jobType: job ? String(typeLabels[job.type] || "") : "",
     status: job ? String(statusLabels[job.status] || "") : "",
     stripLabel: machinist.strip,
@@ -2920,7 +2926,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const kv = (pairs: Array<[string, string]>, mono: string[] = []) => pairs.map(([label, value]) => `<div class="kv"><span>${escapeHtml(label)}</span><em${mono.includes(label) ? ' class="mono"' : ""}>${escapeHtml(value || "—")}</em></div>`).join("");
     const customerRef = [form.customerReference, form.purchaseOrderNumber].filter(Boolean).join(" / ");
     // A multi-item job lists every item (tag, component, machine, work requested) instead of item 1's machine / component only.
-    const itemsTable = jobCardItemsTable(job as unknown as JobDocJob);
+    const itemsTable = jobCardItemsTable(job as unknown as JobDocJob, { machinistsOf: itemMachinistText, machinistHeader: "Machinists" });
     const machineHtml = itemsTable
       ? `<div class="block"><div class="sec"><b>Items (${itemsTable.rows.length})</b><i></i></div><table class="items"><thead><tr>${itemsTable.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${itemsTable.rows.map((row) => `<tr>${row.map((cell, index) => `<td${index === 0 ? ' class="mono tg"' : ""}>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
       : `<div class="block">
@@ -4204,7 +4210,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // 2026-10-29, user request (Engineering): several items on one job.
   // New Job: the machine / component card is replaced by the "Items received" list.
-  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} />;
+  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} />;
   // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
   // Machine / component card and offers "Add another item" beneath it.
   const jobItemRows = job?.jobItems ?? [];
@@ -4261,6 +4267,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       onSelect={(id) => setItemFilter(id || "all")}
       onPrintTags={() => setTagsOpen(true)}
       selectedSlot={selectedItemSlot}
+      mechanics={mechanics}
+      machinistLabels={{ strip: machinist.strip, build: machinist.build }}
+      jobMachinists={{ stripMechanicId: (job.stripMechanicId as string | null) ?? null, buildMechanicId: (job.buildMechanicId as string | null) ?? null }}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
     />
   ) : null;
@@ -4343,6 +4352,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
         </label>
+        {mode === "detail" && ((job?.jobItems?.length ?? 0) > 0) && <span className="muted small-line wide">Items can have their own machinists (see the item list above). An item without its own follows these.</span>}
         <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
         <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
           </>

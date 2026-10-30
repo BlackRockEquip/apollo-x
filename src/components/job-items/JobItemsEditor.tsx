@@ -14,9 +14,12 @@ type Props = {
   disabled?: boolean;
   /** The Engineering wording for the staff ETA ("Machinist ETA"). */
   staffEtaLabel: string;
+  /** 2026-10-30: the company's machinists and the field names ('Assess' / 'Final'); an item can have its own once there are several. */
+  mechanics?: Array<{ id: string; label: string }>;
+  machinistLabels?: { strip: string; build: string };
 };
 
-export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel }: Props) {
+export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mechanics = [], machinistLabels }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [several, setSeveral] = useState(4);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -62,6 +65,7 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel }: Pro
       machineMake: first.machineMake, machineModel: first.machineModel,
       workRequested: first.workRequested, conditionOnReceipt: first.conditionOnReceipt,
       etaDate: first.etaDate, mechanicEtaDate: first.mechanicEtaDate,
+      stripMechanicId: first.stripMechanicId, buildMechanicId: first.buildMechanicId,
     }));
     onChange([...items, ...copies]);
   }
@@ -104,6 +108,7 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel }: Pro
                 const isOpen = open.has(item.key);
                 return (
                   <ItemRows key={item.key} item={item} index={index} isOpen={isOpen} staffEtaLabel={staffEtaLabel} canDuplicate={room > 0}
+                    mechanics={items.length >= 2 ? mechanics : []} machinistLabels={machinistLabels}
                     onPatch={(field, value) => patch(item.key, field, value)} onToggle={() => toggle(item.key)}
                     onDuplicate={() => duplicate(item.key)} onRemove={() => remove(item.key)} />
                 );
@@ -140,8 +145,9 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel }: Pro
   );
 }
 
-function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, onPatch, onToggle, onDuplicate, onRemove }: {
+function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics, machinistLabels, onPatch, onToggle, onDuplicate, onRemove }: {
   item: ItemDraft; index: number; isOpen: boolean; staffEtaLabel: string; canDuplicate: boolean;
+  mechanics: Array<{ id: string; label: string }>; machinistLabels?: { strip: string; build: string };
   onPatch: (field: keyof ItemDraft, value: string) => void; onToggle: () => void; onDuplicate: () => void; onRemove: () => void;
 }) {
   const label = `Item ${index + 1}`;
@@ -175,6 +181,22 @@ function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, onPatch, o
               <label><span>Machine hours</span><input type="number" min="0" step="0.01" value={item.machineHours} onChange={(e) => onPatch("machineHours", e.target.value)} /></label>
               <label><span>ETA date</span><input type="date" value={item.etaDate} onChange={(e) => onPatch("etaDate", e.target.value)} /></label>
               <label><span>{staffEtaLabel}</span><input type="date" value={item.mechanicEtaDate} onChange={(e) => onPatch("mechanicEtaDate", e.target.value)} /></label>
+              {mechanics.length > 0 && machinistLabels && (
+                <>
+                  <label><span>{machinistLabels.strip}</span>
+                    <select value={item.stripMechanicId} onChange={(e) => onPatch("stripMechanicId", e.target.value)}>
+                      <option value="">Same as the job</option>
+                      {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
+                  </label>
+                  <label><span>{machinistLabels.build}</span>
+                    <select value={item.buildMechanicId} onChange={(e) => onPatch("buildMechanicId", e.target.value)}>
+                      <option value="">Same as the job</option>
+                      {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                    </select>
+                  </label>
+                </>
+              )}
               <label className="ji-wide"><span>Condition on receipt</span><input value={item.conditionOnReceipt} onChange={(e) => onPatch("conditionOnReceipt", e.target.value)} placeholder="e.g. Cracked housing, oil leak, arrived without end cap" /></label>
             </div>
           </td>

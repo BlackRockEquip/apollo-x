@@ -2529,17 +2529,18 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .data-table tr.jobs-item-row td.table-state.jobs-item-cell { display: table-cell; min-height: 0; padding: 0; background: #fafbfc; color: inherit; font-size: 13px; text-align: left; white-space: normal; border-bottom: 1px solid var(--line, #e5e9f0); }
 .jobs-item-list { list-style: none; margin: 0; padding: 4px 16px 8px 34px; position: relative; }
 .jobs-item-list::before { content: ""; position: absolute; left: 22px; top: 0; bottom: 18px; width: 2px; background: #d8e2f2; border-radius: 2px; }
-.jobs-item { position: relative; display: grid; grid-template-columns: 110px minmax(160px, 1.6fr) auto minmax(120px, 1fr) minmax(120px, auto); align-items: center; gap: 12px; padding: 7px 0; }
+.jobs-item { position: relative; display: grid; grid-template-columns: 110px minmax(160px, 1.6fr) auto minmax(110px, 1fr) minmax(110px, 1fr) minmax(120px, auto); align-items: center; gap: 12px; padding: 7px 0; }
 .jobs-item::before { content: ""; position: absolute; left: -12px; top: 50%; width: 10px; height: 2px; background: #d8e2f2; }
 .jobs-item + .jobs-item { border-top: 1px solid #eef1f6; }
 .jobs-item-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jobs-item-model { color: var(--ink-500); }
 .jobs-item-machine { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-500); }
+.jobs-item-mach { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-700, #344054); }
 .jobs-item-eta { white-space: nowrap; color: var(--ink-500); font-variant-numeric: tabular-nums; }
 .jobs-item-eta.late { color: #c62828; font-weight: 700; }
 @media (max-width: 900px) {
   .jobs-item { grid-template-columns: 1fr auto; }
-  .jobs-item-machine, .jobs-item-eta { grid-column: 1 / -1; }
+  .jobs-item-machine, .jobs-item-mach, .jobs-item-eta { grid-column: 1 / -1; }
 }
 @media print {
   .data-table tr.jobs-item-row, .jobs-chev, .jobs-items-toggle { display: none !important; }
@@ -2589,3 +2590,12 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .ji-fold svg { transition: transform .15s ease; }
 .ji-fold.is-closed svg { transform: rotate(-90deg); }
 .job-workspace > .ji-card { margin: 0; }
+
+/* 2026-10-30, user request: each item can have its own machinists (item list column, Reassign machinist on the selected item). */
+.ji-mach { font-weight: 650; }
+.ji-mach.ji-inherit { color: #667085; font-weight: 500; }
+.ji-reassign { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; align-items: end; margin: 0 18px 16px; padding: 12px 14px; border: 1px solid var(--ink-150); border-radius: 10px; background: #fafbfc; }
+.ji-reassign p { grid-column: 1 / -1; margin: 0; color: #667085; font-size: 12.5px; }
+.ji-reassign label { display: grid; gap: 4px; font-size: 12px; font-weight: 650; color: #344054; }
+.ji-reassign .ji-edit-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+@media (max-width: 760px) { .ji-reassign { grid-template-columns: 1fr; } }

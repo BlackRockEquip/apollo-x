@@ -15,7 +15,7 @@ import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
 import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
-import { itemTag } from "@/lib/jobs/item-model";
+import { itemTag, machinistSummary } from "@/lib/jobs/item-model";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
@@ -380,6 +380,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                                   <span className="jobs-item-what"><strong>{item.component || job.component || "Item"}</strong>{item.componentModel ? <span className="jobs-item-model"> {item.componentModel}</span> : null}{item.componentSerial ? <span className="jobs-item-model"> · S/N {item.componentSerial}</span> : null}</span>
                                   <StatusPill status={item.status} build={ctx.industryBuild} />
                                   <span className="jobs-item-machine">{machine || "—"}</span>
+                                  <span className="jobs-item-mach" title="Machinists (Assess / Final)">{machinistSummary(item.stripMechanic?.name ?? job.stripMechanic?.name, item.buildMechanic?.name ?? job.buildMechanic?.name) || "—"}</span>
                                   <span className={`jobs-item-eta${late ? " late" : ""}`}>ETA {fmtDate(eta)}{late ? ` · ${late}d late` : ""}</span>
                                 </li>
                               );

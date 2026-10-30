@@ -16,6 +16,9 @@ export type ItemDraft = {
   conditionOnReceipt: string;
   etaDate: string;
   mechanicEtaDate: string;
+  /** 2026-10-30: this item's own machinists (a Mechanic id); "" = follows the job's. */
+  stripMechanicId: string;
+  buildMechanicId: string;
 };
 
 export type ItemRow = {
@@ -35,6 +38,8 @@ export type ItemRow = {
   conditionOnReceipt: string | null;
   etaDate: string | null;
   mechanicEtaDate: string | null;
+  stripMechanicId?: string | null;
+  buildMechanicId?: string | null;
 };
 
 let counter = 0;
@@ -48,7 +53,7 @@ export function blankDraft(): ItemDraft {
     key: newItemKey(),
     component: "", componentModel: "", componentSerial: "", componentPartNumber: "",
     machineMake: "", machineModel: "", machineSerial: "", plantNumber: "", machineHours: "",
-    workRequested: "", conditionOnReceipt: "", etaDate: "", mechanicEtaDate: "",
+    workRequested: "", conditionOnReceipt: "", etaDate: "", mechanicEtaDate: "", stripMechanicId: "", buildMechanicId: "",
   };
 }
 
@@ -82,6 +87,8 @@ export function draftToPayload(draft: ItemDraft) {
     conditionOnReceipt: text(draft.conditionOnReceipt),
     etaDate: text(draft.etaDate),
     mechanicEtaDate: text(draft.mechanicEtaDate),
+    stripMechanicId: text(draft.stripMechanicId),
+    buildMechanicId: text(draft.buildMechanicId),
   };
 }
 
@@ -95,5 +102,6 @@ export function rowToDraft(row: ItemRow): ItemDraft {
     machineHours: row.machineHours == null ? "" : String(Number(row.machineHours)),
     workRequested: row.workRequested ?? "", conditionOnReceipt: row.conditionOnReceipt ?? "",
     etaDate: date(row.etaDate), mechanicEtaDate: date(row.mechanicEtaDate),
+    stripMechanicId: row.stripMechanicId ?? "", buildMechanicId: row.buildMechanicId ?? "",
   };
 }
