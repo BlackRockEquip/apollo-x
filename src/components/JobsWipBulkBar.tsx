@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenantPermissions } from "@/components/AppShell";
+import { PO_STATUS_LABELS } from "@/components/job-screen/job-facts";
 import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, jobStatusLabelsFor, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 
 // ---------------------------------------------------------------------------
@@ -32,9 +33,9 @@ type BulkResult = {
   failed: Array<{ jobId: string; jobNumber: string; reason: string }>;
 };
 
-type DialogKind = "status" | "close" | null;
+type DialogKind = "status" | "close" | "payment" | null;
 
-const ACTION_LABEL: Record<string, string> = { status: "Status change", close: "Close", cancel: "Cancel", pex: "Send to PEX" };
+const ACTION_LABEL: Record<string, string> = { status: "Status change", close: "Close", cancel: "Cancel", pex: "Send to PEX", payment: "Payment update" };
 
 const WORKSHOP_STEPS = MAIN_WORKSHOP_STATUS_STEPS;
 const FIELD_STEPS = FIELD_SERVICE_STATUS_STEPS.filter((s) => !WORKSHOP_STEPS.includes(s) && !ENGINEERING_STATUS_STEPS.includes(s));
@@ -53,6 +54,10 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
   const [status, setStatus] = useState("");
   const [outcome, setOutcome] = useState("");
   const [closingNote, setClosingNote] = useState("");
+  // 2026-10-30: bulk purchase order status / payment date received. Blank = leave as is; "clear" empties the date.
+  const [poStatus, setPoStatus] = useState("");
+  const [payDate, setPayDate] = useState("");
+  const [clearPayDate, setClearPayDate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<BulkResult | null>(null);
@@ -163,6 +168,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
         <strong>{count} selected</strong>
         {canEdit && <>
           <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setStatus(""); setDialog("status"); }}>Change status</button>
+          <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setPoStatus(""); setPayDate(""); setClearPayDate(false); setDialog("payment"); }}>PO status / payment date</button>
           <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setOutcome(""); setClosingNote(""); setDialog("close"); }}>Close job</button>
           <button type="button" className="quiet-button danger" disabled={busy} onClick={() => void cancelJobs()}>Cancel job</button>
         </>}
@@ -191,6 +197,29 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
             {error && <div className="inline-error wide">{error}</div>}
           </div>
           <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || !status} onClick={() => void (async () => { if (needsDocumentCheck(industryBuild, status) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await run({ action: "status", status }); })()}>{busy ? "Updating…" : "Update status"}</button></footer>
+        </aside>
+      </div>
+    )}
+
+    {dialog === "payment" && (
+      <div className="drawer-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setDialog(null); }}>
+        <aside className="form-drawer compact-dialog">
+          <header><div><p className="eyebrow">Jobs &amp; WIP</p><h2>Purchase order status / payment date for {noun}</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
+          <div className="drawer-fields">
+            <label className="wide"><span>Purchase order status</span>
+              <select value={poStatus} onChange={(e) => setPoStatus(e.target.value)}>
+                <option value="">Leave unchanged</option>
+                {Object.entries(PO_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="wide"><span>Payment date received</span>
+              <input type="date" value={payDate} disabled={clearPayDate} onChange={(e) => setPayDate(e.target.value)} />
+            </label>
+            <label className="wide inline-check"><input type="checkbox" checked={clearPayDate} onChange={(e) => { setClearPayDate(e.target.checked); if (e.target.checked) setPayDate(""); }} /> <span>Clear the payment date instead</span></label>
+            <p className="muted small-line wide">Leave a field empty to keep each job&apos;s own value. Jobs that already have the values you choose are skipped.</p>
+            {error && <div className="inline-error wide">{error}</div>}
+          </div>
+          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || (!poStatus && !payDate && !clearPayDate)} onClick={() => void run({ action: "payment", ...(poStatus ? { purchaseOrderStatus: poStatus } : {}), ...(clearPayDate ? { paymentDateReceived: null } : payDate ? { paymentDateReceived: payDate } : {}) })}>{busy ? "Updating…" : "Update jobs"}</button></footer>
         </aside>
       </div>
     )}
