@@ -44,7 +44,7 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
   // 2026-10-30, user report: the list was clipped by / hidden behind the cards and the scrolling item table around it. It is drawn in a
   // portal on <body> with fixed coordinates taken from the input, so no card, table or sticky bar can cover or clip it.
   const box = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null);
+  const [place, setPlace] = useState<{ left: number; width: number; top: number | "auto"; bottom: number | "auto"; maxHeight: number } | null>(null);
 
   const selected = options.find((option) => option.id === value);
   const matches = filterNamedOptions(options, text);
@@ -62,18 +62,26 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
   const showList = open && !disabled && rows.length > 0;
   useLayoutEffect(() => {
     if (!showList) { setPlace(null); return; }
+    // 2026-10-30, user report: the list must open below the field like a normal dropdown. Near the bottom of the screen the page is
+    // first scrolled so the field has room under it; only when the page cannot scroll any further (end of the page) does it open upward.
+    let scrolled = false;
     function measure() {
       const el = box.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
+      let rect = el.getBoundingClientRect();
+      if (!scrolled && window.innerHeight - rect.bottom < 240) {
+        scrolled = true;
+        el.scrollIntoView({ block: "center" });
+        rect = el.getBoundingClientRect();
+      }
       const below = window.innerHeight - rect.bottom - 8;
       const above = rect.top - 8;
-      // Open downwards unless there is clearly more room above.
-      const up = below < 200 && above > below;
+      const up = below < 140 && above > below;
       const maxHeight = Math.max(120, Math.min(280, up ? above : below));
+      // top and bottom are both always set ("auto" for the unused one): the shared .selector-results style has its own top.
       setPlace(up
-        ? { left: rect.left, width: rect.width, bottom: window.innerHeight - rect.top + 2, maxHeight }
-        : { left: rect.left, width: rect.width, top: rect.bottom + 2, maxHeight });
+        ? { left: rect.left, width: rect.width, top: "auto", bottom: window.innerHeight - rect.top + 2, maxHeight }
+        : { left: rect.left, width: rect.width, top: rect.bottom + 2, bottom: "auto", maxHeight });
     }
     measure();
     window.addEventListener("scroll", measure, true);
