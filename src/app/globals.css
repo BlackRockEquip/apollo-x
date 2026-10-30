@@ -2609,3 +2609,16 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .npk .npk-add svg { vertical-align: -2px; }
 .npk .npk-none { color: #667085; font-weight: 500; }
 .npk-error { color: #b42318; font-size: 12px; font-weight: 600; }
+
+/* pr22: NamedPicker list must render in front of following cards and never be clipped */
+.npk:focus-within { z-index: 60; }
+.npk .selector-results { z-index: 70; }
+/* Any scroll/clip container that currently holds an open picker list lets it overflow */
+.drawer-fields:has(.npk .selector-results),
+.ji-scroll:has(.npk .selector-results),
+.ji-reassign:has(.npk .selector-results) { overflow: visible; }
+/* Lift the whole card that holds the open list above the cards that follow it */
+.detail-panel:has(.npk .selector-results),
+.info-card:has(.npk .selector-results),
+.ji-card:has(.npk .selector-results),
+.ji-reassign:has(.npk .selector-results) { position: relative; z-index: 50; overflow: visible; }
