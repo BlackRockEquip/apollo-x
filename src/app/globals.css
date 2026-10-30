@@ -2617,3 +2617,6 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .job-edit-grid.jw-top-cards > .detail-panel { grid-column: span 2; }
 .job-edit-grid.jw-top-cards > .detail-panel.full-row { grid-column: 1 / -1; }
 @media (max-width: 900px) { .job-edit-grid.jw-top-cards > .detail-panel { grid-column: 1 / -1; } }
+
+/* pr29: on Jobs & WIP the row tick boxes (z-index 2) scrolled over the sticky header's Select all box (z-index 1). The header sits above them. */
+.jobs-panel .data-table-wrap .data-table thead tr:not(.filter-row) th { z-index: 6; }

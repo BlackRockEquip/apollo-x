@@ -33,9 +33,9 @@ type BulkResult = {
   failed: Array<{ jobId: string; jobNumber: string; reason: string }>;
 };
 
-type DialogKind = "status" | "close" | "payment" | null;
+type DialogKind = "update" | "close" | null;
 
-const ACTION_LABEL: Record<string, string> = { status: "Status change", close: "Close", cancel: "Cancel", pex: "Send to PEX", payment: "Payment update" };
+const ACTION_LABEL: Record<string, string> = { status: "Status change", close: "Close", cancel: "Cancel", pex: "Send to PEX", update: "Update" };
 
 const WORKSHOP_STEPS = MAIN_WORKSHOP_STATUS_STEPS;
 const FIELD_STEPS = FIELD_SERVICE_STATUS_STEPS.filter((s) => !WORKSHOP_STEPS.includes(s) && !ENGINEERING_STATUS_STEPS.includes(s));
@@ -121,7 +121,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
     return () => clearTimeout(timer);
   }, [toast]);
 
-  function clearSelection() { setSelected(new Set()); }
+  function clearSelection() { setSelected(new Set()); setStatus(""); setPoStatus(""); setPayDate(""); setClearPayDate(false); }
 
   async function run(body: Record<string, unknown>) {
     setBusy(true);
@@ -131,12 +131,16 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error?.message || "The bulk update failed.");
       const res = data as BulkResult;
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (const ok of res.succeeded) next.delete(ok.jobId);
-        for (const skip of res.skipped) next.delete(skip.jobId);
-        return next;
-      });
+      // 2026-10-30, user request: after a field update the jobs stay ticked (and the chosen values stay in the dialog) so a further
+      // update can follow straight away. Close / cancel / send to PEX take the jobs out of the working list, so those un-tick them.
+      if (res.action !== "update") {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (const ok of res.succeeded) next.delete(ok.jobId);
+          for (const skip of res.skipped) next.delete(skip.jobId);
+          return next;
+        });
+      }
       setDialog(null);
       if (res.failed.length > 0 || res.skipped.length > 0) setResult(res);
       else setToast(`${ACTION_LABEL[res.action] ?? "Update"}: ${res.succeeded.length} job${res.succeeded.length === 1 ? "" : "s"} updated.`);
@@ -167,8 +171,7 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
       <div className="jobs-bulk-bar" role="region" aria-label="Bulk update">
         <strong>{count} selected</strong>
         {canEdit && <>
-          <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setStatus(""); setDialog("status"); }}>Change status</button>
-          <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setPoStatus(""); setPayDate(""); setClearPayDate(false); setDialog("payment"); }}>PO status / payment date</button>
+          <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setDialog("update"); }}>Update fields</button>
           <button type="button" className="quiet-button" disabled={busy} onClick={() => { setError(""); setOutcome(""); setClosingNote(""); setDialog("close"); }}>Close job</button>
           <button type="button" className="quiet-button danger" disabled={busy} onClick={() => void cancelJobs()}>Cancel job</button>
         </>}
@@ -179,33 +182,20 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
     )}
     {toast && <div className="jobs-bulk-toast" role="status">{toast}</div>}
 
-    {dialog === "status" && (
+    {dialog === "update" && (
       <div className="drawer-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setDialog(null); }}>
         <aside className="form-drawer compact-dialog">
-          <header><div><p className="eyebrow">Jobs &amp; WIP</p><h2>Change status of {noun}</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
+          <header><div><p className="eyebrow">Jobs &amp; WIP</p><h2>Update {noun}</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
           <div className="drawer-fields">
-            <label className="wide"><span>New status</span>
+            <label className="wide"><span>Status</span>
               <select value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="">Select a status…</option>
+                <option value="">Leave unchanged</option>
                 {engineering
                   ? <optgroup label="Engineering flow">{ENGINEERING_STATUS_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
                   : <optgroup label="Workshop flow">{WORKSHOP_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>}
                 <optgroup label="Field service flow">{FIELD_STEPS.map((s) => <option key={s} value={s}>{JOB_STATUS_LABELS[s]}</option>)}</optgroup>
               </select>
             </label>
-            <p className="muted small-line wide">Each job only accepts statuses from its own flow. Jobs the status doesn't suit are left unchanged and listed afterwards.</p>
-            {error && <div className="inline-error wide">{error}</div>}
-          </div>
-          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || !status} onClick={() => void (async () => { if (needsDocumentCheck(industryBuild, status) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await run({ action: "status", status }); })()}>{busy ? "Updating…" : "Update status"}</button></footer>
-        </aside>
-      </div>
-    )}
-
-    {dialog === "payment" && (
-      <div className="drawer-backdrop" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setDialog(null); }}>
-        <aside className="form-drawer compact-dialog">
-          <header><div><p className="eyebrow">Jobs &amp; WIP</p><h2>Purchase order status / payment date for {noun}</h2></div><button type="button" onClick={() => setDialog(null)} aria-label="Close dialog"><X size={18} /></button></header>
-          <div className="drawer-fields">
             <label className="wide"><span>Purchase order status</span>
               <select value={poStatus} onChange={(e) => setPoStatus(e.target.value)}>
                 <option value="">Leave unchanged</option>
@@ -216,10 +206,10 @@ export function JobsWipBulkBar({ tableId, canEdit, canPex }: { tableId: string; 
               <input type="date" value={payDate} disabled={clearPayDate} onChange={(e) => setPayDate(e.target.value)} />
             </label>
             <label className="wide inline-check"><input type="checkbox" checked={clearPayDate} onChange={(e) => { setClearPayDate(e.target.checked); if (e.target.checked) setPayDate(""); }} /> <span>Clear the payment date instead</span></label>
-            <p className="muted small-line wide">Leave a field empty to keep each job&apos;s own value. Jobs that already have the values you choose are skipped.</p>
+            <p className="muted small-line wide">Change any one or several at once; a field left on &quot;Leave unchanged&quot; keeps each job&apos;s own value. Each job only accepts statuses from its own flow. Jobs that already have the values are skipped, and jobs the update doesn&apos;t suit are listed afterwards. Your jobs stay ticked so you can update them again.</p>
             {error && <div className="inline-error wide">{error}</div>}
           </div>
-          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || (!poStatus && !payDate && !clearPayDate)} onClick={() => void run({ action: "payment", ...(poStatus ? { purchaseOrderStatus: poStatus } : {}), ...(clearPayDate ? { paymentDateReceived: null } : payDate ? { paymentDateReceived: payDate } : {}) })}>{busy ? "Updating…" : "Update jobs"}</button></footer>
+          <footer className="detail-actions"><button type="button" className="gold-button" disabled={busy || (!status && !poStatus && !payDate && !clearPayDate)} onClick={() => void (async () => { if (status && needsDocumentCheck(industryBuild, status) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return; await run({ action: "update", ...(status ? { status } : {}), ...(poStatus ? { purchaseOrderStatus: poStatus } : {}), ...(clearPayDate ? { paymentDateReceived: null } : payDate ? { paymentDateReceived: payDate } : {}) }); })()}>{busy ? "Updating…" : "Update jobs"}</button></footer>
         </aside>
       </div>
     )}

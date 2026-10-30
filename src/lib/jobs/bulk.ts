@@ -30,15 +30,16 @@ export const jobsBulkInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("close"), jobIds: z.array(z.string().min(1)).min(1).max(MAX_BULK_JOBS), outcome: z.string().trim().min(2).max(200), closingNote: z.string().trim().min(2).max(4000) }),
   z.object({ action: z.literal("cancel"), jobIds: z.array(z.string().min(1)).min(1).max(MAX_BULK_JOBS), reason: z.string().trim().max(500).optional() }),
   z.object({ action: z.literal("pex"), jobIds: z.array(z.string().min(1)).min(1).max(MAX_BULK_JOBS) }),
-  // 2026-10-30, user request: bulk update the purchase order status and the payment date received. Either or both; a field left out
-  // is not touched, and paymentDateReceived: null clears the date.
+  // 2026-10-30, user request: bulk update the status, the purchase order status and the payment date received in one go (any
+  // combination); a field left out is not touched, and paymentDateReceived: null clears the date.
   z.object({
-    action: z.literal("payment"),
+    action: z.literal("update"),
     jobIds: z.array(z.string().min(1)).min(1).max(MAX_BULK_JOBS),
+    status: z.enum(FLOW_JOB_STATUSES).optional(),
     purchaseOrderStatus: z.enum(PURCHASE_ORDER_STATUS_VALUES).optional(),
     paymentDateReceived: z.union([z.null(), z.coerce.date()]).optional(),
   }),
-]).refine((value) => value.action !== "payment" || value.purchaseOrderStatus !== undefined || value.paymentDateReceived !== undefined, { message: "Choose a purchase order status or a payment date." });
+]).refine((value) => value.action !== "update" || value.status !== undefined || value.purchaseOrderStatus !== undefined || value.paymentDateReceived !== undefined, { message: "Choose a status, a purchase order status or a payment date." });
 
 export type JobsBulkResult = {
   action: string;
@@ -62,7 +63,7 @@ export async function bulkUpdateJobs(ctx: RequestContext, raw: unknown): Promise
   const input = jobsBulkInput.parse(raw);
   const companyId = ctx.companyId!;
   // updateJob quietly ignores everything but Notes for a Mechanic, so say so instead of reporting a false success.
-  if (input.action === "payment" && ctx.tenantRole === "USER") throw new AuthorizationError("Your role can only edit Notes, the parts list and outwork on a job.");
+  if (input.action === "update" && ctx.tenantRole === "USER") throw new AuthorizationError("Your role can only edit Notes, the parts list and outwork on a job.");
   const ids = Array.from(new Set(input.jobIds));
   const jobs = await prisma.job.findMany({ where: { companyId, id: { in: ids } }, select: { id: true, jobNumber: true, draftNumber: true, status: true, purchaseOrderStatus: true, paymentDateReceived: true } });
   const byId = new Map(jobs.map((job) => [job.id, job]));
@@ -91,13 +92,15 @@ export async function bulkUpdateJobs(ctx: RequestContext, raw: unknown): Promise
         case "pex":
           await allocateJobToPexInventory(ctx, id);
           break;
-        case "payment": {
-          // Same service the job page saves through (activity entry, audit, PEX sync); only what actually changes is sent.
+        case "update": {
+          // Each part goes through the same service the job page uses (activity entry, audit, PEX sync); only what actually changes is sent.
           const change: Record<string, unknown> = {};
+          const statusChange = input.status !== undefined && input.status !== job.status;
           if (input.purchaseOrderStatus !== undefined && input.purchaseOrderStatus !== job.purchaseOrderStatus) change.purchaseOrderStatus = input.purchaseOrderStatus;
           if (input.paymentDateReceived !== undefined && dayOf(input.paymentDateReceived) !== dayOf(job.paymentDateReceived)) change.paymentDateReceived = input.paymentDateReceived;
-          if (Object.keys(change).length === 0) { result.skipped.push({ jobId: id, jobNumber, reason: "Already has those values." }); continue; }
-          await updateJob(ctx, id, change);
+          if (!statusChange && Object.keys(change).length === 0) { result.skipped.push({ jobId: id, jobNumber, reason: "Already has those values." }); continue; }
+          if (statusChange) await changeJobStatus(ctx, id, { status: input.status });
+          if (Object.keys(change).length > 0) await updateJob(ctx, id, change);
           break;
         }
       }

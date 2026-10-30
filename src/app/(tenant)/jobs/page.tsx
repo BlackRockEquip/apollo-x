@@ -20,7 +20,8 @@ import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
 import { listJobs } from "@/lib/jobs/service";
-import { JOB_TYPE_LABELS, etaOverdueDays, jobTypeLabelsFor } from "@/lib/jobs/ui";
+import { JOB_TYPE_LABELS, etaOverdueDays, jobStatusLabelsFor, jobTypeLabelsFor } from "@/lib/jobs/ui";
+import { PO_STATUS_LABELS } from "@/components/job-screen/job-facts";
 import { getJobsWipColumns } from "@/lib/jobs/wip-columns-service";
 import { JOBS_WIP_COLUMNS, filterColumnsByPermission, wipColumnLabelsFor, type JobsWipColumnId } from "@/lib/jobs/wip-columns";
 
@@ -66,10 +67,28 @@ function statusFilterValues(job: JobRow, build?: string | null): string {
 // the customer's name, trading name and account code), lower-cased, one per
 // line so a match can't straddle two fields. See searchRows in
 // TableColumnFilters.tsx.
-function searchText(job: JobRow, canSearchCustomerName: boolean): string {
+function searchText(job: JobRow, canSearchCustomerName: boolean, build: string | null | undefined, allowed: ReadonlySet<string>): string {
+  const typeLabels = jobTypeLabelsFor(build);
+  const statusLabels = jobStatusLabelsFor(build);
+  // A field that sits behind a column permission is only searchable by viewers who may see that column.
+  const col = (id: JobsWipColumnId, value: string | null | undefined) => (allowed.has(id) && value ? value : "");
+  const day = (id: JobsWipColumnId, value: Date | string | null | undefined) => (allowed.has(id) && value ? fmtDate(value) : "");
   return [
-    job.jobNumber, job.draftNumber, job.previousJobNumber, job.customerReference, job.customerPo,
-    job.machineModel, job.machineSerial, job.component, job.componentModel, job.componentSerial, job.componentPartNumber, job.description,
+    // Job
+    job.jobNumber, job.draftNumber, job.previousJobNumber, job.customerReference, job.customerPo, job.description,
+    typeLabels[job.type], statusLabels[job.status],
+    col("relationshipNotes", job.relationshipNotes), col("reportNumber", job.reportNumber), col("importTrackingNumber", job.importTrackingNumber), col("plantNumber", job.plantNumber),
+    col("salesRepresentative", job.salesRepresentative?.name), job.stripMechanic?.name, job.buildMechanic?.name,
+    // Machine and component
+    col("machineMake", job.machineMake), job.machineModel, job.machineSerial, job.component, job.componentModel, col("componentType", job.componentType), job.componentSerial, job.componentPartNumber,
+    col("machineHours", job.machineHours != null ? String(job.machineHours) : ""),
+    // Commercial and logistics
+    col("quoteNumber", job.quoteNumber), col("salesOrderNumber", job.salesOrderNumber), col("invoiceNumber", job.invoiceNumber), col("purchaseOrderNumber", job.purchaseOrderNumber),
+    col("purchaseOrderStatus", PO_STATUS_LABELS[job.purchaseOrderStatus]), col("deliveryType", job.deliveryType), col("receivingTransport", job.receivingTransport),
+    // Dates, written the way the table shows them (e.g. 2026/10/13)
+    day("dateReceived", job.dateReceived), day("etaDate", job.etaDate), day("mechanicEtaDate", job.mechanicEtaDate), day("quoteDate", job.quoteDate), day("salesOrderDate", job.salesOrderDate),
+    day("invoiceDate", job.invoiceDate), day("purchaseOrderDate", job.purchaseOrderDate), day("deliveryDate", job.deliveryDate), day("paymentDateReceived", job.paymentDateReceived),
+    // Customer (only for viewers allowed to see customers)
     ...(canSearchCustomerName ? [job.customer.name, job.customer.tradingName, job.customer.accountCode] : []),
     // 2026-10-29: a multi-item job is found by what its items are too (they sit in the rows under it).
     ...(job.jobItems.length > 1 ? job.jobItems.flatMap((item) => [item.component, item.componentModel, item.componentSerial, item.componentPartNumber, item.machineMake, item.machineModel, item.plantNumber]) : []),
@@ -194,6 +213,8 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
 export default async function JobsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requireRequestContext();
   const COLUMN_LABELS = wipColumnLabelsFor(ctx.industryBuild);
+  // Which job fields this viewer may search (the same column permissions as the table).
+  const searchableColumns = new Set<string>(filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions));
   requireTenantModulePage(ctx, "JOBS_WIP");
   requireTenantPermission(ctx, "JOBS_VIEW");
   const sp = await searchParams;
@@ -298,7 +319,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 CUSTOMERS_VIEW (see mapListWhere's own comment in
                 jobs/service.ts), so the hint drops "customer" for that same
                 audience. */}
-            <LiveSearchInput tableId="jobs-wip-table" serverMode={serverSearch} name="q" placeholder={canSearchCustomerName ? "Search job #, linked job #, customer, machine, component or reference" : "Search job #, linked job #, machine, component or reference"} defaultValue={q} />
+            <LiveSearchInput tableId="jobs-wip-table" serverMode={serverSearch} name="q" placeholder={canSearchCustomerName ? "Search anything: job #, customer, machine, component, quote, invoice, PO, status…" : "Search anything: job #, machine, component, quote, invoice, PO, status…"} defaultValue={q} />
             {/* The view (WIP / completed) only rides along while no status is
                 chosen — a status is the more specific filter, and keeping both
                 made a later status pick combine with the old view. */}
@@ -359,7 +380,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 const columnSpan = columns.length + (wipViewOnly ? 0 : 1) + (showSelect ? 1 : 0);
                 return (
                   <Fragment key={job.id}>
-                    <tr className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
+                    <tr className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName, ctx.industryBuild, searchableColumns)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
                       {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
                       {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
                       {!wipViewOnly && <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>}
