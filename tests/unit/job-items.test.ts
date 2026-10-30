@@ -106,7 +106,7 @@ describe("parseItemsPaste", () => {
   });
 });
 
-import { DELIVERED_STATUS, defaultDeliveryPicks, deliveryNoteSuffix, itemDeliveryLine, itemsToMarkDelivered } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, defaultDeliveryPicks, deliveryNoteSuffix, itemDeliveryLine, itemIdsOnNotes, itemsOfferedForDelivery, itemsToMarkDelivered } from "@/lib/jobs/item-model";
 
 const deliverable = [
   { id: "a", sequence: 1, status: "TO_BE_DELIVERED", component: "Final drive gearbox", componentModel: "PC400-8", componentSerial: "SN-1", machineMake: "Komatsu", machineModel: "PC400" },
@@ -127,6 +127,14 @@ describe("delivery notes per item", () => {
     expect(itemsToMarkDelivered(deliverable, ["a", "b", "d"])).toEqual(["a", "b"]);
     expect(itemsToMarkDelivered(deliverable, [])).toEqual([]);
     expect(itemsToMarkDelivered([...deliverable, { id: "e", sequence: 5, status: "CANCELLED" }, { id: "f", sequence: 6, status: "COMPLETE" }], ["d", "e", "f"])).toEqual([]);
+  });
+  it("takes items that are already on a printed note out of the picker", () => {
+    const notes = [{ lines: [{ description: "x", quantity: "1", itemId: "a" }, { description: "typed", quantity: "2" }] }, { lines: [{ description: "y", quantity: "1", itemId: "c" }] }];
+    expect(itemIdsOnNotes(notes).sort()).toEqual(["a", "c"]);
+    expect(itemIdsOnNotes([])).toEqual([]);
+    expect(itemsOfferedForDelivery(deliverable, ["a"]).map((item) => item.id)).toEqual(["b", "c", "d"]);
+    expect(itemsOfferedForDelivery([...deliverable, { id: "z", sequence: 9, status: "CANCELLED" }], []).map((item) => item.id)).toEqual(["a", "b", "c", "d"]);
+    expect(defaultDeliveryPicks(itemsOfferedForDelivery(deliverable, ["a"]))).toEqual(["c"]);
   });
   it("names the saved note after the items on it", () => {
     expect(deliveryNoteSuffix(deliverable, ["c", "a"])).toBe("Items 1, 3");

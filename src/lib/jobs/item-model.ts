@@ -153,6 +153,21 @@ export function defaultDeliveryPicks(items: readonly DeliveryItem[]): string[] {
   return items.filter((item) => item.status === READY_TO_DELIVER_STATUS).map((item) => item.id);
 }
 
+// 2026-10-30, user request: "if the item has already had a delivery note printed for, it is removed from the list to pick from".
+// The ids of the items that are on at least one printed note of the job (lines tied to an item).
+export function itemIdsOnNotes(notes: ReadonlyArray<{ lines: readonly DeliveryNoteLine[] }>): string[] {
+  const ids = new Set<string>();
+  for (const note of notes) for (const line of note.lines ?? []) if (line.itemId) ids.add(line.itemId);
+  return [...ids];
+}
+
+// The items the delivery note picker offers: not cancelled and not already on a printed note (a note is reprinted from the job's
+// Delivery notes list instead).
+export function itemsOfferedForDelivery<T extends { id: string; status: string }>(items: readonly T[], onNoteIds: readonly string[]): T[] {
+  const taken = new Set(onNoteIds);
+  return items.filter((item) => item.status !== "CANCELLED" && !taken.has(item.id));
+}
+
 // After the note is printed, every ticked item that has not already been delivered is moved on to Delivered. 2026-10-30, user
 // report: "when printing delivery note and clicking tickbox move status stepper, it doesn't move" - an item ticked on the note
 // but still at an earlier step (e.g. QC control) used to be skipped without a word; an item that goes out on a note is delivered,

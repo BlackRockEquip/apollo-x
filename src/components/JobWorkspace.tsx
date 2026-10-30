@@ -28,7 +28,7 @@ import { PrintTagsDialog } from "./job-items/PrintTagsDialog";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, activityMatchesItemFilter, itemMachinists, machinistSummary, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, activityMatchesItemFilter, itemMachinists, machinistSummary, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, itemIdsOnNotes, itemsOfferedForDelivery, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
 import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
@@ -742,7 +742,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // markDelivered moves the ticked ready items to Delivered once it is printed.
   // 2026-10-29, Engineering delivery note register: bumped after a note is recorded so the job's list of notes reloads.
   const [dnRefresh, setDnRefresh] = useState(0);
-  const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string; markDelivered?: boolean } | null>(null);
+  const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string; markDelivered?: boolean; onNoteIds?: string[] } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
   // once its normal-flow position reaches the pinned offset) still visibly
@@ -3281,15 +3281,28 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // first: the first line is the machine/component description (as before),
   // more lines can be added, and notes can be typed. The same lines and notes
   // go to the print window and to the saved PDF.
-  function openJobDeliveryNoteDialog() {
+  async function openJobDeliveryNoteDialog() {
     if (!job) return;
     // 2026-10-29, Engineering multi-item jobs: the note lists the items going out on it. The ones that are ready to deliver are
     // ticked; the date is today (each delivery is its own note); printing moves the ready ones on to Delivered.
     const rows = job.jobItems ?? [];
     if (rows.length > 0) {
-      const picks = defaultDeliveryPicks(rows);
-      const lines = rows.filter((row) => picks.includes(row.id)).map((row) => ({ description: itemDeliveryLine(row, job.jobNumber), quantity: "1", itemId: row.id }));
-      setJobDnDraft({ items: lines.length > 0 ? lines : [{ description: "", quantity: "1" }], notes: "", deliveryDate: new Date().toISOString().slice(0, 10), markDelivered: !mechanicFieldsLocked });
+      // 2026-10-30: an item that is already on a printed delivery note of this job is not offered again (reprint it from the job's
+      // Delivery notes list). The register is read fresh each time so a note printed a moment ago counts.
+      let onNoteIds: string[] = [];
+      try {
+        const response = await fetch(`/api/v1/jobs/${job.id}/delivery-notes`, { cache: "no-store" });
+        if (response.ok) {
+          const body = await response.json();
+          onNoteIds = itemIdsOnNotes(Array.isArray(body.items) ? body.items : []);
+        }
+      } catch {
+        /* without the register every item is offered, as before */
+      }
+      const offered = itemsOfferedForDelivery(rows, onNoteIds);
+      const picks = defaultDeliveryPicks(offered);
+      const lines = offered.filter((row) => picks.includes(row.id)).map((row) => ({ description: itemDeliveryLine(row, job.jobNumber), quantity: "1", itemId: row.id }));
+      setJobDnDraft({ items: lines.length > 0 ? lines : [{ description: "", quantity: "1" }], notes: "", deliveryDate: new Date().toISOString().slice(0, 10), markDelivered: !mechanicFieldsLocked, onNoteIds });
       return;
     }
     const description = [form.machineMake, form.machineModel, form.component, form.componentSerial].filter(Boolean).join(" · ");
@@ -6458,8 +6471,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   {(job?.jobItems ?? []).length > 0 && (
                     <div className="wide ji-pick">
                       <p className="ji-pick-title">Items on this delivery</p>
+                      {itemsOfferedForDelivery(job?.jobItems ?? [], jobDnDraft.onNoteIds ?? []).length === 0 && (
+                        <p className="muted small-line">Every item on this job already has a delivery note. Reprint one from the Delivery notes list on the job.</p>
+                      )}
                       <ul>
-                        {(job?.jobItems ?? []).filter((row) => row.status !== "CANCELLED").map((row) => (
+                        {itemsOfferedForDelivery(job?.jobItems ?? [], jobDnDraft.onNoteIds ?? []).map((row) => (
                           <li key={row.id}>
                             <label>
                               <input type="checkbox" checked={jobDnDraft.items.some((line) => line.itemId === row.id)} onChange={() => toggleDeliveryItem(row)} />
