@@ -2622,3 +2622,9 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .info-card:has(.npk .selector-results),
 .ji-card:has(.npk .selector-results),
 .ji-reassign:has(.npk .selector-results) { position: relative; z-index: 50; overflow: visible; }
+
+/* pr23: the four job-level cards (Customer details, Notes, Job details, Commercial & logistics) sit above the items card:
+   two across, each half the width. */
+.job-edit-grid.jw-top-cards > .detail-panel { grid-column: span 2; }
+.job-edit-grid.jw-top-cards > .detail-panel.full-row { grid-column: 1 / -1; }
+@media (max-width: 900px) { .job-edit-grid.jw-top-cards > .detail-panel { grid-column: 1 / -1; } }

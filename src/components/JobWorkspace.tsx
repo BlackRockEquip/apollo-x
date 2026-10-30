@@ -4526,6 +4526,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // Design C: only the Mechanic role (tenantRole USER), not the view-only role.
   const tabletLayout = mode === "detail" && !!job && tenantRole === "USER";
 
+  // 2026-10-30, user request: "Customer details, Notes, Job details, Commercial & logistics - move those 4 cards above the items card,
+  // leave details of items in details tab." On an open Engineering job (desktop, not the field-service or mechanic tablet layouts) the
+  // four job-level cards sit above the items card, so they are on screen whatever tab is open; the Details tab keeps only the
+  // selected item's details (Machine / component, Delivery notes). Their fields still autosave from the same form state.
+  const jobCardsAboveItems = itemsListOn && !fieldLayout && !tabletLayout;
+  const jobTopSections = (
+    <div className="job-edit-grid jw-top-cards">
+      {customerSection}
+      {notesSection}
+      {jobDetailsSection}
+      {commercialSection}
+    </div>
+  );
+  const itemDetailsSections = (
+    <div className="job-edit-grid">
+      <div ref={setSelectedItemSlot} style={{ display: "contents" }} />
+      {(!itemsPanelSection || jobItemRows.length === 0) && machineSection}
+      {deliveryNotesSection}
+    </div>
+  );
+
   const showPickSlipsTab = !!job && (pickSlipsAccess !== "DENIED" ? (job.partLines.length > 0 || jobPickSlips.length > 0) : jobPickSlips.length > 0);
   const showFollowupTab = !!job && !mechanicFieldsLocked && partsAccess === "FULL" && partsFollowupGroups.length > 0;
   const partCounts = countParts(job?.partLines ?? []);
@@ -5810,6 +5831,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {tabletSheets}
           {!tabletLayout && <JobFactsStrip items={factItems} />}
           {/* 2026-10-29, user request: the item list sits above the item header and the tabs (as in the item mockup), so it is on screen whatever tab is open. */}
+          {jobCardsAboveItems && <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobTopSections}</form>}
           {!tabletLayout && itemsPanelSection}
           {!tabletLayout && itemsListOn && (
             <ItemHeader
@@ -5829,7 +5851,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {/* Always mounted (just hidden on other tabs) so a field you were typing in keeps its state when you flip tabs. */}
           {!tabletLayout && (
             <div className="jw-panel" hidden={activeTab !== "overview"}>
-              {fieldLayout ? fieldOverview : (
+              {fieldLayout ? fieldOverview : jobCardsAboveItems ? (
+                <div className="job-layout">{itemDetailsSections}</div>
+              ) : (
                 <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
               )}
             </div>
