@@ -123,9 +123,10 @@ describe("delivery notes per item", () => {
   it("ticks only items that are ready and not yet delivered", () => {
     expect(defaultDeliveryPicks(deliverable)).toEqual(["a", "c"]);
   });
-  it("moves on only the ticked items that were ready", () => {
-    expect(itemsToMarkDelivered(deliverable, ["a", "b", "d"])).toEqual(["a"]);
+  it("moves on every ticked item that is not delivered yet, ready or not", () => {
+    expect(itemsToMarkDelivered(deliverable, ["a", "b", "d"])).toEqual(["a", "b"]);
     expect(itemsToMarkDelivered(deliverable, [])).toEqual([]);
+    expect(itemsToMarkDelivered([...deliverable, { id: "e", sequence: 5, status: "CANCELLED" }, { id: "f", sequence: 6, status: "COMPLETE" }], ["d", "e", "f"])).toEqual([]);
   });
   it("names the saved note after the items on it", () => {
     expect(deliveryNoteSuffix(deliverable, ["c", "a"])).toBe("Items 1, 3");

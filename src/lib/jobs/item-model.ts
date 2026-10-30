@@ -153,11 +153,14 @@ export function defaultDeliveryPicks(items: readonly DeliveryItem[]): string[] {
   return items.filter((item) => item.status === READY_TO_DELIVER_STATUS).map((item) => item.id);
 }
 
-// After the note is printed, only the ticked items that were ready are moved on to Delivered. A ticked item that was not ready
-// (e.g. goes out early on the customer's say-so) stays where it is.
+// After the note is printed, every ticked item that has not already been delivered is moved on to Delivered. 2026-10-30, user
+// report: "when printing delivery note and clicking tickbox move status stepper, it doesn't move" - an item ticked on the note
+// but still at an earlier step (e.g. QC control) used to be skipped without a word; an item that goes out on a note is delivered,
+// so it moves too. Items already delivered, complete, closed or cancelled are left alone.
+const NOT_MOVED_TO_DELIVERED = [DELIVERED_STATUS, "COMPLETE", "CLOSED", "CANCELLED"];
 export function itemsToMarkDelivered(items: readonly DeliveryItem[], pickedIds: readonly string[]): string[] {
   const picked = new Set(pickedIds);
-  return items.filter((item) => picked.has(item.id) && item.status === READY_TO_DELIVER_STATUS).map((item) => item.id);
+  return items.filter((item) => picked.has(item.id) && !NOT_MOVED_TO_DELIVERED.includes(item.status)).map((item) => item.id);
 }
 
 // Added to the saved PDF's name so one delivery note does not replace another, e.g. "Items 1, 3".

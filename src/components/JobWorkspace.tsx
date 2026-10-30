@@ -3331,8 +3331,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     await offerToSave(printed, "JOB_DELIVERY_NOTE", () => jobDeliveryNoteSpec(draft, issued.number), suffix);
     if (!printed || !draft.markDelivered || !jobId) return;
     const moving = itemsToMarkDelivered(rows, pickedIds);
-    if (moving.length === 0) return;
-    if (needsDocumentCheck(industryBuild, DELIVERED_STATUS) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
+    if (moving.length === 0) { setDocumentNotice("Delivery note printed. The items on it were already delivered, so none were moved."); return; }
+    if (needsDocumentCheck(industryBuild, DELIVERED_STATUS) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) { setDocumentNotice("Delivery note printed. The items were not moved to delivered."); return; }
     setError("");
     try {
       for (const itemId of moving) {
@@ -3340,6 +3340,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body?.error?.message || "Unable to move the items to delivered.");
       }
+      setDocumentNotice(`Delivery note printed. ${moving.length === 1 ? "1 item" : `${moving.length} items`} moved to ${statusLabels.DELIVERED_AWAITING_PAYMENT}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to move the items to delivered.");
     }
@@ -6474,7 +6475,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                         {!mechanicFieldsLocked && (
                           <label className="ji-pick-mark">
                             <input type="checkbox" checked={!!jobDnDraft.markDelivered} onChange={(e) => setJobDnDraft((d) => (d ? { ...d, markDelivered: e.target.checked } : d))} />
-                            <span>When printed, move the ready items on this note to {statusLabels.DELIVERED_AWAITING_PAYMENT}</span>
+                            <span>When printed, move the items on this note to {statusLabels.DELIVERED_AWAITING_PAYMENT}</span>
                           </label>
                         )}
                       </div>

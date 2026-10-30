@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Plus, Search } from "lucide-react";
 
 // 2026-10-30, user request: a machinist or sales rep typed on a job that is not in the dropdown is added to it. A type-ahead box over
@@ -40,6 +41,10 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // 2026-10-30, user report: the list was clipped by / hidden behind the cards and the scrolling item table around it. It is drawn in a
+  // portal on <body> with fixed coordinates taken from the input, so no card, table or sticky bar can cover or clip it.
+  const box = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null);
 
   const selected = options.find((option) => option.id === value);
   const matches = filterNamedOptions(options, text);
@@ -53,6 +58,28 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
   ];
 
   useEffect(() => { setActive(0); }, [text, open]);
+
+  const showList = open && !disabled && rows.length > 0;
+  useLayoutEffect(() => {
+    if (!showList) { setPlace(null); return; }
+    function measure() {
+      const el = box.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const below = window.innerHeight - rect.bottom - 8;
+      const above = rect.top - 8;
+      // Open downwards unless there is clearly more room above.
+      const up = below < 200 && above > below;
+      const maxHeight = Math.max(120, Math.min(280, up ? above : below));
+      setPlace(up
+        ? { left: rect.left, width: rect.width, bottom: window.innerHeight - rect.top + 2, maxHeight }
+        : { left: rect.left, width: rect.width, top: rect.bottom + 2, maxHeight });
+    }
+    measure();
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => { window.removeEventListener("scroll", measure, true); window.removeEventListener("resize", measure); };
+  }, [showList, rows.length]);
 
   function close() { setOpen(false); setText(""); }
   async function addTyped() {
@@ -94,7 +121,7 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
       className="party-selector npk"
       onBlur={(event) => { if (!root.current?.contains(event.relatedTarget as Node | null)) close(); }}
     >
-      <div>
+      <div ref={box}>
         <Search size={14} />
         <input
           role="combobox"
@@ -111,8 +138,14 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
           onKeyDown={onKeyDown}
         />
       </div>
-      {open && !disabled && rows.length > 0 && (
-        <div className="selector-results" id={listId} role="listbox">
+      {showList && place && typeof document !== "undefined" && createPortal(
+        <div
+          className="selector-results npk-list"
+          id={listId}
+          role="listbox"
+          style={{ position: "fixed", left: place.left, width: place.width, top: place.top, bottom: place.bottom, maxHeight: place.maxHeight }}
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {rows.map((row, index) => (
             <button
               key={row.key}
@@ -130,7 +163,8 @@ export function NamedPicker({ value, options, onChange, onCreate, emptyLabel = "
               {row.kind === "add" && <strong><Plus size={13} /> {busy ? "Adding..." : `Add "${text.trim()}" as a new name`}</strong>}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
       {error && <span className="npk-error" role="alert">{error}</span>}
     </div>
