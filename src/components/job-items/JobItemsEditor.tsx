@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, ClipboardList, Copy, Plus, Trash2, X } from "lucide-react";
 import { MAX_ITEMS_PER_JOB, parseItemsPaste } from "@/lib/jobs/item-model";
+import { NamedPicker, type NamedOption } from "@/components/NamedPicker";
 import { blankDraft, isBlankDraft, newItemKey, type ItemDraft } from "./item-draft";
 
 // 2026-10-29, user request (Engineering): "Items received" on the New Job screen. A customer can send several items in together
@@ -17,9 +18,11 @@ type Props = {
   /** 2026-10-30: the company's machinists and the field names ('Assess' / 'Final'); an item can have its own once there are several. */
   mechanics?: Array<{ id: string; label: string }>;
   machinistLabels?: { strip: string; build: string };
+  /** Adds a machinist that is not in the list yet (typed in a picker); resolves with the new option. */
+  onCreateMechanic?: (name: string) => Promise<NamedOption>;
 };
 
-export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mechanics = [], machinistLabels }: Props) {
+export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mechanics = [], machinistLabels, onCreateMechanic }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [several, setSeveral] = useState(4);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -108,7 +111,7 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
                 const isOpen = open.has(item.key);
                 return (
                   <ItemRows key={item.key} item={item} index={index} isOpen={isOpen} staffEtaLabel={staffEtaLabel} canDuplicate={room > 0}
-                    mechanics={items.length >= 2 ? mechanics : []} machinistLabels={machinistLabels}
+                    mechanics={items.length >= 2 ? mechanics : []} machinistLabels={machinistLabels} onCreateMechanic={onCreateMechanic}
                     onPatch={(field, value) => patch(item.key, field, value)} onToggle={() => toggle(item.key)}
                     onDuplicate={() => duplicate(item.key)} onRemove={() => remove(item.key)} />
                 );
@@ -145,9 +148,9 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
   );
 }
 
-function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics, machinistLabels, onPatch, onToggle, onDuplicate, onRemove }: {
+function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics, machinistLabels, onCreateMechanic, onPatch, onToggle, onDuplicate, onRemove }: {
   item: ItemDraft; index: number; isOpen: boolean; staffEtaLabel: string; canDuplicate: boolean;
-  mechanics: Array<{ id: string; label: string }>; machinistLabels?: { strip: string; build: string };
+  mechanics: Array<{ id: string; label: string }>; machinistLabels?: { strip: string; build: string }; onCreateMechanic?: (name: string) => Promise<NamedOption>;
   onPatch: (field: keyof ItemDraft, value: string) => void; onToggle: () => void; onDuplicate: () => void; onRemove: () => void;
 }) {
   const label = `Item ${index + 1}`;
@@ -184,16 +187,10 @@ function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics,
               {mechanics.length > 0 && machinistLabels && (
                 <>
                   <label><span>{machinistLabels.strip}</span>
-                    <select value={item.stripMechanicId} onChange={(e) => onPatch("stripMechanicId", e.target.value)}>
-                      <option value="">Same as the job</option>
-                      {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
+                    <NamedPicker value={item.stripMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.strip} onChange={(id) => onPatch("stripMechanicId", id)} onCreate={onCreateMechanic} />
                   </label>
                   <label><span>{machinistLabels.build}</span>
-                    <select value={item.buildMechanicId} onChange={(e) => onPatch("buildMechanicId", e.target.value)}>
-                      <option value="">Same as the job</option>
-                      {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
+                    <NamedPicker value={item.buildMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.build} onChange={(id) => onPatch("buildMechanicId", id)} onCreate={onCreateMechanic} />
                   </label>
                 </>
               )}

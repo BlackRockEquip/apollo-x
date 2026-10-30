@@ -433,3 +433,6 @@ export const itemLinkInput = z.object({
   itemId: z.string().cuid().nullable(),
 });
 export type ItemLinkInput = z.infer<typeof itemLinkInput>;
+
+// 2026-10-30: a machinist / sales rep typed on a job that is not in the list yet (see addMechanicOption in service.ts).
+export const staffNameInput = z.object({ name: z.string().trim().min(2, "Type at least 2 letters.").max(120) });

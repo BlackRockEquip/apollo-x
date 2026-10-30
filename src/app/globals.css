@@ -2599,3 +2599,13 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .ji-reassign label { display: grid; gap: 4px; font-size: 12px; font-weight: 650; color: #344054; }
 .ji-reassign .ji-edit-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
 @media (max-width: 760px) { .ji-reassign { grid-template-columns: 1fr; } }
+
+/* 2026-10-30, user request: machinist / sales rep boxes offer "Add <name>" when the typed name is not in the list (components/NamedPicker.tsx). */
+.npk { position: relative; }
+.npk .selector-results { top: calc(100% + 2px); }
+.npk .selector-results button.npk-row { display: flex; align-items: center; gap: 6px; }
+.npk .npk-row.is-active { background: #fffaf0; }
+.npk .npk-add { color: #7a5200; }
+.npk .npk-add svg { vertical-align: -2px; }
+.npk .npk-none { color: #667085; font-weight: 500; }
+.npk-error { color: #b42318; font-size: 12px; font-weight: 600; }

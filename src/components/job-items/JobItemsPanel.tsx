@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, UserCog, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
+import { NamedPicker, type NamedOption } from "@/components/NamedPicker";
 import { itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeItemStatuses, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
 import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } from "./item-draft";
@@ -55,6 +56,8 @@ type Props = {
   mechanics?: Array<{ id: string; label: string }>;
   machinistLabels?: { strip: string; build: string };
   jobMachinists?: MachinistRefs;
+  /** Adds a machinist that is not in the list yet (typed in a picker); resolves with the new option. */
+  onCreateMechanic?: (name: string) => Promise<NamedOption>;
 };
 
 function fmtDate(value: string | null): string {
@@ -63,7 +66,7 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {} }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {}, onCreateMechanic }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
@@ -189,9 +192,9 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
         </div>
         {reassign && reassign.id === selected.id && (
           <div className="ji-reassign" role="group" aria-label={`Reassign the machinists of ${selectedTag}`}>
-            <p>Who works on {selectedTag}? Leave a box on &quot;Same as the job&quot; and the item follows the job&apos;s machinist{jobMachinists.stripMechanicId || jobMachinists.buildMechanicId ? ` (${machinistLabels.strip}: ${mechanicName(jobMachinists.stripMechanicId) || "-"}, ${machinistLabels.build}: ${mechanicName(jobMachinists.buildMechanicId) || "-"})` : ""}.</p>
-            <label><span>{machinistLabels.strip}</span><select value={reassign.strip} onChange={(e) => setReassign({ ...reassign, strip: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
-            <label><span>{machinistLabels.build}</span><select value={reassign.build} onChange={(e) => setReassign({ ...reassign, build: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+            <p>Who works on {selectedTag}? Pick a name, or type a new one to add it. Leave a box on &quot;Same as the job&quot; and the item follows the job&apos;s machinist{jobMachinists.stripMechanicId || jobMachinists.buildMechanicId ? ` (${machinistLabels.strip}: ${mechanicName(jobMachinists.stripMechanicId) || "-"}, ${machinistLabels.build}: ${mechanicName(jobMachinists.buildMechanicId) || "-"})` : ""}.</p>
+            <label><span>{machinistLabels.strip}</span><NamedPicker value={reassign.strip} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.strip} onChange={(id) => setReassign({ ...reassign, strip: id })} onCreate={onCreateMechanic} /></label>
+            <label><span>{machinistLabels.build}</span><NamedPicker value={reassign.build} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.build} onChange={(id) => setReassign({ ...reassign, build: id })} onCreate={onCreateMechanic} /></label>
             <div className="ji-edit-actions">
               <button type="button" className="gold-button" disabled={busy === selected.id} onClick={() => void saveReassign()}>Save machinists</button>
               <button type="button" className="quiet-button" onClick={() => setReassign(null)}>Cancel</button>
@@ -294,8 +297,8 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                       {field(draft, setDraft, "mechanicEtaDate", staffEtaLabel, { type: "date" })}
                       {!virtual && mechanics.length > 0 && (
                         <>
-                          <label><span>{machinistLabels.strip}</span><select value={draft.stripMechanicId} onChange={(e) => setDraft({ ...draft, stripMechanicId: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
-                          <label><span>{machinistLabels.build}</span><select value={draft.buildMechanicId} onChange={(e) => setDraft({ ...draft, buildMechanicId: e.target.value })}><option value="">Same as the job</option>{mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select></label>
+                          <label><span>{machinistLabels.strip}</span><NamedPicker value={draft.stripMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.strip} onChange={(id) => setDraft({ ...draft, stripMechanicId: id })} onCreate={onCreateMechanic} /></label>
+                          <label><span>{machinistLabels.build}</span><NamedPicker value={draft.buildMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.build} onChange={(id) => setDraft({ ...draft, buildMechanicId: id })} onCreate={onCreateMechanic} /></label>
                         </>
                       )}
                       {field(draft, setDraft, "workRequested", "Work requested", { wide: true })}

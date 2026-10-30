@@ -41,6 +41,7 @@ import {
   jobBreakdownInput,
   machineMakeInput,
   jobItemInput,
+  staffNameInput,
   jobItemsInput,
   jobItemUpdateInput,
   jobDeliveryNoteInput,
@@ -234,6 +235,46 @@ export async function listSalesRepresentativeOptions(ctx: RequestContext) {
     orderBy: { name: "asc" },
   });
   return { items: salesRepresentatives.map((s) => ({ id: s.id, label: s.name })) };
+}
+
+// 2026-10-30, user request: a machinist or sales rep typed on a job that is not in the dropdown is added to the list (the same lists
+// Settings > Users > User Setup manages). Whoever may create or edit a job may do this; a name that already exists (any capitals, even one
+// switched off in User Setup) is reused, never duplicated.
+function requireJobsEditOrCreate(ctx: RequestContext) {
+  try {
+    return requireJobs(ctx, "JOBS_EDIT");
+  } catch (error) {
+    if (!(error instanceof AuthorizationError)) throw error;
+    return requireJobs(ctx, "JOBS_CREATE");
+  }
+}
+
+export async function addMechanicOption(ctx: RequestContext, raw: unknown) {
+  const companyId = requireJobsEditOrCreate(ctx);
+  requireNotMechanicRestricted(ctx);
+  const { name } = staffNameInput.parse(raw);
+  const existing = await prisma.mechanic.findFirst({ where: { companyId, name: { equals: name, mode: "insensitive" } } });
+  if (existing) {
+    if (!existing.active) await prisma.mechanic.update({ where: { id: existing.id }, data: { active: true } });
+    return { id: existing.id, label: existing.name, created: false };
+  }
+  const created = await prisma.mechanic.create({ data: { companyId, name, active: true } });
+  await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, correlationId: ctx.correlationId, source: "UI", module: "JOBS_WIP", entityType: "Mechanic", entityId: created.id, action: "MECHANIC_CREATED", afterData: { name: created.name, active: true, via: "job screen" } } });
+  return { id: created.id, label: created.name, created: true };
+}
+
+export async function addSalesRepresentativeOption(ctx: RequestContext, raw: unknown) {
+  const companyId = requireJobsEditOrCreate(ctx);
+  requireNotMechanicRestricted(ctx);
+  const { name } = staffNameInput.parse(raw);
+  const existing = await prisma.salesRepresentative.findFirst({ where: { companyId, name: { equals: name, mode: "insensitive" } } });
+  if (existing) {
+    if (!existing.active) await prisma.salesRepresentative.update({ where: { id: existing.id }, data: { active: true } });
+    return { id: existing.id, label: existing.name, created: false };
+  }
+  const created = await prisma.salesRepresentative.create({ data: { companyId, name, active: true } });
+  await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, correlationId: ctx.correlationId, source: "UI", module: "JOBS_WIP", entityType: "SalesRepresentative", entityId: created.id, action: "SALES_REPRESENTATIVE_CREATED", afterData: { name: created.name, active: true, via: "job screen" } } });
+  return { id: created.id, label: created.name, created: true };
 }
 
 function notFound(): never {

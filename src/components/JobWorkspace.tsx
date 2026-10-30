@@ -19,6 +19,7 @@ import { QtyStepper } from "./job-screen/QtyStepper";
 import { buildTabletCard, buildTabletFacts, formatQty, latestNote, outstandingHeadline, tabletSegments } from "./job-screen/tablet-model";
 import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter } from "./job-screen/parts-summary";
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
+import { NamedPicker, type NamedOption } from "./NamedPicker";
 import { JobItemsEditor } from "./job-items/JobItemsEditor";
 import { JobItemsPanel } from "./job-items/JobItemsPanel";
 import { ItemsStepper } from "./job-items/ItemsStepper";
@@ -1335,6 +1336,19 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const r = await fetch("/api/v1/jobs/machine-make", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: makeTyped }) });
       if (r.ok) setAddedMakes((prev) => [...prev, makeTyped.toLowerCase()]);
     } catch { /* best effort - the make is still saved on the job */ }
+  }
+
+  // 2026-10-30, user request: a machinist / sales rep typed on a job that is not in the dropdown is added to the list (the one Settings >
+  // Users > User Setup manages). The new name is selected by the caller.
+  async function createStaffOption(kind: "mechanic" | "salesRep", name: string): Promise<NamedOption> {
+    const url = kind === "mechanic" ? "/api/v1/jobs/mechanics" : "/api/v1/jobs/sales-representatives";
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b?.error?.message || "Unable to add that name.");
+    const option: NamedOption = { id: String(b.id), label: String(b.label) };
+    const add = (list: NamedOption[]) => (list.some((o) => o.id === option.id) ? list : [...list, option].sort((a, c) => a.label.localeCompare(c.label)));
+    if (kind === "mechanic") setMechanics(add); else setSalesRepresentatives(add);
+    return option;
   }
 
   function updateField(key: string, value: string) {
@@ -4210,7 +4224,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // 2026-10-29, user request (Engineering): several items on one job.
   // New Job: the machine / component card is replaced by the "Items received" list.
-  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} />;
+  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} onCreateMechanic={(name) => createStaffOption("mechanic", name)} />;
   // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
   // Machine / component card and offers "Add another item" beneath it.
   const jobItemRows = job?.jobItems ?? [];
@@ -4268,6 +4282,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       onPrintTags={() => setTagsOpen(true)}
       selectedSlot={selectedItemSlot}
       mechanics={mechanics}
+      onCreateMechanic={(name) => createStaffOption("mechanic", name)}
       machinistLabels={{ strip: machinist.strip, build: machinist.build }}
       jobMachinists={{ stripMechanicId: (job.stripMechanicId as string | null) ?? null, buildMechanicId: (job.buildMechanicId as string | null) ?? null }}
       confirmDocuments={async (status) => !needsDocumentCheck(industryBuild, status) || (await confirm(DOCUMENT_CHECK_CONFIRM))}
@@ -4340,17 +4355,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             here. Options come from the new JOBS_VIEW-gated
             /api/v1/jobs/mechanics list (see listMechanicOptions's own
             comment for why not /api/v1/users). */}
+        {/* 2026-10-30: type-ahead; a name that is not in the list can be added on the spot. */}
         <label><span>{machinist.strip}</span>
-          <select value={form.stripMechanicId} onChange={(e) => updateField("stripMechanicId", e.target.value)}>
-            <option value="">—</option>
-            {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
+          <NamedPicker value={form.stripMechanicId} options={mechanics} emptyLabel="—" ariaLabel={machinist.strip} onChange={(id) => updateField("stripMechanicId", id)} onCreate={(name) => createStaffOption("mechanic", name)} />
         </label>
         <label><span>{machinist.build}</span>
-          <select value={form.buildMechanicId} onChange={(e) => updateField("buildMechanicId", e.target.value)}>
-            <option value="">—</option>
-            {mechanics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
+          <NamedPicker value={form.buildMechanicId} options={mechanics} emptyLabel="—" ariaLabel={machinist.build} onChange={(id) => updateField("buildMechanicId", id)} onCreate={(name) => createStaffOption("mechanic", name)} />
         </label>
         {mode === "detail" && ((job?.jobItems?.length ?? 0) > 0) && <span className="muted small-line wide">Items can have their own machinists (see the item list above). An item without its own follows these.</span>}
         <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
@@ -4397,10 +4407,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 assemble below, backed by /api/v1/jobs/sales-representatives
                 (see listSalesRepresentativeOptions's own comment). */}
             <label><span>Sales representative</span>
-              <select value={form.salesRepresentativeId} onChange={(e) => updateField("salesRepresentativeId", e.target.value)}>
-                <option value="">—</option>
-                {salesRepresentatives.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
+              <NamedPicker value={form.salesRepresentativeId} options={salesRepresentatives} emptyLabel="—" ariaLabel="Sales representative" onChange={(id) => updateField("salesRepresentativeId", id)} onCreate={(name) => createStaffOption("salesRep", name)} />
             </label>
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
             {/* 2026-10-06 — field service jobs: where the work is and how to get in.
