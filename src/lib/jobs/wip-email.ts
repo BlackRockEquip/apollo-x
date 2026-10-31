@@ -4,6 +4,8 @@ import { recordAudit } from "@/lib/audit/service";
 import { renderDocumentPdf, type DocBlock } from "@/lib/documents/pdf";
 import { sendEmail } from "@/lib/email";
 import { buildWipTableEmailMessage, getCompanyEmailTemplates } from "@/lib/email-templates";
+import { ccForSend } from "@/lib/email-template-fields";
+import { loadCompanyEmailVars } from "@/lib/email-template-vars";
 import { emailTableInput } from "@/lib/jobs/validation";
 import { getCompanyLetterhead } from "@/lib/master-data/company-settings-service";
 import { columnWeights, parseRecipients } from "@/lib/jobs/wip-email-helpers";
@@ -43,12 +45,14 @@ export async function emailJobsWipTable(ctx: RequestContext, raw: unknown) {
 
   const company = letterhead?.name ?? "";
   const templates = await getCompanyEmailTemplates(companyId);
-  const message = buildWipTableEmailMessage(templates, { title: input.title, company, date: dateLabel, count, filters }, input.note);
+  // The company phone and the sender's name come from the shared company fields; `company` and `date` keep the wording this email always used.
+  const companyVars = await loadCompanyEmailVars(companyId, ctx.displayName);
+  const message = buildWipTableEmailMessage(templates, { ...companyVars, title: input.title, company, date: dateLabel, count, filters }, input.note);
   const stamp = now.toISOString().slice(0, 10);
   const fileName = `${input.title} - ${stamp}.pdf`.replace(/[\\/:*?"<>|]+/g, "-");
 
   try {
-    await sendEmail(companyId, { to: recipients.join(", "), subject: message.subject, text: message.text, attachments: [{ filename: fileName, content: pdf, contentType: "application/pdf" }] });
+    await sendEmail(companyId, { to: recipients.join(", "), cc: ccForSend(message.cc, recipients.join(", ")), subject: message.subject, text: message.text, attachments: [{ filename: fileName, content: pdf, contentType: "application/pdf" }] });
   } catch (error) {
     if (error instanceof Error && error.message === "EMAIL_NOT_CONFIGURED") throw error;
     console.error("Jobs & WIP table email failed", error);

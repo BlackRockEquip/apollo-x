@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings / Templates - mockup</title>
+<style>
+:root{
+  --navy-950:#07111f;--navy-900:#0c1a2c;--navy-800:#152943;
+  --blue-700:#155fca;--blue-600:#2674df;--blue-100:#dbeafe;
+  --ink-900:#172033;--ink-700:#3f4b60;--ink-500:#6b7689;--ink-300:#c6cdd8;--ink-150:#e2e6ec;--ink-100:#edf0f4;
+  --surface:#fff;--canvas:#f5f7fa;--success:#087a55;--danger:#b42318;
+  --gold-500:#d6a83b;--gold-600:#b8871f;--gold-50:#fff9ea;--gold-100:#fdf1cf;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--ink-900);font-size:14px}
+button,input,textarea,select{font:inherit;color:inherit}
+.mock-flag{position:fixed;left:14px;bottom:14px;z-index:50;background:var(--navy-900);color:#fff;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-radius:999px;opacity:.85}
+
+/* shell */
+.shell{display:grid;grid-template-columns:216px 1fr;min-height:100vh}
+.side{background:var(--navy-950);color:#c9d3e3;padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+.side .brand{display:flex;align-items:center;gap:9px;color:#fff;font-weight:800;font-size:15px;padding:4px 8px 16px}
+.side .brand i{width:26px;height:26px;border-radius:7px;background:linear-gradient(#e0b74f,#c39224);display:block}
+.side a{display:block;padding:8px 10px;border-radius:7px;font-size:13px;font-weight:600;color:#aebbd0}
+.side a.on{background:var(--navy-800);color:#fff;box-shadow:inset 3px 0 0 var(--gold-500)}
+.main{min-width:0}
+.topbar{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;background:rgba(255,255,255,.92);border-bottom:1px solid var(--ink-150);position:sticky;top:0;z-index:20}
+.topbar b{font-size:13px;display:block}.topbar small{color:var(--ink-500);font-size:12px}
+.page{padding:22px 28px 110px;max-width:1440px}
+.eyebrow{margin:0 0 3px;color:var(--gold-600);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+h1{margin:0;font-size:24px;letter-spacing:-.01em}
+.sub{margin:5px 0 0;color:var(--ink-500);font-size:13px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 20px;padding-bottom:14px;border-bottom:1px solid var(--ink-150)}
+.tabs a{padding:7px 12px;border:1px solid var(--ink-150);border-radius:8px;background:#fff;font-size:12.5px;font-weight:650;color:var(--ink-700)}
+.tabs a.on{background:var(--navy-900);border-color:var(--navy-900);color:#fff}
+
+/* from bar */
+.from{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;border:1px solid var(--ink-150);border-radius:12px;padding:12px 16px;margin-bottom:16px;box-shadow:0 2px 7px rgba(15,23,42,.035)}
+.from .ico{width:34px;height:34px;border-radius:9px;background:var(--gold-50);color:var(--gold-600);display:grid;place-items:center;border:1px solid var(--gold-100)}
+.from .txt{flex:1;min-width:220px}
+.from .txt small{display:block;color:var(--ink-500);font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.from .txt strong{font-size:14px}
+.from .txt span{color:var(--ink-500);font-size:12.5px}
+.btn{display:inline-flex;align-items:center;gap:7px;min-height:36px;border:1px solid var(--ink-300);border-radius:8px;background:#fff;padding:7px 13px;font-size:13px;font-weight:650;cursor:pointer;color:var(--ink-900)}
+.btn:hover{background:var(--canvas)}
+.btn.gold{border-color:#a97917;background:linear-gradient(#e0b74f,#c39224);color:#17120a;font-weight:750}
+.btn.gold:hover{background:#e0b74f}
+.btn.sm{min-height:30px;padding:4px 10px;font-size:12px}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--ink-700)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+
+/* workspace */
+.work{display:grid;grid-template-columns:300px minmax(0,1fr) 380px;gap:16px;align-items:start}
+.card{background:#fff;border:1px solid var(--ink-150);border-radius:12px;box-shadow:0 2px 7px rgba(15,23,42,.035)}
+.card>header{padding:14px 18px;border-bottom:1px solid var(--ink-150);display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card>header h2{margin:0;font-size:14px}
+.card>header p{margin:3px 0 0;color:var(--ink-500);font-size:12px}
+
+/* list */
+.list{padding:8px;display:grid;gap:4px}
+.list-label{padding:10px 10px 4px;color:var(--ink-500);font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
+.tpl{display:grid;grid-template-columns:34px 1fr auto;gap:11px;align-items:center;text-align:left;border:1px solid transparent;border-radius:10px;background:transparent;padding:10px;cursor:pointer;width:100%}
+.tpl:hover{background:var(--canvas)}
+.tpl.on{background:var(--gold-50);border-color:var(--gold-100);box-shadow:inset 3px 0 0 var(--gold-500)}
+.tpl .ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--ink-100);color:var(--ink-700)}
+.tpl.on .ic{background:#fff;color:var(--gold-600);border:1px solid var(--gold-100)}
+.tpl b{display:block;font-size:13.5px}
+.tpl small{display:block;color:var(--ink-500);font-size:12px;margin-top:2px;line-height:1.3}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 8px;font-size:10.5px;font-weight:750;white-space:nowrap}
+.pill.def{background:var(--ink-100);color:var(--ink-700)}
+.pill.cus{background:#e7f6ef;color:var(--success)}
+.pill.dirty{background:var(--gold-100);color:#7a5200}
+.pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+
+/* editor */
+.editor{padding:18px;display:grid;gap:16px}
+.field label.lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;font-size:12px;font-weight:750;color:var(--ink-700)}
+.field label.lab span{font-weight:500;color:var(--ink-500);font-size:11.5px}
+.field input[type=text],.field textarea{width:100%;border:1px solid var(--ink-300);border-radius:8px;padding:10px 12px;background:#fff;line-height:1.5;outline:none;transition:box-shadow .12s,border-color .12s}
+.field textarea{min-height:230px;resize:vertical;font-size:13.5px}
+.field input:focus,.field textarea:focus{border-color:var(--gold-500);box-shadow:0 0 0 3px var(--gold-100)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chips .hint{font-size:11.5px;color:var(--ink-500);margin-right:2px}
+.chip{border:1px solid var(--ink-150);background:var(--canvas);border-radius:7px;padding:4px 8px;font:600 11.5px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-700);cursor:pointer}
+.chip:hover{border-color:var(--gold-500);background:var(--gold-50);color:#7a5200}
+.chip em{font:500 11px Inter,system-ui,sans-serif;color:var(--ink-500);font-style:normal;margin-left:5px}
+.ph{border:1px solid var(--ink-150);border-radius:10px;background:#fafbfc}
+.ph-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--ink-150)}
+.ph-head b{font-size:12.5px;display:block}.ph-head span{font-size:11.5px;color:var(--ink-500)}
+.ph-head input{width:210px;max-width:100%;border:1px solid var(--ink-300);border-radius:7px;padding:6px 10px;font-size:12.5px;background:#fff;outline:none}
+.ph-head input:focus{border-color:var(--gold-500);box-shadow:0 0 0 3px var(--gold-100)}
+.ph-groups{padding:6px 12px 12px;display:grid;gap:10px;max-height:250px;overflow-y:auto}
+.ph-group h4{margin:8px 0 6px;font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-500)}
+.ph-none{padding:10px 0 2px;color:var(--ink-500);font-size:12.5px}
+.chip mark{background:var(--gold-100);color:#7a5200;border-radius:2px}
+.tools{display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;border-top:1px solid var(--ink-100);padding-top:14px}
+.tools .left{display:flex;gap:8px;flex-wrap:wrap}
+.when{display:flex;gap:10px;align-items:flex-start;background:var(--canvas);border:1px solid var(--ink-150);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--ink-700);line-height:1.45}
+.when svg{flex:none;margin-top:2px;color:var(--gold-600)}
+
+/* preview */
+.preview{position:sticky;top:78px}
+.mail{margin:16px;border:1px solid var(--ink-150);border-radius:10px;overflow:hidden;background:#fff}
+.mail .bar{background:var(--canvas);border-bottom:1px solid var(--ink-150);padding:10px 14px;display:grid;gap:4px;font-size:12px}
+.mail .bar div{display:flex;gap:8px}.mail .bar b{width:48px;color:var(--ink-500);font-weight:650}
+.mail .bar .subj{display:block;font-weight:750;font-size:13px;color:var(--ink-900);padding-top:2px}
+.mail .bar mark{background:var(--gold-100);color:#7a5200;border-radius:3px;padding:0 2px}
+.mail .body{padding:14px 16px;font-size:13px;line-height:1.55;white-space:pre-wrap;min-height:200px}
+.mail .body mark{background:var(--gold-100);color:#7a5200;border-radius:3px;padding:0 2px}
+.att{margin:0 16px 14px;display:flex;align-items:center;gap:8px;border:1px solid var(--ink-150);border-radius:8px;padding:8px 10px;font-size:12px;background:#fafbfc}
+.att b{font-weight:700}
+.sample{padding:0 16px 16px}
+.sample summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--ink-700)}
+.sample dl{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:10px 0 0;font-size:12px}
+.sample dt{font:600 11.5px ui-monospace,Menlo,Consolas,monospace;color:var(--ink-500)}.sample dd{margin:0}
+
+/* save bar */
+.savebar{position:fixed;left:216px;right:0;bottom:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 28px;background:rgba(255,255,255,.96);border-top:1px solid var(--ink-150);backdrop-filter:blur(8px);transform:translateY(100%);transition:transform .18s}
+.savebar.show{transform:none}
+.savebar .msg{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650}
+.toast{position:fixed;left:50%;top:80px;transform:translate(-50%,-20px);background:var(--success);color:#fff;border-radius:10px;padding:10px 16px;font-weight:650;font-size:13px;box-shadow:0 8px 24px rgba(3,10,20,.25);opacity:0;pointer-events:none;transition:.2s;z-index:60}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:1250px){.work{grid-template-columns:280px minmax(0,1fr)}.preview{grid-column:1/-1;position:static}}
+@media (max-width:860px){.shell{grid-template-columns:1fr}.side{display:none}.work{grid-template-columns:1fr}.savebar{left:0}.page{padding:18px 16px 110px}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><i></i> Workshop Track</div>
+    <a>Dashboard</a><a>Jobs &amp; WIP</a><a>Customers</a><a>Parts &amp; Stock</a><a>Reports</a><a class="on">Settings</a>
+  </aside>
+  <div class="main">
+    <div class="topbar"><div><b>Hi-Gear Engineering (Pty) Ltd</b><small>Company Admin</small></div><small>Support</small></div>
+    <div class="page">
+      <header>
+        <p class="eyebrow">Settings</p>
+        <h1>Templates</h1>
+        <p class="sub">The wording of the emails Workshop Track sends for you. Pick a template, edit it, and watch the preview update.</p>
+      </header>
+      <nav class="tabs"><a>Company / Branding</a><a class="on">Templates</a><a>Dashboard</a><a>User Setup</a><a>Configuration</a><a>Import / Export</a><a>Support</a></nav>
+
+      <div class="from">
+        <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></div>
+        <div class="txt"><small>Emails are sent from</small><strong>Hi-Gear Engineering</strong> <span>&lt;workshop@hi-gear.co.za&gt;</span></div>
+        <a class="btn sm" href="#" onclick="return false">Change in Company / Branding</a>
+      </div>
+
+      <div class="work">
+        <!-- list -->
+        <section class="card">
+          <header><div><h2>Templates</h2><p>Click one to edit it</p></div></header>
+          <div class="list" id="list"></div>
+        </section>
+
+        <!-- editor -->
+        <section class="card" id="editorCard">
+          <header>
+            <div><h2 id="edTitle"></h2><p id="edDesc"></p></div>
+            <span class="pill def" id="edState"></span>
+          </header>
+          <div class="editor">
+            <div class="when" id="edWhen"></div>
+            <div class="field" id="subjectField">
+              <label class="lab" for="subject">Subject <span>shown in the recipient's inbox</span></label>
+              <input type="text" id="subject" autocomplete="off">
+            </div>
+            <div class="field">
+              <label class="lab" for="body"><span id="bodyLabel" style="color:inherit;font-weight:750;font-size:12px">Message</span><span id="bodyHint">leave empty to use the default wording</span></label>
+              <textarea id="body"></textarea>
+            </div>
+            <div class="ph" id="ph">
+              <div class="ph-head">
+                <div><b>Insert a field</b><span id="phSub">Click one to put it where your cursor is (subject or message).</span></div>
+                <input type="search" id="phFind" placeholder="Find a field, e.g. serial" autocomplete="off">
+              </div>
+              <div class="ph-groups" id="chips"></div>
+            </div>
+            <div class="tools">
+              <div class="left">
+                <button class="btn sm" id="useDefault" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg> Reset to default wording</button>
+                <button class="btn sm" id="sendTest" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg> Send me a test</button>
+              </div>
+              <span class="sub" style="margin:0" id="count"></span>
+            </div>
+          </div>
+        </section>
+
+        <!-- preview -->
+        <section class="card preview">
+          <header><div><h2>Preview</h2><p>With example job details</p></div><span class="pill cus"><i></i> Live</span></header>
+          <div class="mail">
+            <div class="bar">
+              <div><b>From</b><span>Hi-Gear Engineering</span></div>
+              <div><b>To</b><span id="pvTo"></span></div>
+              <div class="subj" id="pvSubject"></div>
+            </div>
+            <div class="body" id="pvBody"></div>
+          </div>
+          <div class="att" id="pvAtt" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span><b>Jobs-WIP-2026-10-30.pdf</b> · attached automatically</span></div>
+          <details class="sample">
+            <summary>Example values used in the preview</summary>
+            <dl id="sampleList"></dl>
+          </details>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="savebar" id="savebar">
+  <div class="msg"><span class="pill dirty"><i></i> Unsaved changes</span><span id="dirtyWhat" style="color:var(--ink-500);font-weight:500"></span></div>
+  <div style="display:flex;gap:8px"><button class="btn" id="discard" type="button">Discard</button><button class="btn gold" id="save" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg> Save templates</button></div>
+</div>
+<div class="toast" id="toast">Templates saved.</div>
+<div class="mock-flag">Mockup</div>
+
+<script>
+const ICON = {
+  rfq:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  follow:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  wip:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',
+  sig:'<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c3-6 5-9 7-9s1 6 3 6 3-4 4-4 2 3 4 3"/><path d="M3 21h18"/></svg>',
+  info:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>'
+};
+const SAMPLE = {
+  // supplier
+  supplierName:"Barloworld Equipment",supplierContact:"Ruan",supplierOrderNumber:"PO-1190",partsList:"  \u2022 4695312  Liner, cylinder  x6\n  \u2022 5P0597  Clamp, hose  x4\n  \u2022 2132410  Gasket  x1",partsCount:"3 parts",
+  // job
+  jobNumber:"BRE1146",jobType:"Standard repair",jobStatus:"Await outwork",customerName:"Black Rock Equipment",customerReference:"BR-4471",customerPo:"PO-90871",dateIn:"13 Oct 2026",etaDate:"06 Nov 2026",salesRep:"Pieter Naude",machinist:"Andre Botha",
+  // machine
+  machine:"CAT 3406E \u00b7 S/N 7SK01234",machineMake:"Caterpillar",machineModel:"3406E",machineSerial:"7SK01234",plantNumber:"PL-0231",machineHours:"12 480",
+  // component
+  component:"Cylinder head",componentModel:"CH-3406",componentSerial:"CH-88213",componentPartNumber:"4W0004",componentType:"Engine",
+  // commercial
+  quoteNumber:"Q-20418",salesOrderNumber:"SO-7731",purchaseOrderNumber:"PO-90871",invoiceNumber:"INV-5520",
+  // list email + company
+  title:"Jobs & WIP",count:"12 jobs",filters:"Status: Await outwork \u00b7 Type: Standard repair",company:"Hi-Gear Engineering (Pty) Ltd",date:"30 Oct 2026",senderName:"Mornay Rossouw",companyPhone:"011 555 0142"
+};
+const GROUPS = {
+  job:{label:"Job",keys:["jobNumber","jobType","jobStatus","customerName","customerReference","customerPo","dateIn","etaDate","salesRep","machinist"]},
+  machine:{label:"Machine",keys:["machine","machineMake","machineModel","machineSerial","plantNumber","machineHours"]},
+  component:{label:"Component",keys:["component","componentModel","componentSerial","componentPartNumber","componentType"]},
+  supplier:{label:"Supplier & parts",keys:["supplierName","supplierContact","supplierOrderNumber","partsList","partsCount"]},
+  commercial:{label:"Commercial",keys:["quoteNumber","salesOrderNumber","purchaseOrderNumber","invoiceNumber"]},
+  list:{label:"This list",keys:["title","count","filters"]},
+  company:{label:"You & your company",keys:["company","senderName","companyPhone","date"]}
+};
+const T = {
+ rfq:{name:"Quote request (RFQ)",short:"Asks a supplier to quote on parts",icon:"rfq",
+  desc:"Sent when a part is sent to a supplier for a quote, or resent with Retry.",when:"Goes to the supplier you pick on the Parts tab, with your signature added at the end.",
+  groups:["supplier","job","machine","component","commercial","company"],to:"orders@barloworld.co.za",
+  subj:"Request for quote — Job {{jobNumber}}",
+  body:"Hi {{supplierName}},\n\nCould you please quote on the following parts for job {{jobNumber}} ({{machine}})?\n\n{{partsList}}\n\nPlease reply with pricing and availability at your earliest convenience."},
+ follow:{name:"Parts follow-up",short:"Chases outstanding ordered parts",icon:"follow",
+  desc:"Sent when chasing a supplier for parts that are still outstanding.",when:"Sent from the Parts follow-up list, one email per supplier, with your signature added at the end.",
+  groups:["supplier","job","machine","component","commercial","company"],to:"orders@barloworld.co.za",
+  subj:"Follow-up — outstanding parts for Job {{jobNumber}}",
+  body:"Hi {{supplierName}},\n\nFollowing up on order {{supplierOrderNumber}} - the parts still outstanding for job {{jobNumber}}:\n\n{{partsList}}\n\nPlease could you let us know an updated ETA for these?"},
+ wip:{name:"Jobs & WIP table email",short:"Emails the table as a PDF",icon:"wip",att:true,
+  desc:"Sent by the Email button on the Jobs & WIP table.",when:"The table, as it is filtered on screen, is attached as a PDF. Your signature is added at the end.",
+  groups:["list","company"],to:"workshop-manager@hi-gear.co.za",
+  subj:"{{title}} - {{company}} - {{date}}",
+  body:"Hi,\n\nPlease find attached the {{title}} list ({{count}}).\n\n{{filters}}"},
+ sig:{name:"Signature",short:"Added to the end of every email",icon:"sig",sig:true,
+  desc:"Added after a blank line at the end of every email above.",when:"Applies to all templates, so you only write it once.",
+  groups:["company"],to:"",subj:"",body:"Thank you."}
+};
+const VARHINT={supplierName:"supplier",supplierContact:"contact first name",supplierOrderNumber:"our order # to them",partsList:"parts, one per line",partsCount:"e.g. 3 parts",
+  jobNumber:"job #",jobType:"e.g. Standard repair",jobStatus:"current status",customerName:"customer",customerReference:"their reference",customerPo:"their PO",dateIn:"date received",etaDate:"ETA",salesRep:"sales rep",machinist:"machinist",
+  machine:"make, model, serial",machineMake:"make",machineModel:"model",machineSerial:"serial",plantNumber:"plant #",machineHours:"hours",
+  component:"component",componentModel:"model",componentSerial:"serial",componentPartNumber:"part #",componentType:"type",
+  quoteNumber:"quote #",salesOrderNumber:"sales order #",purchaseOrderNumber:"PO #",invoiceNumber:"invoice #",
+  title:"list name",count:"e.g. 12 jobs",filters:"table filters",company:"company",senderName:"your name",companyPhone:"company phone",date:"today"};
+function varsOf(k){return T[k].groups.flatMap(g=>GROUPS[g].keys)}
+// state
+const DEF=k=>({subj:T[k].subj,body:T[k].body});
+// every template starts with its default wording written out in full (edit it freely); the signature is already customised here as an example
+const saved = {rfq:DEF("rfq"),follow:DEF("follow"),wip:DEF("wip"),sig:{subj:"",body:"Kind regards,\nWorkshop team\nHi-Gear Engineering \u00b7 011 555 0142"}};
+let cur = JSON.parse(JSON.stringify(saved));
+let sel = "rfq";
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+function isCustom(k){const d=DEF(k),v=cur[k];return (v.subj.trim()!==""&&v.subj!==d.subj)||(v.body.trim()!==""&&v.body!==d.body)}
+function isDirty(k){return cur[k].subj!==saved[k].subj||cur[k].body!==saved[k].body}
+function anyDirty(){return Object.keys(T).filter(isDirty)}
+function stateOf(k){return isDirty(k)?["dirty","Unsaved"]:isCustom(k)?["cus","Customised"]:["def","Default"]}
+
+function renderList(){
+  const g=(label,keys)=>`<div class="list-label">${label}</div>`+keys.map(k=>{const [c,t]=stateOf(k);return `<button class="tpl ${k===sel?"on":""}" data-k="${k}"><span class="ic">${ICON[T[k].icon]}</span><span><b>${T[k].name}</b><small>${T[k].short}</small></span><span class="pill ${c}"><i></i>${t}</span></button>`}).join("");
+  $("list").innerHTML=g("To suppliers",["rfq","follow"])+g("Internal",["wip"])+g("All emails",["sig"]);
+  document.querySelectorAll(".tpl").forEach(b=>b.onclick=()=>{sel=b.dataset.k;phQuery="";$("phFind").value="";renderAll()});
+}
+function fill(str){return str.replace(/\{\{(\w+)\}\}/g,(m,k)=>SAMPLE[k]!==undefined?`\u0001${SAMPLE[k]}\u0002`:m)}
+function pv(str){return esc(fill(str)).replace(/\u0001/g,"<mark>").replace(/\u0002/g,"</mark>")}
+function renderEditor(){
+  const t=T[sel],v=cur[sel];
+  $("edTitle").textContent=t.name;$("edDesc").textContent=t.desc;
+  const [c,l]=stateOf(sel);const s=$("edState");s.className="pill "+c;s.innerHTML="<i></i>"+l;
+  $("edWhen").innerHTML=ICON.info+"<span>"+t.when+"</span>";
+  $("subjectField").style.display=t.sig?"none":"";
+  $("bodyLabel").textContent=t.sig?"Signature":"Message";
+  $("bodyHint").textContent=t.sig?"plain text, keep it short":"starts with the default wording - edit it, or reset it below";
+  if($("subject").value!==v.subj)$("subject").value=v.subj;
+  $("subject").placeholder=t.subj;
+  if($("body").value!==v.body)$("body").value=v.body;
+  $("body").placeholder=t.body;
+  $("body").style.minHeight=t.sig?"110px":"230px";
+  renderChips();
+  $("count").textContent=(v.body||t.body).length+" characters";
+  $("sendTest").style.display=t.sig?"none":"";
+}
+let phQuery="";
+function hl(text){const q=phQuery.trim();if(!q)return esc(text);const i=text.toLowerCase().indexOf(q.toLowerCase());return i<0?esc(text):esc(text.slice(0,i))+"<mark>"+esc(text.slice(i,i+q.length))+"</mark>"+esc(text.slice(i+q.length))}
+function renderChips(){
+  const t=T[sel],q=phQuery.trim().toLowerCase();
+  $("ph").style.display=t.sig?"none":"";
+  if(t.sig)return;
+  const html=t.groups.map(g=>{
+    const keys=GROUPS[g].keys.filter(k=>!q||k.toLowerCase().includes(q)||VARHINT[k].toLowerCase().includes(q)||GROUPS[g].label.toLowerCase().includes(q));
+    if(!keys.length)return"";
+    return `<div class="ph-group"><h4>${GROUPS[g].label}</h4><div class="chips">${keys.map(k=>`<button type="button" class="chip" data-v="${k}">${hl("{{"+k+"}}")}<em>${hl(VARHINT[k])}</em></button>`).join("")}</div></div>`;
+  }).join("");
+  $("chips").innerHTML=html||`<div class="ph-none">No field matches "${esc(phQuery)}".</div>`;
+  document.querySelectorAll(".chip").forEach(b=>b.onclick=()=>insert(b.dataset.v));
+}
+function renderPreview(){
+  const t=T[sel],v=cur[sel];
+  const sig=cur.sig.body.trim()?cur.sig.body:T.sig.body;
+  if(t.sig){
+    $("pvTo").textContent="orders@barloworld.co.za";
+    $("pvSubject").textContent="Request for quote — Job BRE1146";
+    $("pvBody").innerHTML=pv("Hi {{supplierName}},\n\nCould you please quote on the following parts…")+"\n\n"+esc(v.body.trim()?v.body:t.body);
+  }else{
+    $("pvTo").textContent=t.to;
+    $("pvSubject").innerHTML=pv(v.subj.trim()?v.subj:t.subj);
+    $("pvBody").innerHTML=pv(v.body.trim()?v.body:t.body)+"\n\n"+esc(sig);
+  }
+  $("pvAtt").style.display=t.att?"flex":"none";
+  $("sampleList").innerHTML=Object.entries(SAMPLE).filter(([k])=>t.sig?["company","senderName","companyPhone","date"].includes(k):varsOf(sel).includes(k)).map(([k,v])=>`<dt>{{${k}}}</dt><dd>${esc(v).replace(/\n/g,"<br>")}</dd>`).join("")||"<dd>—</dd>";
+}
+function renderBar(){
+  const d=anyDirty();$("savebar").classList.toggle("show",d.length>0);
+  $("dirtyWhat").textContent=d.length?"· "+d.map(k=>T[k].name).join(", "):"";
+}
+function renderAll(){renderList();renderEditor();renderPreview();renderBar()}
+let lastField="body";
+$("subject").onfocus=()=>{lastField="subject"};$("body").onfocus=()=>{lastField="body"};
+function insert(name){
+  const key=T[sel].sig?"body":lastField,ta=$(key==="subject"?"subject":"body"),tok="{{"+name+"}}";
+  const prop=key==="subject"?"subj":"body";
+  const had=cur[sel][prop].trim()!=="";
+  // an empty field means "use the default", so inserting starts from the default wording
+  const text=had?ta.value:(key==="subject"?T[sel].subj:T[sel].body);
+  const a=had?ta.selectionStart:text.length,b=had?ta.selectionEnd:text.length;
+  const lead=a>0&&!/\s$/.test(text.slice(0,a))?" ":"";
+  const next=text.slice(0,a)+lead+tok+text.slice(b);
+  cur[sel][prop]=next;ta.value=next;renderAll();ta.focus();ta.setSelectionRange(a+lead.length+tok.length,a+lead.length+tok.length);
+}
+$("phFind").oninput=e=>{phQuery=e.target.value;renderChips()};
+$("subject").oninput=e=>{cur[sel].subj=e.target.value;renderList();renderPreview();renderBar();renderEditorState()};
+$("body").oninput=e=>{cur[sel].body=e.target.value;renderList();renderPreview();renderBar();renderEditorState();$("count").textContent=(e.target.value||T[sel].body).length+" characters"};
+function renderEditorState(){const [c,l]=stateOf(sel);const s=$("edState");s.className="pill "+c;s.innerHTML="<i></i>"+l}
+$("useDefault").onclick=()=>{const d=DEF(sel);cur[sel].subj=d.subj;cur[sel].body=d.body;$("subject").value=d.subj;$("body").value=d.body;renderAll()};
+$("sendTest").onclick=()=>{const t=$("toast");t.textContent="Test email sent to mornayrossouw@gmail.com (mockup)";t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200)};
+$("discard").onclick=()=>{cur=JSON.parse(JSON.stringify(saved));renderAll()};
+$("save").onclick=()=>{Object.keys(cur).forEach(k=>saved[k]=JSON.parse(JSON.stringify(cur[k])));renderAll();const t=$("toast");t.textContent="Templates saved.";t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2000)};
+renderAll();
+</script>
+</body>
+</html>

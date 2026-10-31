@@ -2620,3 +2620,94 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 
 /* pr29: on Jobs & WIP the row tick boxes (z-index 2) scrolled over the sticky header's Select all box (z-index 1). The header sits above them. */
 .jobs-panel .data-table-wrap .data-table thead tr:not(.filter-row) th { z-index: 6; }
+
+/* pr30, 2026-10-30, user request: Settings > Templates redesign (components/CompanyTemplatesForm.tsx): a list of templates, an editor with a
+   searchable "Insert a field" panel, and a live preview with example job details. */
+.tpl-page { display: grid; gap: 14px; padding: 20px; }
+.tpl-banner { border: 1px solid transparent; border-radius: 8px; }
+.tpl-from { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border: 1px solid var(--ink-150); border-radius: 12px; background: #fff; padding: 11px 15px; box-shadow: 0 2px 7px rgba(15,23,42,.035); }
+.tpl-from-icon { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #fdf1cf; border-radius: 9px; background: #fff9ea; color: var(--gold-600); }
+.tpl-from-text { flex: 1; min-width: 220px; font-size: 13px; }
+.tpl-from-text small { display: block; color: var(--ink-500); font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.tpl-from-text span { color: var(--ink-500); font-size: 12px; }
+.tpl-from .quiet-button { text-decoration: none; }
+
+.tpl-work { display: grid; grid-template-columns: 290px minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.tpl-card { border: 1px solid var(--ink-150); border-radius: 12px; background: #fff; box-shadow: 0 2px 7px rgba(15,23,42,.035); }
+.tpl-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--ink-150); padding: 13px 16px; }
+.tpl-card > header h2 { margin: 0; font-size: 14px; }
+.tpl-card > header p { margin: 3px 0 0; color: var(--ink-500); font-size: 11.5px; }
+
+.tpl-list { display: grid; gap: 4px; padding: 8px; }
+.tpl-list-label { padding: 10px 10px 4px; color: var(--ink-500); font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.tpl-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 11px; width: 100%; border: 1px solid transparent; border-radius: 10px; background: transparent; padding: 10px; text-align: left; cursor: pointer; color: var(--ink-900); }
+.tpl-item:hover { background: var(--canvas); }
+.tpl-item.on { border-color: #fdf1cf; background: #fff9ea; box-shadow: inset 3px 0 0 var(--gold-500); }
+.tpl-item-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: var(--ink-100); color: var(--ink-700); }
+.tpl-item.on .tpl-item-icon { border: 1px solid #fdf1cf; background: #fff; color: var(--gold-600); }
+.tpl-item b { display: block; font-size: 13px; }
+.tpl-item small { display: block; margin-top: 2px; color: var(--ink-500); font-size: 11.5px; line-height: 1.3; }
+
+.tpl-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 8px; font-size: 10px; font-weight: 750; white-space: nowrap; }
+.tpl-pill i { display: block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.tpl-pill.def { background: var(--ink-100); color: var(--ink-700); }
+.tpl-pill.cus { background: #e7f6ef; color: var(--success); }
+.tpl-pill.dirty { background: #fdf1cf; color: #7a5200; }
+
+.tpl-editor { display: grid; gap: 15px; padding: 16px; }
+.tpl-when { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--ink-150); border-radius: 10px; background: var(--canvas); padding: 10px 12px; color: var(--ink-700); font-size: 12px; line-height: 1.45; }
+.tpl-when svg, .tpl-warn svg { flex: none; margin-top: 1px; color: var(--gold-600); }
+.tpl-warn { display: flex; align-items: flex-start; gap: 10px; border: 1px solid #f1d58a; border-radius: 10px; background: #fff9ea; padding: 9px 12px; color: #7a5200; font-size: 12px; line-height: 1.45; }
+.tpl-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; color: var(--ink-700); font-size: 12px; font-weight: 750; }
+.tpl-label span { color: var(--ink-500); font-size: 11px; font-weight: 500; }
+.tpl-field input[type=text], .tpl-field textarea { width: 100%; border: 1px solid var(--ink-300); border-radius: 8px; background: #fff; padding: 9px 11px; font: inherit; font-size: 13px; line-height: 1.5; outline: none; color: var(--ink-900); }
+.tpl-field textarea { min-height: 230px; resize: vertical; }
+.tpl-field textarea.short { min-height: 110px; }
+.tpl-field input:focus, .tpl-field textarea:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fdf1cf; }
+
+.tpl-fields { border: 1px solid var(--ink-150); border-radius: 10px; background: #fafbfc; }
+.tpl-fields-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--ink-150); padding: 10px 12px; }
+.tpl-fields-head b { display: block; font-size: 12.5px; }
+.tpl-fields-head span { color: var(--ink-500); font-size: 11.5px; }
+.tpl-fields-head input { width: 210px; max-width: 100%; border: 1px solid var(--ink-300); border-radius: 7px; background: #fff; padding: 6px 10px; font: inherit; font-size: 12px; outline: none; }
+.tpl-fields-head input:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px #fdf1cf; }
+.tpl-fields-groups { display: grid; gap: 10px; max-height: 250px; overflow-y: auto; padding: 4px 12px 12px; }
+.tpl-group h4 { margin: 8px 0 6px; color: var(--ink-500); font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.tpl-fields-none { padding: 10px 0 2px; color: var(--ink-500); font-size: 12px; }
+.tpl-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tpl-chip { border: 1px solid var(--ink-150); border-radius: 7px; background: var(--canvas); padding: 4px 8px; color: var(--ink-700); font: 600 11.5px ui-monospace, Menlo, Consolas, monospace; cursor: pointer; }
+.tpl-chip:hover { border-color: var(--gold-500); background: #fff9ea; color: #7a5200; }
+.tpl-chip em { margin-left: 5px; color: var(--ink-500); font: 500 11px Inter, system-ui, sans-serif; font-style: normal; }
+.tpl-chip mark, .tpl-mail mark { border-radius: 3px; background: #fdf1cf; color: #7a5200; }
+.tpl-mail mark { padding: 0 2px; }
+
+.tpl-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--ink-100); padding-top: 13px; }
+.tpl-tools .quiet-button:disabled { cursor: not-allowed; opacity: .5; }
+.tpl-count { color: var(--ink-500); font-size: 11.5px; }
+
+.tpl-mail { margin: 14px; overflow: hidden; border: 1px solid var(--ink-150); border-radius: 10px; background: #fff; }
+.tpl-mail-bar { display: grid; gap: 4px; border-bottom: 1px solid var(--ink-150); background: var(--canvas); padding: 10px 14px; font-size: 12px; }
+.tpl-mail-bar > div { display: flex; gap: 8px; }
+.tpl-mail-bar b { width: 46px; flex: none; color: var(--ink-500); font-weight: 650; }
+.tpl-mail-bar .tpl-mail-subject { display: block; padding-top: 2px; color: var(--ink-900); font-size: 13px; font-weight: 750; }
+.tpl-mail-body { min-height: 200px; padding: 14px 16px; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tpl-mail-note { color: var(--ink-500); font-style: italic; }
+.tpl-attachment { display: flex; align-items: center; gap: 8px; margin: 0 14px 14px; border: 1px solid var(--ink-150); border-radius: 8px; background: #fafbfc; padding: 8px 10px; font-size: 12px; }
+.tpl-sample { padding: 0 16px 16px; }
+.tpl-sample summary { color: var(--ink-700); font-size: 12px; font-weight: 700; cursor: pointer; }
+.tpl-sample dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 12px; margin: 10px 0 0; font-size: 12px; }
+.tpl-sample dt { color: var(--ink-500); font: 600 11px ui-monospace, Menlo, Consolas, monospace; }
+.tpl-sample dd { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+
+.tpl-savebar { position: sticky; bottom: 0; z-index: 15; display: none; align-items: center; justify-content: space-between; gap: 14px; margin: 0 -20px -20px; border-top: 1px solid var(--ink-150); background: rgba(255,255,255,.96); padding: 12px 20px; backdrop-filter: blur(8px); }
+.tpl-savebar.show { display: flex; }
+.tpl-savebar-msg { display: flex; align-items: center; gap: 8px; color: var(--ink-500); font-size: 12.5px; }
+.tpl-savebar-actions { display: flex; gap: 8px; }
+
+@media (max-width: 1250px) { .tpl-work { grid-template-columns: 270px minmax(0, 1fr); } .tpl-preview { grid-column: 1 / -1; } }
+@media (max-width: 860px) { .tpl-work { grid-template-columns: 1fr; } }
+
+/* pr31: CC box on each email template. */
+.tpl-field input[aria-invalid="true"] { border-color: var(--danger); }
+.tpl-field-error { margin-top: 5px; color: var(--danger); font-size: 11.5px; font-weight: 600; }
+.tpl-mail-bar b { white-space: nowrap; }

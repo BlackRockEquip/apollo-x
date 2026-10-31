@@ -8,6 +8,8 @@ import { recordAudit } from "@/lib/audit/service";
 import { rfqRequestInput, rfqQuoteRecordInput, rfqQuoteLinesSaveInput, rfqPreferredInput, rfqNewSupplierRequestInput, generalRfqCreateInput, generalRfqUpdateInput } from "@/lib/rfq/validation";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
+import { ccForSend, partsCountText } from "@/lib/email-template-fields";
+import { loadCompanyEmailVars, loadJobEmailVars, supplierContactFirstName } from "@/lib/email-template-vars";
 import { guessQuoteFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
 import { normalized } from "@/lib/master-data/validation";
@@ -108,11 +110,21 @@ async function buildPartsSummary(companyId: string, jobId: string) {
 // this exact same text when nothing's been customized. See
 // src/lib/email-templates.ts for the shared subject/body/signature
 // merge logic (also used by the parts-follow-up email).
-async function buildRfqEmailBody(companyId: string, job: { jobNumber: string | null; draftNumber: string; machineMake: string | null; machineModel: string | null }, supplierName: string, partsSummary: string) {
-  const jobRef = job.jobNumber ?? job.draftNumber;
-  const machine = [job.machineMake, job.machineModel].filter(Boolean).join(" ") || "the unit";
+// 2026-10-30 - the template can now use the job, machine, component, commercial and sender fields too (Settings > Templates).
+// {{supplierOrderNumber}} is blank here: an order number only exists once the parts are ordered, so it is for the follow-up email.
+async function buildRfqEmailBody(companyId: string, job: { id: string; jobNumber: string | null; draftNumber: string }, supplier: { name: string; contacts?: Array<{ firstName?: string; isPrimary?: boolean }> }, partsSummary: string, senderName?: string | null) {
   const templates = await getCompanyEmailTemplates(companyId);
-  return buildRfqEmailMessage(templates, { supplierName, jobNumber: jobRef, machine, partsList: partsSummary });
+  const [jobVars, companyVars] = await Promise.all([loadJobEmailVars(companyId, job.id, job), loadCompanyEmailVars(companyId, senderName)]);
+  const partLines = partsSummary.startsWith("No specific parts listed") ? 0 : partsSummary.split("\n").filter((line) => line.trim()).length;
+  return buildRfqEmailMessage(templates, {
+    ...companyVars,
+    ...jobVars,
+    supplierName: supplier.name,
+    supplierContact: supplierContactFirstName((supplier.contacts ?? []).filter((c): c is { firstName: string; isPrimary?: boolean } => typeof c.firstName === "string")),
+    supplierOrderNumber: "",
+    partsList: partsSummary,
+    partsCount: partsCountText(partLines),
+  });
 }
 
 // Builds the RFQ email's recipient list: the supplier's mainEmail plus any
@@ -133,18 +145,18 @@ function rfqRecipients(supplier: { mainEmail: string | null; contacts?: Array<{ 
 // to persist. Never throws — a send failure is recorded as FAILED, not
 // surfaced as an API error, so one bad supplier address doesn't block the
 // rest of the request.
-async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequested: boolean, supplier: { name: string; mainEmail: string | null; contacts?: Array<{ email: string | null }> }, partsSummary: string, attachment?: { fileName: string; mimeType: string; data: Buffer } | null): Promise<{ status: "SENT" | "FAILED" | "SKIPPED"; lastSendError: string | null }> {
+async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequested: boolean, supplier: { name: string; mainEmail: string | null; contacts?: Array<{ email: string | null; firstName?: string; isPrimary?: boolean }> }, partsSummary: string, attachment?: { fileName: string; mimeType: string; data: Buffer } | null, senderName?: string | null): Promise<{ status: "SENT" | "FAILED" | "SKIPPED"; lastSendError: string | null }> {
   if (!sendEmailRequested) return { status: "SKIPPED", lastSendError: null };
   const to = rfqRecipients(supplier);
   if (!to) return { status: "SKIPPED", lastSendError: null };
   if (!(await isCompanyEmailConfigured(companyId))) return { status: "SKIPPED", lastSendError: null };
 
-  const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true, machineMake: true, machineModel: true } });
+  const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
   if (!job) return { status: "SKIPPED", lastSendError: null };
 
-  const { subject, text } = await buildRfqEmailBody(companyId, job, supplier.name, partsSummary);
+  const { subject, text, cc } = await buildRfqEmailBody(companyId, job, supplier, partsSummary, senderName);
   try {
-    await sendEmail(companyId, { to, subject, text, attachments: attachment ? [{ filename: attachment.fileName, content: attachment.data, contentType: attachment.mimeType }] : undefined });
+    await sendEmail(companyId, { to, cc: ccForSend(cc, to), subject, text, attachments: attachment ? [{ filename: attachment.fileName, content: attachment.data, contentType: attachment.mimeType }] : undefined });
     return { status: "SENT", lastSendError: null };
   } catch (err) {
     const message = err instanceof Error && err.message !== "EMAIL_NOT_CONFIGURED" ? err.message.slice(0, 500) : "Could not send the email — check the SMTP settings under Settings.";
@@ -223,14 +235,14 @@ export async function requestRfqFromSupplier(ctx: RequestContext, jobId: string,
 
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId } });
   if (!job) notFound();
-  const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true, mainEmail: true, contacts: { where: { active: true, canReceiveRfq: true }, select: { email: true } } } });
+  const supplier = await prisma.supplier.findFirst({ where: { id: input.supplierId, companyId, active: true }, select: { id: true, name: true, mainEmail: true, contacts: { where: { active: true, canReceiveRfq: true }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], select: { email: true, firstName: true, isPrimary: true } } } });
   if (!supplier) notFound();
 
   const attachment = decodeAttachmentFile(input);
   const partsSummary = await buildPartsSummary(companyId, jobId);
   const existing = await prisma.jobRfqRequest.findUnique({ where: { jobId_supplierId: { jobId, supplierId: input.supplierId } }, select: { status: true } });
 
-  const send = existing?.status === "QUOTED" ? { status: existing.status, lastSendError: null } : await attemptRfqSend(companyId, jobId, input.sendEmail, supplier, partsSummary, attachment);
+  const send = existing?.status === "QUOTED" ? { status: existing.status, lastSendError: null } : await attemptRfqSend(companyId, jobId, input.sendEmail, supplier, partsSummary, attachment, ctx.displayName);
 
   const rfq = await prisma.$transaction(async (tx) => {
     const record = await tx.jobRfqRequest.upsert({
@@ -270,7 +282,7 @@ export async function resendRfqRequest(ctx: RequestContext, jobId: string, rfqRe
   const rfq = await getRfqRequestScoped(companyId, jobId, rfqRequestId);
   if (rfq.status === "QUOTED") throw new Error("RFQ_ALREADY_QUOTED");
 
-  const supplier = await prisma.supplier.findFirst({ where: { id: rfq.supplierId, companyId }, select: { name: true, mainEmail: true, contacts: { where: { active: true, canReceiveRfq: true }, select: { email: true } } } });
+  const supplier = await prisma.supplier.findFirst({ where: { id: rfq.supplierId, companyId }, select: { name: true, mainEmail: true, contacts: { where: { active: true, canReceiveRfq: true }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], select: { email: true, firstName: true, isPrimary: true } } } });
   if (!supplier) notFound();
 
   // Resending re-sends whatever attachment is already on the request — it
@@ -285,7 +297,7 @@ export async function resendRfqRequest(ctx: RequestContext, jobId: string, rfqRe
       attachment = { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, data: Buffer.from(rfq.attachmentData) };
     }
   }
-  const send = await attemptRfqSend(companyId, jobId, true, supplier, rfq.partsSummary, attachment);
+  const send = await attemptRfqSend(companyId, jobId, true, supplier, rfq.partsSummary, attachment, ctx.displayName);
   if (send.status === "SKIPPED" && !rfqRecipients(supplier)) throw new Error("SUPPLIER_HAS_NO_EMAIL");
   if (send.status === "SKIPPED") throw new Error("EMAIL_NOT_CONFIGURED");
 

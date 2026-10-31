@@ -6,6 +6,8 @@ import { recordAudit } from "@/lib/audit/service";
 import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildFollowupEmailMessage, type CompanyEmailTemplates } from "@/lib/email-templates";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
+import { ccForSend, joinOrderNumbers, partsCountText } from "@/lib/email-template-fields";
+import { loadCompanyEmailVars, loadJobEmailVars, supplierContactFirstName } from "@/lib/email-template-vars";
 
 // Parts follow-up — new, added 2026-09-09 at the user's request ("ModApp's
 // separate 'Parts follow-up' chase-email feature wasn't built"). Scoped
@@ -38,10 +40,21 @@ async function addActivity(tx: Prisma.TransactionClient, ctx: RequestContext, jo
 // through the per-company template (Settings > Templates), falling back to
 // this exact same text when nothing's been customized. See
 // src/lib/email-templates.ts (also used by the RFQ-request email).
-function buildFollowupEmailBody(templates: CompanyEmailTemplates, job: { jobNumber: string | null; draftNumber: string }, supplierName: string, lines: { partNumber: string; description: string | null; outstandingQty: string }[]) {
-  const jobRef = job.jobNumber ?? job.draftNumber;
-  const partsList = lines.map((l) => `${l.partNumber} — ${l.description ?? "no description"} (outstanding qty ${l.outstandingQty})`).join("\n");
-  return buildFollowupEmailMessage(templates, { supplierName, jobNumber: jobRef, partsList });
+// 2026-10-30 - the template can now use the job, machine, component, commercial and sender fields, the supplier's contact name, our
+// order number(s) to them and how many parts are outstanding (Settings > Templates).
+type FollowupLine = { partNumber: string; description: string | null; outstandingQty: string; orderNumber: string | null };
+
+function buildFollowupEmailBody(templates: CompanyEmailTemplates, jobVars: Record<string, string>, companyVars: Record<string, string>, supplier: { supplierName: string; contactFirstName: string; lines: FollowupLine[] }) {
+  const partsList = supplier.lines.map((l) => `${l.partNumber} — ${l.description ?? "no description"} (outstanding qty ${l.outstandingQty})`).join("\n");
+  return buildFollowupEmailMessage(templates, {
+    ...companyVars,
+    ...jobVars,
+    supplierName: supplier.supplierName,
+    supplierContact: supplier.contactFirstName,
+    supplierOrderNumber: joinOrderNumbers(supplier.lines.map((l) => l.orderNumber)),
+    partsList,
+    partsCount: partsCountText(supplier.lines.length),
+  });
 }
 
 // Synthetic bucket id for part lines with no orderedFromSupplierId at all —
@@ -85,13 +98,13 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
 
   const lines = await prisma.jobPartLine.findMany({
     where: { companyId, jobId, status: { in: ["PENDING", "ON_ORDER", "PARTIALLY_RECEIVED", "IN_STOCK", "PICKED"] } },
-    include: { orderedFromSupplier: { select: { id: true, name: true, mainEmail: true } } },
+    include: { orderedFromSupplier: { select: { id: true, name: true, mainEmail: true, contacts: { where: { active: true }, orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], select: { firstName: true, isPrimary: true } } } } },
     orderBy: { createdAt: "asc" },
   });
 
   if (lines.length === 0) return { ok: true, sent: [], skipped: [], message: "No outstanding ordered parts on this job." };
 
-  const bySupplier = new Map<string, { supplierId: string; supplierName: string; mainEmail: string | null; lines: { partNumber: string; description: string | null; outstandingQty: string }[] }>();
+  const bySupplier = new Map<string, { supplierId: string; supplierName: string; mainEmail: string | null; contactFirstName: string; lines: FollowupLine[] }>();
   for (const line of lines) {
     // 2026-10-05 — a line that is partly from stock (IN_STOCK / PICKED) is
     // only chased when it also has something ordered from a supplier.
@@ -113,8 +126,8 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
     if (!outstandingQty.greaterThan(0)) continue;
     const supplierId = supplier?.id ?? UNKNOWN_SUPPLIER_ID;
     const supplierName = supplier?.name ?? "Unknown";
-    const entry = bySupplier.get(supplierId) ?? { supplierId, supplierName, mainEmail: supplier?.mainEmail ?? null, lines: [] };
-    entry.lines.push({ partNumber: line.partNumber, description: line.description, outstandingQty: outstandingQty.toString() });
+    const entry = bySupplier.get(supplierId) ?? { supplierId, supplierName, mainEmail: supplier?.mainEmail ?? null, contactFirstName: supplierContactFirstName(supplier?.contacts), lines: [] };
+    entry.lines.push({ partNumber: line.partNumber, description: line.description, outstandingQty: outstandingQty.toString(), orderNumber: line.orderNumber });
     bySupplier.set(supplierId, entry);
   }
 
@@ -127,6 +140,7 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
     throw new Error("EMAIL_NOT_CONFIGURED");
   }
   const templates = await getCompanyEmailTemplates(companyId);
+  const [jobVars, companyVars] = await Promise.all([loadJobEmailVars(companyId, jobId, job), loadCompanyEmailVars(companyId, ctx.displayName)]);
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 
@@ -144,9 +158,9 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: "This supplier has no email address on file." });
       continue;
     }
-    const { subject, text } = buildFollowupEmailBody(templates, job, entry.supplierName, entry.lines);
+    const { subject, text, cc } = buildFollowupEmailBody(templates, jobVars, companyVars, entry);
     try {
-      await sendEmail(companyId, { to: entry.mainEmail, subject, text });
+      await sendEmail(companyId, { to: entry.mainEmail, cc: ccForSend(cc, entry.mainEmail), subject, text });
       sent.push({ supplierId: entry.supplierId, supplierName: entry.supplierName });
     } catch (err) {
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: err instanceof Error ? err.message.slice(0, 300) : "Could not send the email." });

@@ -10,6 +10,7 @@ import { SmtpTestError } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/audit/service";
 import { decryptSecret, encryptSecret } from "@/lib/storage/secret-crypto";
 import { normalizeWebsiteUrl } from "@/lib/master-data/website-url";
+import { ccProblem, storedCc, storedWording } from "@/lib/email-template-fields";
 const text = z.string().trim().max(500).optional().nullable();
 const color = z.string().trim().regex(/^#?[0-9a-fA-F]{6}$/).optional().nullable().or(z.literal(""));
 // SMTP fields — added 2026-09-09 so a Company Administrator can enter their
@@ -53,6 +54,7 @@ const smtpTestInput = z.object({ smtpHost: z.string().trim().min(1, "SMTP host i
 // means "clear it and fall back to the built-in default text" (see
 // DEFAULT_RFQ_SUBJECT etc. in email-templates.ts) — there's no write-only
 // "leave unchanged" case like smtpPassword, since none of these are secrets.
+const ccInput = z.string().trim().max(1000).optional().nullable().refine((value) => !ccProblem(value), { message: "Enter valid email addresses to copy, separated by commas." });
 const emailTemplatesInput = z.object({
   rfqEmailSubject: text,
   rfqEmailBody: z.string().trim().max(5000).optional().nullable(),
@@ -61,6 +63,10 @@ const emailTemplatesInput = z.object({
   wipEmailSubject: text,
   wipEmailBody: z.string().trim().max(5000).optional().nullable(),
   emailSignature: z.string().trim().max(2000).optional().nullable(),
+  // 2026-10-31: addresses copied on every email of that template.
+  rfqEmailCc: ccInput,
+  followupEmailCc: ccInput,
+  wipEmailCc: ccInput,
 });
 function normalizeColor(value?: string | null) { const trimmed = value?.trim(); if (!trimmed) return null; return trimmed.startsWith("#") ? trimmed.toUpperCase() : `#${trimmed.toUpperCase()}`; }
 function auth(ctx: RequestContext, intent: "READ" | "WRITE") { requireModule(ctx, "DASHBOARD", intent); requireTenantPermission(ctx, intent === "READ" ? "COMPANY_SETTINGS_VIEW" : "COMPANY_SETTINGS_EDIT"); return ctx.companyId!; }
@@ -328,15 +334,20 @@ export async function testCompanySmtpConnection(ctx: RequestContext, raw: unknow
 export async function updateCompanyEmailTemplates(ctx: RequestContext, raw: unknown) {
   const companyId = auth(ctx, "WRITE");
   const input = emailTemplatesInput.parse(raw);
-  const before = await prisma.companySettings.findUnique({ where: { companyId }, select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, wipEmailSubject: true, wipEmailBody: true, emailSignature: true } });
+  const before = await prisma.companySettings.findUnique({ where: { companyId }, select: { rfqEmailSubject: true, rfqEmailBody: true, followupEmailSubject: true, followupEmailBody: true, wipEmailSubject: true, wipEmailBody: true, emailSignature: true, rfqEmailCc: true, followupEmailCc: true, wipEmailCc: true } });
+  // 2026-10-30: wording that is exactly the default (or blank) is saved as "not customised", so a later improvement to a default
+  // wording still reaches a company that never changed it (the Templates page shows these as "Default").
   const data = {
-    rfqEmailSubject: input.rfqEmailSubject || null,
-    rfqEmailBody: input.rfqEmailBody || null,
-    followupEmailSubject: input.followupEmailSubject || null,
-    followupEmailBody: input.followupEmailBody || null,
-    wipEmailSubject: input.wipEmailSubject || null,
-    wipEmailBody: input.wipEmailBody || null,
-    emailSignature: input.emailSignature || null,
+    rfqEmailSubject: storedWording("rfq", "subject", input.rfqEmailSubject ?? ""),
+    rfqEmailBody: storedWording("rfq", "body", input.rfqEmailBody ?? ""),
+    followupEmailSubject: storedWording("followup", "subject", input.followupEmailSubject ?? ""),
+    followupEmailBody: storedWording("followup", "body", input.followupEmailBody ?? ""),
+    wipEmailSubject: storedWording("wip", "subject", input.wipEmailSubject ?? ""),
+    wipEmailBody: storedWording("wip", "body", input.wipEmailBody ?? ""),
+    emailSignature: storedWording("signature", "body", input.emailSignature ?? ""),
+    rfqEmailCc: storedCc(input.rfqEmailCc),
+    followupEmailCc: storedCc(input.followupEmailCc),
+    wipEmailCc: storedCc(input.wipEmailCc),
   };
   const updated = await prisma.companySettings.update({ where: { companyId }, data });
   await recordAudit(ctx, { source: "API", module: "SETTINGS", entityType: "CompanySettings", entityId: updated.id, action: "UPDATE", beforeData: (before ?? {}) as Prisma.InputJsonValue, afterData: data as Prisma.InputJsonValue });

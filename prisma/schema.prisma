@@ -936,6 +936,11 @@ model CompanySettings {
   // 2026-10-20: template for the email sent by the Email button on the Jobs & WIP table (null = default text in email-templates.ts).
   wipEmailSubject        String?
   wipEmailBody           String?
+  // 2026-10-31, user request: "add fields on the template for emails to be cc'd". Comma-separated addresses copied on every email sent
+  // from that template (null = nobody is copied).
+  rfqEmailCc             String?
+  followupEmailCc        String?
+  wipEmailCc             String?
   // 2026-10-21: platform admins can switch off the "Powered by Flo X Integrations" line printed in the footer of documents (Platform > Companies > company).
   hidePoweredBy          Boolean @default(false)
   // 2026-10-23: platform admins can switch off the advertising block in this company's sidebar (Platform > Companies > company).

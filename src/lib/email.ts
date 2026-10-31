@@ -50,7 +50,7 @@ export async function isCompanyEmailConfigured(companyId: string): Promise<boole
 // Throws EMAIL_NOT_CONFIGURED (caught by callers and turned into a
 // FAILED/lastSendError on the relevant record) rather than a raw
 // nodemailer error when nothing's been entered under Settings yet.
-export async function sendEmail(companyId: string, input: { to: string; subject: string; text: string; html?: string; attachments?: OutboundAttachment[] }): Promise<void> {
+export async function sendEmail(companyId: string, input: { to: string; cc?: string; subject: string; text: string; html?: string; attachments?: OutboundAttachment[] }): Promise<void> {
   const settings = await getSmtpSettings(companyId);
   if (!isConfigured(settings)) throw new Error("EMAIL_NOT_CONFIGURED");
 
@@ -64,6 +64,7 @@ export async function sendEmail(companyId: string, input: { to: string; subject:
   await transporter.sendMail({
     from: settings.smtpFromName ? { name: settings.smtpFromName, address: settings.smtpFromAddress } : settings.smtpFromAddress,
     to: input.to,
+    cc: input.cc || undefined,
     subject: input.subject,
     text: input.text,
     html: input.html,
