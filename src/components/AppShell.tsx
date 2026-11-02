@@ -161,6 +161,10 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, demo =
   const footerGroups = groups.filter((group) => group.footer && group.items.length > 0);
   const shellStyle = useMemo(() => ({ ["--tenant-theme" as string]: context.themeColor || undefined, ["--tenant-accent" as string]: context.accentColor || undefined, ["--tenant-secondary" as string]: context.secondaryColor || undefined, ["--tenant-canvas" as string]: context.backgroundColor || undefined }), [context.themeColor, context.accentColor, context.secondaryColor, context.backgroundColor]);
   const logoSrc = initialLogoSrc ?? (context.hasCompanyLogo && context.companyId ? `/api/v1/company-settings/logo?company=${encodeURIComponent(context.companyId)}&v=${encodeURIComponent(`${context.themeColor || ''}:${context.accentColor || ''}`)}` : null);
+  // 2026-11-02, user request: while the Settings menu is open the sidebar ad is hidden (the long settings list needs the room);
+  // it comes back when Settings is closed. Settings starts open on a settings page and a click on it opens / closes it.
+  const settingsGroup = footerGroups.find((group) => group.key === "settings");
+  const settingsOpen = !!settingsGroup && (groupOpen[settingsGroup.key] ?? bestNavMatchHref(settingsGroup.items, pathname) !== null);
   function toggleGroup(key: string, isExpanded: boolean) { setGroupChoice((current) => ({ path: pathname, open: { ...(current.path === pathname ? current.open : {}), [key]: !isExpanded } })); }
   return (
     <div className="app-frame tenant-themed-shell" style={shellStyle}>
@@ -180,8 +184,9 @@ export function AppShell({ context, companyName, logoSrc: initialLogoSrc, demo =
         <nav>{topGroups.map((group) => { const bestHref = bestNavMatchHref(group.items, pathname); const isActiveGroup = bestHref !== null; const isExpanded = groupOpen[group.key] ?? isActiveGroup; const GroupIcon = group.icon; return <section key={group.key} className={isActiveGroup ? "nav-group nav-group-active" : "nav-group"}><button type="button" className="nav-group-toggle" onClick={() => toggleGroup(group.key, isExpanded)} aria-expanded={isExpanded} aria-controls={`group-${group.key}`}><span className="nav-group-label"><GroupIcon size={16} /> <span>{group.label}</span></span><ChevronDown size={15} className={isExpanded ? "chevron chevron-open" : "chevron"} /></button>{isExpanded && <div id={`group-${group.key}`} className="nav-group-items">{group.items.map((item) => { const readOnly = settingsNavModuleReadOnly(context.moduleAccess, item.module); const ItemIcon = item.icon; const active = item.href === bestHref; return <Link key={item.key} href={item.href} className={active ? "nav-subitem active" : "nav-subitem"}><ItemIcon size={16} /><span>{item.label}</span>{readOnly && <em>Read-only</em>}</Link>; })}</div>}</section>; })}</nav>
         <div className="sidebar-footer">
           {/* 2026-10-23, user request: advertising block above the Reports pane (supplier ads, Flo X card when none is running;
-              hidden in support sessions and for companies with ads switched off - see SidebarAd.tsx). */}
-          {!context.supportAccessId && <SidebarAd />}
+              hidden in support sessions and for companies with ads switched off - see SidebarAd.tsx; 2026-11-02: also hidden
+              while the Settings menu is open). */}
+          {!context.supportAccessId && !settingsOpen && <SidebarAd />}
           {/* 2026-10-02 — Reports, above Settings (see REPORTS_ITEM's own
               comment above) — same plain nav-item treatment as the
               Dashboard item at the top of the sidebar, not a nav-group. */}
