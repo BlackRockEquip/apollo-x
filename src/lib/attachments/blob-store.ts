@@ -35,7 +35,7 @@ export async function tryGetBackend(companyId: string): Promise<StorageBackend |
   }
 }
 
-function keyPrefix(backend: StorageBackend, companyId: string) {
+export function keyPrefix(backend: StorageBackend, companyId: string) {
   return backend.providerName === "LOCAL_FOLDER" ? "" : `${companyId}/`;
 }
 

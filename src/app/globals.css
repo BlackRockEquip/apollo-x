@@ -2711,3 +2711,44 @@ tr[data-expanded="1"] .jobs-chev { color: var(--blue-700); }
 .tpl-field input[aria-invalid="true"] { border-color: var(--danger); }
 .tpl-field-error { margin-top: 5px; color: var(--danger); font-size: 11.5px; font-weight: 600; }
 .tpl-mail-bar b { white-space: nowrap; }
+
+/* pr32, 2026-11-02, user request: "View folder" - the job's folder from the job page, and Settings > Files (components/StorageFolderBrowser.tsx). */
+.sfv { display: grid; gap: 12px; }
+.sfv-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sfv-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; min-width: 0; }
+.sfv-crumb { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-500); }
+.sfv-crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; padding: 5px 8px; color: var(--ink-700); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.sfv-crumbs button:hover { background: var(--canvas); }
+.sfv-crumbs button.on { background: #fff9ea; color: #7a5200; }
+.sfv-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sfv-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: var(--ink-100); padding: 4px 9px; color: var(--ink-700); font-size: 11px; font-weight: 700; }
+.sfv-everything { display: flex; align-items: flex-start; gap: 9px; border: 1px solid #f1d58a; border-radius: 9px; background: #fff9ea; padding: 9px 12px; color: #7a5200; font-size: 12px; line-height: 1.45; cursor: pointer; }
+.sfv-everything small { color: #8a6a1f; font-size: 11.5px; }
+.sfv-everything input { margin-top: 3px; }
+.sfv-table-wrap { overflow: auto; border: 1px solid var(--ink-150); border-radius: 10px; background: #fff; }
+.sfv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.sfv-table th { position: sticky; top: 0; border-bottom: 1px solid var(--ink-150); background: #fafbfc; padding: 9px 12px; color: var(--ink-500); font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+.sfv-table td { border-bottom: 1px solid var(--ink-100); padding: 9px 12px; vertical-align: top; }
+.sfv-table tr:last-child td { border-bottom: 0; }
+.sfv-table .num { text-align: right; white-space: nowrap; }
+.sfv-table .sfv-act { text-align: right; white-space: nowrap; }
+.sfv-table .muted { color: var(--ink-500); }
+.sfv-folder-row { cursor: pointer; }
+.sfv-folder-row:hover td { background: var(--canvas); }
+.sfv-name { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 0; color: var(--ink-900); font: inherit; text-align: left; }
+button.sfv-name { cursor: pointer; }
+.sfv-name svg { flex: none; color: var(--gold-600); }
+.sfv-file-name { overflow-wrap: anywhere; font-weight: 600; }
+.sfv-note { display: block; margin: 2px 0 0 24px; color: var(--ink-500); font-size: 11.5px; }
+.sfv-tag { display: inline-block; margin: 3px 0 0 24px; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 750; }
+.sfv-tag.warn { background: #fdf1cf; color: #7a5200; }
+.sfv-tag.bad { background: #fde7e4; color: var(--danger); }
+.sfv-empty, .sfv-empty-cell { display: flex; align-items: center; gap: 8px; color: var(--ink-500); font-size: 12.5px; }
+.sfv-empty { border: 1px dashed var(--ink-300); border-radius: 10px; background: #fafbfc; padding: 16px; }
+.sfv-empty-cell { padding: 22px 14px !important; justify-content: center; }
+.sfv-backdrop { display: grid; place-items: center; padding: 20px; }
+.sfv-dialog { display: flex; flex-direction: column; width: min(980px, 96vw); max-height: min(720px, 92vh); overflow: hidden; border-radius: 12px; background: #fff; box-shadow: 0 24px 60px rgba(3,10,20,.35); }
+.sfv-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ink-150); padding: 16px 20px; }
+.sfv-dialog > header h2 { margin: 0; font-size: 19px; }
+.sfv-dialog > header button { border: 0; background: transparent; color: var(--ink-500); cursor: pointer; }
+.sfv-dialog-body { overflow: auto; padding: 16px 20px 20px; }

@@ -6,6 +6,9 @@
 // credentials differ per company (see src/lib/storage/index.ts).
 // local-disk-backend.ts is a non-production fallback only, so `next dev`
 // works with zero bucket setup.
+/** One file found in the storage when it is listed (see StorageBackend.listObjects). */
+export type StoredObjectInfo = { key: string; sizeBytes: number; modifiedAt: Date | null };
+
 export interface StorageBackend {
   /** Stored on the Attachment row's `provider` column — "R2" | "B2" | "S3_COMPATIBLE" | "LOCAL_FOLDER" | "LOCAL_DEV". */
   readonly providerName: string;
@@ -31,6 +34,11 @@ export interface StorageBackend {
   getObject(objectKey: string): Promise<Buffer>;
   /** Creates the folder for a key prefix where the backend has real folders (local disk/folder); a no-op for bucket storage, where folders are just key prefixes. */
   ensureFolder?(folder: string): Promise<void>;
+  /**
+   * Every file whose key starts with the given folder prefix (all the way down), newest information the storage itself has - what is
+   * physically there, not what the database knows about. Capped (about 5000 files). Used by the "View folder" screens.
+   */
+  listObjects?(folderPrefix: string, limit?: number): Promise<StoredObjectInfo[]>;
 }
 
 export type S3CompatibleConfig = {

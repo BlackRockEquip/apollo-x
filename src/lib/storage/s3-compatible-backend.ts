@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { S3CompatibleConfig, StorageBackend } from "@/lib/storage/types";
 
@@ -51,6 +51,20 @@ export function createS3CompatibleBackend(config: S3CompatibleConfig): StorageBa
       const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: objectKey }));
       if (!result.Body) throw new Error("STORAGE_OBJECT_EMPTY");
       return Buffer.from(await result.Body.transformToByteArray());
+    },
+    async listObjects(folderPrefix, limit = 5000) {
+      const prefix = folderPrefix.split("/").filter(Boolean).join("/");
+      const found: Array<{ key: string; sizeBytes: number; modifiedAt: Date | null }> = [];
+      let token: string | undefined;
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket: config.bucket, Prefix: prefix ? `${prefix}/` : undefined, ContinuationToken: token, MaxKeys: Math.min(1000, limit) }));
+        for (const item of page.Contents ?? []) {
+          // A "folder marker" object (key ending in /) is not a file.
+          if (item.Key && !item.Key.endsWith("/")) found.push({ key: item.Key, sizeBytes: item.Size ?? 0, modifiedAt: item.LastModified ?? null });
+        }
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token && found.length < limit);
+      return found.slice(0, limit);
     },
   };
 }

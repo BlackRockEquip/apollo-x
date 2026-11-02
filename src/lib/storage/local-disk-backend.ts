@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import type { StorageBackend } from "@/lib/storage/types";
+import { walkFolder } from "@/lib/storage/walk-folder";
 
 // Dev-only fallback so `next dev` works with zero bucket setup when no
 // per-company or platform-default STORAGE_* configuration exists — never
@@ -43,6 +44,9 @@ export function createLocalDiskBackend(): StorageBackend {
     },
     async ensureFolder(folder) {
       await mkdir(resolvePath(folder), { recursive: true });
+    },
+    async listObjects(folderPrefix, limit) {
+      return walkFolder(ROOT, folderPrefix, limit);
     },
   };
 }

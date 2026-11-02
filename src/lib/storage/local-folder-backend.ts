@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import type { LocalFolderConfig, StorageBackend } from "@/lib/storage/types";
 import { signStorageLink } from "@/lib/storage/signing";
+import { walkFolder } from "@/lib/storage/walk-folder";
 
 // "Local folder" storage option — files are written under an admin-chosen
 // folder on the server Apollo X runs on (local disk, mounted network share,
@@ -53,6 +54,9 @@ export function createLocalFolderBackend(config: LocalFolderConfig): StorageBack
     },
     async ensureFolder(folder) {
       await mkdir(resolveLocalFolderObjectPath(config.rootPath, folder), { recursive: true });
+    },
+    async listObjects(folderPrefix, limit) {
+      return walkFolder(normalize(config.rootPath.trim()), folderPrefix, limit);
     },
   };
 }

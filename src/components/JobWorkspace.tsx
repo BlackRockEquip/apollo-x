@@ -34,6 +34,8 @@ import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compa
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
 import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
 import { followupErrorOutcome, followupOutcome, type FollowupOutcome } from "@/lib/jobs/followup-outcome";
+import { jobHref } from "@/lib/jobs/job-href";
+import { ViewFolderButton } from "@/components/StorageFolderBrowser";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -1438,7 +1440,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
       // The server creates the job numbered and at the first stage of its flow.
-      router.push(`/jobs/${b.id}`);
+      router.push(jobHref(b));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save job.");
     } finally {
@@ -5179,7 +5181,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const attachmentsSection = job && tenantRole !== "USER" ? (
             <section className="detail-panel">
               <header>
-                <div><h2>Attachments</h2><p>Documents and other files kept with this job — stored with the job record itself (an object-storage move is planned; see the storage-architecture decision doc).</p></div>
+                <div><h2>Attachments</h2><p>Documents and other files kept with this job.</p></div>
+                <ViewFolderButton jobId={job.id} jobLabel={job.jobNumber || job.draftNumber} />
               </header>
               <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.attachments.filter((a) => !a.isPhoto && matchesItemFilter(a.itemId, f)).length} />
               <div className="drawer-fields">

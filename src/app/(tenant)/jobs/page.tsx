@@ -16,6 +16,7 @@ import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
 import { itemTag, machinistSummary } from "@/lib/jobs/item-model";
+import { jobHref } from "@/lib/jobs/job-href";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
 import { requireTenantPermission } from "@/lib/auth/guards";
@@ -106,7 +107,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
       return <>
         {/* 2026-10-29, user request: a multi-item job opens into its items, like the list mockup (JobsWipItemsToggle flips the row). */}
         {job.jobItems.length > 1 && <button type="button" className="jobs-chev" aria-expanded="false" aria-label={`Show the ${job.jobItems.length} items of job ${job.jobNumber || job.draftNumber}`} title="Show items"><ChevronRight size={15} strokeWidth={2.5} aria-hidden="true" /></button>}
-        {viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={`/jobs/${job.id}`} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>}
+        {viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={jobHref(job)} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>}
         {job.jobItems.length > 1 && <span className="ji-chip">{job.jobItems.length} items</span>}
       </>;
     case "customerName":
@@ -383,7 +384,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                     <tr className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName, ctx.industryBuild, searchableColumns)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
                       {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
                       {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
-                      {!wipViewOnly && <td className="actions jobs-no-print"><Link href={`/jobs/${job.id}`} className="table-action">Open</Link></td>}
+                      {!wipViewOnly && <td className="actions jobs-no-print"><Link href={jobHref(job)} className="table-action">Open</Link></td>}
                     </tr>
                     {/* The items of a multi-item job: one cell across the table (so the column filters, print and email, which read
                         ordinary rows, skip it), shown only while the job row above is expanded. */}

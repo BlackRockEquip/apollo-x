@@ -85,5 +85,8 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   // so existing bookmarks/links don't break.
   { key: "configuration", label: "Configuration", href: "/configuration", module: ["CUSTOMERS", "QUOTES"], permission: ["TAX_CODES_VIEW", "COMMERCIAL_TERMS_VIEW", "NUMBERING_VIEW", "COMPANY_SETTINGS_VIEW"] },
   { key: "import-export", label: "Import / Export", href: "/settings/import-export", module: "DASHBOARD", permission: "SETTINGS_MANAGE" },
+  // 2026-11-02, user request: "is there a way to view what is on the server folders? like a button that says view folder?" - the whole
+  // storage location (a job's own folder opens from the job page).
+  { key: "files", label: "Files", href: "/settings/files", module: "DASHBOARD", permission: "COMPANY_SETTINGS_VIEW" },
   { key: "support", label: "Support", href: "/support", module: "NOTIFICATIONS", permission: "DASHBOARD_VIEW" },
 ];
