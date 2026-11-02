@@ -4270,6 +4270,18 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     mechanicEtaDate: (job.mechanicEtaDate as string | null) ?? null,
   } : null;
   const selectedItem = jobItemRows.find((item) => item.id === activeItemFilter) ?? null;
+  // Workshop build (no item list): the job's own fields make the one tag for the whole job.
+  const wholeJobTagItem = job && mode === "detail" && !itemsListOn ? {
+    id: "job-tag",
+    sequence: 1,
+    component: (job.component as string | null) ?? null,
+    componentModel: (job.componentModel as string | null) ?? null,
+    componentSerial: (job.componentSerial as string | null) ?? null,
+    componentPartNumber: (job.componentPartNumber as string | null) ?? null,
+    machineMake: (job.machineMake as string | null) ?? null,
+    machineModel: (job.machineModel as string | null) ?? null,
+    plantNumber: (job.plantNumber as string | null) ?? null,
+  } : null;
   // The tag (BRE1122-2) of the item a record is for; blank for a whole-job record or a job without items.
   const itemTagOf = (itemId: unknown) => {
     const row = itemId ? jobItemRows.find((entry) => entry.id === itemId) : undefined;
@@ -5372,7 +5384,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       : { key: "job-card", label: "Job card", onSelect: () => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec) },
     { key: "job-history", label: "Job history", onSelect: () => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec) },
     { key: "delivery-note", label: "Delivery note", onSelect: openJobDeliveryNoteDialog },
-    ...(itemsListOn ? [{ key: "job-tags", label: "Job tags", onSelect: () => setTagsOpen(true) }] : []),
+    { key: "job-tags", label: "Job tags", onSelect: () => setTagsOpen(true) },
   ] : [];
   // Every item here changes job status, so they are hidden together with the stepper for a Mechanic / view-only user
   // (the server rejects them too — requireNotMechanicRestricted in jobs/service.ts).
@@ -6459,7 +6471,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               jobNumber={job.jobNumber ?? job.draftNumber}
               customerName={job.customer?.name}
               received={form.dateReceived || null}
-              items={jobItemRows.length > 0 ? jobItemRows : virtualItem ? [virtualItem] : []}
+              items={wholeJobTagItem ? [wholeJobTagItem] : jobItemRows.length > 0 ? jobItemRows : virtualItem ? [virtualItem] : []}
+              wholeJob={!!wholeJobTagItem}
               selectedId={selectedItem?.id ?? ""}
               onClose={() => setTagsOpen(false)}
               onError={setError}

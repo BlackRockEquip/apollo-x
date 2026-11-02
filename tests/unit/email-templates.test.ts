@@ -9,6 +9,7 @@ import {
   EMAIL_TEMPLATE_KEYS,
   buildJobFieldValues,
   ccForSend,
+  ccWithSender,
   ccProblem,
   emailSampleValues,
   formatEmailDate,
@@ -196,6 +197,14 @@ describe("CC addresses", () => {
     expect(ccForSend("ann@x.co.za, bob@x.co.za", "Ann@x.co.za")).toBe("bob@x.co.za");
     expect(ccForSend("ann@x.co.za", "ann@x.co.za, other@x.co.za")).toBeUndefined();
     expect(ccForSend(null, "ann@x.co.za")).toBeUndefined();
+  });
+
+  it("a follow-up also copies the address the company sends from, once, and never the person it is addressed to", () => {
+    expect(ccWithSender(null, "workshop@hi-gear.co.za", "sales@supplier.co.za")).toBe("workshop@hi-gear.co.za");
+    expect(ccWithSender("accounts@hi-gear.co.za", "Workshop@hi-gear.co.za", "sales@supplier.co.za")).toBe("accounts@hi-gear.co.za, workshop@hi-gear.co.za");
+    expect(ccWithSender("workshop@hi-gear.co.za", "workshop@hi-gear.co.za", "sales@supplier.co.za")).toBe("workshop@hi-gear.co.za");
+    expect(ccWithSender("accounts@hi-gear.co.za", "sales@supplier.co.za", "sales@supplier.co.za")).toBe("accounts@hi-gear.co.za");
+    expect(ccWithSender(null, null, "sales@supplier.co.za")).toBeUndefined();
   });
 
   it("each email carries its own template's CC", () => {

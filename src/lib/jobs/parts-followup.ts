@@ -3,10 +3,10 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
-import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
+import { getCompanySendingAddress, isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildFollowupEmailMessage, type CompanyEmailTemplates } from "@/lib/email-templates";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
-import { ccForSend, joinOrderNumbers, partsCountText } from "@/lib/email-template-fields";
+import { ccWithSender, joinOrderNumbers, partsCountText } from "@/lib/email-template-fields";
 import { loadCompanyEmailVars, loadJobEmailVars, supplierContactFirstName } from "@/lib/email-template-vars";
 
 // Parts follow-up — new, added 2026-09-09 at the user's request ("ModApp's
@@ -141,6 +141,8 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
   }
   const templates = await getCompanyEmailTemplates(companyId);
   const [jobVars, companyVars] = await Promise.all([loadJobEmailVars(companyId, jobId, job), loadCompanyEmailVars(companyId, ctx.displayName)]);
+  // Every follow-up also goes to the address the company sends from, so the sender keeps a copy.
+  const sendingAddress = emailConfigured ? await getCompanySendingAddress(companyId) : null;
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 
@@ -160,7 +162,7 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
     }
     const { subject, text, cc } = buildFollowupEmailBody(templates, jobVars, companyVars, entry);
     try {
-      await sendEmail(companyId, { to: entry.mainEmail, cc: ccForSend(cc, entry.mainEmail), subject, text });
+      await sendEmail(companyId, { to: entry.mainEmail, cc: ccWithSender(cc, sendingAddress, entry.mainEmail), subject, text });
       sent.push({ supplierId: entry.supplierId, supplierName: entry.supplierName });
     } catch (err) {
       skipped.push({ supplierId: entry.supplierId, supplierName: entry.supplierName, reason: err instanceof Error ? err.message.slice(0, 300) : "Could not send the email." });

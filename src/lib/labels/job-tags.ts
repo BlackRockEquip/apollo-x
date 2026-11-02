@@ -48,16 +48,17 @@ export type TagLabel = {
 
 const clean = (value: string | null | undefined) => (value ?? "").trim();
 
-export function buildJobTagLabels(input: { jobNumber: string | null | undefined; customerName?: string | null; received?: string | null; items: readonly TagItemInput[]; totalItems?: number }): TagLabel[] {
+// `wholeJob` (Workshop build, jobs without items): the tag is the job number itself (BRE1182, not BRE1182-1) and there is no "Item 1 of 1".
+export function buildJobTagLabels(input: { jobNumber: string | null | undefined; customerName?: string | null; received?: string | null; items: readonly TagItemInput[]; totalItems?: number; wholeJob?: boolean }): TagLabel[] {
   const total = input.totalItems ?? input.items.length;
   const received = input.received ? new Date(input.received) : null;
   return [...input.items].sort((a, b) => a.sequence - b.sequence).map((item) => {
-    const tag = itemTag(input.jobNumber, item.sequence);
+    const tag = input.wholeJob ? (clean(input.jobNumber) || "JOB") : itemTag(input.jobNumber, item.sequence);
     const machine = [clean(item.machineMake), clean(item.machineModel)].filter(Boolean).join(" ");
     return {
       tag,
       jobNumber: clean(input.jobNumber),
-      position: `Item ${item.sequence} of ${Math.max(total, item.sequence)}`,
+      position: input.wholeJob ? "" : `Item ${item.sequence} of ${Math.max(total, item.sequence)}`,
       component: clean(item.component) || "Item",
       componentLine: [clean(item.componentModel), clean(item.componentSerial) ? `S/N ${clean(item.componentSerial)}` : "", clean(item.componentPartNumber) ? `P/N ${clean(item.componentPartNumber)}` : ""].filter(Boolean).join(" · "),
       machineLine: [machine, clean(item.plantNumber) ? `Plant ${clean(item.plantNumber)}` : ""].filter(Boolean).join(" · "),
@@ -82,7 +83,7 @@ function labelHtml(label: TagLabel, size: LabelSize): string {
   const scale = size.widthMm / 100;
   const px = (n: number) => `${(n * scale).toFixed(2)}mm`;
   return `<section class="label" style="width:${size.widthMm}mm;height:${size.heightMm}mm">
-    <div class="top"><span class="job">${escapeHtml(label.jobNumber ? `JOB ${label.jobNumber}` : "JOB")}</span><span class="pos">${escapeHtml(label.position)}</span></div>
+    <div class="top"><span class="job">${escapeHtml(label.jobNumber ? `JOB ${label.jobNumber}` : "JOB")}</span>${label.position ? `<span class="pos">${escapeHtml(label.position)}</span>` : ""}</div>
     <div class="tag" style="font-size:${px(8)}">${escapeHtml(label.tag)}</div>
     <div class="component" style="font-size:${px(4.6)}">${escapeHtml(label.component)}</div>
     ${label.componentLine ? `<div class="line" style="font-size:${px(3.3)}">${escapeHtml(label.componentLine)}</div>` : ""}

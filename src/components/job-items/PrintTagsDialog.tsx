@@ -14,21 +14,23 @@ type Props = {
   customerName: string | null | undefined;
   received: string | null | undefined;
   items: Array<TagItemInput & { id: string }>;
+  /** Workshop build: the job has no items, so one tag for the whole job (its number) and no item list to pick from. */
+  wholeJob?: boolean;
   /** The item selected on the job screen: ticked by default, otherwise every item is. */
   selectedId?: string;
   onClose: () => void;
   onError: (message: string) => void;
 };
 
-export function PrintTagsDialog({ jobNumber, customerName, received, items, selectedId = "", onClose, onError }: Props) {
+export function PrintTagsDialog({ jobNumber, customerName, received, items, wholeJob = false, selectedId = "", onClose, onError }: Props) {
   const [picked, setPicked] = useState<string[]>(() => (items.some((item) => item.id === selectedId) ? [selectedId] : items.map((item) => item.id)));
   const [copies, setCopies] = useState("1");
   const [settings, setSettings] = useState(() => loadLabelPrintSettings());
   const size = labelSizeById(settings.sizeId);
   const printer = labelPrinterById(settings.printerId);
   const labels = useMemo(
-    () => buildJobTagLabels({ jobNumber, customerName, received, items: items.filter((item) => picked.includes(item.id)), totalItems: items.length }),
-    [jobNumber, customerName, received, items, picked],
+    () => buildJobTagLabels({ jobNumber, customerName, received, items: items.filter((item) => picked.includes(item.id)), totalItems: items.length, wholeJob }),
+    [jobNumber, customerName, received, items, picked, wholeJob],
   );
   const copyCount = Math.min(20, Math.max(1, Math.floor(Number(copies) || 1)));
   const total = labels.length * copyCount;
@@ -49,11 +51,11 @@ export function PrintTagsDialog({ jobNumber, customerName, received, items, sele
     <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="Print job tags">
       <aside className="form-drawer compact-dialog print-tags-dialog">
         <header>
-          <div><p className="eyebrow">Job {jobNumber || ""}</p><h2>Print job tags</h2><p className="muted small-line">One tag per item, with a scannable barcode.</p></div>
+          <div><p className="eyebrow">Job {jobNumber || ""}</p><h2>Print job tags</h2><p className="muted small-line">{wholeJob ? "A tag for this job, with a scannable barcode of the job number." : "One tag per item, with a scannable barcode."}</p></div>
           <button type="button" onClick={onClose} aria-label="Close dialog"><X size={18} /></button>
         </header>
         <div className="drawer-fields">
-          <div className="wide ji-pick">
+          {!wholeJob && <div className="wide ji-pick">
             <p className="ji-pick-title">Items to print</p>
             <ul>
               {items.map((item) => (
@@ -72,8 +74,8 @@ export function PrintTagsDialog({ jobNumber, customerName, received, items, sele
                 <button type="button" className="quiet-button" onClick={() => setPicked([])}>None</button>
               </div>
             )}
-          </div>
-          <label><span>Copies of each tag</span><input type="number" min={1} max={20} value={copies} onChange={(e) => setCopies(e.target.value)} /></label>
+          </div>}
+          <label><span>{wholeJob ? "Copies of the tag" : "Copies of each tag"}</span><input type="number" min={1} max={20} value={copies} onChange={(e) => setCopies(e.target.value)} /></label>
           <label><span>Label size</span>
             <select value={size.id} onChange={(e) => update({ sizeId: e.target.value })}>{LABEL_SIZES.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
           </label>

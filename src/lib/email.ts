@@ -43,6 +43,12 @@ function isConfigured(settings: SmtpSettings | null): settings is SmtpSettings &
   return !!(settings?.smtpHost && settings.smtpUsername && settings.smtpPassword && settings.smtpFromAddress);
 }
 
+// The address this company's emails are sent from (Settings > Email), or null when none is set.
+export async function getCompanySendingAddress(companyId: string): Promise<string | null> {
+  const address = (await getSmtpSettings(companyId))?.smtpFromAddress?.trim();
+  return address || null;
+}
+
 export async function isCompanyEmailConfigured(companyId: string): Promise<boolean> {
   return isConfigured(await getSmtpSettings(companyId));
 }

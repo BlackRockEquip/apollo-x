@@ -240,6 +240,12 @@ export function ccForSend(cc: string | null | undefined, to: string): string | u
   return list.length > 0 ? list.join(", ") : undefined;
 }
 
+// The CC for a supplier follow-up: the template's CC list plus the address the email is sent from (2026-11-02, user request: the
+// follow-up RFQ should cc the sending email, so the sender's own mailbox gets a copy). Nobody twice, nobody who is on the To line.
+export function ccWithSender(cc: string | null | undefined, sender: string | null | undefined, to: string): string | undefined {
+  return ccForSend([cc, sender].filter(Boolean).join(", "), to);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Filling in a job's fields
 // ---------------------------------------------------------------------------------------------------------------------------
