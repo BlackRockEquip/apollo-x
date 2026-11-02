@@ -17,7 +17,7 @@ vi.mock("@/lib/attachments/blob-store", () => ({
   jobFolderName: (job: { jobNumber: string | null; draftNumber: string | null }, fallback: string) => job.jobNumber ?? job.draftNumber ?? fallback,
 }));
 
-import { cleanFolderPath, foldLevel, folderBreadcrumbs, isInsideFolder, keyToPath, mergeFolderFiles, type FolderFile } from "@/lib/storage/folder-level";
+import { cleanFolderPath, filterByTopFolder, foldLevel, folderBreadcrumbs, groupJobFolders, isInsideFolder, keyToPath, mergeFolderFiles, rankFoldersByTerm, type FolderFile, type FolderLevelFolder } from "@/lib/storage/folder-level";
 import { walkFolder } from "@/lib/storage/walk-folder";
 import { getStorageFileUrl, listStorageFolder } from "@/lib/storage/folder-view";
 import type { RequestContext } from "@/lib/auth/context-types";
@@ -171,5 +171,93 @@ describe("listStorageFolder / getStorageFileUrl", () => {
   it("will not open a file outside the job's folder", async () => {
     await expect(getStorageFileUrl(ctxWith(), { kind: "job", jobId: "job1" }, "BRE9999/a.pdf")).rejects.toThrow("NOT_FOUND");
     await expect(getStorageFileUrl(ctxWith(), { kind: "job", jobId: "job1" }, "")).rejects.toThrow("NOT_FOUND");
+  });
+});
+
+
+const folder = (name: string, fileCount = 1, sizeBytes = 100): FolderLevelFolder => ({ name, path: name, fileCount, sizeBytes });
+
+describe("job folders grouped in 100s", () => {
+  it("groups BRE1182-style folders by hundreds, newest group and folder first, and keeps unnumbered folders apart", () => {
+    const { others, groups } = groupJobFolders([folder("Company"), folder("RFQs"), folder("BRE1182", 3, 30), folder("BRE1101", 2, 20), folder("BRE1099"), folder("BRE1200"), folder("Support")]);
+    expect(others.map((f) => f.name)).toEqual(["Company", "RFQs", "Support"]);
+    expect(groups.map((g) => g.label)).toEqual(["BRE1200 - BRE1299", "BRE1100 - BRE1199", "BRE1000 - BRE1099"]);
+    const middle = groups[1];
+    expect(middle.folders.map((f) => f.name)).toEqual(["BRE1182", "BRE1101"]);
+    expect(middle.fileCount).toBe(5);
+    expect(middle.sizeBytes).toBe(50);
+  });
+
+  it("keeps different prefixes apart and pads the label to the number width", () => {
+    const { groups } = groupJobFolders([folder("BRE0005"), folder("BRE0150"), folder("ENG42"), folder("ENG250")]);
+    expect(groups.map((g) => g.label)).toEqual(["BRE0100 - BRE0199", "BRE0000 - BRE0099", "ENG200 - ENG299", "ENG000 - ENG099"]);
+  });
+
+  it("does not group when everything numbered fits in one group", () => {
+    const input = [folder("RFQs"), folder("BRE1101"), folder("BRE1182")];
+    const out = groupJobFolders(input);
+    expect(out.groups).toEqual([]);
+    expect(out.others).toEqual(input);
+  });
+
+  it("treats a long random id ending in digits as an unnumbered folder", () => {
+    const { others } = groupJobFolders([folder("cmvz7ovqv055d6x135"), folder("BRE1"), folder("BRE250")]);
+    expect(others.map((f) => f.name)).toContain("cmvz7ovqv055d6x135");
+  });
+
+  it("supports another group size", () => {
+    const { groups } = groupJobFolders([folder("J1"), folder("J12"), folder("J25")], 10);
+    expect(groups.map((g) => g.label)).toEqual(["J20 - J29", "J10 - J19", "J00 - J09"]);
+  });
+});
+
+describe("finding a job folder by number", () => {
+  const files = [{ path: "BRE1182/a.pdf" }, { path: "BRE1182/Support/b.pdf" }, { path: "BRE1183/a.pdf" }, { path: "RFQs/BRE1182/x.pdf" }, { path: "loose.pdf" }];
+  it("keeps files whose top-level folder contains the text, ignoring capitals and spaces", () => {
+    expect(filterByTopFolder(files, "bre 1182").map((f) => f.path)).toEqual(["BRE1182/a.pdf", "BRE1182/Support/b.pdf"]);
+    expect(filterByTopFolder(files, "BRE118")).toHaveLength(3);
+    expect(filterByTopFolder(files, "rfq").map((f) => f.path)).toEqual(["RFQs/BRE1182/x.pdf"]);
+    expect(filterByTopFolder(files, "  ")).toBe(files);
+  });
+  it("ranks the exact job number first, then folders starting with the text", () => {
+    const ranked = rankFoldersByTerm([folder("XBRE118"), folder("BRE11820"), folder("BRE1182")], "bre1182");
+    expect(ranked.map((f) => f.name)).toEqual(["BRE1182", "BRE11820", "XBRE118"]);
+  });
+});
+
+describe("listStorageFolder search", () => {
+  beforeEach(() => { attachmentFindMany.mockReset(); listObjects.mockReset(); provider = "R2"; });
+
+  it("searches the top level of the whole storage: narrows the query and returns the best match first", async () => {
+    attachmentFindMany.mockResolvedValue([row("co1/BRE11820/a.pdf"), row("co1/BRE1182/a.pdf"), row("co1/BRE1182/Support/b.pdf")]);
+    const listing = await listStorageFolder(ctxWith(), { kind: "company" }, "", false, " bre 1182 ");
+    expect(listing.search).toBe("bre 1182");
+    expect(attachmentFindMany.mock.calls[0][0].where.objectKey).toEqual({ startsWith: "co1/", contains: "bre1182", mode: "insensitive" });
+    expect(listing.folders.map((f) => f.name)).toEqual(["BRE1182", "BRE11820"]);
+    expect(listing.folders[0].fileCount).toBe(2);
+  });
+
+  it("ignores the search inside a folder and for a job's own folder", async () => {
+    attachmentFindMany.mockResolvedValue([row("co1/BRE1182/a.pdf")]);
+    const inside = await listStorageFolder(ctxWith(), { kind: "company" }, "BRE1182", false, "zzz");
+    expect(inside.search).toBe("");
+    expect(attachmentFindMany.mock.calls[0][0].where.objectKey).toEqual({ startsWith: "co1/BRE1182/" });
+    jobFindFirst.mockResolvedValue({ id: "j1", jobNumber: "BRE1182", draftNumber: null });
+    const job = await listStorageFolder(ctxWith(), { kind: "job", jobId: "j1" }, "", false, "zzz");
+    expect(job.search).toBe("");
+  });
+
+  it("also narrows what is read from the server for a platform administrator", async () => {
+    attachmentFindMany.mockResolvedValue([]);
+    listObjects.mockResolvedValue([{ key: "co1/BRE1182/x.bin", sizeBytes: 5, modifiedAt: null }, { key: "co1/ABC9/y.bin", sizeBytes: 5, modifiedAt: null }]);
+    const listing = await listStorageFolder(ctxWith({ platform: ["PLATFORM_COMPANIES_EDIT"] }), { kind: "company" }, "", true, "1182");
+    expect(listing.folders.map((f) => f.name)).toEqual(["BRE1182"]);
+  });
+
+  it("returns an empty search as no search", async () => {
+    attachmentFindMany.mockResolvedValue([row("co1/BRE1182/a.pdf")]);
+    const listing = await listStorageFolder(ctxWith(), { kind: "company" }, "", false, "   ");
+    expect(listing.search).toBe("");
+    expect(attachmentFindMany.mock.calls[0][0].where.objectKey).toEqual({ startsWith: "co1/" });
   });
 });

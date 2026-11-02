@@ -4,11 +4,13 @@ import { AuthorizationError, requireModule, requireTenantPermission } from "@/li
 import { jobFolderName, keyPrefix, tryGetBackend } from "@/lib/attachments/blob-store";
 import {
   cleanFolderPath,
+  filterByTopFolder,
   folderBreadcrumbs,
   foldLevel,
   isInsideFolder,
   keyToPath,
   mergeFolderFiles,
+  rankFoldersByTerm,
   type FolderFile,
   type FolderLevelFile,
   type FolderLevelFolder,
@@ -37,10 +39,13 @@ export type FolderListing = {
   everything: boolean;
   canSeeEverything: boolean;
   truncated: boolean;
+  /** The job number typed in the search box (only the whole-storage screen at its top level can search); "" = not searching. */
+  search: string;
 };
 
 const MAX_KNOWN_FILES = 20000;
 const MAX_PHYSICAL_FILES = 5000;
+const MAX_SEARCH_LENGTH = 40;
 
 export function canSeeEverythingOnServer(ctx: RequestContext): boolean {
   return ctx.platformPermissions.has("PLATFORM_COMPANIES_EDIT");
@@ -62,13 +67,15 @@ async function authorize(ctx: RequestContext, scope: FolderScope): Promise<{ com
   return { companyId, rootPath: jobFolderName(job, job.id) };
 }
 
-export async function listStorageFolder(ctx: RequestContext, scope: FolderScope, rawPath: string | null | undefined, wantEverything: boolean): Promise<FolderListing> {
+export async function listStorageFolder(ctx: RequestContext, scope: FolderScope, rawPath: string | null | undefined, wantEverything: boolean, rawSearch?: string | null): Promise<FolderListing> {
   const { companyId, rootPath } = await authorize(ctx, scope);
   const canSeeEverything = canSeeEverythingOnServer(ctx);
   const requested = cleanFolderPath(rawPath);
   const path = requested || rootPath;
   if (!isInsideFolder(path, rootPath)) throw new Error("NOT_FOUND");
-  const empty: FolderListing = { configured: false, provider: null, path, rootPath, breadcrumbs: folderBreadcrumbs(path), folders: [], files: [], everything: false, canSeeEverything, truncated: false };
+  // Searching by job number looks through the top-level folders, so it only applies to the whole storage, from its top.
+  const search = scope.kind === "company" && !path ? (rawSearch ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_SEARCH_LENGTH) : "";
+  const empty: FolderListing = { configured: false, provider: null, path, rootPath, breadcrumbs: folderBreadcrumbs(path), folders: [], files: [], everything: false, canSeeEverything, truncated: false, search };
 
   const backend = await tryGetBackend(companyId);
   if (!backend) return empty;
@@ -76,7 +83,8 @@ export async function listStorageFolder(ctx: RequestContext, scope: FolderScope,
   const keyStart = `${prefix}${path ? `${path}/` : ""}`;
 
   const rows = await prisma.attachment.findMany({
-    where: { companyId, status: "COMMITTED", objectKey: { startsWith: keyStart } },
+    // A search narrows the query itself (not only the result) so a company with a huge number of files still finds the job.
+    where: { companyId, status: "COMMITTED", objectKey: search ? { startsWith: keyStart, contains: search.replace(/\s+/g, ""), mode: "insensitive" } : { startsWith: keyStart } },
     select: { objectKey: true, sizeBytes: true, createdAt: true, notes: true, uploadedBy: { select: { displayName: true } } },
     orderBy: { createdAt: "desc" },
     take: MAX_KNOWN_FILES,
@@ -102,8 +110,10 @@ export async function listStorageFolder(ctx: RequestContext, scope: FolderScope,
     truncated = truncated || found.length >= MAX_PHYSICAL_FILES;
   }
 
-  const level = foldLevel(mergeFolderFiles(known, physical), path);
-  return { ...empty, configured: true, provider: backend.providerName, folders: level.folders, files: level.files, everything, truncated };
+  const merged = mergeFolderFiles(known, physical);
+  const level = foldLevel(search ? filterByTopFolder(merged, search) : merged, path);
+  const folders = search ? rankFoldersByTerm(level.folders, search) : level.folders;
+  return { ...empty, configured: true, provider: backend.providerName, folders, files: level.files, everything, truncated };
 }
 
 /** A short-lived link that opens one file. Filed files for anyone allowed to see the folder; files not filed by the system only for a platform administrator. */

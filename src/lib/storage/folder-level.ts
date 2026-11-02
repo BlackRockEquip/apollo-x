@@ -79,3 +79,81 @@ export function foldLevel(files: FolderFile[], folder: string): { folders: Folde
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
   return { folders: [...folders.values()].sort(byName), files: direct.sort(byName) };
 }
+
+// ---- Settings > Files: job folders grouped in 100s, and finding a job's folder by its number (2026-11-02, user request:
+// "can folders be grouped in 100s?" and "add a search bar so a user can type the job number for the folder") ----
+
+export type FolderGroup = {
+  /** Stable id for the group, e.g. "BRE|1100". */
+  key: string;
+  /** What people see, e.g. "BRE1100 - BRE1199". */
+  label: string;
+  start: number;
+  end: number;
+  folders: FolderLevelFolder[];
+  fileCount: number;
+  sizeBytes: number;
+};
+
+/** "BRE1182" -> { prefix: "BRE", digits: "1182" }. Anything that does not end in a (reasonable) number is not a job folder. */
+function splitJobNumber(name: string): { prefix: string; digits: string } | null {
+  const match = /^(.*?)(\d{1,9})$/.exec(name);
+  if (!match) return null;
+  const prefix = match[1];
+  if (prefix.length > 12) return null; // a long random id that happens to end in digits is not a job number
+  return { prefix, digits: match[2] };
+}
+
+/**
+ * Job folders named like BRE1182 are put in groups of `size` (BRE1100 - BRE1199). Folders that are not numbered (RFQs, Support, Company, ...)
+ * come back as `others`. When everything numbered fits in one group there is nothing to group, so all folders stay in `others`.
+ * Groups: prefix A-Z, then the highest numbers first (the newest jobs are the ones people look for); folders inside a group: newest first.
+ */
+export function groupJobFolders(folders: FolderLevelFolder[], size = 100): { others: FolderLevelFolder[]; groups: FolderGroup[] } {
+  const others: FolderLevelFolder[] = [];
+  const byKey = new Map<string, FolderGroup & { prefix: string; width: number }>();
+  const numberOf = new Map<string, number>();
+  for (const folder of folders) {
+    const parts = splitJobNumber(folder.name);
+    if (!parts) { others.push(folder); continue; }
+    const value = Number(parts.digits);
+    numberOf.set(folder.path, value);
+    const start = Math.floor(value / size) * size;
+    const key = `${parts.prefix}|${start}`;
+    const group = byKey.get(key) ?? { key, label: "", start, end: start + size - 1, folders: [], fileCount: 0, sizeBytes: 0, prefix: parts.prefix, width: 0 };
+    group.folders.push(folder);
+    group.fileCount += folder.fileCount;
+    group.sizeBytes += folder.sizeBytes;
+    group.width = Math.max(group.width, parts.digits.length);
+    byKey.set(key, group);
+  }
+  if (byKey.size <= 1) return { others: folders, groups: [] };
+  const groups = [...byKey.values()].map(({ prefix, width, ...group }): FolderGroup => {
+    const pad = (n: number) => String(n).padStart(Math.max(width, String(size).length), "0");
+    group.folders.sort((a, b) => (numberOf.get(b.path) ?? 0) - (numberOf.get(a.path) ?? 0));
+    return { ...group, label: `${prefix}${pad(group.start)} - ${prefix}${pad(group.end)}` };
+  });
+  const prefixOf = (g: FolderGroup) => g.key.slice(0, g.key.lastIndexOf("|"));
+  groups.sort((a, b) => prefixOf(a).localeCompare(prefixOf(b), undefined, { sensitivity: "base" }) || b.start - a.start);
+  return { others, groups };
+}
+
+const squash = (value: string) => value.replace(/\s+/g, "").toLowerCase();
+
+/** Keeps the files whose top-level folder (the job number) contains what was typed; spaces and capitals do not matter. An empty search keeps everything. */
+export function filterByTopFolder<T extends { path: string }>(files: T[], term: string): T[] {
+  const wanted = squash(term);
+  if (!wanted) return files;
+  return files.filter((file) => {
+    const slash = file.path.indexOf("/");
+    return slash > 0 && squash(file.path.slice(0, slash)).includes(wanted);
+  });
+}
+
+/** Best match first: the exact job number, then folders that start with what was typed, then the rest (each keeping its order). */
+export function rankFoldersByTerm<T extends { name: string }>(folders: T[], term: string): T[] {
+  const wanted = squash(term);
+  if (!wanted) return folders;
+  const rank = (name: string) => { const n = squash(name); return n === wanted ? 0 : n.startsWith(wanted) ? 1 : 2; };
+  return folders.map((folder, index) => ({ folder, index })).sort((a, b) => rank(a.folder.name) - rank(b.folder.name) || a.index - b.index).map((x) => x.folder);
+}

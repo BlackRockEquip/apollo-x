@@ -2752,3 +2752,15 @@ button.sfv-name { cursor: pointer; }
 .sfv-dialog > header h2 { margin: 0; font-size: 19px; }
 .sfv-dialog > header button { border: 0; background: transparent; color: var(--ink-500); cursor: pointer; }
 .sfv-dialog-body { overflow: auto; padding: 16px 20px 20px; }
+
+/* Settings > Files: job number search and folders grouped in 100s (pr33) */
+.sfv-search { position: relative; display: flex; align-items: center; gap: 8px; max-width: 560px; border: 1px solid var(--ink-200, var(--ink-150)); border-radius: 9px; background: #fff; padding: 0 10px; }
+.sfv-search:focus-within { border-color: var(--gold-600); box-shadow: 0 0 0 3px rgba(212,160,23,.18); }
+.sfv-search > svg { flex: none; color: var(--ink-500); }
+.sfv-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; padding: 10px 0; color: var(--ink-900); font: inherit; font-size: 13px; }
+.sfv-search input::-webkit-search-cancel-button { display: none; }
+.sfv-search-clear { display: inline-grid; place-items: center; border: 0; border-radius: 6px; background: transparent; padding: 4px; color: var(--ink-500); cursor: pointer; }
+.sfv-search-clear:hover { background: var(--canvas); color: var(--ink-900); }
+.sfv-search-count { flex: none; color: var(--ink-500); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
+.sfv-group-row td:first-child b { letter-spacing: .01em; }
+@media (max-width: 640px) { .sfv-search-count { display: none; } }
