@@ -6,9 +6,10 @@ import { getPlatformCompanyDetail } from "@/lib/platform/admin-service";
 import { getCompanyIndustryBuild } from "@/lib/platform/industry-build-service";
 import { PlatformIndustryBuild } from "@/components/PlatformIndustryBuild";
 import { SupportContextForm } from "@/components/SupportContextForm";
-import { addCompanyUserAction, setCompanyStatusAction, updateCompanyAction } from "@/app/platform/actions";
+import { CompanyTabs } from "@/components/CompanyTabs";
+import { PlatformCompanyUsers } from "@/components/PlatformCompanyUsers";
+import { setCompanyStatusAction, updateCompanyAction } from "@/app/platform/actions";
 import { CompanyColourFields } from "@/components/CompanyColourFields";
-import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
 import { PlatformStorageForm } from "@/components/PlatformStorageForm";
 import { ResetCompanyButton } from "@/components/ResetCompanyButton";
 import { CloneCompanyButton } from "@/components/CloneCompanyButton";
@@ -47,7 +48,6 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
   const sp = await searchParams;
   const pick = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
   const errorMessage = pick("error") ? (ERROR_MESSAGES[pick("error")] ?? "Unable to save the company.") : "";
-  const userErrorMessage = pick("userError") ? (ERROR_MESSAGES[pick("userError")] ?? "Unable to add the user.") : "";
   const lifecycleErrorMessage = pick("lifecycleError") ? (ERROR_MESSAGES[pick("lifecycleError")] ?? "That could not be completed.") : "";
   const company = await getPlatformCompanyDetail(context, id);
   const industryBuild = await getCompanyIndustryBuild(context, company.id);
@@ -55,49 +55,84 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
   const inlineFiles = await countInlineFiles(company.id);
   const activeUsers = company.memberships.filter((membership: Membership) => membership.status === "ACTIVE" && membership.user.active);
   const displayName = company.tradingName?.trim() || company.legalName;
-  const roleLabels = tenantRoleLabelsFor(company.industryBuild);
-  const allowedRoles = tenantRolesFor(company.industryBuild);
   const address = company.addresses[0];
   const admins = activeUsers.filter((membership: Membership) => membership.role === "COMPANY_ADMIN");
 
-  return (
+  const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+  const requested = pick("tab");
+  const tabKeys = ["overview", "users", "company", "storage", "build", "support", ...(company.blackRockIncluded ? [] : ["reset"])];
+  const initialTab = tabKeys.includes(requested) ? requested : (pick("error") || pick("notice")) ? "company" : (pick("reset") || pick("cloned") || pick("lifecycleError")) ? "reset" : "overview";
+  const statusLabel = company.status.charAt(0) + company.status.slice(1).toLowerCase();
+  const recentAudit = company.auditEvents.slice(0, 5);
+  const fileCount = storageSummary.fileCount;
+
+  const overview = (
     <>
-      <div className="platform-notice">
-        <ShieldCheck size={20} />
-        <div>
-          <strong>Explicit support entry only</strong>
-          <p>Platform authority does not silently impersonate tenant users or bypass licensing. Support mode must be explicit and audited.</p>
+      <section className="pcv-stats">
+        <article className="pcv-stat"><span>Active users</span><strong>{activeUsers.length}</strong><button type="button" className="pcv-link" data-goto-tab="users">Manage users</button></article>
+        <article className="pcv-stat"><span>Company administrators</span><strong>{admins.length}</strong><small>At least one is always required</small></article>
+        <article className="pcv-stat"><span>Stored files</span><strong>{fileCount}</strong><button type="button" className="pcv-link" data-goto-tab="storage">Storage location</button></article>
+        <article className="pcv-stat"><span>Support tickets</span><strong>{company._count.supportTickets}</strong><button type="button" className="pcv-link" data-goto-tab="support">Support &amp; audit</button></article>
+      </section>
+      <section className="pcv-two">
+        <div className="pcv-col">
+          <article className="platform-card">
+            <div className="pcv-card-head"><h3>Company details</h3><button type="button" className="pcv-link" data-goto-tab="company">Edit</button></div>
+            <dl className="pcv-facts">
+              <div><dt>Legal name</dt><dd>{company.legalName}</dd></div>
+              <div><dt>Trading name</dt><dd>{company.tradingName?.trim() || "-"}</dd></div>
+              <div><dt>Main email</dt><dd>{company.settings?.mainEmail || "-"}</dd></div>
+              <div><dt>Telephone</dt><dd>{company.settings?.mainTelephone || "-"}</dd></div>
+              <div><dt>Currency</dt><dd>{company.settings?.defaultCurrencyCode ?? company.defaultCurrencyCode}</dd></div>
+              <div><dt>Tax jurisdiction</dt><dd>{company.settings?.defaultTaxJurisdiction ?? "ZA"}</dd></div>
+              <div><dt>Industry build</dt><dd>{company.industryBuild}</dd></div>
+              <div><dt>Created</dt><dd>{new Date(company.createdAt).toLocaleDateString("en-ZA")}</dd></div>
+            </dl>
+          </article>
+          <article className="platform-card">
+            <div className="pcv-card-head"><h3>Recent activity</h3><button type="button" className="pcv-link" data-goto-tab="support">Open Support &amp; audit</button></div>
+            <div className="history-list">
+              {recentAudit.map((event: Audit) => (
+                <article key={event.id}>
+                  <strong>{event.action.replaceAll("_", " ")}</strong>
+                  <span>{event.entityType} · {event.actor?.displayName || "System"}</span>
+                  <time>{new Date(event.occurredAt).toLocaleString("en-ZA")}</time>
+                </article>
+              ))}
+              {recentAudit.length === 0 && <div className="table-state compact-empty-state">Nothing recorded yet.</div>}
+            </div>
+          </article>
         </div>
-      </div>
-
-      <header className="page-header compact">
-        <div>
-          <Link href="/platform/companies" className="back-link"><ArrowLeft size={15} /> Back to companies</Link>
-          <p className="eyebrow">Platform</p>
-          <h1>{displayName}</h1>
-          <p>{company.internalCode} · {company.status}</p>
+        <div className="pcv-col">
+          <article className="platform-card">
+            <h3>Quick actions</h3>
+            <div className="pcv-actions">
+              <button type="button" className="gold-button" data-goto-tab="users">Manage users</button>
+              <button type="button" className="quiet-button" data-goto-tab="support">Enter support mode</button>
+            </div>
+          </article>
+          <article className="platform-card">
+            <h3>Status</h3>
+            {company.blackRockIncluded ? <p className="platform-inline-note">Black Rock is protected: its status cannot be changed here.</p> : (
+              <>
+                <form action={setCompanyStatusAction} className="pcv-status">
+                  <input type="hidden" name="companyId" value={company.id} />
+                  <label><span className="sr-only">Status</span><select name="status" defaultValue={company.status}><option value="ACTIVE">ACTIVE</option><option value="SUSPENDED">SUSPENDED</option></select></label>
+                  <button type="submit" className="quiet-button">Update status</button>
+                </form>
+                <p className="muted small-line">Suspending stops everyone in the company signing in. Nothing is deleted.</p>
+              </>
+            )}
+          </article>
         </div>
-      </header>
+      </section>
+    </>
+  );
 
-      {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
-      {pick("notice") === "saved" ? <div className="inline-success">Company saved.</div> : null}
-      {pick("reset") ? <div className="inline-success">{pick("reset")} was reset. Its data is cleared; its setup and users are unchanged.</div> : null}
-      {pick("cloned") ? <div className="inline-success">Company copied. This is the new company; it has the same setup but no users or data yet.</div> : null}
-      {lifecycleErrorMessage ? <div className="inline-error">{lifecycleErrorMessage}</div> : null}
+  const usersTab = <PlatformCompanyUsers companyId={company.id} companyActive={company.status === "ACTIVE"} />;
 
-      <section className="platform-grid">
-        <article className="platform-card">
-          <h3>Overview</h3>
-          <dl className="platform-detail-list">
-            <div><dt>Legal name</dt><dd>{company.legalName}</dd></div>
-            <div><dt>Status</dt><dd>{company.status}</dd></div>
-            <div><dt>Created</dt><dd>{new Date(company.createdAt).toLocaleString("en-ZA")}</dd></div>
-            <div><dt>Users</dt><dd>{activeUsers.length}</dd></div>
-            <div><dt>Tenant admins</dt><dd>{admins.length}</dd></div>
-            <div><dt>Support tickets</dt><dd>{company._count.supportTickets}</dd></div>
-          </dl>
-        </article>
-
+  const companyTab = (
+    <section className="platform-grid">
         <article className="platform-card">
           <h3>Branding</h3>
           <div className="record-list">
@@ -113,7 +148,6 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             </article>
           </div>
         </article>
-
         <article className="platform-card platform-card-span-2">
           <h3>Company management</h3>
           {company.blackRockIncluded ? <p className="platform-inline-note">Black Rock is protected: immutable code, internal included modules, and no normal UI action can suspend or rewrite its licensing basis.</p> : null}
@@ -153,15 +187,12 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             </label>
             <div className="platform-form-actions"><button type="submit" className="primary-button" disabled={company.blackRockIncluded}>Save company</button></div>
           </form>
-          {!company.blackRockIncluded && (
-            <form action={setCompanyStatusAction} className="platform-form-grid compact-top-gap">
-              <input type="hidden" name="companyId" value={company.id} />
-              <label><span>Status</span><select name="status" defaultValue={company.status}><option value="ACTIVE">ACTIVE</option><option value="SUSPENDED">SUSPENDED</option></select></label>
-              <div className="platform-form-actions"><button type="submit" className="quiet-button">Update status</button></div>
-            </form>
-          )}
         </article>
+    </section>
+  );
 
+  const storageTab = (
+    <section className="platform-grid">
         <article className="platform-card platform-card-span-2">
           <h3>Storage location</h3>
           <p className="muted small-line">
@@ -190,53 +221,32 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             }}
           />
         </article>
+    </section>
+  );
 
+  const buildTab = (
+    <section className="platform-grid">
         <article className="platform-card platform-card-span-2">
           <h3>Industry build</h3>
           <p className="muted small-line">{company.blackRockIncluded ? "Black Rock receives all Workshop modules through immutable internal policy, so this section is read-only." : company.entitlementSummary}</p>
           <PlatformIndustryBuild initial={industryBuild} />
         </article>
+    </section>
+  );
 
-        <article className="platform-card">
-          <h3>Users</h3>
-          <div className="record-list">
-            {company.memberships.map((membership: Membership) => (
-              <article key={membership.id}>
-                <div className="record-icon">U</div>
-                <div>
-                  <strong>{membership.user.displayName}</strong>
-                  <span>{membership.user.email} · {roleLabels[membership.role] ?? membership.role} · {membership.status}</span>
-                </div>
-              </article>
-            ))}
-            {company.memberships.length === 0 && <div className="table-state compact-empty-state">No users on this company yet.</div>}
-          </div>
-          {userErrorMessage ? <div className="inline-error">{userErrorMessage}</div> : null}
-          {pick("userAdded") ? <div className="inline-success">{pick("userAdded")} was added.</div> : null}
-          {company.status === "ACTIVE" ? (
-            <div className="compact-top-gap">
-              <h4>Add user</h4>
-              <p className="muted small-line">Creates a login for this company with every module switched on (the company licence still decides what can be used). Company admins cannot add or change users themselves - they contact Flo X, and users are managed here (use Manage users below to switch modules on or off for a user).</p>
-              <form action={addCompanyUserAction} className="platform-form-grid compact-top-gap" data-testid="add-user-form">
-                <input type="hidden" name="companyId" value={company.id} />
-                <label><span>Name</span><input name="displayName" required minLength={2} /></label>
-                <label><span>Email</span><input name="email" type="email" required /></label>
-                <label><span>Password</span><input name="password" type="password" required minLength={8} autoComplete="new-password" /></label>
-                <label><span>Role</span>
-                  <select name="role" defaultValue={allowedRoles.includes("COMPANY_ADMIN") ? "COMPANY_ADMIN" : allowedRoles[0]}>
-                    {allowedRoles.map((role) => <option key={role} value={role}>{roleLabels[role]}</option>)}
-                  </select>
-                </label>
-                <div className="platform-form-actions"><button type="submit" className="primary-button">Add user</button></div>
-              </form>
-              <p className="muted small-line">To edit, reset or remove existing users, open the company&rsquo;s Users screen under an audited read-write support session.</p>
-              <SupportContextForm companyId={company.id} companyName={displayName} redirectTo="/users" defaultMode="READ_WRITE" actionLabel="Manage users" />
-            </div>
-          ) : (
-            <p className="platform-inline-note">User management is unavailable while this company is deactivated.</p>
-          )}
+  const supportTab = (
+    <section className="platform-grid">
+      <div className="platform-notice platform-card-span-2">
+        <ShieldCheck size={20} />
+        <div>
+          <strong>Explicit support entry only</strong>
+          <p>Platform authority does not silently impersonate tenant users or bypass licensing. Support mode must be explicit and audited. Users are managed on the Users tab without it.</p>
+        </div>
+      </div>
+        <article className="platform-card platform-card-span-2">
+          <h3>Enter support mode</h3>
+          {company.status === "ACTIVE" ? <SupportContextForm companyId={company.id} companyName={displayName} compact={false} /> : <p className="platform-inline-note">Support entry is unavailable while this company is deactivated.</p>}
         </article>
-
         <article className="platform-card">
           <h3>Support</h3>
           <div className="record-list">
@@ -253,7 +263,6 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             {company.supportTickets.length === 0 && <div className="table-state compact-empty-state">No support tickets.</div>}
           </div>
         </article>
-
         <article className="platform-card platform-card-span-2">
           <h3>Audit</h3>
           <div className="history-list">
@@ -266,7 +275,6 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             ))}
           </div>
         </article>
-
         {context.platformPermissions.has("PLATFORM_AUDIT_VIEW") && (
           <article className="platform-card platform-card-span-2">
             <h3>Activity history</h3>
@@ -276,7 +284,11 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             </div>
           </article>
         )}
+    </section>
+  );
 
+  const resetTab = (
+    <section className="platform-grid">
         {!company.blackRockIncluded && (
           <article className="platform-card platform-card-span-2">
             <h3>Reset and clone</h3>
@@ -287,12 +299,49 @@ export default async function PlatformCompanyDetailPage({ params, searchParams }
             </div>
           </article>
         )}
+    </section>
+  );
 
-        <article className="platform-card platform-card-span-2">
-          <h3>Enter support mode</h3>
-          {company.status === "ACTIVE" ? <SupportContextForm companyId={company.id} companyName={displayName} compact={false} /> : <p className="platform-inline-note">Support entry is unavailable while this company is deactivated.</p>}
-        </article>
-      </section>
+  return (
+    <>
+      <header className="pcv-head">
+        <div className="pcv-head-main">
+          <Link href="/platform/companies" className="back-link"><ArrowLeft size={15} /> Back to companies</Link>
+          <div className="pcv-title">
+            <span className="pcv-mark" aria-hidden="true">{initials}</span>
+            <div>
+              <div className="pcv-title-row">
+                <h1>{displayName}</h1>
+                <span className={company.status === "ACTIVE" ? "pcv-chip ok" : "pcv-chip off"}>{statusLabel}</span>
+                <span className="pcv-chip">{company.industryBuild} build</span>
+              </div>
+              <p>{company.internalCode} · Created {new Date(company.createdAt).toLocaleDateString("en-ZA")}</p>
+            </div>
+          </div>
+        </div>
+        <div className="pcv-head-actions">
+          {company.status === "ACTIVE" ? <button type="button" className="quiet-button" data-goto-tab="support">Enter support mode</button> : null}
+        </div>
+      </header>
+
+      {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
+      {pick("notice") === "saved" ? <div className="inline-success">Company saved.</div> : null}
+      {pick("reset") ? <div className="inline-success">{pick("reset")} was reset. Its data is cleared; its setup and users are unchanged.</div> : null}
+      {pick("cloned") ? <div className="inline-success">Company copied. This is the new company; it has the same setup but no users or data yet.</div> : null}
+      {lifecycleErrorMessage ? <div className="inline-error">{lifecycleErrorMessage}</div> : null}
+
+      <CompanyTabs
+        initial={initialTab}
+        tabs={[
+          { key: "overview", label: "Overview", content: overview },
+          { key: "users", label: "Users", badge: company.memberships.length, content: usersTab },
+          { key: "company", label: "Company & branding", content: companyTab },
+          { key: "storage", label: "Storage", content: storageTab },
+          { key: "build", label: "Industry build", content: buildTab },
+          { key: "support", label: "Support & audit", content: supportTab },
+          ...(company.blackRockIncluded ? [] : [{ key: "reset", label: "Reset & clone", content: resetTab }]),
+        ]}
+      />
     </>
   );
 }

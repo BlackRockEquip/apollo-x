@@ -232,7 +232,11 @@ function tileRoleHas(tileModules: ModuleKey[], effective: ReadonlySet<string>) {
 }
 
 export async function listTenantUsers(ctx: RequestContext) {
-  const companyId = auth(ctx);
+  return listTenantUsersCore(auth(ctx));
+}
+
+// Shared by the company's own Users screen (above) and Platform > Companies > company > Users (platform/company-users-service.ts).
+export async function listTenantUsersCore(companyId: string) {
   const entitledModules = await companyEntitledModules(companyId);
   const roleLabels = tenantRoleLabelsFor(await companyIndustryBuild(companyId));
   const memberships = await prisma.companyMembership.findMany({ where: { companyId }, include: { user: true, permissions: true }, orderBy: [{ role: "asc" }, { createdAt: "asc" }] });
@@ -245,7 +249,10 @@ export async function listTenantUsers(ctx: RequestContext) {
 }
 
 export async function getTenantUserEditorData(ctx: RequestContext, membershipId?: string) {
-  const companyId = auth(ctx);
+  return getTenantUserEditorDataCore(auth(ctx), membershipId);
+}
+
+export async function getTenantUserEditorDataCore(companyId: string, membershipId?: string) {
   const entitled = Array.from(await companyEntitledModules(companyId)).sort();
   const availableModules = entitled.map((moduleKey) => ({ moduleKey, label: MODULE_LABELS[moduleKey], category: MODULE_CATEGORY[moduleKey] ?? "Other" }));
   const build = await companyIndustryBuild(companyId);
@@ -332,7 +339,11 @@ export async function createTenantUserCore(ctx: RequestContext, companyId: strin
 }
 
 export async function updateTenantUser(ctx: RequestContext, membershipId: string, raw: unknown) {
-  const companyId = adminAuth(ctx);
+  return updateTenantUserCore(ctx, adminAuth(ctx), "API", membershipId, raw);
+}
+
+// `source` is what the audit log records: "API" from a support session on the company's own screen, "PLATFORM" from the platform's company page.
+export async function updateTenantUserCore(ctx: RequestContext, companyId: string, source: "API" | "PLATFORM", membershipId: string, raw: unknown) {
   const input = userInput.partial({ email: true, displayName: true, role: true, password: true }).parse(raw);
   const build = await companyIndustryBuild(companyId);
   const switchable = switchableModuleKeys(build, await companyEntitledModules(companyId));
@@ -376,13 +387,16 @@ export async function updateTenantUser(ctx: RequestContext, membershipId: string
         : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
       if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
     }
-    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify({ ...before, user: { id: before.user.id, email: before.user.email, displayName: before.user.displayName, active: before.user.active } })) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify({ ...before, user: { id: before.user.id, email: before.user.email, displayName: before.user.displayName, active: before.user.active } })) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
     return membership;
   });
 }
 
 export async function resetTenantUserSessions(ctx: RequestContext, membershipId: string) {
-  const companyId = adminAuth(ctx);
+  return resetTenantUserSessionsCore(ctx, adminAuth(ctx), "API", membershipId);
+}
+
+export async function resetTenantUserSessionsCore(ctx: RequestContext, companyId: string, source: "API" | "PLATFORM", membershipId: string) {
   return prisma.$transaction(async (tx) => {
     const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId } });
     if (!membership) throw new Error("NOT_FOUND");
@@ -392,7 +406,7 @@ export async function resetTenantUserSessions(ctx: RequestContext, membershipId:
     const otherMemberships = await tx.companyMembership.count({ where: { userId: membership.userId, companyId: { not: companyId } } });
     if (platformRoles === 0 && otherMemberships === 0) await tx.userIdentity.update({ where: { id: membership.userId }, data: { sessionVersion: { increment: 1 } } });
     await tx.userSession.updateMany({ where: { membershipId, revokedAt: null }, data: { revokedAt: new Date() } });
-    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_SESSIONS_RESET", correlationId: ctx.correlationId } });
+    await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_SESSIONS_RESET", correlationId: ctx.correlationId } });
     return { ok: true };
   });
 }
@@ -407,7 +421,10 @@ export async function resetTenantUserSessions(ctx: RequestContext, membershipId:
 // Guarded: you can't delete yourself, and the last active Company Admin can't
 // be deleted (the company would be locked out of its own user list).
 export async function deleteTenantUser(ctx: RequestContext, membershipId: string) {
-  const companyId = adminAuth(ctx);
+  return deleteTenantUserCore(ctx, adminAuth(ctx), "API", membershipId);
+}
+
+export async function deleteTenantUserCore(ctx: RequestContext, companyId: string, source: "API" | "PLATFORM", membershipId: string) {
   return prisma.$transaction(async (tx) => {
     const membership = await tx.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true } });
     if (!membership) throw new Error("NOT_FOUND");
@@ -428,7 +445,7 @@ export async function deleteTenantUser(ctx: RequestContext, membershipId: string
     }
     await tx.auditEvent.create({
       data: {
-        companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "CompanyMembership", entityId: membershipId,
+        companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membershipId,
         action: "TENANT_USER_DELETED", correlationId: ctx.correlationId,
         beforeData: { email: membership.user.email, displayName: membership.user.displayName, role: membership.role },
         afterData: { loginDisabled },

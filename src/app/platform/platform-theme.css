@@ -151,3 +151,136 @@
   .platform-shell .platform-header.compact-shell { padding: 10px 16px; position: static; }
   .platform-shell .platform-page { padding: 20px 16px 48px; }
 }
+
+/* ---------- 2026-11-03: company page in tabs, users managed inside it (mockup "Platform company view mockup") ---------- */
+.platform-shell .pcv-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.platform-shell .pcv-title { display: flex; align-items: center; gap: 16px; margin-top: 10px; }
+.platform-shell .pcv-mark { display: grid; flex: none; width: 52px; height: 52px; place-items: center; border-radius: 14px; background: #0c1a2c; color: var(--gold-500); font-size: 18px; font-weight: 700; }
+.platform-shell .pcv-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.platform-shell .pcv-title h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.02em; line-height: 30px; }
+.platform-shell .pcv-title p { margin: 4px 0 0; color: var(--pt-ink-muted); font-size: 13px; }
+.platform-shell .pcv-chip { display: inline-block; padding: 3px 10px; border-radius: 999px; background: #eef1f6; color: #3f4a5c; font-size: 12px; font-weight: 600; }
+.platform-shell .pcv-chip.ok { background: #dff5e9; color: #065f43; }
+.platform-shell .pcv-chip.off { background: #fde7e4; color: #8f1d12; }
+.platform-shell .pcv-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--pt-line); overflow-x: auto; }
+.platform-shell .pcv-tab { display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; padding: 11px 14px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--pt-ink-muted); font: inherit; font-size: 13.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.platform-shell .pcv-tab:hover { color: var(--ink-900); }
+.platform-shell .pcv-tab.on { border-bottom-color: var(--gold-500); color: var(--ink-900); font-weight: 700; }
+.platform-shell .pcv-badge { padding: 1px 8px; border-radius: 999px; background: #eef1f6; color: #3f4a5c; font-size: 12px; font-weight: 700; }
+.platform-shell .pcv-panel[hidden] { display: none; }
+.platform-shell .pcv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.platform-shell .pcv-stat { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border: 1px solid var(--pt-line); border-radius: var(--pt-radius); background: #fff; box-shadow: 0 1px 2px rgba(23,32,51,.05); }
+.platform-shell .pcv-stat span { color: var(--pt-ink-muted); font-size: 12px; font-weight: 600; }
+.platform-shell .pcv-stat strong { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 34px; }
+.platform-shell .pcv-stat small { color: var(--pt-ink-muted); font-size: 12.5px; }
+.platform-shell .pcv-link { align-self: flex-start; padding: 0; border: 0; background: transparent; color: #7a5200; font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.platform-shell .pcv-link:hover { color: #4d3300; text-decoration: underline; }
+.platform-shell .pcv-two { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.platform-shell .pcv-col { display: flex; flex-direction: column; gap: 20px; flex: 1 1 300px; min-width: 0; }
+.platform-shell .pcv-col:first-child { flex: 2 1 520px; }
+.platform-shell .pcv-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.platform-shell .pcv-card-head h3 { margin: 0; }
+.platform-shell .pcv-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 20px; margin: 14px 0 0; }
+.platform-shell .pcv-facts dt { color: var(--pt-ink-muted); font-size: 12px; }
+.platform-shell .pcv-facts dd { margin: 2px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.platform-shell .pcv-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.platform-shell .pcv-status { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+.platform-shell .pcv-status select { min-height: 38px; border: 1px solid #d5dae2; border-radius: 8px; padding: 0 12px; font-size: 13.5px; }
+
+/* Users tab */
+.platform-shell .pcu { display: flex; flex-direction: column; border: 1px solid var(--pt-line); border-radius: var(--pt-radius); background: #fff; box-shadow: 0 1px 2px rgba(23,32,51,.05); overflow: hidden; }
+.platform-shell .pcu-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--pt-line-soft); }
+.platform-shell .pcu-toolbar select { min-height: 38px; border: 1px solid #d5dae2; border-radius: 8px; background: #fff; padding: 0 12px; color: var(--ink-900); font-size: 13.5px; }
+.platform-shell .pcu-search { display: flex; flex: 1 1 240px; max-width: 340px; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border: 1px solid #d5dae2; border-radius: 8px; background: #fff; color: var(--pt-ink-muted); }
+.platform-shell .pcu-search:focus-within { border-color: var(--gold-500); box-shadow: 0 0 0 3px var(--pt-gold-100); }
+.platform-shell .pcu-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13.5px; color: var(--ink-900); }
+.platform-shell .pcu-toolbar-end { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.platform-shell .pcu-count { color: var(--pt-ink-muted); font-size: 13px; }
+.platform-shell .pcu-banner { margin: 12px 20px 0; }
+.platform-shell .pcu-head, .platform-shell .pcu-row { display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .8fr) 190px; gap: 12px; align-items: center; padding: 0 20px; }
+.platform-shell .pcu-head { margin-top: 12px; padding-top: 10px; padding-bottom: 10px; border-top: 1px solid var(--pt-line); border-bottom: 1px solid var(--pt-line); background: #fafbfc; color: var(--pt-ink-muted); font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.platform-shell .pcu-banner + .pcu-banner, .platform-shell .pcu-banner + .pcu-head { margin-top: 12px; }
+.platform-shell .pcu-right { text-align: right; }
+.platform-shell .pcu-body { max-height: calc(100vh - 430px); min-height: 220px; overflow: auto; }
+.platform-shell .pcu-row { padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--pt-line-soft); }
+.platform-shell .pcu-row:hover { background: #fafbfc; }
+.platform-shell .pcu-user { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.platform-shell .pcu-avatar { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 50%; color: var(--ink-900); font-size: 13px; font-weight: 700; }
+.platform-shell .pcu-avatar.big { width: 44px; height: 44px; font-size: 15px; }
+.platform-shell .pcu-user-text { display: flex; flex-direction: column; min-width: 0; }
+.platform-shell .pcu-user-text strong { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.platform-shell .pcu-user-text small { overflow: hidden; color: var(--pt-ink-muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.platform-shell .pcu-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+.platform-shell .pcu-role { background: #fbf1d6; color: #6b4a00; }
+.platform-shell .pcu-ok { background: #dff5e9; color: #065f43; }
+.platform-shell .pcu-off { background: #fde7e4; color: #8f1d12; }
+.platform-shell .pcu-modules { font-size: 13px; }
+.platform-shell .pcu-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.platform-shell .pcu-menu-wrap { position: relative; }
+.platform-shell .pcu-more { display: inline-grid; width: 34px; height: 34px; place-items: center; border: 1px solid #d5dae2; border-radius: 8px; background: #fff; color: var(--pt-ink-muted); cursor: pointer; }
+.platform-shell .pcu-more:hover { background: #f6f7fa; }
+.platform-shell .pcu-menu-scrim { position: fixed; inset: 0; z-index: 30; }
+.platform-shell .pcu-menu { position: absolute; top: 40px; right: 0; z-index: 31; min-width: 210px; padding: 6px; border: 1px solid var(--pt-line); border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgba(23,32,51,.18); }
+.platform-shell .pcu-menu button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-900); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.platform-shell .pcu-menu button:hover { background: #f4f6f9; }
+.platform-shell .pcu-menu button.danger { color: #8f1d12; }
+.platform-shell .pcu-empty, .platform-shell .pcu-empty-small { padding: 32px 20px; color: var(--pt-ink-muted); font-size: 13.5px; text-align: center; }
+.platform-shell .pcu-empty-small { padding: 14px 0; text-align: left; }
+.platform-shell .pcu-foot { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-top: 1px solid #f1d58a; background: #fdf8ea; color: #6b4a00; font-size: 12.5px; }
+
+/* Add / edit user panel */
+.platform-shell .pcu-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(7,17,31,.45); }
+.platform-shell .pcu-panel { position: absolute; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: 540px; max-width: 100%; background: #fff; box-shadow: -12px 0 40px rgba(7,17,31,.25); }
+.platform-shell .pcu-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 24px 16px; border-bottom: 1px solid var(--pt-line-soft); }
+.platform-shell .pcu-panel-who { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.platform-shell .pcu-panel-who h2 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
+.platform-shell .pcu-panel-who .eyebrow { margin: 0 0 2px; color: var(--gold-600); font-size: 11px; letter-spacing: .14em; }
+.platform-shell .pcu-panel-who small { color: var(--pt-ink-muted); font-size: 13px; }
+.platform-shell .pcu-close { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #d5dae2; border-radius: 8px; background: #fff; cursor: pointer; }
+.platform-shell .pcu-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 20px 24px; }
+.platform-shell .pcu-panel-body .inline-error { margin: 0 0 14px; }
+.platform-shell .pcu-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.platform-shell .pcu-fields label { display: flex; flex-direction: column; gap: 6px; color: #3f4a5c; font-size: 12.5px; font-weight: 600; }
+.platform-shell .pcu-fields label em { color: var(--pt-ink-muted); font-style: normal; font-weight: 400; }
+.platform-shell .pcu-fields .wide { grid-column: 1 / -1; }
+.platform-shell .pcu-fields input, .platform-shell .pcu-fields select { min-height: 40px; border: 1px solid #d5dae2; border-radius: 8px; background: #fff; padding: 0 12px; color: var(--ink-900); font: inherit; font-size: 14px; font-weight: 400; }
+.platform-shell .pcu-fields input:focus, .platform-shell .pcu-fields select:focus { border-color: var(--gold-500); box-shadow: 0 0 0 3px var(--pt-gold-100); outline: 0; }
+.platform-shell .pcu-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--pt-line); border-radius: 10px; background: #fafbfc; }
+.platform-shell .pcu-switch-row b { display: block; color: var(--ink-900); font-size: 13.5px; }
+.platform-shell .pcu-switch-row small { color: var(--pt-ink-muted); font-size: 12.5px; font-weight: 400; }
+.platform-shell .pcu-switch { position: relative; flex: none; width: 42px; height: 24px; padding: 0; border: 0; border-radius: 999px; background: #b7c0cd; cursor: pointer; }
+.platform-shell .pcu-switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .12s; }
+.platform-shell .pcu-switch.on { background: #087a55; }
+.platform-shell .pcu-switch.on i { transform: translateX(18px); }
+.platform-shell .pcu-switch:disabled { opacity: .6; cursor: default; }
+.platform-shell .pcu-mod-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 22px; }
+.platform-shell .pcu-mod-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.platform-shell .pcu-mod-head p { margin: 2px 0 0; color: var(--pt-ink-muted); font-size: 12.5px; }
+.platform-shell .pcu-mod-tools { display: flex; align-items: center; gap: 8px; color: var(--pt-ink-muted); font-size: 12.5px; }
+.platform-shell .pcu-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.platform-shell .pcu-tile { display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px; border: 1px dashed #c3c9d4; border-radius: 10px; background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.platform-shell .pcu-tile.on { border: 1px solid #9fd8bd; background: #f4fbf7; }
+.platform-shell .pcu-tile.locked { border: 1px solid var(--pt-line); background: #f4f6f9; cursor: default; }
+.platform-shell .pcu-tile:disabled { cursor: default; }
+.platform-shell .pcu-tile-box { display: grid; flex: none; width: 20px; height: 20px; place-items: center; margin-top: 1px; border: 2px solid #b7c0cd; border-radius: 5px; background: #fff; color: #fff; }
+.platform-shell .pcu-tile.on .pcu-tile-box { border-color: #087a55; background: #087a55; }
+.platform-shell .pcu-tile.locked .pcu-tile-box { border-color: #8b95a5; background: #8b95a5; }
+.platform-shell .pcu-tile-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.platform-shell .pcu-tile-text b { font-size: 13.5px; font-weight: 600; color: var(--ink-900); }
+.platform-shell .pcu-tile-text small { color: var(--pt-ink-muted); font-size: 12px; }
+.platform-shell .pcu-tile-text em { color: #3f4a5c; font-size: 12px; font-style: normal; font-weight: 650; }
+.platform-shell .pcu-tile.on .pcu-tile-text em { color: #065f43; }
+.platform-shell .pcu-tile-text small.warn { color: #92400e; }
+.platform-shell .pcu-danger { margin-top: 24px; padding: 14px; border: 1px solid #f3cfc9; border-radius: 10px; background: #fff8f7; }
+.platform-shell .pcu-danger b { color: #8f1d12; font-size: 13.5px; }
+.platform-shell .pcu-danger > div { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 8px; }
+.platform-shell .pcu-danger small { color: #6b3b35; font-size: 12px; }
+.platform-shell .pcu-remove { color: #8f1d12; border-color: #e3a59d; }
+.platform-shell .pcu-panel-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--pt-line-soft); background: #fff; }
+@media (max-width: 960px) {
+  .platform-shell .pcu-head { display: none; }
+  .platform-shell .pcu-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 8px; }
+  .platform-shell .pcu-row > :nth-child(3) { display: none; }
+  .platform-shell .pcu-body { max-height: none; }
+  .platform-shell .pcu-fields, .platform-shell .pcu-tiles { grid-template-columns: 1fr; }
+}
