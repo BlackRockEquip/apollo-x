@@ -7,6 +7,7 @@ import { getDocumentTitlesForCompany } from "@/lib/documents/titles-service";
 import { getCompanyLetterhead } from "@/lib/master-data/company-settings-service";
 import { sanitizeSegment } from "@/lib/attachments/blob-store";
 import { attachmentVisibleTo, photoTypeAllowed, uploadAsPhoto } from "@/lib/jobs/attachment-visibility";
+import { tagAllowed } from "@/lib/jobs/attachment-tags";
 import { Prisma } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { TenantPermission } from "@/lib/auth/permissions";
@@ -2092,6 +2093,8 @@ export async function addJobAttachment(ctx: RequestContext, jobId: string, raw: 
   // A mechanic can only add photos; a file added through the Photos section must be an image.
   const isPhoto = uploadAsPhoto(ctx, input.isPhoto);
   if (isPhoto && !photoTypeAllowed(input.mimeType)) throw new Error("INVALID_ATTACHMENT_TYPE");
+  // 2026-11-03: a photo carries a photo tag (Before / After ...), a document a document tag (Drawing / Quote ...).
+  if (!tagAllowed(isPhoto, input.tag)) throw new Error("INVALID_ATTACHMENT_TAG");
   const data = Buffer.from(input.contentBase64, "base64");
   if (data.length > MAX_ATTACHMENT_BYTES) throw new Error("ATTACHMENT_TOO_LARGE");
   const fileName = input.fileName.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 160);
@@ -2196,13 +2199,15 @@ export async function updateJobAttachmentNotes(ctx: RequestContext, jobId: strin
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const input = jobAttachmentNotesUpdateInput.parse(raw);
   const attachment = await getJobAttachmentScoped(ctx, companyId, jobId, attachmentId);
+  // 2026-11-03: only what was sent changes - a note edit leaves the tag alone, and re-tagging from the chip leaves the note alone.
+  if (input.tag !== undefined && !tagAllowed(attachment.isPhoto, input.tag)) throw new Error("INVALID_ATTACHMENT_TAG");
   const updated = await prisma.$transaction(async (tx) => {
     const record = await tx.jobAttachment.update({
       where: { id: attachment.id },
-      data: { notes: input.notes || null },
+      data: { ...(input.notes !== undefined ? { notes: input.notes || null } : {}), ...(input.tag !== undefined ? { tag: input.tag || null } : {}) },
       select: { id: true, fileName: true, mimeType: true, sizeBytes: true, notes: true, tag: true, isPhoto: true, itemId: true, createdAt: true, createdBy: { select: { displayName: true } } },
     });
-    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", `Attachment note updated: ${attachment.fileName}.`, { attachmentId: attachment.id, edited: true });
+    await addActivity(tx, ctx, jobId, "ATTACHMENT_UPLOADED", (input.tag !== undefined && input.notes === undefined ? `Attachment tag updated: ${attachment.fileName}.` : `Attachment note updated: ${attachment.fileName}.`), { attachmentId: attachment.id, edited: true });
     return record;
   });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobAttachment", entityId: attachment.id, action: "UPDATE", afterData: { jobId, attachmentId } });

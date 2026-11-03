@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ALL_ATTACHMENT_TAGS } from "@/lib/jobs/attachment-tags";
 
 const optionalText = z.string().trim().max(500).optional().nullable();
 const longText = z.string().trim().max(4000).optional().nullable();
@@ -293,7 +294,8 @@ export const attachmentUploadInput = z.object({
   contentBase64: z.string().min(4),
   notes: optionalText,
   // 2026-10-06 — field jobs: what the photo shows (see JobAttachment.tag).
-  tag: z.enum(["BEFORE", "AFTER", "FAULT", "SERIAL_PLATE", "OTHER"]).optional().nullable(),
+  // 2026-11-03: documents can be tagged too (Drawing, Quote ...); the service checks the tag suits a photo / a document.
+  tag: z.enum(ALL_ATTACHMENT_TAGS).optional().nullable(),
   // 2026-10-27: true when the file is added through the Photos section (images only).
   isPhoto: z.boolean().optional(),
   // 2026-10-29: the item of a multi-item job this file is for (left out / null = the whole job).
@@ -304,9 +306,11 @@ export const attachmentUploadInput = z.object({
 // allow a user to edit it as well." Mirrors the attachment-upload note
 // field's own bounds; the file itself is immutable, only its note changes
 // (see updateJobAttachmentNotes in service.ts).
+// 2026-11-03: the same call changes the tag (from the chip in the list). Either field may be left out - only what is sent changes.
 export const jobAttachmentNotesUpdateInput = z.object({
   notes: optionalText,
-});
+  tag: z.enum(ALL_ATTACHMENT_TAGS).optional().nullable(),
+}).refine((value) => value.notes !== undefined || value.tag !== undefined, { message: "Nothing to change." });
 
 // The unselected option on the Jobs & WIP filter dropdowns has value="" —
 // and, since those <select>s are associated with the search form via a

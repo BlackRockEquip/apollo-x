@@ -36,6 +36,9 @@ import { buildXlsx, type XlsxCell } from "@/lib/files/xlsx-lite";
 import { followupErrorOutcome, followupOutcome, type FollowupOutcome } from "@/lib/jobs/followup-outcome";
 import { jobHref } from "@/lib/jobs/job-href";
 import { ViewFolderButton } from "@/components/StorageFolderBrowser";
+import { JobFileUploader, type StagedUpload } from "./job-files/JobFileUploader";
+import { AttachmentTagChip } from "./job-files/AttachmentTagChip";
+import { fileBadge, formatFileSize } from "@/lib/jobs/attachment-tags";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -259,8 +262,6 @@ function partStatusLabel(status: string, stockOn: boolean): string {
 }
 // Form keys autosaved by runFieldReportAutosave (the field-service report fields).
 const FIELD_REPORT_KEYS = ["fieldTechnician", "fieldVehicle", "fieldReport", "fieldScheduledDate", "fieldHoursNormal", "fieldHoursOvertime", "fieldHoursTravelled", "fieldFindings", "fieldWorkDone", "fieldRecommendations", "fieldFollowUp", "fieldFollowUpDate"];
-// 2026-10-06 — field jobs: what an attachment (usually a photo) shows. Keys match attachmentUploadInput.tag.
-const ATTACHMENT_TAG_LABELS: Record<string, string> = { BEFORE: "Before", AFTER: "After", FAULT: "Fault", SERIAL_PLATE: "Serial plate", OTHER: "Other" };
 const DELIVERY_TYPES = ["INTERNAL_BAKKIE", "INTERNAL_TRUCK", "INTERNAL_COURIER", "EXTERNAL_BAKKIE", "EXTERNAL_TRUCK", "EXTERNAL_COURIER"];
 const PURCHASE_ORDER_STATUSES = ["TBA", "AWAIT_PAYMENT", "PARTIALLY_PAID", "PAID", "NOT_APPLICABLE"];
 // Registerable/changeable/reopenable status options are a function of the
@@ -693,13 +694,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // inline, only the add-form is a modal now.
   const [showOutworkPopup, setShowOutworkPopup] = useState(false);
   // Attachments — new (see schema.prisma's JobAttachment comment).
-  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
-  const [attachmentNotes, setAttachmentNotes] = useState("");
-  // 2026-10-06 — field jobs: what the photo shows (BEFORE / AFTER / ...).
   // 2026-10-27, user request (Mechanic view): Photos and Attachments are separate sections, each with its own upload form.
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoNotes, setPhotoNotes] = useState("");
-  const [photoTag, setPhotoTag] = useState("");
+  // 2026-11-03: the files being added (and their tags / notes) now live inside JobFileUploader; only the busy flags stay here.
   const [photoUploading, setPhotoUploading] = useState(false);
   // 2026-10-06 — field jobs: which of Parts list / Pick slips / Follow-up is open.
   // 2026-10-27, job screen redesign: the open tab lives in the URL hash (#tab=parts) so a refresh or a shared link lands on the same tab.
@@ -2569,35 +2565,50 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // uses the same fileToBase64 helper as the parts-list import / RFQ quote
   // file uploads above; view/download opens a data: URL in a new tab, same
   // convention as viewQuoteFile below.
-  async function uploadAttachment(asPhoto = false) {
-    const file = asPhoto ? photoFile : attachmentFile;
-    if (!jobId || !file) return;
-    const setUploading = asPhoto ? setPhotoUploading : setAttachmentUploading;
-    setUploading(true); setError("");
+  // 2026-11-03: uploads ONE staged file; JobFileUploader calls it for each file in turn and shows the message beside any that fail.
+  async function uploadOneAttachment(asPhoto: boolean, entry: StagedUpload): Promise<string | null> {
+    if (!jobId) return "The job is not loaded.";
+    const itemId = asPhoto ? photoItemId : attachmentItemId;
     try {
-      const contentBase64 = await fileToBase64(file);
+      const contentBase64 = await fileToBase64(entry.file);
       const r = await fetch(`/api/v1/jobs/${jobId}/attachments`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          fileName: file.name,
-          mimeType: file.type || "application/octet-stream",
+          fileName: entry.file.name,
+          mimeType: entry.file.type || "application/octet-stream",
           contentBase64,
-          notes: (asPhoto ? photoNotes : attachmentNotes).trim() || null,
-          tag: asPhoto ? photoTag || null : null,
+          notes: entry.notes || null,
+          tag: entry.tag || null,
           isPhoto: asPhoto,
-          ...((asPhoto ? photoItemId : attachmentItemId) ? { itemId: asPhoto ? photoItemId : attachmentItemId } : {}),
+          ...(itemId ? { itemId } : {}),
         }),
       });
       const b = await r.json();
-      if (!r.ok) throw new Error(b.error?.message || (asPhoto ? "Unable to upload the photo." : "Unable to upload attachment."));
-      if (asPhoto) { setPhotoFile(null); setPhotoNotes(""); setPhotoTag(""); }
-      else { setAttachmentFile(null); setAttachmentNotes(""); }
+      if (!r.ok) return b.error?.message || (asPhoto ? "Unable to upload the photo." : "Unable to upload the file.");
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : asPhoto ? "Unable to upload the photo." : "Unable to upload the file.";
+    }
+  }
+
+  // 2026-11-03: change (or clear) the tag of a photo / attachment from the chip in the list. Only the tag is sent, so the note stays.
+  async function setAttachmentTag(attachmentId: string, tag: string | null) {
+    if (!jobId) return;
+    setSaving(true); setError("");
+    try {
+      const r = await fetch(`/api/v1/jobs/${jobId}/attachments/${attachmentId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to change the tag.");
       await load(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : asPhoto ? "Unable to upload the photo." : "Unable to upload attachment.");
+      setError(e instanceof Error ? e.message : "Unable to change the tag.");
     } finally {
-      setUploading(false);
+      setSaving(false);
     }
   }
 
@@ -5141,11 +5152,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                   const isEditingNote = editingAttachmentId === fileId;
                   return (
                   <article key={fileId}>
-                    <div className="record-icon">{file.isPhoto ? <Camera size={14} /> : <FileText size={14} />}</div>
+                    {file.isPhoto ? <div className="record-icon"><Camera size={14} /></div> : <span className={`jfu-badge ${fileBadge(String(file.fileName), file.mimeType).tone}`}>{fileBadge(String(file.fileName), file.mimeType).label}</span>}
                     <div>
                       <strong><button type="button" className="table-action" onClick={() => void viewAttachment(fileId)}>{text(file.fileName)}</button></strong>
-                      {file.tag ? <span className="field-tag-chip">{ATTACHMENT_TAG_LABELS[String(file.tag)] || String(file.tag)}</span> : null}
-                      <span>{file.sizeBytes ? `${Math.max(1, Math.round(Number(file.sizeBytes) / 1024))} KB` : "—"} · {file.createdBy?.displayName || "System"}</span>
+                      <AttachmentTagChip tag={file.tag ? String(file.tag) : null} isPhoto={Boolean(file.isPhoto)} canEdit={!viewOnly && (!mechanicFieldsLocked || Boolean(file.isPhoto))} busy={saving} onChange={(next) => void setAttachmentTag(fileId, next)} />
+                      <span>{file.sizeBytes ? formatFileSize(Number(file.sizeBytes)) : "—"} · {file.createdBy?.displayName || "System"}</span>
                       {isEditingNote ? (
                         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
                           <input value={editingAttachmentNotes} onChange={(e) => setEditingAttachmentNotes(e.target.value)} placeholder="What is this file?" style={{ flex: 1 }} />
@@ -5172,20 +5183,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <div><h2>Photos</h2><p>Pictures of the job, such as the machine, the fault or the serial plate.</p></div>
               </header>
               <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.attachments.filter((a) => a.isPhoto && matchesItemFilter(a.itemId, f)).length} />
-              <div className="drawer-fields">
-                <ItemField items={linkItems} jobNumber={itemJobNumber} value={photoItemId} onChange={setPhotoItemId} disabled={photoUploading} label="For item" />
-                <label><span>Add a photo (max 8MB)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} /></label>
-                {fieldLayout && (
-                  <label><span>Tag</span>
-                    <select value={photoTag} onChange={(e) => setPhotoTag(e.target.value)}>
-                      <option value="">—</option>
-                      {Object.entries(ATTACHMENT_TAG_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                  </label>
-                )}
-                <label><span>Notes (optional)</span><input value={photoNotes} onChange={(e) => setPhotoNotes(e.target.value)} placeholder="What does it show?" /></label>
-                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!photoFile || photoUploading} onClick={() => void uploadAttachment(true)}>{photoUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Add photo</button></label>
-              </div>
+              {!viewOnly && (
+                <div className="jfu-wrap">
+                  <div className="drawer-fields jfu-item-row">
+                    <ItemField items={linkItems} jobNumber={itemJobNumber} value={photoItemId} onChange={setPhotoItemId} disabled={photoUploading} label="For item" />
+                  </div>
+                  <JobFileUploader kind="photo" disabled={saving} uploadOne={(entry) => uploadOneAttachment(true, entry)} onBusyChange={setPhotoUploading} onDone={() => load(true)} />
+                </div>
+              )}
               {fileRows(photoFiles as JobAttachmentRow[], "No photos added yet.")}
             </section>
   ) : null;
@@ -5197,12 +5202,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 <ViewFolderButton jobId={job.id} jobLabel={job.jobNumber || job.draftNumber} />
               </header>
               <ItemFilterBar items={linkItems} jobNumber={itemJobNumber} value={activeItemFilter} onChange={setItemFilter} count={(f) => job.attachments.filter((a) => !a.isPhoto && matchesItemFilter(a.itemId, f)).length} />
-              <div className="drawer-fields">
-                <ItemField items={linkItems} jobNumber={itemJobNumber} value={attachmentItemId} onChange={setAttachmentItemId} disabled={attachmentUploading} label="For item" />
-                <label><span>Upload a file (max 8MB)</span><input type="file" onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)} /></label>
-                <label><span>Notes (optional)</span><input value={attachmentNotes} onChange={(e) => setAttachmentNotes(e.target.value)} placeholder="What is this file?" /></label>
-                <label><span>&nbsp;</span><button type="button" className="gold-button" disabled={!attachmentFile || attachmentUploading} onClick={() => void uploadAttachment(false)}>{attachmentUploading && <Loader2 className="spin" size={14} />} <Plus size={15} /> Upload</button></label>
-              </div>
+              {!viewOnly && (
+                <div className="jfu-wrap">
+                  <div className="drawer-fields jfu-item-row">
+                    <ItemField items={linkItems} jobNumber={itemJobNumber} value={attachmentItemId} onChange={setAttachmentItemId} disabled={attachmentUploading} label="For item" />
+                  </div>
+                  <JobFileUploader kind="document" disabled={saving} uploadOne={(entry) => uploadOneAttachment(false, entry)} onBusyChange={setAttachmentUploading} onDone={() => load(true)} />
+                </div>
+              )}
               {fileRows(documentFiles as JobAttachmentRow[], "No attachments uploaded yet.")}
             </section>
   ) : null;
