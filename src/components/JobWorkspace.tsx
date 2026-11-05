@@ -39,6 +39,7 @@ import { ViewFolderButton } from "@/components/StorageFolderBrowser";
 import { JobFileUploader, type StagedUpload } from "./job-files/JobFileUploader";
 import { AttachmentTagChip } from "./job-files/AttachmentTagChip";
 import { fileBadge, formatFileSize } from "@/lib/jobs/attachment-tags";
+import { RELATION_PAYLOAD_KEYS, createSerialRunner, diffPayload, jobPayloadFromForm, mergeServerForm, nextBaseline, pickFormKeys, type JobFormValues } from "@/lib/jobs/job-autosave";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
@@ -872,15 +873,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // two, per the user's own scoping of when the "unsaved changes" popup
   // should fire.
   const [autosaveState, setAutosaveState] = useState<"idle" | "saving" | "error">("idle");
-  // Every load() (initial fetch, or the reload after a postAction/
-  // patchAction elsewhere on the page) repopulates `form` from the
-  // server's own values — without this guard, that repopulation would
-  // itself look like a user edit to the autosave effect below and fire a
-  // redundant, harmless-but-wasteful PATCH echoing back what the server
-  // just sent. Set to true right before every setForm in load(); the
-  // autosave effect consumes and clears it on the very next run instead of
-  // scheduling a save.
-  const skipNextAutosave = useRef(true);
+  // 2026-11-05, user request (saving on the job screen is slow, and typing in one field then the next could lose the next field):
+  //  - baselineRef: the job fields as the server last confirmed them. A save sends only what differs from it, and a reload of the job
+  //    keeps anything typed that differs from it (mergeServerForm), so a reload can never put an old value over what is being typed;
+  //  - saver: one save at a time (a request during a save asks for one follow-up, not a second save in parallel);
+  //  - saveEpoch: bumped whenever a save is confirmed. A reload that started before that is stale and is dropped (and retried shortly);
+  //  - formRef: the latest form values for timers and event handlers that must not read a stale render.
+  // This replaces skipNextAutosave, which swallowed the first edit after a save when the reload changed no field value.
+  const baselineRef = useRef<JobFormValues | null>(null);
+  const formRef = useRef<JobFormValues>({});
+  const saveEpoch = useRef(0);
+  const inFlightChanges = useRef<Record<string, unknown> | null>(null);
+  const leaveSent = useRef<Record<string, unknown> | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadRef = useRef<(silent?: boolean) => Promise<void>>(async () => {});
+  const [saver] = useState(() => createSerialRunner());
   // 2026-10-06 — the field-service report fields (technician ... follow-up)
   // autosave like every other field (runFieldReportAutosave below). While any of
   // them has unsaved typing, a background reload of the job (e.g. after an
@@ -1013,24 +1020,37 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     pexNotes: "",
   });
 
+  // Reloads the job once saving has gone quiet (no save running, nothing waiting to be saved).
+  const scheduleRefresh = useCallback((delay: number) => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    const wait = (ms: number) => {
+      refreshTimer.current = setTimeout(() => {
+        refreshTimer.current = null;
+        if (saver.isRunning() || autosaveTimer.current) wait(1000);
+        else void loadRef.current(true);
+      }, ms);
+    };
+    wait(delay);
+  }, [saver]);
+
   const load = useCallback(async (silent?: boolean) => {
     if (!jobId) return;
     if (!silent) setLoading(true);
     setError("");
+    const epochAtStart = saveEpoch.current;
     try {
       const response = await fetch(`/api/v1/jobs/${jobId}`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load job.");
+      // A background reload that started before a save was confirmed (or is landing mid-save) holds older values than the server now
+      // has. Applying it would put them back over newer typing, so it is dropped and tried again once saving is quiet.
+      if (silent && (epochAtStart !== saveEpoch.current || saver.isRunning())) { scheduleRefresh(400); return; }
       setJob(body);
       // See jobRef's own comment above — kept in sync right here (not via
       // a useEffect keyed on `job`) so it's already current by the time a
       // queued row save reads it, with zero extra render lag.
       jobRef.current = body;
-      // See skipNextAutosave's own comment above — this repopulation is
-      // the server echoing back what's already saved, not a new edit.
-      skipNextAutosave.current = true;
-      setForm((current) => ({
-        ...current,
+      const serverFields: Record<string, string> = {
         customerId: body.customerId || "",
         dateReceived: body.dateReceived ? String(body.dateReceived).slice(0, 10) : "",
         customerReference: body.customerReference || "",
@@ -1099,6 +1119,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         warrantyNotes: body.warranty?.notes ? String(body.warranty.notes) : "",
         warrantyHistorical: body.warranty?.historicalSourceStatus ? String(body.warranty.historicalSourceStatus) : "",
         pexNotes: String((body.pexAsSupply?.notes ?? body.pexAsReturn?.notes) || ""),
+      };
+      // Keep whatever has been typed that the server has not confirmed yet (see baselineRef above).
+      const merged = mergeServerForm(formRef.current, serverFields, baselineRef.current);
+      baselineRef.current = nextBaseline(serverFields, merged);
+      formRef.current = { ...formRef.current, ...merged };
+      setForm((current) => ({
+        ...current,
+        ...merged,
         // Keep unsaved field-report typing (see fieldReportDirty above).
         ...(fieldReportDirty.current ? Object.fromEntries(FIELD_REPORT_KEYS.map((key) => [key, current[key]])) : {}),
       }));
@@ -1107,7 +1135,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     } finally {
       setLoading(false);
     }
-  }, [jobId]);
+  }, [jobId, saver, scheduleRefresh]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- async resource loading and search result synchronization are intentional here */
   useEffect(() => { void load(); }, [load]);
@@ -1351,6 +1379,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   function updateField(key: string, value: string) {
     if (FIELD_REPORT_KEYS.includes(key)) { fieldReportDirty.current = true; fieldReportVersion.current += 1; }
+    formRef.current = { ...formRef.current, [key]: value };
     setForm((current) => ({ ...current, [key]: value }));
   }
 
@@ -1368,54 +1397,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     return items.length > 0 ? { ...base, items } : base;
   }
 
+  // The job-edit grid's fields as the API takes them (shared with the autosave in lib/jobs/job-autosave.ts).
   function buildBaseJobPayload() {
-    return {
-      customerId: form.customerId,
-      dateReceived: form.dateReceived || null,
-      customerReference: form.customerReference || null,
-      customerPo: form.purchaseOrderNumber || null,
-      machineMake: form.machineMake || null,
-      machineModel: form.machineModel || null,
-      machineSerial: form.machineSerial || null,
-      component: form.component || null,
-      componentModel: form.componentModel || null,
-      componentType: form.componentType || null,
-      componentSerial: form.componentSerial || null,
-      componentPartNumber: form.componentPartNumber || null,
-      description: form.description || null,
-      notes: form.notes || null,
-      type: form.type,
-      etaDate: form.etaDate || null,
-      mechanicEtaDate: form.mechanicEtaDate || null,
-      stripMechanicId: form.stripMechanicId || null,
-      buildMechanicId: form.buildMechanicId || null,
-      relationshipNotes: form.relationshipNotes || null,
-      quoteNumber: form.quoteNumber || null,
-      quoteDate: form.quoteDate || null,
-      salesOrderNumber: form.salesOrderNumber || null,
-      salesOrderDate: form.salesOrderDate || null,
-      invoiceNumber: form.invoiceNumber || null,
-      invoiceDate: form.invoiceDate || null,
-      purchaseOrderNumber: form.purchaseOrderNumber || null,
-      purchaseOrderDate: form.purchaseOrderDate || null,
-      purchaseOrderStatus: form.purchaseOrderStatus || null,
-      deliveryDate: form.deliveryDate || null,
-      deliveryType: form.deliveryType || null,
-      receivingTransport: form.receivingTransport || null,
-      kmsTravelled: form.kmsTravelled ? Number(form.kmsTravelled) : null,
-      siteContactName: form.siteContactName || null,
-      siteContactPhone: form.siteContactPhone || null,
-      siteAddress: form.siteAddress || null,
-      accessNotes: form.accessNotes || null,
-      paymentDateReceived: form.paymentDateReceived || null,
-      paymentNotApplicable: form.paymentNotApplicable === "true",
-      machineHours: form.machineHours || null,
-      plantNumber: form.plantNumber || null,
-      reportNumber: form.reportNumber || null,
-      importTrackingNumber: form.importTrackingNumber || null,
-      previousJobNumber: form.previousJobNumber || null,
-      salesRepresentativeId: form.salesRepresentativeId || null,
-    };
+    return jobPayloadFromForm(form);
   }
 
   async function submitDraft(e: React.FormEvent<HTMLFormElement>) {
@@ -1444,43 +1428,83 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }
 
-  // Debounced full autosave for the job-edit-grid fields (2026-09-14, user
-  // request — see autosaveState's own comment above for the skip-echo
-  // guard this relies on). Deliberately does NOT check the shared `saving`
-  // flag before firing — postAction/patchAction calls elsewhere on the
-  // page already reload the job afterwards, which itself sets
-  // skipNextAutosave and would just cancel out a same-tick autosave
-  // attempt harmlessly; gating on `saving` risked a real edit's autosave
-  // getting silently dropped instead of retried.
-  async function runAutosave() {
-    if (!jobId) return;
+  // Debounced autosave for the job-edit-grid fields (2026-09-14, user request: "autosaves all changes without having to click save").
+  // Deliberately does NOT check the shared `saving` flag before firing: gating on it risked a real edit's autosave getting silently
+  // dropped instead of retried. Reworked 2026-11-05 (see baselineRef / saver above): changes-only saves, one at a time.
+  // 2026-11-05: one autosave attempt. Sends ONLY the fields that differ from what the server last confirmed (baselineRef), so a save is
+  // small, and two people editing different fields of a job no longer overwrite each other. Returns false when the save failed.
+  // `skip` leaves out changes that are already on their way to the server (a save in flight).
+  function pendingChanges(skip: Record<string, unknown> | null = null) {
+    const baseline = baselineRef.current;
+    const snapshot = formRef.current;
+    if (!baseline || !snapshot.customerId) return null;
+    const changes = diffPayload(jobPayloadFromForm(snapshot), jobPayloadFromForm({ ...snapshot, ...baseline }));
+    if (skip) for (const key of Object.keys(changes)) if (skip[key] === changes[key]) delete changes[key];
+    return Object.keys(changes).length > 0 ? changes : null;
+  }
+
+  async function autosaveOnce(): Promise<boolean> {
+    if (!jobId) return true;
+    const snapshot = formRef.current;
+    // Anything already sent while the page was being left (see the pagehide handler below) is not sent a second time.
+    const changes = pendingChanges(leaveSent.current);
+    if (!changes) { setAutosaveState((state) => (state === "error" ? "idle" : state)); return true; }
     setAutosaveState("saving");
     setError("");
+    inFlightChanges.current = changes;
     try {
       const r = await fetch(`/api/v1/jobs/${jobId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildJobPayload()),
+        body: JSON.stringify(changes),
       });
       const b = await r.json();
       if (!r.ok) throw new Error(b.error?.message || "Unable to save job.");
+      // The server now holds what was just sent. Anything typed since stays "unsaved" because it differs from this.
+      saveEpoch.current += 1;
+      baselineRef.current = { ...(baselineRef.current || {}), ...pickFormKeys(snapshot) };
+      // The save returns the job's own fields, so the screen's copy is brought up to date without waiting for a full reload.
+      setJob((current) => (current ? ({ ...current, ...b } as typeof current) : current));
+      if (jobRef.current) jobRef.current = { ...jobRef.current, ...b } as JobDetail;
       setAutosaveState("idle");
-      await load(true);
+      // Names / people shown elsewhere on the screen come from the full job, so reload it soon after those change; otherwise wait for a quiet moment.
+      scheduleRefresh(Object.keys(changes).some((key) => RELATION_PAYLOAD_KEYS.includes(key)) ? 300 : 2500);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save job.");
       setAutosaveState("error");
+      return false;
+    } finally {
+      inFlightChanges.current = null;
     }
   }
 
+  function runAutosave() { return saver.run(autosaveOnce); }
+
+  // Saves right now instead of waiting for the typing pause - used when the person leaves a field or the tab.
+  function flushAutosave() {
+    if (!autosaveTimer.current) return;
+    clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = null;
+    void saver.run(autosaveOnce);
+  }
+
+  // Keeps the refs above pointing at the latest render (read by timers, the save queue and the leave-the-page handlers).
+  useEffect(() => {
+    formRef.current = form;
+    loadRef.current = load;
+  });
+
   useEffect(() => {
     if (mode !== "detail" || !jobId) return;
-    if (skipNextAutosave.current) { skipNextAutosave.current = false; return; }
     if (!form.customerId) return;
+    // Nothing differs from what the server has (for example right after a reload): nothing to schedule.
+    if (!pendingChanges()) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
-    autosaveTimer.current = setTimeout(() => { void runAutosave(); }, 1200);
-    return () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); };
-    // Deliberately only the job-edit-grid's own fields (matches
-    // buildJobPayload above) — note/dialog/field-service/warranty/pex
+    autosaveTimer.current = setTimeout(() => { autosaveTimer.current = null; void saver.run(autosaveOnce); }, 1000);
+    return () => { if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; } };
+    // Deliberately only the job-edit grid's own fields (matches
+    // jobPayloadFromForm) — note/dialog/field-service/warranty/pex
     // fields on the same `form` object have their own explicit save
     // actions and must not trigger this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1494,6 +1518,29 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     form.plantNumber, form.reportNumber, form.importTrackingNumber, form.previousJobNumber, form.salesRepresentativeId,
     form.siteContactName, form.siteContactPhone, form.siteAddress, form.accessNotes,
   ]);
+
+  // Switching to another tab saves at once; leaving the page (closing the tab, or moving to another screen) sends whatever is still
+  // waiting so a last edit is not lost to the typing pause. keepalive lets that request finish after the page is gone.
+  useEffect(() => {
+    if (mode !== "detail" || !jobId) return;
+    const sendLeft = () => {
+      const changes = pendingChanges({ ...inFlightChanges.current, ...leaveSent.current });
+      if (!changes) return;
+      // The tab can be hidden, closed and unmounted in quick succession: each change is sent once.
+      leaveSent.current = { ...leaveSent.current, ...changes };
+      void fetch(`/api/v1/jobs/${jobId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(changes), keepalive: true }).catch(() => {});
+    };
+    const onHidden = () => { if (document.visibilityState === "hidden") flushAutosave(); };
+    window.addEventListener("pagehide", sendLeft);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      window.removeEventListener("pagehide", sendLeft);
+      document.removeEventListener("visibilitychange", onHidden);
+      sendLeft();
+      if (refreshTimer.current) { clearTimeout(refreshTimer.current); refreshTimer.current = null; }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- these helpers only read refs, so the first render's copies are always current.
+  }, [mode, jobId]);
 
   // Autosave for the field-service report fields — same debounce, same
   // header indicator and same retry as the job fields above, but PUT to the
@@ -5857,7 +5904,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div style={{ height: stickyHeaderHeight }} aria-hidden="true" />
 
       {mode === "create" && (
-        <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
+        <form className="job-layout" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobFormSections}</form>
       )}
 
       {job && (
@@ -5867,7 +5914,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {tabletSheets}
           {!tabletLayout && <JobFactsStrip items={factItems} />}
           {/* 2026-10-29, user request: the item list sits above the item header and the tabs (as in the item mockup), so it is on screen whatever tab is open. */}
-          {jobCardsAboveItems && <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobTopSections}</form>}
+          {jobCardsAboveItems && <form className="job-layout" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobTopSections}</form>}
           {!tabletLayout && itemsPanelSection}
           {!tabletLayout && itemsListOn && (
             <ItemHeader
@@ -5890,7 +5937,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               {fieldLayout ? fieldOverview : jobCardsAboveItems ? (
                 <div className="job-layout">{itemDetailsSections}</div>
               ) : (
-                <form className="job-layout" id="job-edit-form" onSubmit={submitDraft}>{jobFormSections}</form>
+                <form className="job-layout" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobFormSections}</form>
               )}
             </div>
           )}

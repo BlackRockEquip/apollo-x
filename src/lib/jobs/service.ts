@@ -933,6 +933,21 @@ export async function getJobById(ctx: RequestContext, id: string) {
   return { ...job, attachments, customer, emailConfigured, previousPexJob };
 }
 
+// 2026-11-05, user request (saving on the job screen is slow): a job save only needs these few fields of the job, not the customer,
+// branches, contacts, addresses and everything else getJobScoped loads for the job screen.
+async function getJobForUpdate(companyId: string, id: string) {
+  const job = await prisma.job.findFirst({
+    where: { id, companyId },
+    select: {
+      id: true, type: true, status: true, stripMechanicId: true, buildMechanicId: true, salesRepresentativeId: true,
+      component: true, componentType: true, componentSerial: true, componentPartNumber: true, returnedUnrepaired: true,
+      jobItems: { select: { id: true }, take: 1 },
+    },
+  });
+  if (!job) notFound();
+  return job;
+}
+
 export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   const parsedInput = jobUpdateInput.parse(raw);
@@ -945,7 +960,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   // making every other field a silent no-op for this role, matching what
   // the UI already shows as read-only.
   const input = ctx.tenantRole === "USER" ? ({ notes: parsedInput.notes } as typeof parsedInput) : parsedInput;
-  const existing = await getJobScoped(companyId, id);
+  const existing = await getJobForUpdate(companyId, id);
   // 2026-10-29, Engineering multi-item jobs: once a job has items, the job's own machine / component fields mirror item 1 and are
   // changed through the items, so a save of the job form never overwrites them.
   if (existing.jobItems.length > 0) for (const key of ITEM_MANAGED_JOB_FIELDS) delete (input as Record<string, unknown>)[key];
@@ -1018,14 +1033,16 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
       },
     });
 
-    const componentExists = await tx.jobComponent.findFirst({ where: { companyId, jobId: existing.id } });
+    // 2026-11-05: the component record is only touched when a save actually changes one of its fields.
+    const componentTouched = input.component !== undefined || input.componentType !== undefined || input.componentSerial !== undefined || input.componentPartNumber !== undefined;
+    const componentExists = componentTouched ? await tx.jobComponent.findFirst({ where: { companyId, jobId: existing.id } }) : null;
     const componentPayload = {
       component: input.component ?? existing.component ?? "Component",
       componentType: input.componentType === undefined ? existing.componentType : input.componentType,
       componentSerial: input.componentSerial === undefined ? existing.componentSerial : input.componentSerial,
       componentPartNumber: input.componentPartNumber === undefined ? existing.componentPartNumber : input.componentPartNumber,
     };
-    if (job.component) {
+    if (componentTouched && job.component) {
       if (componentExists) await tx.jobComponent.update({ where: { id: componentExists.id }, data: componentPayload });
       else await tx.jobComponent.create({ data: { companyId, jobId: existing.id, ...componentPayload } });
     }
@@ -1035,17 +1052,19 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
     // Covers a save that changes an existing job's type TO PEX_SUPPLY —
     // same "create the PexRecord if one doesn't already exist" as
     // createJob above, safe/no-op otherwise.
-    await createPexRecordForSupplyJob(tx, ctx, companyId, job);
-    // Unconditional for every job type, matching ModApp's own
-    // syncPexConsumption call.
-    await syncPexRedeployment(tx, ctx, companyId, job);
+    // 2026-11-05: each PEX sync now runs only when the save changed a field it reads (a save of just Notes used to run all four).
+    if (input.type !== undefined || input.component !== undefined || input.componentType !== undefined || input.deliveryDate !== undefined) {
+      await createPexRecordForSupplyJob(tx, ctx, companyId, job);
+    }
+    // Every job type (matching ModApp's own syncPexConsumption call), whenever "Previous job number" is part of the save.
+    if (input.previousJobNumber !== undefined) await syncPexRedeployment(tx, ctx, companyId, job);
     // Also unconditional — deliveryDate is a plain form field with no
     // status transition of its own, so it needs its own sync call rather
     // than piggybacking on the status-change branch below (see
     // syncPexAwaitCoreFromDeliveryDate's own comment).
-    await syncPexAwaitCoreFromDeliveryDate(tx, ctx, companyId, job);
+    if (input.deliveryDate !== undefined || input.type !== undefined) await syncPexAwaitCoreFromDeliveryDate(tx, ctx, companyId, job);
     // 2026-10-13 — a renamed Component carries over to the job's PEX record.
-    await syncPexUnitDescription(tx, ctx, companyId, job);
+    if (input.component !== undefined || input.componentType !== undefined) await syncPexUnitDescription(tx, ctx, companyId, job);
     if (input.status !== undefined && input.status !== existing.status) {
       await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
       if (RESERVATION_RELEASE_STATUSES.includes(job.status)) await releaseJobPartReservationsTx(tx, ctx, companyId, job.id);
