@@ -1,0 +1,61 @@
+/* Jobs & WIP — Board view (2026-11-06). Imported by JobsWipBoard.tsx. */
+
+/* Which of the two views shows is set by data-layout on .jobs-panel (page.tsx sets it from the saved choice,
+   JobsWipLayoutSwitch.tsx flips it). Both are always in the page, so searching/filtering is one thing, not two. */
+.jobs-panel[data-layout="table"] .jb { display: none; }
+.jobs-panel[data-layout="board"] .data-table-wrap { display: none; }
+.jobs-table-only { display: contents; }
+.jobs-panel[data-layout="board"] .jobs-table-only { display: none; }
+
+/* Table | Board switch */
+.jb-switch { display: inline-flex; border: 1px solid var(--ink-300, #cfd6e0); border-radius: 10px; padding: 2px; background: #fff; }
+.jb-switch button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-700, #394559); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.jb-switch button[aria-pressed="true"] { background: #fbf1d6; color: #5c3d00; font-weight: 700; }
+.jb-switch button:focus-visible { outline: 2px solid var(--gold-500, #d6a83b); outline-offset: 1px; }
+
+/* Board */
+.jb { display: flex; flex-direction: column; min-height: 0; }
+.jb-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 13px; border-bottom: 1px solid var(--ink-150, #e2e6ec); font-size: 12px; color: var(--ink-500, #5b677a); }
+.jb-bar-group { display: inline-flex; align-items: center; gap: 8px; }
+.jb-seg { display: inline-flex; border: 1px solid var(--ink-300, #cfd6e0); border-radius: 10px; padding: 2px; background: #fff; }
+.jb-seg button { height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-700, #394559); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.jb-seg button[aria-pressed="true"] { background: #eef1f5; color: var(--ink-900, #172033); font-weight: 700; }
+.jb-chip { height: 30px; padding: 0 12px; border: 1px solid var(--ink-300, #cfd6e0); border-radius: 15px; background: #fff; color: var(--ink-700, #394559); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.jb-chip[aria-pressed="true"] { border-color: #e0a39c; background: #fdecea; color: #9a1c12; font-weight: 700; }
+.jb-chip.check[aria-pressed="true"] { border-color: #d6a83b; background: #fbf1d6; color: #5c3d00; }
+.jb-bar select { height: 30px; border: 1px solid var(--ink-300, #cfd6e0); border-radius: 8px; background: #fff; padding: 0 8px; color: var(--ink-900, #172033); font: inherit; font-size: 12px; }
+.jb-count { margin-left: auto; }
+.jb-count strong { color: #9a1c12; }
+
+.jb-board { display: flex; align-items: flex-start; gap: 14px; padding: 14px; overflow: auto; }
+.jb-lane { flex: 1 1 280px; min-width: 270px; max-width: 420px; display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; background: #eef1f5; }
+.jb-lane-head { padding: 2px 4px 4px; }
+.jb-lane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.jb-lane-title h2 { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink-900, #172033); }
+.jb-lane-count { padding: 1px 9px; border: 1px solid #d9dfe8; border-radius: 10px; background: #fff; color: var(--ink-700, #394559); font-size: 11.5px; font-weight: 700; }
+.jb-lane-sub { margin: 3px 0 0; color: var(--ink-500, #5b677a); font-size: 11.5px; line-height: 1.35; }
+.jb-empty { padding: 18px 8px; text-align: center; color: var(--ink-500, #5b677a); font-size: 12px; }
+.jb-more { align-self: flex-start; padding: 6px 4px 2px; border: 0; background: none; color: #7a5200; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+
+.jb-card { display: flex; flex-direction: column; gap: 6px; padding: 11px 12px; border: 1px solid var(--ink-150, #e2e6ec); border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(7, 17, 31, .05); color: var(--ink-900, #172033); text-decoration: none; }
+a.jb-card:hover { border-color: #d6a83b; box-shadow: 0 2px 8px rgba(7, 17, 31, .1); }
+a.jb-card:focus-visible { outline: 2px solid var(--gold-500, #d6a83b); outline-offset: 1px; }
+.jb-row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.jb-row1 strong { font-size: 13px; }
+.jb-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-500, #5b677a); font-size: 11px; }
+.jb-items { padding: 1px 7px; border-radius: 9px; background: #eef1f5; color: var(--ink-700, #394559); font-size: 11px; font-weight: 600; }
+.jb-customer { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.jb-what { color: var(--ink-500, #5b677a); font-size: 12px; overflow-wrap: anywhere; }
+.jb-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.jb-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.jb-person { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--ink-500, #5b677a); font-size: 11.5px; }
+.jb-person span.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jb-avatar { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%; background: #07111f; color: #fff; font-size: 10px; font-weight: 700; }
+.jb-eta { flex: none; color: var(--ink-500, #5b677a); font-size: 11.5px; white-space: nowrap; }
+.jb-late { flex: none; padding: 2px 8px; border-radius: 10px; background: #fdecea; color: #9a1c12; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .jb-lane { flex: 0 0 82vw; }
+  .jb-count { margin-left: 0; width: 100%; }
+}
+@media print { .jb { display: none !important; } }

@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { ChevronRight, FileText, Search, Plus } from "lucide-react";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
 import { ItemsStatusBadge, itemsAreMixed } from "@/components/job-items/ItemsStatusBadge";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -15,7 +16,10 @@ import { JobsWipBulkBar } from "@/components/JobsWipBulkBar";
 import { JobsWipPrintButton } from "@/components/JobsWipPrintButton";
 import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
+import { JobsWipBoard } from "@/components/JobsWipBoard";
+import { JobsWipLayoutSwitch } from "@/components/JobsWipLayoutSwitch";
 import { itemTag, machinistSummary } from "@/lib/jobs/item-model";
+import { JOBS_BOARD_PREFS_COOKIE, JOBS_LAYOUT_COOKIE, normalizeJobsLayout, parseBoardPrefs, toBoardCard } from "@/lib/jobs/wip-board";
 import { jobHref } from "@/lib/jobs/job-href";
 import { requireRequestContext } from "@/lib/auth/session";
 import { requireTenantModulePage } from "@/lib/auth/page-guard";
@@ -287,6 +291,32 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
   if (q) clearViewParams.set("q", q);
   const clearViewHref = clearViewParams.toString() ? `/jobs?${clearViewParams.toString()}` : "/jobs";
   const filterSummary = filterParts.length > 0 ? filterParts.join("  ·  ") : "No filters (all jobs)";
+  // 2026-11-06, user request: a Board view next to the table (cards in stage lanes). The table is the default; the choice is
+  // remembered in a cookie so the page opens on the view that was last used. See lib/jobs/wip-board.ts.
+  const cookieJar = await cookies();
+  const layout = normalizeJobsLayout(cookieJar.get(JOBS_LAYOUT_COOKIE)?.value);
+  const boardPrefs = parseBoardPrefs(cookieJar.get(JOBS_BOARD_PREFS_COOKIE)?.value);
+  // The customer on a card follows the same permission as the Customer column.
+  const showCustomerOnCards = searchableColumns.has("customerName");
+  const boardCards = data.items.map((job) => toBoardCard({
+    id: job.id,
+    href: jobHref(job),
+    jobNumber: job.jobNumber,
+    draftNumber: job.draftNumber,
+    customerName: showCustomerOnCards ? job.customer.name : null,
+    component: job.component,
+    machineMake: job.machineMake,
+    machineModel: job.machineModel,
+    status: job.status,
+    type: job.type,
+    returnedUnrepaired: job.returnedUnrepaired,
+    breakdown: Boolean(job.breakdown),
+    pex: Boolean(job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)),
+    itemStatuses: job.jobItems.map((item) => item.status),
+    people: [job.buildMechanic?.name, job.stripMechanic?.name],
+    mechanicEtaDate: job.mechanicEtaDate,
+    etaDate: job.etaDate,
+  }, ctx.industryBuild));
 
   return (
     <div>
@@ -309,7 +339,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
         </div>
       </header>
 
-      <section className="master-panel jobs-panel">
+      <section className="master-panel jobs-panel" data-layout={layout}>
         <div className="master-toolbar jobs-toolbar">
           <form id="jobs-filter-form" method="GET" action="/jobs" className="search-control inventory-search-control">
             <Search size={15} />
@@ -326,6 +356,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 made a later status pick combine with the old view. */}
             {!wipViewOnly && view !== "all" && !rawStatus && <input type="hidden" name="view" value={view} />}
           </form>
+          <JobsWipLayoutSwitch initial={layout} />
           {/* 2026-10-09 — Job type / Status dropdowns removed: both now live in the table headers (Excel-style filters). */}
           {/* 2026-09-14 — "Move the custom column button selctor and apply
               button to the far right" (explicit request). The item-count
@@ -339,7 +370,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               than the dropdowns say. */}
           {!wipViewOnly && view !== "all" && VIEW_LABELS[view] && !rawStatus && <Link href={clearViewHref} className="status-chip active" title="Show all jobs">{VIEW_LABELS[view]} ✕</Link>}
           <span>{data.total} job{data.total === 1 ? "" : "s"}</span>
-          <JobsWipItemsToggle tableId="jobs-wip-table" />
+          <div className="jobs-table-only"><JobsWipItemsToggle tableId="jobs-wip-table" /></div>
           {/* 2026-10-01 — `available` (the subset of JOBS_WIP_COLUMNS this
               viewer's role is entitled to) now travels down alongside
               `selected`, so e.g. a Mechanic never even sees "Customer" as a
@@ -347,12 +378,12 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
               wip-columns.ts, and getJobsWipColumns above (the real
               enforcement: that column is never in `columns` to begin
               with). */}
-          {!wipViewOnly && <JobsWipColumnPicker build={ctx.industryBuild} selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} />}
+          {!wipViewOnly && <div className="jobs-table-only"><JobsWipColumnPicker build={ctx.industryBuild} selected={columns} available={filterColumnsByPermission(JOBS_WIP_COLUMNS.map((c) => c.id), ctx.tenantPermissions)} /></div>}
           {/* 2026-10-06, user request: "Create a Print view of the table
               however the user filtered or saved the columns". */}
-          <JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} />
+          <div className="jobs-table-only"><JobsWipPrintButton tableId="jobs-wip-table" filterSummary={filterSummary} /></div>
           {/* 2026-10-20, user request: an Email button next to Print that emails the current table view as a PDF. Not for the view-only WIP View user. */}
-          {!wipViewOnly && <JobsWipEmailButton tableId="jobs-wip-table" filterSummary={filterSummary} />}
+          {!wipViewOnly && <div className="jobs-table-only"><JobsWipEmailButton tableId="jobs-wip-table" filterSummary={filterSummary} /></div>}
           <TableColumnFilters tableId="jobs-wip-table" storageKey="jobs-wip" noun="job" initialSearch={serverSearch ? "" : q} initialInclude={include} stripParams={["type", "status", "returnedUnrepaired"]} />
         </div>
 
@@ -381,7 +412,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                 const columnSpan = columns.length + (wipViewOnly ? 0 : 1) + (showSelect ? 1 : 0);
                 return (
                   <Fragment key={job.id}>
-                    <tr className={wipViewOnly ? undefined : "clickable-row"} data-search={searchText(job, canSearchCustomerName, ctx.industryBuild, searchableColumns)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
+                    <tr className={wipViewOnly ? undefined : "clickable-row"} data-row-id={job.id} data-search={searchText(job, canSearchCustomerName, ctx.industryBuild, searchableColumns)} data-job={(job.jobNumber || "").toLowerCase()} data-prev={(job.previousJobNumber || "").toLowerCase()} data-multi-item={multi ? "1" : undefined} data-job-id={multi ? job.id : undefined}>
                       {showSelect && <td className="jobs-no-print jobs-select-cell"><input type="checkbox" className="jobs-select" data-job-id={job.id} aria-label={`Select job ${job.jobNumber || job.draftNumber}`} /></td>}
                       {columns.map((id) => <td key={id} data-filter-values={id === "status" ? statusFilterValues(job, ctx.industryBuild) : undefined}>{renderCell(id, job, ctx.industryBuild, wipViewOnly)}</td>)}
                       {!wipViewOnly && <td className="actions jobs-no-print"><Link href={jobHref(job)} className="table-action">Open</Link></td>}
@@ -429,6 +460,10 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
           <RememberListUrl storageKey="jobs" />
           <FitToViewportBottom selector=".jobs-panel .data-table-wrap" />
         </div>
+        {/* 2026-11-06: the Board view. Always in the page (hidden by CSS while the table shows) so the search box and the
+            header filters drive both; see JobsWipBoard.tsx. */}
+        <JobsWipBoard tableId="jobs-wip-table" cards={boardCards} build={ctx.industryBuild} canOpen={!wipViewOnly} initialPrefs={boardPrefs} personLabel={ctx.industryBuild === "ENGINEERING" ? "Machinist" : "Mechanic"} />
+        <FitToViewportBottom selector=".jobs-panel .jb-board" />
       </section>
     </div>
   );
