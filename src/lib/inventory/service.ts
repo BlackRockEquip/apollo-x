@@ -31,6 +31,7 @@ import { itemTag, withItemTag } from "@/lib/jobs/item-model";
 import { normalized } from "@/lib/master-data/validation";
 import { findPartByNumber } from "@/lib/inventory/parts-lookup";
 import { canSeePickSlipValue, estimatePickValue } from "@/lib/inventory/pick-slip-value";
+import { pickSlipPickState, pickedUnitsBySlipLine } from "@/lib/inventory/pick-slip-state";
 
 type Tx = Prisma.TransactionClient;
 type Quantity = Prisma.Decimal;
@@ -3019,6 +3020,18 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
   ]);
   const supersededByPart = await supersededNumbersByPart(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.partId)));
   const itemOfLine = await itemTagsByPartLine(ctx.companyId!, slips.flatMap((ps) => ps.lines.map((l) => l.jobPartLineId)));
+  // 2026-11-06, user request: a status next to each slip - Awaiting picking / Partly picked / Picked. A slip is a list and stock comes off
+  // the shelf when a part is marked received, so this follows the part lines (see lib/inventory/pick-slip-state.ts). Every other live slip
+  // line on the same part lines is read too, so the units taken are handed out oldest slip first whichever page is showing.
+  const partLineIds = Array.from(new Set(slips.flatMap((ps) => ps.lines.map((l) => l.jobPartLineId)).filter((id): id is string => Boolean(id))));
+  const [siblingLines, stateParts] = partLineIds.length > 0
+    ? await Promise.all([
+        prisma.pickSlipLine.findMany({ where: { jobPartLineId: { in: partLineIds }, pickSlip: { companyId: ctx.companyId!, status: { not: "CANCELLED" } } }, select: { id: true, createdAt: true, jobPartLineId: true, quantity: true, stockMovementId: true } }),
+        prisma.jobPartLine.findMany({ where: { id: { in: partLineIds }, companyId: ctx.companyId! }, select: { id: true, status: true, stockIssuedQuantity: true } }),
+      ])
+    : [[], []];
+  const unlinkedLines = slips.flatMap((ps) => ps.lines).filter((l) => !l.jobPartLineId);
+  const pickedUnits = pickedUnitsBySlipLine([...siblingLines, ...unlinkedLines], stateParts);
   // "Estimate Stock Price" column: only company admins, managers and stock controllers (who may see cost prices); a cancelled slip picked nothing.
   const viewCost = canSeePickSlipValue(ctx);
   return {
@@ -3033,6 +3046,7 @@ export async function listPickSlips(ctx: RequestContext, input: z.infer<typeof p
       status: String(ps.status),
       cancelledAt: ps.cancelledAt ? ps.cancelledAt.toISOString() : null,
       cancelReason: ps.cancelReason,
+      ...(() => { const { state, pickedLines } = pickSlipPickState(ps.lines, pickedUnits); return { pickState: state, pickedLines }; })(),
       lines: ps.lines.map((l) => ({
         partNumber: l.partNumber,
         supersededNumbers: supersededByPart.get(l.partId) ?? "",

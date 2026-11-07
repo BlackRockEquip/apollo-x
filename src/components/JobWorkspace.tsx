@@ -44,6 +44,7 @@ import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
+import { PickSlipStateBadge } from "@/components/PickSlipStateBadge";
 import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
@@ -582,6 +583,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     cancelledAt: string | null;
     cancelReason: string | null;
     jobNumber: string | null;
+    // 2026-11-06: Awaiting picking / Partly picked / Picked, worked out by the server from the slip's part lines.
+    pickState?: string;
+    pickedLines?: number;
     lines: { partNumber: string; supersededNumbers?: string; description: string | null; quantity: string; binLocationLabel: string | null }[];
   };
   const [jobPickSlips, setJobPickSlips] = useState<JobPickSlipData[]>([]);
@@ -2122,9 +2126,11 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-09-29 — the persistent "Picking slips for this job" list (see
   // jobPickSlips' own comment above) — separate from load()/job's own GET
   // since PickSlip isn't part of the Job model's own nested includes.
-  const loadJobPickSlips = useCallback(async () => {
+  const loadJobPickSlips = useCallback(async (silent = false) => {
     if (!jobId || pickSlipsAccess === "DENIED") return;
-    setJobPickSlipsLoading(true); setJobPickSlipsError("");
+    // `silent`: a refresh after the parts changed - keep the list on screen instead of flashing "Loading…".
+    if (!silent) setJobPickSlipsLoading(true);
+    setJobPickSlipsError("");
     try {
       const r = await fetch(`/api/v1/inventory/pick-slips?jobId=${jobId}&pageSize=50`, { cache: "no-store" });
       const b = await r.json();
@@ -2137,6 +2143,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     }
   }, [jobId, pickSlipsAccess]);
   useEffect(() => { void loadJobPickSlips(); }, [loadJobPickSlips]);
+  // 2026-11-06: a slip's Awaiting picking / Picked status follows the parts being marked received, so read the slips again whenever a part line changes.
+  const partLinesSignature = job ? job.partLines.map((l) => `${l.id}:${String(l.status ?? "")}:${String(l.stockIssuedQuantity ?? "")}`).join("|") : "";
+  const lastPartLinesSignature = useRef("");
+  useEffect(() => {
+    const previous = lastPartLinesSignature.current;
+    lastPartLinesSignature.current = partLinesSignature;
+    if (previous && previous !== partLinesSignature) void loadJobPickSlips(true);
+  }, [partLinesSignature, loadJobPickSlips]);
 
   async function createJobPickSlip(overrideLineIds?: string[]) {
     if (!jobId) return;
@@ -5035,14 +5049,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             {jobPickSlipsLoading || jobPickSlips.length > 0 ? (
               <div className="data-table-wrap" style={{ margin: "0 14px 10px" }}>
                 <table className="data-table">
-                  <thead><tr><th>Pick slip</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
+                  <thead><tr><th>Pick slip</th><th>Status</th><th>Lines</th><th className="actions">Actions</th></tr></thead>
                   <tbody>
                     {jobPickSlipsLoading ? (
-                      <tr><td colSpan={3} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
+                      <tr><td colSpan={4} className="table-state compact-empty-state"><Loader2 className="spin" size={16} /> Loading…</td></tr>
                     ) : (
                       jobPickSlips.map((ps, index) => (
                         <tr key={ps.id}>
                           <td>Pickslip {jobPickSlips.length - index} — {new Date(ps.createdAt).toLocaleString()}</td>
+                          <td><PickSlipStateBadge state={ps.pickState} pickedLines={ps.pickedLines} totalLines={ps.lines.length} /></td>
                           <td>{ps.lines.length}</td>
                           <td className="actions">
                             <button type="button" className="table-action" onClick={() => void offerToSave(printJobPickSlip(ps), "PICK_SLIP", () => pickSlipSpec(ps))}><Printer size={13} /> Print</button>

@@ -14,6 +14,7 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { readListState, writeListState } from "@/components/list-state";
 import { ScrollRestore } from "@/components/ScrollRestore";
 import { FitToViewportBottom } from "@/components/FitToViewportBottom";
+import { PickSlipStateBadge } from "@/components/PickSlipStateBadge";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { TablePrintButton } from "@/components/TablePrintButton";
 import { withPoweredBy } from "@/lib/documents/powered-by";
@@ -132,7 +133,7 @@ type PickRequestLine = { partNumber: string; description: string; quantity: stri
 type PickRequestRow = { id: string; jobId: string; jobNumber: string; customerName: string | null; requestedBy: string | null; createdAt: string; status: string; note: string | null; handledAt: string | null; declineReason: string | null; lines: PickRequestLine[] };
 type JobOption = { id: string; jobNumber: string; customerName: string | null };
 type PickSlipLineData = { partNumber: string; supersededNumbers?: string; description: string; quantity: string; binLocationLabel: string | null };
-type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; cancelledAt?: string | null; cancelReason?: string | null; estimatedValue?: string | null; lines: PickSlipLineData[] };
+type PickSlipData = { id: string; jobId: string; jobNumber: string; customerName: string | null; createdAt: string; status?: string; pickState?: string; pickedLines?: number; cancelledAt?: string | null; cancelReason?: string | null; estimatedValue?: string | null; lines: PickSlipLineData[] };
 type BulkSearchRow = { partNumber: string; found: boolean; partId: string | null; description: string | null; binLocationLabel: string | null; quantityAvailable: string };
 // 2026-10-02 — Stock Take tab types. systemQty is a snapshot taken when the
 // location is opened for counting (for the printed sheet and the entry
@@ -1322,12 +1323,12 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
           {historyError ? <div className="inline-error">{historyError}</div> : null}
           <div className="data-table-wrap">
             <table className="data-table">
-              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Lines</th>{historyCanViewCost && <th className="numeric" title="Quantity picked x the parts' cost price today">Estimate Stock Price</th>}<th className="actions">Actions</th></tr></thead>
+              <thead><tr><th>Job</th><th>Client</th><th>Generated</th><th>Status</th><th>Lines</th>{historyCanViewCost && <th className="numeric" title="Quantity picked x the parts' cost price today">Estimate Stock Price</th>}<th className="actions">Actions</th></tr></thead>
               <tbody>
                 {historyLoading ? (
-                  <tr><td colSpan={historyCanViewCost ? 6 : 5} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
+                  <tr><td colSpan={historyCanViewCost ? 7 : 6} className="table-state compact-empty-state"><Loader2 className="spin" size={18} /> Loading…</td></tr>
                 ) : history.length === 0 ? (
-                  <tr><td colSpan={historyCanViewCost ? 6 : 5} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
+                  <tr><td colSpan={historyCanViewCost ? 7 : 6} className="table-state compact-empty-state"><span>No picking slips have been generated yet.</span></td></tr>
                 ) : history.map((ps) => (
                   <tr key={ps.id}>
                     {/* 2026-10-02 — user report: this link "looks like a button
@@ -1341,6 +1342,7 @@ export function StockLevelsWorkspace({ hasManage }: { hasManage: boolean }) {
                     <td><Link href={`/jobs/${ps.jobId}`}>{ps.jobNumber}</Link></td>
                     <td>{ps.customerName || "—"}</td>
                     <td>{new Date(ps.createdAt).toLocaleString()}</td>
+                    <td><PickSlipStateBadge state={ps.pickState} pickedLines={ps.pickedLines} totalLines={ps.lines.length} /></td>
                     <td>{ps.lines.length}</td>
                     {historyCanViewCost && <td className="numeric">{formatMoney(ps.estimatedValue)}</td>}
                     <td className="actions">
