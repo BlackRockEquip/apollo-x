@@ -45,6 +45,7 @@ export const TILES: Record<string, BuildTile> = {
   PEX: { id: "PEX", label: "PEX inventory", note: "PEX supply and return jobs, tracking", modules: ["PEX_STOCK", "PEX_TRACKING"] },
   OUTWORK: { id: "OUTWORK", label: "Outwork", note: "Jobs sent to other shops", modules: ["OUTWORK"] },
   FIELD_SERVICE: { id: "FIELD_SERVICE", label: "Field service", note: "Field service jobs and field report", modules: ["FIELD_SERVICE"] },
+  TESTING_REPORTS: { id: "TESTING_REPORTS", label: "Testing Reports", note: "Transmission dyno test sheets checked against the spec for each machine model, kept with the job", modules: ["TESTING_REPORTS"] },
   SPECIFICATIONS: { id: "SPECIFICATIONS", label: "Specifications", note: "Dimensions, tolerances and spec notes, with before-work and after-work report uploads", modules: ["SPECIFICATIONS"] },
 };
 
@@ -67,7 +68,7 @@ export const BUILDS: Record<IndustryBuildId, BuildDefinition> = {
     label: "Workshop Business",
     description: "Repair, rebuild and field service workshops that quote parts, issue pick slips and track components through the shop.",
     example: "Repair and rebuild workshop",
-    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE"],
+    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE", "TESTING_REPORTS"],
     defaultOn: ["JOB_PARTS", "RFQ", "OUTWORK", "FIELD_SERVICE"],
     wording: ["Job", "Component", "Pick slip", "Delivery note", "Mechanic"],
   },

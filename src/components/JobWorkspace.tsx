@@ -48,6 +48,7 @@ import { PickSlipStateBadge } from "@/components/PickSlipStateBadge";
 import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
+import { JobTestingCard } from "@/components/testing/JobTestingCard";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
@@ -5345,6 +5346,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     />
   ) : null;
 
+  // 2026-11-07, Testing Reports module: the job's dyno test sheets. Hidden when the module is off or the user has no Testing access.
+  const testingAccess = accessOf("TESTING_REPORTS");
+  const testingSection = job && testingAccess !== "DENIED" && tenantPermissions.has("TESTING_VIEW") ? (
+    <JobTestingCard
+      jobId={job.id}
+      jobLabel={String(job.jobNumber || job.draftNumber || "")}
+      canEdit={testingAccess === "FULL" && tenantPermissions.has("TESTING_EDIT")}
+      canManage={testingAccess === "FULL" && tenantPermissions.has("TESTING_MANAGE")}
+    />
+  ) : null;
+
   const fieldServiceSection = job && fieldLayout ? (
     <section className="detail-panel">
       <header><div><h2>Field service</h2><p>Who is going, when, and what was done.</p></div></header>
@@ -5409,6 +5421,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     showFollowup: showFollowupTab,
     showOutwork: !!outworkSection,
     showSpecifications: !!specificationsSection,
+    showTesting: !!testingSection,
     showPex: hasPexPanel,
     showWarranty: !!job && job.type === "WARRANTY",
     showActivity: !!activitySection,
@@ -6415,6 +6428,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           {activeTab === "outwork" && outworkSection}
           {activeTab === "specifications" && specificationsSection}
+          {activeTab === "testing" && testingSection}
 
           {/* 2026-10-06 — user request: Attachments and Send to PEX side by
               side. The PEX panels (mutually exclusive: Send job to PEX / In PEX

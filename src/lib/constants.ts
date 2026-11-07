@@ -30,6 +30,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   JOB_PARTS: "Job Parts & Ordering",
   PICK_SLIPS: "Pick Slips",
   SPECIFICATIONS: "Specifications",
+  TESTING_REPORTS: "Testing Reports",
 };
 
 export const TENANT_ROLE_LABELS: Record<TenantRole, string> = {
@@ -40,6 +41,7 @@ export const TENANT_ROLE_LABELS: Record<TenantRole, string> = {
   SALES: "Sales",
   FINANCE: "Finance",
   WIP_VIEWER: "WIP View (View Only)",
+  TESTING_TECHNICIAN: "Testing Technician",
 };
 
 // 2026-10-16, Engineering Business: the user types offered are exactly Company Admin, Manager, Store Controller,
@@ -56,7 +58,8 @@ const ENGINEERING_ROLE_LABELS: Partial<Record<TenantRole, string>> = {
 export const ENGINEERING_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "STORE_CONTROLLER", "USER", "WIP_VIEWER"];
 // 2026-10-29, user request: Finance is not offered as a user type yet (there is no finance module). Anyone who already
 // has the Finance type keeps working; it is just not offered for new users, same rule as the Engineering list above.
-export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "WIP_VIEWER"];
+// 2026-11-07: Testing Technician (Testing Reports) is a Workshop user type.
+export const WORKSHOP_TENANT_ROLES: TenantRole[] = ["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "WIP_VIEWER", "TESTING_TECHNICIAN"];
 
 export function tenantRoleLabelsFor(build?: string | null): Record<TenantRole, string> {
   return build === "ENGINEERING" ? { ...TENANT_ROLE_LABELS, ...ENGINEERING_ROLE_LABELS } as Record<TenantRole, string> : TENANT_ROLE_LABELS;

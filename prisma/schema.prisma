@@ -28,6 +28,8 @@ enum TenantRole {
   FINANCE
   // 2026-10-16: "WIP View (View Only)" - sees Jobs & WIP, cannot change anything.
   WIP_VIEWER
+  // 2026-11-07: "Testing Technician" - sees and fills in Testing Reports only. Admins and Managers have the module too.
+  TESTING_TECHNICIAN
 }
 
 enum PlatformRole {
@@ -71,6 +73,8 @@ enum ModuleKey {
   JOB_PARTS
   PICK_SLIPS
   SPECIFICATIONS
+  // 2026-11-07 — Testing Reports (transmission dyno test sheets). Switched per company like the other optional tiles.
+  TESTING_REPORTS
 }
 
 // The platform hosts more than one product line under one shared
@@ -635,6 +639,8 @@ model Company {
   salesRepresentatives SalesRepresentative[]
   jobKitLines       JobKitLine[]
   jobDimensionReports JobDimensionReport[]
+  testSpecTemplates TestSpecTemplate[]
+  testReports TestReport[]
   jobDimensionLines JobDimensionLine[]
   specificationFormSettings SpecificationFormSettings?
   jobPartLines      JobPartLine[]
@@ -1815,6 +1821,7 @@ model Job {
   rfqRequests         JobRfqRequest[]
   attachments         JobAttachment[]
   dimensionReports    JobDimensionReport[]
+  testReports         TestReport[]
   noteEntries         JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
@@ -3261,4 +3268,100 @@ model Advertisement {
   updatedAt    DateTime   @updatedAt
 
   @@index([active])
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-07 — Testing Reports module (transmission dyno test sheets).
+// A spec template holds the limits for one machine model (flows, pressures, clutch rows). A report copies the template
+// at the moment it is created (`spec`), so editing a template later never changes a test that was already done.
+// Limits and readings are JSON because every machine model has a different set of rows; the rules that read them live in
+// src/lib/testing/spec.ts.
+// ---------------------------------------------------------------------------
+enum TestLayout {
+  FORWARD_REVERSE
+  P1_P2
+}
+
+enum TestReportStatus {
+  DRAFT
+  COMPLETED
+}
+
+enum TestResult {
+  PASS
+  FAIL
+  PASS_WITH_NOTE
+}
+
+model TestSpecTemplate {
+  id            String     @id @default(cuid())
+  companyId     String
+  name          String
+  machineModels String[]
+  layout        TestLayout @default(FORWARD_REVERSE)
+  inputRpm      Int?
+  // Names of the two reading columns in the clutch table ("Forward" / "Reverse", or "P1" / "P2").
+  labelA        String     @default("Forward")
+  labelB        String     @default("Reverse")
+  // [{ id, name, unit, note?, limit }] - see TestLimit in src/lib/testing/spec.ts
+  parameters    Json       @default("[]")
+  // [{ id, name, a: limit|null, b: limit|null }]; a is the first reading column (Forward / P1), b the second (Reverse / P2)
+  clutchRows    Json       @default("[]")
+  // Goes up by one every time the limits are changed.
+  revision      Int        @default(1)
+  active        Boolean    @default(true)
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  company       Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reports       TestReport[]
+
+  @@unique([id, companyId])
+  @@index([companyId, active])
+}
+
+model TestReport {
+  id            String           @id @default(cuid())
+  companyId     String
+  // Running number per company, shown as TR-0001.
+  number        Int
+  jobId         String?
+  templateId    String?
+  // The template as it was when this test was created (name, layout, labels, revision, parameters, clutchRows).
+  spec          Json
+  machineModel  String
+  serialNumber  String?
+  customerName  String?
+  testDate      DateTime         @db.Date
+  inputRpm      Int?
+  testType      String?
+  // { params: { [rowId]: Reading }, clutches: { [rowId]: { a?: Reading, b?: Reading } } } - see src/lib/testing/spec.ts
+  readings      Json             @default("{}")
+  testers       String[]
+  comments      String?
+  status        TestReportStatus @default(DRAFT)
+  result        TestResult?
+  // { total, pass, fail, overridden } worked out when the test is marked complete.
+  resultSummary Json?
+  completedAt   DateTime?
+  completedById String?
+  // The failed report this test repeats.
+  retestOfId    String?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  company       Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job           Job?             @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  template      TestSpecTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  retestOf      TestReport?      @relation("TestRetest", fields: [retestOfId], references: [id], onDelete: SetNull)
+  retests       TestReport[]     @relation("TestRetest")
+
+  @@unique([id, companyId])
+  @@unique([companyId, number])
+  @@index([companyId, status])
+  @@index([companyId, jobId])
 }

@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
@@ -129,6 +129,9 @@ const NAV_GROUPS: NavGroup[] = [
   // create/edit/delete), so its own nav item is gone; /parts now redirects
   // there (see src/app/(tenant)/parts/page.tsx).
   { key: "inventory", label: "Inventory", icon: Boxes, items: [{ key: "inventory", label: "Stock Levels", href: "/inventory", module: "INVENTORY", permission: "INVENTORY_VIEW", icon: Boxes }, { key: "storage-locations", label: "Storage Locations", href: "/storage-locations", module: "STORAGE", permission: "STORAGE_LOCATIONS_VIEW", icon: MapPin }, { key: "manufacturers", label: "Manufacturers", href: "/manufacturers", module: "INVENTORY", permission: "MANUFACTURERS_VIEW", icon: Factory }] },
+  // 2026-11-07, Testing Reports (transmission dyno test sheets). Its own sidebar group so a Testing Technician, who holds nothing
+  // else, does not see a "Jobs" group with a single item in it.
+  { key: "testing", label: "Testing", icon: Gauge, items: [{ key: "testing-reports", label: "Testing Reports", href: "/testing-reports", module: "TESTING_REPORTS", permission: "TESTING_VIEW", icon: Gauge }] },
   { key: "settings", label: "Settings", icon: Settings, footer: true, items: SETTINGS_NAV_ITEMS.map((item) => ({ ...item, icon: SETTINGS_ICONS[item.key] ?? Settings })) },
 ];
 

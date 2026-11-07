@@ -39,6 +39,8 @@ export const TENANT_PERMISSIONS = [
   "INVOICES_CANCEL", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT",
   "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT",
   "REPORTS_VIEW", "REPORTS_EXPORT", "USERS_MANAGE", "SETTINGS_MANAGE", "AUDIT_VIEW",
+  // 2026-11-07, Testing Reports: see the reports, fill in and complete them, and (Admin / Manager) change the spec templates.
+  "TESTING_VIEW", "TESTING_EDIT", "TESTING_MANAGE",
 ] as const;
 
 export type TenantPermission = (typeof TENANT_PERMISSIONS)[number];
@@ -112,6 +114,12 @@ const STORES = new Set<TenantPermission>([
   "STORAGE_LOCATIONS_VIEW", "STORAGE_LOCATIONS_CREATE", "STORAGE_LOCATIONS_EDIT",
   "PEX_VIEW", "PEX_STOCK_VIEW", "PEX_TRACKING_VIEW",
 ]);
+// 2026-11-07, user request: "create a new user type Testing Technician ... access granted to Admins, Managers, Testing Techs".
+// A Testing Technician sees Testing Reports and nothing else: they can open, fill in and complete reports and look up a job to
+// test, but cannot change the spec templates (those limits belong to Admins and Managers) and have no Jobs, stock, customer,
+// dashboard or settings access. Admins hold every permission and Managers hold everything except Settings, so both already
+// include the three TESTING_ permissions.
+const TESTING_TECHNICIAN = new Set<TenantPermission>(["TESTING_VIEW", "TESTING_EDIT"]);
 const SALES = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT", "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "SUPPLIERS_VIEW", "JOBS_VIEW", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT", "QUOTES_EDIT_PRICE", "QUOTES_APPLY_DISCOUNT", "QUOTES_SEND", "QUOTES_REVISE", "QUOTES_EXPORT", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE", "SALES_ORDERS_EDIT_DRAFT"]);
 const FINANCE = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "INVENTORY_VIEW", "INVENTORY_VIEW_COST", "STOCK_MOVEMENTS_VIEW", "QUOTES_VIEW","QUOTES_VIEW_COST", "QUOTES_VIEW_MARGIN", "SALES_ORDERS_VIEW", "SALES_ORDERS_VIEW_COST", "SALES_ORDERS_CREATE_INVOICE", "INVOICES_VIEW", "INVOICES_CREATE", "INVOICES_CREATE_FROM_JOB", "INVOICES_CREATE_FROM_SALES_ORDER", "INVOICES_EDIT_DRAFT", "INVOICES_VIEW_COST_MARGIN", "INVOICES_APPROVE", "INVOICES_ISSUE", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT", "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT", "REPORTS_VIEW"]);
 
@@ -123,6 +131,7 @@ export const DEFAULT_TENANT_PERMISSIONS: Record<TenantRole, ReadonlySet<TenantPe
   SALES,
   FINANCE,
   WIP_VIEWER,
+  TESTING_TECHNICIAN,
 };
 
 const ALL_PLATFORM = new Set<PlatformPermission>(PLATFORM_PERMISSIONS);

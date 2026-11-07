@@ -70,6 +70,7 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   JOB_PARTS: "Workshop",
   PICK_SLIPS: "Workshop",
   SPECIFICATIONS: "Engineering",
+  TESTING_REPORTS: "Workshop",
 };
 
 export async function companyEntitledModules(companyId: string) {
@@ -120,6 +121,7 @@ function modulePermissions(moduleKey: ModuleKey) {
     JOB_PARTS: [],
     PICK_SLIPS: [],
     SPECIFICATIONS: [],
+    TESTING_REPORTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("TESTING_")),
   };
   return new Set(prefixMap[moduleKey] ?? []);
 }
