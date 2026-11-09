@@ -3,9 +3,10 @@
 import "./testing.css";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Eye, Loader2, Plus, Trash2 } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { DEFAULT_COLUMN_LABELS, LAYOUT_LABELS, LIMIT_TYPE_LABELS, formatLimit, type TestClutchCell, type TestClutchRow, type TestLayoutId, type TestLimit, type TestParameterRow } from "@/lib/testing/spec";
+import { TemplatePreview } from "./TemplatePreview";
 import { testingApi, type TemplateItem } from "./types";
 
 type Draft = {
@@ -92,6 +93,7 @@ export function TestTemplatesWorkspace() {
   const [note, setNote] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   const load = useCallback(async () => {
     try { setItems((await testingApi<{ items: TemplateItem[] }>("/api/v1/testing-templates?all=1")).items); }
@@ -183,10 +185,21 @@ export function TestTemplatesWorkspace() {
             <header>
               <div><h2>{draft.id ? `Edit ${editing?.name ?? "template"}` : "New template"}</h2><p>{draft.id ? "Changing limits starts a new revision; old tests keep theirs." : "Fill in the readings, then save."}</p></div>
               <div className="tr-bar">
+                <button type="button" className="quiet-button" onClick={() => setPreviewing(true)}><Eye size={14} /> Preview</button>
                 {editing && <button type="button" className="quiet-button" onClick={() => void toggle(editing)}>{editing.active ? "Switch off" : "Switch on"}</button>}
                 <button type="button" className="gold-button" disabled={saving || draft.name.trim().length < 2} onClick={() => void save()}>{saving ? "Saving…" : "Save template"}</button>
               </div>
             </header>
+            {previewing && (
+              <TemplatePreview
+                onClose={() => setPreviewing(false)}
+                template={{
+                  name: draft.name, layout: draft.layout, revision: editing?.revision ?? null, machineModels: draft.machineModels.split(",").map((m) => m.trim()).filter(Boolean),
+                  inputRpm: draft.inputRpm.trim() === "" ? null : Number(draft.inputRpm), labelA: draft.labelA || "Forward", labelB: draft.labelB || "Reverse",
+                  parameters: draft.parameters, clutchRows: draft.clutchRows,
+                }}
+              />
+            )}
             <div className="tr-details">
               <label className="tr-field wide"><span>Template name</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. CAT 777D" /></label>
               <label className="tr-field wide"><span>Machine models (comma separated)</span><input value={draft.machineModels} onChange={(e) => setDraft({ ...draft, machineModels: e.target.value })} placeholder="e.g. 777D, 777E" /></label>

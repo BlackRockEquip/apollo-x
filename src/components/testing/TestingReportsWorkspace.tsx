@@ -4,10 +4,11 @@ import "./testing.css";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, Search, Settings2, X } from "lucide-react";
+import { Eye, Loader2, Plus, Search, Settings2, X } from "lucide-react";
 import { templateMatchesModel } from "@/lib/testing/spec";
 import { rankTemplatesForModel } from "./rank";
 import { ResultPill } from "./ResultPill";
+import { TemplatePreview } from "./TemplatePreview";
 import { formatDate, testingApi, type JobHit, type ReportDetail, type ReportListItem, type TemplateItem } from "./types";
 
 type Filter = "ALL" | "OPEN" | "DONE" | "FAIL";
@@ -107,6 +108,7 @@ export function NewTestDialog({ onClose, onCreated, jobId, canManage }: { onClos
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [testType, setTestType] = useState("");
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -194,7 +196,13 @@ export function NewTestDialog({ onClose, onCreated, jobId, canManage }: { onClos
             </select>
           </label>
           {templatesLoaded && templates.length === 0 && <div className="tr-sub">{canManage ? <>Add the starter templates first on the <Link className="tr-link" href="/testing-reports/templates">Spec templates</Link> page.</> : "Ask a manager to add the spec templates first."}</div>}
-          {selected && <div className="tr-sub">{selected.parameters.length} parameters and {selected.clutchRows.length} clutch rows. The limits are copied onto this test, so later template changes do not alter it.</div>}
+          {selected && (
+            <div className="tr-bar">
+              <div className="tr-sub tr-grow">{selected.parameters.length} parameters and {selected.clutchRows.length} clutch rows. The limits are copied onto this test, so later template changes do not alter it.</div>
+              <button type="button" className="quiet-button" onClick={() => setPreviewing(true)}><Eye size={13} /> Preview template</button>
+            </div>
+          )}
+          {previewing && selected && <TemplatePreview template={selected} onClose={() => setPreviewing(false)} />}
           <div className="tr-two">
             <label className="tr-field"><span>Test date</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
             <label className="tr-field"><span>Test type</span><input value={testType} onChange={(e) => setTestType(e.target.value)} placeholder="e.g. After repair" /></label>
