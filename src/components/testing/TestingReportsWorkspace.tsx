@@ -80,7 +80,7 @@ export function TestingReportsWorkspace({ canEdit, canManage, showCustomer }: { 
                     <td>{formatDate(r.testDate)}</td>
                     <td>{r.testers.join(", ") || "—"}</td>
                     <td><span className="tr-progress"><i><b style={{ width: `${r.total ? Math.round((r.entered / r.total) * 100) : 0}%` }} /></i>{r.entered} of {r.total}</span></td>
-                    <td><ResultPill result={r.result} status={r.status} />{r.status === "COMPLETED" && <span className="tr-sub" style={{ display: "block", marginTop: 3 }}>Completed</span>}</td>
+                    <td><ResultPill result={r.result} status={r.status} onComments={r.passedOnComments} />{r.status === "COMPLETED" && <span className="tr-sub" style={{ display: "block", marginTop: 3 }}>Completed</span>}</td>
                   </tr>
                 ))}
                 {shown.length === 0 && <tr><td colSpan={showCustomer ? 8 : 7} className="table-state compact-empty-state">{items.length === 0 ? "No tests yet. Start one with New test." : "No tests match."}</td></tr>}

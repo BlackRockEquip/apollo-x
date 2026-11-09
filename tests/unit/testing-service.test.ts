@@ -246,3 +246,98 @@ describe("job screen and platform admin switch", () => {
     expect(BUILDS.ENGINEERING.tiles).not.toContain("TESTING_REPORTS");
   });
 });
+
+describe("passing an out-of-spec test on the tester's comments", () => {
+  const failing = () => {
+    const readings = JSON.parse(JSON.stringify(FULL_READINGS));
+    readings.clutches["6th"].b.actual = "390";
+    return readings;
+  };
+
+  it("records Pass with note, with who passed it, when the reason is written in Comments", async () => {
+    const readings = failing();
+    const row = reportRow({ readings, comments: "6th clutch 2 psi low, shims adjusted in the machine with its own pump." });
+    db.testReport.findFirst.mockResolvedValueOnce(row).mockResolvedValue({ ...row, status: "COMPLETED", result: "PASS_WITH_NOTE", resultSummary: { passedOnComments: { by: "Michael", at: "2026-11-09T08:00:00Z" } } });
+    db.testReport.update.mockResolvedValue({});
+    const done = await completeTestReport(ctxFor("TESTING_TECHNICIAN"), ID, { passOnComments: true });
+    const data = db.testReport.update.mock.calls[0][0].data;
+    expect(data.result).toBe("PASS_WITH_NOTE");
+    expect(data.resultSummary).toMatchObject({ fail: 1, passedOnComments: { by: "Michael", outOfSpec: 1 } });
+    expect(done.passedOnComments).toMatchObject({ by: "Michael" });
+  });
+
+  it("will not pass it without a written reason", async () => {
+    db.testReport.findFirst.mockResolvedValue(reportRow({ readings: failing(), comments: "  " }));
+    await expect(completeTestReport(ctxFor("TESTING_TECHNICIAN"), ID, { passOnComments: true })).rejects.toMatchObject({ code: "COMMENTS_REQUIRED" });
+    expect(db.testReport.update).not.toHaveBeenCalled();
+  });
+
+  it("still records a Fail when the tester does not choose to pass it", async () => {
+    db.testReport.findFirst.mockResolvedValueOnce(reportRow({ readings: failing(), comments: "Needs shims" })).mockResolvedValue(reportRow({ status: "COMPLETED", result: "FAIL" }));
+    db.testReport.update.mockResolvedValue({});
+    await completeTestReport(ctxFor("TESTING_TECHNICIAN"), ID);
+    expect(db.testReport.update.mock.calls[0][0].data.result).toBe("FAIL");
+  });
+
+  it("ignores pass-on-comments for a test with nothing out of spec, and still needs every reading", async () => {
+    db.testReport.findFirst.mockResolvedValueOnce(reportRow({ readings: FULL_READINGS })).mockResolvedValue(reportRow({ status: "COMPLETED", result: "PASS" }));
+    db.testReport.update.mockResolvedValue({});
+    await completeTestReport(ctxFor("MANAGER"), ID, { passOnComments: true });
+    expect(db.testReport.update.mock.calls[0][0].data.result).toBe("PASS");
+    db.testReport.update.mockClear();
+    db.testReport.findFirst.mockResolvedValue(reportRow({ readings: { params: { "input-flow": { actual: "300" } } }, comments: "ok to pass" }));
+    await expect(completeTestReport(ctxFor("TESTING_TECHNICIAN"), ID, { passOnComments: true })).rejects.toMatchObject({ code: "REPORT_INCOMPLETE" });
+  });
+});
+
+describe("Pass with comment wording", () => {
+  it("words a test passed on comments as Pass with comment, and nothing else changes", async () => {
+    const { resultLabel } = await import("@/lib/testing/spec");
+    expect(resultLabel("PASS_WITH_NOTE", true)).toBe("Pass with comment");
+    expect(resultLabel("PASS_WITH_NOTE", false)).toBe("Pass with note");
+    expect(resultLabel("PASS", true)).toBe("Pass");
+    expect(resultLabel("FAIL")).toBe("Fail");
+    expect(resultLabel(null)).toBe("In progress");
+  });
+
+  it("tells the list which completed tests were passed on comments", async () => {
+    const done = { status: "COMPLETED", result: "PASS_WITH_NOTE", resultSummary: { total: 19, entered: 19, passedOnComments: { by: "Michael", at: "2026-11-09T08:00:00Z" } } };
+    db.testReport.findMany.mockResolvedValue([reportRow(done), reportRow({ id: "cabcdefghijklmnopqrstuv8", number: 8, status: "COMPLETED", result: "PASS", resultSummary: { total: 19, entered: 19 } })]);
+    const { listTestReports } = await import("@/lib/testing/service");
+    const { items } = await listTestReports(ctxFor("TESTING_TECHNICIAN"));
+    expect(items.map((i) => [i.result, i.passedOnComments])).toEqual([["PASS_WITH_NOTE", true], ["PASS", false]]);
+  });
+});
+
+describe("engaged clutches per gear", () => {
+  const engagedSpec = {
+    name: "CAT 140K family", layout: "ENGAGED", revision: 1, labelA: "Pressure", labelB: "Pressure 2", parameters: [],
+    clutchRows: [
+      { id: "1st", name: "1st", a: null, b: null, cells: [{ id: "c1", label: "C1", limit: { type: "PLUS_MINUS", nominal: 425, tol: 33 } }, { id: "c3", label: "C3", limit: { type: "PLUS_MINUS", nominal: 345, tol: 40 } }, { id: "c5", label: "C5", limit: { type: "PLUS_MINUS", nominal: 375, tol: 40 } }] },
+      { id: "6th", name: "6th", a: null, b: null, cells: [{ id: "c1", label: "C1", limit: { type: "PLUS_MINUS", nominal: 425, tol: 33 } }, { id: "c4", label: "C4", limit: { type: "PLUS_MINUS", nominal: 205, tol: 40 } }] },
+    ],
+  };
+
+  it("saves a reading for each clutch engaged in a gear and drops clutches the gear does not have", async () => {
+    db.testReport.findFirst.mockResolvedValue(reportRow({ spec: engagedSpec }));
+    db.testReport.update.mockResolvedValue({});
+    await updateTestReport(ctxFor("TESTING_TECHNICIAN"), ID, {
+      readings: { params: {}, clutches: {
+        "1st": { cells: { c1: { actual: "410" }, c3: { actual: "330" }, c5: { actual: "360" }, c4: { actual: "999" } } },
+        "6th": { cells: { c1: { actual: "415" }, c4: { actual: "200", override: { reason: "Read on the second gauge" } } } },
+        "9th": { cells: { c1: { actual: "1" } } },
+      } },
+    });
+    const saved = db.testReport.update.mock.calls[0][0].data.readings.clutches;
+    expect(Object.keys(saved)).toEqual(["1st", "6th"]);
+    expect(Object.keys(saved["1st"].cells)).toEqual(["c1", "c3", "c5"]);
+    expect(saved["6th"].cells.c4.override).toMatchObject({ reason: "Read on the second gauge", by: "Michael" });
+  });
+
+  it("keeps a completed test's old readings readable: a gear with two readings and a gear with three", async () => {
+    const readings = { params: {}, clutches: { "1st": { cells: { c1: { actual: "410" }, c3: { actual: "330" }, c5: { actual: "360" } } }, "6th": { cells: { c1: { actual: "415" }, c4: { actual: "200" } } } } };
+    db.testReport.findFirst.mockResolvedValue(reportRow({ spec: engagedSpec, readings }));
+    const report = await getTestReport(ctxFor("MANAGER"), ID);
+    expect(report.summary).toMatchObject({ total: 5, entered: 5, result: "PASS" });
+  });
+});

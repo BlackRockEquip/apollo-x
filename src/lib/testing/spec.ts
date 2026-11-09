@@ -16,10 +16,13 @@ export type TestLimit =
   | { type: "RECORD" } // written down, no limit to check
   | { type: "NA" }; // not tested on this machine
 
-export type TestLayoutId = "FORWARD_REVERSE" | "P1_P2";
+export type TestLayoutId = "FORWARD_REVERSE" | "P1_P2" | "ENGAGED";
 
 export type TestParameterRow = { id: string; name: string; unit: string; note?: string; limit: TestLimit };
-export type TestClutchRow = { id: string; name: string; a: TestLimit | null; b: TestLimit | null };
+// Engaged-clutch layout (2026-11-09): a gear lists only the clutches engaged in it, so one gear can have two readings and the next four.
+// "id" is the clutch (named once per template, e.g. "c1"), "label" its name as shown ("C1 Forward").
+export type TestClutchCell = { id: string; label: string; limit: TestLimit };
+export type TestClutchRow = { id: string; name: string; a: TestLimit | null; b: TestLimit | null; cells?: TestClutchCell[] };
 
 export type TestSpec = {
   name: string;
@@ -35,7 +38,7 @@ export type TestOverride = { reason: string; by: string; at: string };
 export type TestReading = { actual: string; note?: string; override?: TestOverride | null };
 export type TestReadings = {
   params?: Record<string, TestReading | undefined>;
-  clutches?: Record<string, { a?: TestReading; b?: TestReading } | undefined>;
+  clutches?: Record<string, { a?: TestReading; b?: TestReading; cells?: Record<string, TestReading | undefined> } | undefined>;
 };
 
 export type ReadingState =
@@ -62,11 +65,13 @@ const EPS = 1e-9;
 export const LAYOUT_LABELS: Record<TestLayoutId, string> = {
   FORWARD_REVERSE: "Forward and Reverse",
   P1_P2: "P1 and P2 per gear",
+  ENGAGED: "Engaged clutches per gear",
 };
 
 export const DEFAULT_COLUMN_LABELS: Record<TestLayoutId, { a: string; b: string }> = {
   FORWARD_REVERSE: { a: "Forward", b: "Reverse" },
   P1_P2: { a: "P1", b: "P2" },
+  ENGAGED: { a: "Pressure", b: "Pressure 2" }, // not shown for this layout; every clutch has its own name
 };
 
 export const LIMIT_TYPE_LABELS: Record<TestLimit["type"], string> = {
@@ -81,6 +86,13 @@ export const LIMIT_TYPE_LABELS: Record<TestLimit["type"], string> = {
 
 export const TEST_RESULT_LABELS = { PASS: "Pass", FAIL: "Fail", PASS_WITH_NOTE: "Pass with note" } as const;
 export type TestResultId = keyof typeof TEST_RESULT_LABELS;
+
+// The words for a result. A test the tester passed on the strength of their comments (2026-11-09) reads "Pass with comment" everywhere,
+// so it can be told apart from a test with readings passed one by one with a note.
+export function resultLabel(result: TestResultId | null, passedOnComments = false): string {
+  if (!result) return "In progress";
+  return result === "PASS_WITH_NOTE" && passedOnComments ? "Pass with comment" : TEST_RESULT_LABELS[result];
+}
 
 export function reportNumberLabel(number: number): string {
   return `TR-${String(number).padStart(4, "0")}`;
@@ -159,7 +171,7 @@ export function evaluateReading(limit: TestLimit | null, reading: TestReading | 
 }
 
 export type EvaluatedRow = {
-  key: string; // "p:<id>", "c:<id>:a", "c:<id>:b"
+  key: string; // "p:<id>", "c:<id>:a", "c:<id>:b", "c:<id>:x:<clutch id>"
   label: string; // "Input flow", "6th clutch, Reverse"
   limit: TestLimit;
   evaluation: ReadingEvaluation;
@@ -173,6 +185,9 @@ export function evaluateAll(spec: TestSpec, readings: TestReadings | null | unde
   }
   for (const row of spec.clutchRows) {
     const cell = readings?.clutches?.[row.id];
+    for (const c of row.cells ?? []) {
+      rows.push({ key: `c:${row.id}:x:${c.id}`, label: `${row.name}, ${c.label}`, limit: c.limit, evaluation: evaluateReading(c.limit, cell?.cells?.[c.id]) });
+    }
     const aEval = row.a ? evaluateReading(row.a, cell?.a) : null;
     if (row.a && aEval) rows.push({ key: `c:${row.id}:a`, label: `${row.name}, ${spec.labelA}`, limit: row.a, evaluation: aEval });
     if (row.b) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  STARTER_TEMPLATES, completionProblems, evaluateReading, failureSentence, formatBounds, formatLimit, parseReadingNumber,
+  STARTER_TEMPLATES, completionProblems, evaluateAll, evaluateReading, failureSentence, formatBounds, formatLimit, parseReadingNumber,
   reportNumberLabel, summarizeReport, templateMatchesModel, type TestReadings, type TestSpec,
 } from "@/lib/testing/spec";
 import { testTemplateInput } from "@/lib/testing/validation";
@@ -171,5 +171,68 @@ describe("templates", () => {
     const base = STARTER_TEMPLATES[0];
     expect(() => testTemplateInput.parse({ ...base, parameters: [base.parameters[0], base.parameters[0]] })).toThrow(/same id/);
     expect(() => testTemplateInput.parse({ ...base, clutchRows: [{ id: "x", name: "X", a: { type: "MIN", min: 1 }, b: { type: "BELOW_FIRST", amount: 5 } }] })).toThrow(/only for P1/);
+  });
+});
+
+// Gears with a different number of engaged clutches (2026-11-09).
+const ENGAGED: TestSpec = {
+  name: "CAT 140K family", layout: "ENGAGED", revision: 1, labelA: "Pressure", labelB: "Pressure 2", parameters: [],
+  clutchRows: [
+    { id: "neutral", name: "Neutral", a: null, b: null, cells: [{ id: "c1", label: "C1", limit: { type: "PLUS_MINUS", nominal: 425, tol: 33 } }] },
+    { id: "1st", name: "1st", a: null, b: null, cells: [
+      { id: "c1", label: "C1", limit: { type: "PLUS_MINUS", nominal: 425, tol: 33 } },
+      { id: "c3", label: "C3", limit: { type: "PLUS_MINUS", nominal: 345, tol: 40 } },
+      { id: "c5", label: "C5", limit: { type: "PLUS_MINUS", nominal: 375, tol: 40 } },
+    ] },
+    { id: "3rd", name: "3rd", a: null, b: null, cells: [
+      { id: "c1", label: "C1", limit: { type: "PLUS_MINUS", nominal: 425, tol: 33 } },
+      { id: "c4", label: "C4", limit: { type: "PLUS_MINUS", nominal: 270, tol: 40 } },
+      { id: "c6", label: "C6", limit: { type: "NA" } },
+      { id: "c7", label: "C7", limit: { type: "RECORD" } },
+    ] },
+  ],
+};
+
+describe("engaged clutches per gear", () => {
+  const typed = (v: Record<string, Record<string, string>>): TestReadings => ({
+    params: {}, clutches: Object.fromEntries(Object.entries(v).map(([row, cells]) => [row, { cells: Object.fromEntries(Object.entries(cells).map(([id, actual]) => [id, { actual }])) }])),
+  });
+
+  it("counts one reading per engaged clutch, a different number for each gear, and skips N/A and record-only", () => {
+    expect(summarizeReport(ENGAGED, typed({})).total).toBe(1 + 3 + 2);
+    const rows = evaluateAll(ENGAGED, typed({ "1st": { c3: "330" } }));
+    expect(rows.map((r) => r.key)).toContain("c:1st:x:c3");
+    expect(rows.find((r) => r.key === "c:1st:x:c3")).toMatchObject({ label: "1st, C3", evaluation: { state: "PASS", value: 330 } });
+  });
+
+  it("passes when every engaged clutch is in spec and names the clutch that is out", () => {
+    const ok = typed({ neutral: { c1: "400" }, "1st": { c1: "410", c3: "330", c5: "360" }, "3rd": { c1: "420", c4: "280" } });
+    expect(summarizeReport(ENGAGED, ok)).toMatchObject({ complete: true, result: "PASS", total: 6 });
+    const bad = typed({ neutral: { c1: "400" }, "1st": { c1: "410", c3: "330", c5: "360" }, "3rd": { c1: "420", c4: "325" } });
+    const summary = summarizeReport(ENGAGED, bad);
+    expect(summary.result).toBe("FAIL");
+    expect(failureSentence(summary.failures[0])).toBe("3rd, C4: 325, maximum 310 (15 over)");
+  });
+
+  it("waits for readings that are still empty", () => {
+    const summary = summarizeReport(ENGAGED, typed({ neutral: { c1: "400" } }));
+    expect(summary).toMatchObject({ entered: 1, missing: 5, result: null });
+  });
+
+  it("accepts the layout in the template rules, and rejects mixing it with Forward / Reverse readings", () => {
+    const input = { name: "CAT 140K family", machineModels: ["140K"], layout: "ENGAGED", labelA: "Pressure", labelB: "Pressure 2", parameters: [], clutchRows: ENGAGED.clutchRows };
+    expect(() => testTemplateInput.parse(input)).not.toThrow();
+    expect(() => testTemplateInput.parse({ ...input, clutchRows: [{ id: "x", name: "X", a: { type: "MIN", min: 1 }, b: null, cells: [] }] })).toThrow(/list the engaged clutches/);
+    expect(() => testTemplateInput.parse({ ...input, clutchRows: [{ id: "x", name: "X", a: null, b: null, cells: [] }] })).toThrow(/at least one engaged clutch/);
+    const twice = [{ id: "x", name: "X", a: null, b: null, cells: [ENGAGED.clutchRows[0].cells![0], ENGAGED.clutchRows[0].cells![0]] }];
+    expect(() => testTemplateInput.parse({ ...input, clutchRows: twice })).toThrow(/same clutch twice/);
+    expect(() => testTemplateInput.parse({ ...input, layout: "FORWARD_REVERSE" })).toThrow(/engaged clutches need the/);
+  });
+
+  it("leaves the existing Forward / Reverse and P1 / P2 templates exactly as they were", () => {
+    for (const t of STARTER_TEMPLATES) {
+      expect(t.layout).not.toBe("ENGAGED");
+      expect(t.clutchRows.every((r) => r.cells === undefined)).toBe(true);
+    }
   });
 });

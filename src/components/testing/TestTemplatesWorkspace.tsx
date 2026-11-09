@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
-import { DEFAULT_COLUMN_LABELS, LAYOUT_LABELS, LIMIT_TYPE_LABELS, formatLimit, type TestClutchRow, type TestLayoutId, type TestLimit, type TestParameterRow } from "@/lib/testing/spec";
+import { DEFAULT_COLUMN_LABELS, LAYOUT_LABELS, LIMIT_TYPE_LABELS, formatLimit, type TestClutchCell, type TestClutchRow, type TestLayoutId, type TestLimit, type TestParameterRow } from "@/lib/testing/spec";
 import { testingApi, type TemplateItem } from "./types";
 
 type Draft = {
   id: string | null; name: string; machineModels: string; layout: TestLayoutId; inputRpm: string; labelA: string; labelB: string;
   parameters: TestParameterRow[]; clutchRows: TestClutchRow[]; active: boolean;
+  // Engaged-clutch layout: the clutches of this transmission, named once; each gear picks the ones engaged in it.
+  clutchNames: Array<{ id: string; name: string }>;
 };
 
 const blankLimit = (type: TestLimit["type"]): TestLimit => {
@@ -31,10 +33,38 @@ const slug = (text: string, taken: string[]) => {
   return id.slice(0, 60);
 };
 
+// The clutch names a template uses, in the order they first appear.
+function clutchNamesOf(rows: TestClutchRow[]): Draft["clutchNames"] {
+  const seen = new Map<string, string>();
+  for (const row of rows) for (const c of row.cells ?? []) if (!seen.has(c.id)) seen.set(c.id, c.label);
+  return Array.from(seen, ([id, name]) => ({ id, name }));
+}
+
 function draftOf(t: TemplateItem | null): Draft {
   return t
-    ? { id: t.id, name: t.name, machineModels: t.machineModels.join(", "), layout: t.layout, inputRpm: t.inputRpm == null ? "" : String(t.inputRpm), labelA: t.labelA, labelB: t.labelB, parameters: t.parameters, clutchRows: t.clutchRows, active: t.active }
-    : { id: null, name: "", machineModels: "", layout: "FORWARD_REVERSE", inputRpm: "", labelA: "Forward", labelB: "Reverse", parameters: [], clutchRows: [], active: true };
+    ? { id: t.id, name: t.name, machineModels: t.machineModels.join(", "), layout: t.layout, inputRpm: t.inputRpm == null ? "" : String(t.inputRpm), labelA: t.labelA, labelB: t.labelB, parameters: t.parameters, clutchRows: t.clutchRows, active: t.active, clutchNames: clutchNamesOf(t.clutchRows) }
+    : { id: null, name: "", machineModels: "", layout: "FORWARD_REVERSE", inputRpm: "", labelA: "Forward", labelB: "Reverse", parameters: [], clutchRows: [], active: true, clutchNames: [] };
+}
+
+// Switching layout keeps the gears and their limits where it can: Forward / Reverse (or P1 / P2) become two named clutches, and back.
+function convertLayout(d: Draft, layout: TestLayoutId): Draft {
+  if (layout === d.layout) return d;
+  const labels = DEFAULT_COLUMN_LABELS[layout];
+  if (layout === "ENGAGED") {
+    const names = [{ id: "a", name: d.labelA || "Forward" }, { id: "b", name: d.labelB || "Reverse" }];
+    const clutchRows = d.clutchRows.map((row) => {
+      const cells: TestClutchCell[] = [];
+      if (row.a && row.a.type !== "NA") cells.push({ id: "a", label: names[0].name, limit: row.a });
+      if (row.b && row.b.type !== "NA" && row.b.type !== "BELOW_FIRST") cells.push({ id: "b", label: names[1].name, limit: row.b });
+      return { ...row, a: null, b: null, cells };
+    });
+    return { ...d, layout, labelA: labels.a, labelB: labels.b, clutchRows, clutchNames: names };
+  }
+  const clutchRows = d.clutchRows.map((row) => {
+    const [first, second] = row.cells ?? [];
+    return { id: row.id, name: row.name, a: first?.limit ?? row.a ?? { type: "NA" as const }, b: second?.limit ?? row.b ?? { type: "NA" as const } };
+  });
+  return { ...d, layout, labelA: labels.a, labelB: labels.b, clutchRows, clutchNames: [] };
 }
 
 // Edits one limit: pick the kind, then the numbers it needs.
@@ -106,7 +136,16 @@ export function TestTemplatesWorkspace() {
     } catch (e) { setError(e instanceof Error ? e.message : "Unable to update the template."); }
   }
 
-  const setLayout = (layout: TestLayoutId) => setDraft((d) => d && ({ ...d, layout, labelA: DEFAULT_COLUMN_LABELS[layout].a, labelB: DEFAULT_COLUMN_LABELS[layout].b }));
+  const setLayout = (layout: TestLayoutId) => setDraft((d) => d && convertLayout(d, layout));
+  // Engaged-clutch editing: every change goes through here so a gear's clutch labels always match the clutch names.
+  const setNames = (names: Draft["clutchNames"]) => setDraft((d) => {
+    if (!d) return d;
+    const byId = new Map(names.map((n) => [n.id, n.name]));
+    const clutchRows = d.clutchRows.map((row) => ({ ...row, cells: (row.cells ?? []).filter((c) => byId.has(c.id)).map((c) => ({ ...c, label: byId.get(c.id) ?? c.label })) }));
+    return { ...d, clutchNames: names, clutchRows };
+  });
+  const setCells = (index: number, update: (cells: TestClutchCell[]) => TestClutchCell[]) =>
+    setDraft((d) => d && ({ ...d, clutchRows: d.clutchRows.map((row, j) => (j === index ? { ...row, cells: update(row.cells ?? []) } : row)) }));
   const editing = draft ? items.find((t) => t.id === draft.id) : undefined;
 
   return (
@@ -153,8 +192,8 @@ export function TestTemplatesWorkspace() {
               <label className="tr-field wide"><span>Machine models (comma separated)</span><input value={draft.machineModels} onChange={(e) => setDraft({ ...draft, machineModels: e.target.value })} placeholder="e.g. 777D, 777E" /></label>
               <label className="tr-field wide"><span>Layout</span><select value={draft.layout} onChange={(e) => setLayout(e.target.value as TestLayoutId)}>{(Object.keys(LAYOUT_LABELS) as TestLayoutId[]).map((l) => <option key={l} value={l}>{LAYOUT_LABELS[l]}</option>)}</select></label>
               <label className="tr-field"><span>Input RPM</span><input inputMode="numeric" value={draft.inputRpm} onChange={(e) => setDraft({ ...draft, inputRpm: e.target.value.replace(/[^\d]/g, "") })} /></label>
-              <label className="tr-field"><span>First column name</span><input value={draft.labelA} onChange={(e) => setDraft({ ...draft, labelA: e.target.value })} /></label>
-              <label className="tr-field"><span>Second column name</span><input value={draft.labelB} onChange={(e) => setDraft({ ...draft, labelB: e.target.value })} /></label>
+              {draft.layout !== "ENGAGED" && <label className="tr-field"><span>First column name</span><input value={draft.labelA} onChange={(e) => setDraft({ ...draft, labelA: e.target.value })} /></label>}
+              {draft.layout !== "ENGAGED" && <label className="tr-field"><span>Second column name</span><input value={draft.labelB} onChange={(e) => setDraft({ ...draft, labelB: e.target.value })} /></label>}
             </div>
 
             <div className="tr-section">
@@ -170,6 +209,7 @@ export function TestTemplatesWorkspace() {
               {draft.parameters.length === 0 && <div className="tr-sub">No parameters.</div>}
             </div>
 
+            {draft.layout !== "ENGAGED" && (
             <div className="tr-section">
               <div className="tr-bar"><h3 className="tr-grow">Clutch rows ({draft.labelA} / {draft.labelB})</h3><button type="button" className="quiet-button" onClick={() => setDraft({ ...draft, clutchRows: [...draft.clutchRows, { id: slug("clutch", draft.clutchRows.map((c) => c.id)), name: "", a: { type: "NA" }, b: draft.layout === "P1_P2" ? { type: "NA" } : { type: "NA" } }] })}><Plus size={13} /> Add row</button></div>
               {draft.clutchRows.map((row, i) => (
@@ -182,6 +222,51 @@ export function TestTemplatesWorkspace() {
               ))}
               {draft.clutchRows.length === 0 && <div className="tr-sub">No clutch rows.</div>}
             </div>
+            )}
+            {draft.layout === "ENGAGED" && (
+              <>
+                <div className="tr-section">
+                  <div className="tr-bar"><h3 className="tr-grow">Clutches in this transmission</h3><button type="button" className="quiet-button" onClick={() => setNames([...draft.clutchNames, { id: slug("clutch", draft.clutchNames.map((n) => n.id)), name: `C${draft.clutchNames.length + 1}` }])}><Plus size={13} /> Add clutch</button></div>
+                  <p className="tr-sub">Name each clutch once. Every gear below picks the clutches that are engaged in it.</p>
+                  <div className="tr-chips">
+                    {draft.clutchNames.map((n, i) => (
+                      <span className="tr-chip" key={n.id}>
+                        <input aria-label="Clutch name" value={n.name} onChange={(e) => setNames(draft.clutchNames.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                        <button type="button" className="tr-icon-btn" aria-label={`Remove clutch ${n.name || ""}`} onClick={() => setNames(draft.clutchNames.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
+                      </span>
+                    ))}
+                    {draft.clutchNames.length === 0 && <span className="tr-sub">No clutches yet.</span>}
+                  </div>
+                </div>
+                <div className="tr-section">
+                  <div className="tr-bar"><h3 className="tr-grow">Gears and the clutches engaged in each</h3><button type="button" className="quiet-button" onClick={() => setDraft({ ...draft, clutchRows: [...draft.clutchRows, { id: slug("gear", draft.clutchRows.map((c) => c.id)), name: "", a: null, b: null, cells: [] }] })}><Plus size={13} /> Add gear</button></div>
+                  {draft.clutchRows.map((row, i) => {
+                    const cells = row.cells ?? [];
+                    const free = draft.clutchNames.filter((n) => !cells.some((c) => c.id === n.id));
+                    return (
+                      <div className="tr-eng-edit" key={row.id}>
+                        <input aria-label="Gear name" placeholder="e.g. 1st" value={row.name} onChange={(e) => setDraft({ ...draft, clutchRows: draft.clutchRows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                        <div className="tr-eng-edit-cells">
+                          {cells.map((c, k) => (
+                            <div className="tr-eng-edit-cell" key={c.id}>
+                              <select aria-label="Clutch" value={c.id} onChange={(e) => { const n = draft.clutchNames.find((x) => x.id === e.target.value); if (n) setCells(i, (list) => list.map((x, m) => (m === k ? { ...x, id: n.id, label: n.name } : x))); }}>
+                                <option value={c.id}>{c.label}</option>
+                                {free.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+                              </select>
+                              <LimitEditor key={`${row.id}-${c.id}-${c.limit.type}`} value={c.limit} allowBelowFirst={false} onChange={(limit) => limit && setCells(i, (list) => list.map((x, m) => (m === k ? { ...x, limit } : x)))} />
+                              <button type="button" className="tr-icon-btn" aria-label={`Remove ${c.label} from ${row.name || "gear"}`} onClick={() => setCells(i, (list) => list.filter((_, m) => m !== k))}><Trash2 size={14} /></button>
+                            </div>
+                          ))}
+                          <div><button type="button" className="quiet-button" disabled={free.length === 0} onClick={() => setCells(i, (list) => [...list, { id: free[0].id, label: free[0].name, limit: { type: "NA" } }])}><Plus size={13} /> Add clutch to this gear</button> <span className="tr-sub">{cells.length} engaged</span></div>
+                        </div>
+                        <button type="button" className="tr-icon-btn" aria-label={`Remove ${row.name || "gear"}`} onClick={() => setDraft({ ...draft, clutchRows: draft.clutchRows.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
+                      </div>
+                    );
+                  })}
+                  {draft.clutchRows.length === 0 && <div className="tr-sub">No gears.</div>}
+                </div>
+              </>
+            )}
             <div className="tr-section tr-sub">Preview: {draft.parameters.map((p) => `${p.name || "?"} ${formatLimit(p.limit)}`).join(" · ") || "no parameters"}</div>
           </section>
         ) : (

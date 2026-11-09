@@ -37,7 +37,7 @@ export function JobTestingCard({ jobId, jobLabel, canEdit, canManage }: { jobId:
           {items.map((r) => (
             <Link key={r.id} href={`/testing-reports/${r.id}`} className="tr-job-row">
               <span><strong>{r.label}</strong> <span className="tr-sub">{r.machineModel}{r.serialNumber ? ` · ${r.serialNumber}` : ""} · {formatDate(r.testDate)}{r.testers.length ? ` · ${r.testers.join(", ")}` : ""}{r.retestOfId ? " · Retest" : ""}</span></span>
-              <span className="tr-bar"><span className="tr-sub">{r.entered} of {r.total}</span><ResultPill result={r.result} status={r.status} /></span>
+              <span className="tr-bar"><span className="tr-sub">{r.entered} of {r.total}</span><ResultPill result={r.result} status={r.status} onComments={r.passedOnComments} /></span>
             </Link>
           ))}
           {items.length === 0 && <div className="tr-sub">No tests for this job yet.</div>}

@@ -79,6 +79,11 @@ type ReportRow = {
   createdAt: Date; updatedAt: Date;
 };
 
+function passedOnCommentsOf(value: unknown): { by: string; at: string } | null {
+  const mark = value && typeof value === "object" ? (value as { passedOnComments?: { by?: unknown; at?: unknown } }).passedOnComments : null;
+  return mark && typeof mark.by === "string" ? { by: mark.by, at: typeof mark.at === "string" ? mark.at : "" } : null;
+}
+
 const readingsOf = (value: unknown): TestReadings => (value && typeof value === "object" ? (value as TestReadings) : {});
 const reportSpec = (row: Pick<ReportRow, "spec">): TestSpec => specOf(row.spec as TemplateRow);
 
@@ -242,6 +247,7 @@ function listItem(row: ReportRow & { job: { jobNumber: string | null; draftNumbe
     testDate: isoDate(row.testDate),
     templateName: spec.name,
     retestOfId: row.retestOfId,
+    passedOnComments: status === "COMPLETED" && passedOnCommentsOf(row.resultSummary) !== null,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -304,6 +310,8 @@ export async function getTestReport(ctx: RequestContext, id: string) {
     testers: row.testers,
     comments: row.comments ?? "",
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    // Set when the tester passed an out-of-spec test on the strength of the comments they wrote (see completeTestReport).
+    passedOnComments: status === "COMPLETED" ? passedOnCommentsOf(row.resultSummary) : null,
     updatedAt: row.updatedAt.toISOString(),
     job: row.job ? { id: row.job.id, jobNumber: jobLabel(row.job) } : null,
     template: row.template ? { id: row.template.id, name: row.template.name, revision: row.template.revision, active: row.template.active } : null,
@@ -375,14 +383,18 @@ function mergeReadings(spec: TestSpec, existing: TestReadings, incoming: NonNull
   }
   const clutches: NonNullable<TestReadings["clutches"]> = {};
   for (const row of spec.clutchRows) {
-    const cell: { a?: TestReading; b?: TestReading } = {};
+    const cell: { a?: TestReading; b?: TestReading; cells?: Record<string, TestReading> } = {};
     const incomingCell = incoming.clutches[row.id];
     const before = existing.clutches?.[row.id];
     const a = row.a ? clean(incomingCell?.a, before?.a) : undefined;
     const b = row.b ? clean(incomingCell?.b, before?.b) : undefined;
     if (a) cell.a = a;
     if (b) cell.b = b;
-    if (cell.a || cell.b) clutches[row.id] = cell;
+    for (const c of row.cells ?? []) {
+      const merged = clean(incomingCell?.cells?.[c.id], before?.cells?.[c.id]);
+      if (merged) (cell.cells ??= {})[c.id] = merged;
+    }
+    if (cell.a || cell.b || cell.cells) clutches[row.id] = cell;
   }
   return { params, clutches };
 }
@@ -411,7 +423,13 @@ export async function updateTestReport(ctx: RequestContext, id: string, raw: unk
   return getTestReport(ctx, id);
 }
 
-export async function completeTestReport(ctx: RequestContext, id: string) {
+// Completing records the result the readings work out to. One exception, asked for 2026-11-09: when readings are out of spec the
+// tester may pass the test on the strength of the comments they wrote (passOnComments). It is recorded as "Pass with note" with their
+// name and the time, the out-of-spec readings stay out of spec on the sheet, and the comments are printed with the report. The comments
+// are the reason, so they cannot be empty.
+const MIN_PASS_COMMENT = 5;
+
+export async function completeTestReport(ctx: RequestContext, id: string, options: { passOnComments?: boolean } = {}) {
   const companyId = requireWrite(ctx);
   if (!idShape.test(id)) notFound();
   const existing = await prisma.testReport.findFirst({ where: { id, companyId } });
@@ -420,14 +438,22 @@ export async function completeTestReport(ctx: RequestContext, id: string) {
   const summary = summarizeReport(reportSpec(existing as never), readingsOf(existing.readings));
   const problems = completionProblems(summary, existing.testers);
   if (problems.length > 0 || !summary.result) throw new TestingError("REPORT_INCOMPLETE", problems.join(" ") || "Finish the readings first.", 400);
+  const passOnComments = options.passOnComments === true && summary.result === "FAIL";
+  if (passOnComments && (existing.comments ?? "").trim().length < MIN_PASS_COMMENT) {
+    throw new TestingError("COMMENTS_REQUIRED", "Write the reason in Comments before passing this test on your comments.", 400);
+  }
+  const result: TestResultId = passOnComments ? "PASS_WITH_NOTE" : summary.result;
   await prisma.testReport.update({
     where: { id },
     data: {
-      status: "COMPLETED", result: summary.result, completedAt: new Date(), completedById: ctx.userId, updatedById: ctx.userId,
-      resultSummary: { total: summary.total, entered: summary.entered, pass: summary.pass, fail: summary.fail, overridden: summary.overridden } as Prisma.InputJsonValue,
+      status: "COMPLETED", result, completedAt: new Date(), completedById: ctx.userId, updatedById: ctx.userId,
+      resultSummary: {
+        total: summary.total, entered: summary.entered, pass: summary.pass, fail: summary.fail, overridden: summary.overridden,
+        ...(passOnComments ? { passedOnComments: { by: ctx.displayName, at: new Date().toISOString(), outOfSpec: summary.fail } } : {}),
+      } as Prisma.InputJsonValue,
     },
   });
-  await recordAudit(ctx, { source: "UI", module: "TESTING_REPORTS", entityType: "TestReport", entityId: id, action: "UPDATE", afterData: { completed: true, result: summary.result } as Prisma.InputJsonValue });
+  await recordAudit(ctx, { source: "UI", module: "TESTING_REPORTS", entityType: "TestReport", entityId: id, action: "UPDATE", afterData: { completed: true, result, passedOnComments: passOnComments, outOfSpec: summary.fail } as Prisma.InputJsonValue });
   return getTestReport(ctx, id);
 }
 

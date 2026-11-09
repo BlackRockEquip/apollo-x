@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Check, CheckCircle2, CircleDashed, Lock, Printer, RotateCcw, Trash2, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import {
-  completionProblems, evaluateAll, evaluateReading, failureSentence, formatBounds, formatLimit, formatNumber, limitNeedsValue, summarizeReport,
+  completionProblems, evaluateAll, evaluateReading, failureSentence, formatBounds, formatLimit, formatNumber, limitNeedsValue, resultLabel, summarizeReport,
   type ReadingEvaluation, type TestLimit, type TestReading, type TestReadings,
 } from "@/lib/testing/spec";
 import { printTestReport } from "./printTestReport";
@@ -36,7 +36,10 @@ function payloadOf(form: Form, showCustomer: boolean) {
   const clutches: Record<string, unknown> = {};
   for (const [id, cell] of Object.entries(form.readings.clutches ?? {})) {
     const a = readingPayload(cell?.a); const b = readingPayload(cell?.b);
-    if (a || b) clutches[id] = { ...(a ? { a } : {}), ...(b ? { b } : {}) };
+    const cells: Record<string, unknown> = {};
+    for (const [cid, r] of Object.entries(cell?.cells ?? {})) { const p = readingPayload(r); if (p) cells[cid] = p; }
+    const hasCells = Object.keys(cells).length > 0;
+    if (a || b || hasCells) clutches[id] = { ...(a ? { a } : {}), ...(b ? { b } : {}), ...(hasCells ? { cells } : {}) };
   }
   const rpm = form.inputRpm.trim() === "" ? null : Math.round(Number(form.inputRpm));
   return {
@@ -181,6 +184,11 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
   const setParam = (id: string, next: TestReading) => change((cur) => ({ readings: { ...cur.readings, params: { ...(cur.readings.params ?? {}), [id]: next } } }));
   const setClutch = (id: string, col: "a" | "b", next: TestReading) => change((cur) => ({ readings: { ...cur.readings, clutches: { ...(cur.readings.clutches ?? {}), [id]: { ...(cur.readings.clutches?.[id] ?? {}), [col]: next } } } }));
 
+  const setClutchCell = (rowId: string, cellId: string, next: TestReading) => change((cur) => {
+    const row = cur.readings.clutches?.[rowId] ?? {};
+    return { readings: { ...cur.readings, clutches: { ...(cur.readings.clutches ?? {}), [rowId]: { ...row, cells: { ...(row.cells ?? {}), [cellId]: next } } } } };
+  });
+
   const live = useMemo(() => summarizeReport(spec, form.readings), [spec, form.readings]);
   const evaluated = useMemo(() => new Map(evaluateAll(spec, form.readings).map((row) => [row.key, row.evaluation])), [spec, form.readings]);
   const result = completed ? report.result : live.result;
@@ -202,13 +210,15 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
 
   const applyServer = (detail: ReportDetail) => { setReport(detail); setForm(formOf(detail)); latest.current = formOf(detail); dirty.current = false; setSaveState("saved"); };
 
-  async function complete() {
+  async function complete(passOnComments = false) {
     if (problems.length > 0) { setShowProblems(true); return; }
     await run(async () => {
       if (!(await saveNow())) return;
-      const verdict = live.result === "FAIL" ? "This test has failed readings and will be recorded as a Fail." : live.result === "PASS_WITH_NOTE" ? "This test will be recorded as Pass with note." : "All readings are in spec.";
-      if (!(await confirm({ title: "Complete this test?", message: `${verdict} It becomes read-only; a manager can reopen it if something needs changing.`, confirmLabel: "Complete test", tone: live.result === "FAIL" ? "warning" : "neutral" }))) return;
-      applyServer(await testingApi<ReportDetail>(`/api/v1/testing-reports/${report.id}/complete`, { method: "POST", body: {} }));
+      const verdict = passOnComments
+        ? `${live.fail} reading${live.fail === 1 ? " is" : "s are"} out of spec. This test will be recorded as Pass with comment, with your name on it. The out-of-spec readings stay marked on the sheet.`
+        : live.result === "FAIL" ? "This test has failed readings and will be recorded as a Fail." : live.result === "PASS_WITH_NOTE" ? "This test will be recorded as Pass with note." : "All readings are in spec.";
+      if (!(await confirm({ title: passOnComments ? "Pass this test on your comments?" : "Complete this test?", message: `${verdict} It becomes read-only; a manager can reopen it if something needs changing.`, confirmLabel: passOnComments ? "Pass on comments" : "Complete test", tone: live.result === "FAIL" ? "warning" : "neutral" }))) return;
+      applyServer(await testingApi<ReportDetail>(`/api/v1/testing-reports/${report.id}/complete`, { method: "POST", body: passOnComments ? { passOnComments: true } : {} }));
       setShowProblems(false);
     });
   }
@@ -245,7 +255,7 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
       <div className="tr-head">
         <Link href="/testing-reports" className="quiet-button"><ArrowLeft size={14} /> All tests</Link>
         <h1>{report.label}</h1>
-        <ResultPill result={result} status={report.status} />
+        <ResultPill result={result} status={report.status} onComments={!!report.passedOnComments} />
         {completed && <span className="tr-pill tr-pill-done"><Lock size={12} /> Completed {report.completedAt ? formatDate(report.completedAt) : ""}</span>}
         <span className="tr-sub">{spec.name} · revision {spec.revision}</span>
         {report.job && (canOpenJob ? <Link className="tr-link" href={`/jobs/${report.job.id}`}>Job {report.job.jobNumber}</Link> : <span className="tr-sub">Job {report.job.jobNumber}</span>)}
@@ -258,11 +268,13 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
       <div className={`tr-banner tr-banner-${banner}`} role="status">
         {banner === "pass" ? <CheckCircle2 size={22} /> : banner === "wait" ? <CircleDashed size={22} /> : <AlertTriangle size={22} />}
         <div>
-          <strong>{result === "FAIL" ? "Fail" : result === "PASS_WITH_NOTE" ? "Pass with note" : result === "PASS" ? "Pass" : "In progress"}</strong>
+          <strong>{resultLabel(result, !!report.passedOnComments)}</strong>
           {result === "FAIL" && <ul>{live.failures.map((f) => <li key={f.key}>{failureSentence(f)}</li>)}</ul>}
-          {result === "PASS_WITH_NOTE" && <p>{live.overridden} reading{live.overridden === 1 ? " was" : "s were"} passed by hand with a reason.</p>}
+          {result === "PASS_WITH_NOTE" && report.passedOnComments && <><p>Passed on the tester&apos;s comments by {report.passedOnComments.by}. {live.fail} reading{live.fail === 1 ? " is" : "s are"} out of spec:</p><ul>{live.failures.map((f) => <li key={f.key}>{failureSentence(f)}</li>)}</ul></>}
+          {result === "PASS_WITH_NOTE" && !report.passedOnComments && <p>{live.overridden} reading{live.overridden === 1 ? " was" : "s were"} passed by hand with a reason.</p>}
           {result === "PASS" && <p>All {live.total} readings are within spec.</p>}
           {!result && <p>{live.entered} of {live.total} readings entered. The result shows once every reading is in, or straight away if one fails.</p>}
+          {result === "FAIL" && !completed && live.complete && <p>Not a true fail? Write the reason in Comments, then use Pass based on comments.</p>}
           {result === "FAIL" && !live.complete && <p>{live.missing} reading{live.missing === 1 ? "" : "s"} still to enter.</p>}
         </div>
       </div>
@@ -303,7 +315,35 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
         </section>
       )}
 
-      {spec.clutchRows.length > 0 && (
+      {spec.clutchRows.length > 0 && spec.layout === "ENGAGED" && (
+        <section className="tr-card">
+          <header><div><h2>Clutch pressures</h2><p>Each gear shows only the clutches engaged in it. Press Enter to move to the next reading.</p></div></header>
+          <div className="tr-eng">
+            {spec.clutchRows.map((row) => {
+              const cells = row.cells ?? [];
+              return (
+                <div className="tr-eng-row" key={row.id}>
+                  <div className="tr-eng-name"><strong>{row.name}</strong><span className="tr-sub">{cells.length} clutch{cells.length === 1 ? "" : "es"}</span></div>
+                  <div className="tr-eng-cells">
+                    {cells.map((c) => {
+                      const ev = evaluated.get(`c:${row.id}:x:${c.id}`) ?? evaluateReading(c.limit, form.readings.clutches?.[row.id]?.cells?.[c.id]);
+                      return (
+                        <div className="tr-eng-cell" key={c.id}>
+                          <div className="tr-eng-head"><b>{c.label}</b><span>{c.limit.type === "NA" ? "N/A" : formatLimit(c.limit, spec.labelA)}</span></div>
+                          {c.limit.type === "NA" ? <span className="tr-na">N/A</span>
+                            : <ReadingField reading={form.readings.clutches?.[row.id]?.cells?.[c.id]} evaluation={ev} disabled={readOnly} labelA={spec.labelA} label={`${row.name}, ${c.label}`} onChange={(next) => setClutchCell(row.id, c.id, next)} />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {spec.clutchRows.length > 0 && spec.layout !== "ENGAGED" && (
         <section className="tr-card">
           <header><div><h2>Clutch pressures</h2><p>{spec.labelA} and {spec.labelB} for each clutch or gear. Press Enter to move to the next reading.</p></div></header>
           <div className="tr-table-wrap">
@@ -333,7 +373,7 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
       )}
 
       <section className="tr-card">
-        <header><div><h2>Comments</h2></div></header>
+        <header><div><h2>Comments</h2>{!readOnly && live.result === "FAIL" && <p>The reason written here is printed on the report and lets you pass an out-of-spec test (Pass based on comments).</p>}</div></header>
         <div style={{ padding: "12px 15px" }}>
           <label className="tr-field"><textarea rows={3} value={form.comments} disabled={readOnly} placeholder="Anything the next person should know about this test" onChange={(e) => change({ comments: e.target.value })} /></label>
         </div>
@@ -351,6 +391,7 @@ export function TestReportSheet({ initial, canEdit, canManage, showCustomer, can
           {completed && canManage && <button type="button" className="quiet-button" disabled={busy} onClick={() => void reopen()}><RotateCcw size={13} /> Reopen</button>}
           {completed && canEdit && <button type="button" className="quiet-button" disabled={busy} onClick={() => void retest()}><RotateCcw size={13} /> Retest</button>}
           <button type="button" className="quiet-button" disabled={busy} onClick={() => void print()}><Printer size={13} /> Print report</button>
+          {!readOnly && live.result === "FAIL" && <button type="button" className="quiet-button" disabled={busy || saveState === "saving" || form.comments.trim().length < 5} title={form.comments.trim().length < 5 ? "Write the reason in Comments first" : "Pass this test on the strength of your comments"} onClick={() => void complete(true)}><Check size={13} /> Pass based on comments</button>}
           {!readOnly && <button type="button" className="gold-button" disabled={busy || saveState === "saving"} onClick={() => void complete()}>Complete test</button>}
         </div>
       </div>

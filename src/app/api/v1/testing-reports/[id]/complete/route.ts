@@ -8,7 +8,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     requireSameOrigin(request);
     const { id } = await params;
-    return NextResponse.json(await completeTestReport(await requireRequestContext(), id), { status: 200 });
+    // Optional body: { passOnComments: true } passes an out-of-spec test on the strength of its comments.
+    const body = (await request.json().catch(() => null)) as { passOnComments?: unknown } | null;
+    return NextResponse.json(await completeTestReport(await requireRequestContext(), id, { passOnComments: body?.passOnComments === true }), { status: 200 });
   } catch (error) {
     return apiError(error);
   }

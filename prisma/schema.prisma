@@ -3280,6 +3280,7 @@ model Advertisement {
 enum TestLayout {
   FORWARD_REVERSE
   P1_P2
+  ENGAGED
 }
 
 enum TestReportStatus {

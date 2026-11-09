@@ -25,11 +25,18 @@ const parameterRow = z.object({
   limit: testLimitInput,
 });
 
+const clutchCell = z.object({
+  id,
+  label: text(60).min(1, "Every clutch needs a name."),
+  limit: testLimitInput,
+});
+
 const clutchRow = z.object({
   id,
   name: text(60).min(1, "Every clutch row needs a name."),
   a: testLimitInput.nullable().default(null),
   b: testLimitInput.nullable().default(null),
+  cells: z.array(clutchCell).max(12).optional().refine((cells) => !cells || uniqueIds(cells), "A gear lists the same clutch twice."),
 });
 
 function uniqueIds(rows: Array<{ id: string }>) {
@@ -39,7 +46,7 @@ function uniqueIds(rows: Array<{ id: string }>) {
 export const testTemplateInput = z.object({
   name: text(120).min(2, "Give the template a name."),
   machineModels: z.array(text(60).min(1)).max(40).default([]).transform((models) => Array.from(new Set(models))),
-  layout: z.enum(["FORWARD_REVERSE", "P1_P2"]),
+  layout: z.enum(["FORWARD_REVERSE", "P1_P2", "ENGAGED"]),
   inputRpm: z.number().int().min(0).max(20000).nullable().optional().transform((value) => value ?? null),
   labelA: text(30).min(1).default("Forward"),
   labelB: text(30).min(1).default("Reverse"),
@@ -53,6 +60,15 @@ export const testTemplateInput = z.object({
     }
   }
   for (const r of value.clutchRows) {
+    if (value.layout === "ENGAGED") {
+      if (r.a || r.b) ctx.addIssue({ code: "custom", message: `${r.name}: list the engaged clutches, not Forward / Reverse readings.` });
+      if (!r.cells || r.cells.length === 0) ctx.addIssue({ code: "custom", message: `${r.name}: add at least one engaged clutch.` });
+    } else if (r.cells && r.cells.length > 0) {
+      ctx.addIssue({ code: "custom", message: `${r.name}: engaged clutches need the "Engaged clutches per gear" layout.` });
+    }
+    for (const c of r.cells ?? []) {
+      if (c.limit.type === "BELOW_FIRST") ctx.addIssue({ code: "custom", message: `${r.name}, ${c.label}: "Below the first reading" is only for P1 / P2 sheets.` });
+    }
     if (r.a?.type === "BELOW_FIRST") ctx.addIssue({ code: "custom", message: `${r.name}: the first column cannot depend on itself.` });
   }
   for (const p of value.parameters) {
@@ -81,7 +97,7 @@ const reading = z.object({
 
 const readingsInput = z.object({
   params: z.record(z.string(), reading).default({}),
-  clutches: z.record(z.string(), z.object({ a: reading.optional(), b: reading.optional() })).default({}),
+  clutches: z.record(z.string(), z.object({ a: reading.optional(), b: reading.optional(), cells: z.record(z.string(), reading).optional() })).default({}),
 });
 
 export const testReportUpdateInput = z.object({

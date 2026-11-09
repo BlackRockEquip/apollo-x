@@ -11,7 +11,7 @@ export type ReportListItem = {
   id: string; number: number; label: string; status: TestStatus; result: TestResultId | null;
   entered: number; total: number; fail: number;
   jobId: string | null; jobNumber: string; customerName: string; machineModel: string; serialNumber: string;
-  testers: string[]; testDate: string; templateName: string; retestOfId: string | null; updatedAt: string;
+  testers: string[]; testDate: string; templateName: string; retestOfId: string | null; passedOnComments: boolean; updatedAt: string;
 };
 
 export type ReportDetail = {
@@ -19,6 +19,8 @@ export type ReportDetail = {
   spec: TestSpec; readings: TestReadings;
   machineModel: string; serialNumber: string; customerName: string; testDate: string; inputRpm: number | null; testType: string;
   testers: string[]; comments: string; completedAt: string | null; updatedAt: string;
+  /** Set when the tester passed an out-of-spec test on the strength of their comments. */
+  passedOnComments: { by: string; at: string } | null;
   job: { id: string; jobNumber: string } | null;
   template: { id: string; name: string; revision: number; active: boolean } | null;
   retestOf: { id: string; label: string } | null;
