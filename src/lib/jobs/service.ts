@@ -32,6 +32,7 @@ import {
   jobPartLineOrderUpdateInput,
   jobPartLineDescriptionUpdateInput,
   jobPartLineNotesUpdateInput,
+  jobPartLineQuantityUpdateInput,
   jobPartLineReceiveInput,
   outworkAddInput,
   outworkEditInput,
@@ -1821,6 +1822,91 @@ export async function updatePartLineNotes(ctx: RequestContext, jobId: string, ra
   const line = await getPartLineScoped(companyId, jobId, input.lineId);
   const updated = await prisma.jobPartLine.update({ where: { id: line.id }, data: { notes: input.notes, updatedById: ctx.userId } });
   await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_NOTES", afterData: { jobId, lineId: line.id } });
+  return updated;
+}
+
+// 2026-11-10, user request: "once added to a job, allow a user to edit the qty entered as sometimes the qty added is
+// incorrect." Changes how many units a part line needs. Everything that hangs off the quantity is brought into line:
+//   - the line's status (a part-received line cut down to what has arrived becomes Received; a line that is only waiting flips between In stock and Pending depending on whether the shelf
+//     now covers it, exactly as when a duplicate is added to it),
+//   - the stock held back for the job (reconciled to the units meant to come from stock, same as an order change),
+//   - what the job's history says.
+// It refuses to go below what has already happened to the line (received, taken from stock, on a pick slip), and a fully
+// received line has to have its receive undone first, so no stock movement is ever left pointing at a quantity that
+// no longer exists.
+export async function updatePartLineQuantity(ctx: RequestContext, jobId: string, raw: unknown) {
+  const companyId = requireJobs(ctx, "JOBS_EDIT");
+  requireModule(ctx, "JOB_PARTS", "WRITE");
+  const input = jobPartLineQuantityUpdateInput.parse(raw);
+  const line = await getPartLineScoped(companyId, jobId, input.lineId);
+  const next = new Prisma.Decimal(input.quantity);
+  if (next.eq(line.quantity)) return line;
+
+  const zero = new Prisma.Decimal(0);
+  const received = line.receivedQuantity ?? zero;
+  const issued = line.stockIssuedQuantity ?? zero;
+  const picked = line.pickedQuantity ?? zero;
+  if (line.status === "RECEIVED") {
+    throw new StockError("PART_LINE_QTY_RECEIVED", `${line.partNumber} has been fully received. Undo the receive first, then change the quantity.`);
+  }
+  if (received.gt(0) && next.lt(received)) {
+    throw new StockError("PART_LINE_QTY_TOO_LOW", `${received.toString()} of ${line.partNumber} ${received.eq(1) ? "has" : "have"} already been received, so the quantity can't go below ${received.toString()}.`);
+  }
+  // A part that is part-received can be cut down to what has arrived: that completes the line, as receiving the rest would.
+  const completesLine = received.gt(0) && next.eq(received);
+  if (next.lt(issued)) {
+    throw new StockError("PART_LINE_QTY_TOO_LOW", `${issued.toString()} unit${issued.eq(1) ? " has" : "s have"} already been taken from stock for ${line.partNumber}, so the quantity can't go below that.`);
+  }
+  if (picked.gt(0) && next.lt(picked)) {
+    throw new StockError("PART_LINE_QTY_TOO_LOW", `${picked.toString()} of ${line.partNumber} ${picked.eq(1) ? "is" : "are"} already on a pick slip, so the quantity can't go below that.`);
+  }
+  const ordered = line.orderedQuantity ?? null;
+  if (ordered && ordered.gt(next)) {
+    throw new StockError("PART_LINE_QTY_TOO_LOW", `${ordered.toString()} of ${line.partNumber} ${ordered.eq(1) ? "is" : "are"} marked as ordered from a supplier. Lower the ordered quantity first, then change the quantity.`);
+  }
+  if (ordered && next.minus(ordered).lt(issued)) {
+    throw new StockError("PART_LINE_QTY_TOO_LOW", `${issued.toString()} unit${issued.eq(1) ? " has" : "s have"} already been taken from stock for ${line.partNumber}, so at most ${next.minus(issued).toString()} can be on order. Lower the ordered quantity first.`);
+  }
+
+  const jobRow = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { jobNumber: true, draftNumber: true } });
+  const jobNumberLabel = jobRow?.jobNumber ?? jobRow?.draftNumber ?? jobId;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // A line that is only waiting (Pending / In stock) is checked against the shelf again for the new quantity; one that
+    // is on order, picked or partly received keeps its status.
+    let nextStatus = line.status;
+    if (completesLine) nextStatus = "RECEIVED";
+    else if (line.status === "PENDING" || line.status === "IN_STOCK") {
+      let onHand = zero;
+      if (line.partId) {
+        const balances = await tx.stockBalance.aggregate({ where: { companyId, partId: line.partId }, _sum: { quantityOnHand: true } });
+        onHand = balances._sum.quantityOnHand ?? zero;
+      }
+      nextStatus = line.partId && onHand.gte(next) ? "IN_STOCK" : "PENDING";
+    }
+
+    const record = await tx.jobPartLine.update({ where: { id: line.id }, data: { quantity: next, status: nextStatus, ...(completesLine ? { previousStatus: line.previousStatus ?? line.status } : {}), updatedById: ctx.userId } });
+
+    // Keep the stock held for the job in step: the units meant to come from stock, less any already taken.
+    if (line.partId) {
+      const qtys = partLineQuantities({
+        quantity: next.toString(),
+        orderedQuantity: line.orderedQuantity?.toString() ?? null,
+        orderNumber: line.orderNumber,
+        hasSupplier: Boolean(line.orderedFromSupplierId),
+        receivedQuantity: line.receivedQuantity?.toString() ?? null,
+        stockIssuedQuantity: line.stockIssuedQuantity?.toString() ?? null,
+        pickedQuantity: line.pickedQuantity?.toString() ?? null,
+      });
+      const fromStock = Prisma.Decimal.max(new Prisma.Decimal(qtys.stockQty.toString()).minus(issued), zero);
+      await reconcileJobPartLineReservationTx(tx, { ...ctx, companyId }, { jobNumber: jobNumberLabel, lineId: line.id, partId: line.partId, targetQuantity: nextStatus === "PENDING" || nextStatus === "RECEIVED" ? zero : fromStock });
+    }
+
+    await addActivity(tx, ctx, jobId, "PART_LINE_ORDER_UPDATED", `${line.partNumber}: quantity changed from ${line.quantity.toString()} to ${next.toString()}${completesLine ? ` (all ${received.toString()} received, so the line is complete)` : ""}.`, { lineId: line.id, partNumber: line.partNumber, from: line.quantity.toString(), to: next.toString() });
+    return record;
+  }, { maxWait: 10000, timeout: 30000 });
+
+  await recordAudit(ctx, { source: "UI", module: "JOBS_WIP", entityType: "JobPartLine", entityId: updated.id, action: "UPDATE_QUANTITY", beforeData: { quantity: line.quantity.toString() }, afterData: { jobId, lineId: line.id, quantity: next.toString() } });
   return updated;
 }
 

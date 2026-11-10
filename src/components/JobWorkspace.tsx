@@ -598,6 +598,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // comparison UI inline on the page at all times).
   const [showRfqPopup, setShowRfqPopup] = useState(false);
   const [receivingLineId, setReceivingLineId] = useState("");
+  // 2026-11-10, user request: change a part line's quantity after it was added. The line being edited and the typed value.
+  const [qtyEditLineId, setQtyEditLineId] = useState("");
+  const [qtyEditValue, setQtyEditValue] = useState("");
   const [receiveQty, setReceiveQty] = useState("");
   // 2026-10-05 — for a line that is part from stock, part ordered: where the
   // units being received came from (see jobPartLineReceiveInput.source).
@@ -2242,6 +2245,27 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       await load(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to record received quantity.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Changes the quantity of one part line (the server keeps the stock held for the job, the status and the history in step, and
+  // refuses a quantity below what is already received, taken from stock or on a pick slip). Returns whether it saved.
+  async function savePartQuantity(lineId: string, value: string): Promise<boolean> {
+    if (!jobId) return false;
+    const quantity = Number(value.trim().replace(",", "."));
+    if (!Number.isFinite(quantity) || quantity <= 0) { setError("Enter a quantity greater than 0."); return false; }
+    setSaving(true); setError("");
+    try {
+      const r = await fetch("/api/v1/jobs/part-quantity", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ jobId, lineId, quantity }) });
+      const b = await r.json();
+      if (!r.ok) throw new Error(b.error?.message || "Unable to change the quantity.");
+      await load(true);
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to change the quantity.");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -4793,7 +4817,26 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                     <ItemLinkControl items={linkItems} jobNumber={itemJobNumber} itemId={line.itemId} canEdit busy={saving} onChange={(next) => void linkRecordToItem("part", lineId, next)} subject={String(line.partNumber || "part")} />
                   </td>
                   <td data-filter-values={quantity}>
-                    {quantity}
+                    {qtyEditLineId === lineId ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <input
+                          type="number" inputMode="decimal" min={0} step="any" autoFocus style={{ width: 80 }} value={qtyEditValue} disabled={saving}
+                          aria-label={`Quantity for ${line.partNumber || "part"}`}
+                          onChange={(e) => setQtyEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); void savePartQuantity(lineId, qtyEditValue).then((ok) => { if (ok) setQtyEditLineId(""); }); }
+                            else if (e.key === "Escape") setQtyEditLineId("");
+                          }}
+                        />
+                        <button type="button" className="quiet-button" disabled={saving || !qtyEditValue.trim()} onClick={() => void savePartQuantity(lineId, qtyEditValue).then((ok) => { if (ok) setQtyEditLineId(""); })}>Save</button>
+                        <button type="button" className="quiet-button" disabled={saving} onClick={() => setQtyEditLineId("")}>Cancel</button>
+                      </div>
+                    ) : (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {quantity}
+                        {String(line.status) !== "RECEIVED" && <button type="button" className="quiet-button" style={{ padding: "2px 5px", minHeight: 0 }} disabled={saving} title="Change quantity" aria-label={`Change quantity of ${line.partNumber || "part"}`} onClick={() => { setQtyEditLineId(lineId); setQtyEditValue(quantity); }}><Pencil size={12} /></button>}
+                      </span>
+                    )}
                     {isSplitLine ? <div className="muted small-line">From stock {qtys.stockQty} · Ordered {qtys.ordered}</div> : null}
                     {hasPickedSome ? <div className="muted small-line">On pick slip {picked} of {qtys.hasOrderInfo ? decimalText(Math.max(qtys.stockQty, qtys.picked)) : quantity}</div> : null}
                     {hasReceivedSome ? <div className="muted small-line">Received {received} of {quantity}</div> : null}
@@ -5714,6 +5757,23 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           >
             <fieldset disabled={!partsEditable} className="unstyled-fieldset">
               <div className="jt-form">
+                <label>
+                  <span>Quantity</span>
+                  <input
+                    key={`${lineId}:qty:${decimalText(line.quantity)}`}
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    defaultValue={decimalText(line.quantity)}
+                    disabled={saving || String(line.status) === "RECEIVED"}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim();
+                      if (!next || Number(next) === Number(line.quantity ?? 0)) { e.target.value = decimalText(line.quantity); return; }
+                      void savePartQuantity(lineId, next).then((ok) => { if (!ok) e.target.value = decimalText(line.quantity); });
+                    }}
+                  />
+                </label>
                 <label>
                   <span>Order number</span>
                   <input

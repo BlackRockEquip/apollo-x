@@ -231,6 +231,12 @@ export const jobPartLineNotesUpdateInput = z.object({
   notes: z.string().trim().max(1000).nullable().optional().transform((v) => (v ? v : null)),
 });
 
+// 2026-11-10 — user request: change the quantity of a part line after it was added (it was typed wrong).
+export const jobPartLineQuantityUpdateInput = z.object({
+  lineId: z.string().min(1),
+  quantity: z.coerce.number({ message: "Enter a quantity greater than 0." }).positive("Enter a quantity greater than 0.").max(1000000, "That quantity is too large.").transform((n) => Math.round(n * 10000) / 10000),
+});
+
 // receivedQty accumulates on top of whatever has already been received —
 // see markPartLineReceived's comment in service.ts.
 export const jobPartLineReceiveInput = z.object({
