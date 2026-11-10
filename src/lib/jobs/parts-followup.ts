@@ -3,7 +3,7 @@ import type { RequestContext } from "@/lib/auth/context-types";
 import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
-import { getCompanySendingAddress, isCompanyEmailConfigured, sendEmail } from "@/lib/email";
+import { getCompanySendingAddress, getRequesterAddress, isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildFollowupEmailMessage, type CompanyEmailTemplates } from "@/lib/email-templates";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
 import { ccWithSender, joinOrderNumbers, partsCountText } from "@/lib/email-template-fields";
@@ -142,7 +142,8 @@ export async function sendPartsFollowup(ctx: RequestContext, jobId: string, only
   const templates = await getCompanyEmailTemplates(companyId);
   const [jobVars, companyVars] = await Promise.all([loadJobEmailVars(companyId, jobId, job), loadCompanyEmailVars(companyId, ctx.displayName)]);
   // Every follow-up also goes to the address the company sends from, so the sender keeps a copy.
-  const sendingAddress = emailConfigured ? await getCompanySendingAddress(companyId) : null;
+  // 2026-11-10: and to the person who clicked Follow up, who asked for it.
+  const sendingAddress = emailConfigured ? [await getCompanySendingAddress(companyId), await getRequesterAddress(ctx)].filter(Boolean).join(", ") || null : null;
   const sent: { supplierId: string; supplierName: string }[] = [];
   const skipped: { supplierId: string; supplierName: string; reason: string }[] = [];
 

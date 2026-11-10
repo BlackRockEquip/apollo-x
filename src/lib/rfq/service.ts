@@ -6,9 +6,9 @@ import { requireModule, requireTenantPermission } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { recordAudit } from "@/lib/audit/service";
 import { rfqRequestInput, rfqQuoteRecordInput, rfqQuoteLinesSaveInput, rfqPreferredInput, rfqNewSupplierRequestInput, generalRfqCreateInput, generalRfqUpdateInput } from "@/lib/rfq/validation";
-import { isCompanyEmailConfigured, sendEmail } from "@/lib/email";
+import { getRequesterAddress, isCompanyEmailConfigured, sendEmail } from "@/lib/email";
 import { getCompanyEmailTemplates, buildRfqEmailMessage } from "@/lib/email-templates";
-import { ccForSend, partsCountText } from "@/lib/email-template-fields";
+import { ccWithSender, partsCountText } from "@/lib/email-template-fields";
 import { loadCompanyEmailVars, loadJobEmailVars, supplierContactFirstName } from "@/lib/email-template-vars";
 import { guessQuoteFromFile } from "@/lib/rfq/quote-extraction";
 import { createMaster } from "@/lib/master-data/service";
@@ -145,7 +145,7 @@ function rfqRecipients(supplier: { mainEmail: string | null; contacts?: Array<{ 
 // to persist. Never throws — a send failure is recorded as FAILED, not
 // surfaced as an API error, so one bad supplier address doesn't block the
 // rest of the request.
-async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequested: boolean, supplier: { name: string; mainEmail: string | null; contacts?: Array<{ email: string | null; firstName?: string; isPrimary?: boolean }> }, partsSummary: string, attachment?: { fileName: string; mimeType: string; data: Buffer } | null, senderName?: string | null): Promise<{ status: "SENT" | "FAILED" | "SKIPPED"; lastSendError: string | null }> {
+async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequested: boolean, supplier: { name: string; mainEmail: string | null; contacts?: Array<{ email: string | null; firstName?: string; isPrimary?: boolean }> }, partsSummary: string, attachment?: { fileName: string; mimeType: string; data: Buffer } | null, senderName?: string | null, requesterEmail?: string | null): Promise<{ status: "SENT" | "FAILED" | "SKIPPED"; lastSendError: string | null }> {
   if (!sendEmailRequested) return { status: "SKIPPED", lastSendError: null };
   const to = rfqRecipients(supplier);
   if (!to) return { status: "SKIPPED", lastSendError: null };
@@ -156,7 +156,8 @@ async function attemptRfqSend(companyId: string, jobId: string, sendEmailRequest
 
   const { subject, text, cc } = await buildRfqEmailBody(companyId, job, supplier, partsSummary, senderName);
   try {
-    await sendEmail(companyId, { to, cc: ccForSend(cc, to), subject, text, attachments: attachment ? [{ filename: attachment.fileName, content: attachment.data, contentType: attachment.mimeType }] : undefined });
+    // The person who requested the quote is copied in, together with the template's own CC list (nobody twice, nobody on the To line).
+    await sendEmail(companyId, { to, cc: ccWithSender(cc, requesterEmail, to), subject, text, attachments: attachment ? [{ filename: attachment.fileName, content: attachment.data, contentType: attachment.mimeType }] : undefined });
     return { status: "SENT", lastSendError: null };
   } catch (err) {
     const message = err instanceof Error && err.message !== "EMAIL_NOT_CONFIGURED" ? err.message.slice(0, 500) : "Could not send the email — check the SMTP settings under Settings.";
@@ -242,7 +243,7 @@ export async function requestRfqFromSupplier(ctx: RequestContext, jobId: string,
   const partsSummary = await buildPartsSummary(companyId, jobId);
   const existing = await prisma.jobRfqRequest.findUnique({ where: { jobId_supplierId: { jobId, supplierId: input.supplierId } }, select: { status: true } });
 
-  const send = existing?.status === "QUOTED" ? { status: existing.status, lastSendError: null } : await attemptRfqSend(companyId, jobId, input.sendEmail, supplier, partsSummary, attachment, ctx.displayName);
+  const send = existing?.status === "QUOTED" ? { status: existing.status, lastSendError: null } : await attemptRfqSend(companyId, jobId, input.sendEmail, supplier, partsSummary, attachment, ctx.displayName, input.sendEmail ? await getRequesterAddress(ctx) : null);
 
   const rfq = await prisma.$transaction(async (tx) => {
     const record = await tx.jobRfqRequest.upsert({
@@ -297,7 +298,7 @@ export async function resendRfqRequest(ctx: RequestContext, jobId: string, rfqRe
       attachment = { fileName: rfq.attachmentFileName, mimeType: rfq.attachmentMimeType, data: Buffer.from(rfq.attachmentData) };
     }
   }
-  const send = await attemptRfqSend(companyId, jobId, true, supplier, rfq.partsSummary, attachment, ctx.displayName);
+  const send = await attemptRfqSend(companyId, jobId, true, supplier, rfq.partsSummary, attachment, ctx.displayName, await getRequesterAddress(ctx));
   if (send.status === "SKIPPED" && !rfqRecipients(supplier)) throw new Error("SUPPLIER_HAS_NO_EMAIL");
   if (send.status === "SKIPPED") throw new Error("EMAIL_NOT_CONFIGURED");
 

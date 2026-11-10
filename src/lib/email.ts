@@ -49,6 +49,16 @@ export async function getCompanySendingAddress(companyId: string): Promise<strin
   return address || null;
 }
 
+// 2026-11-10, user request: "when sending RFQ emails, cc also the user that requested it". The email address of the person who is
+// sending, so their own mailbox gets a copy. Null when there is nothing to copy: a deactivated user, or a platform support user
+// working inside a company (the company's staff are not to be copied on, and support staff are not to be copied by, each other's mail).
+export async function getRequesterAddress(ctx: { userId: string; supportAccessId?: string | null }): Promise<string | null> {
+  if (ctx.supportAccessId) return null;
+  const user = await prisma.userIdentity.findUnique({ where: { id: ctx.userId }, select: { email: true, active: true } });
+  const address = user?.active ? user.email.trim() : "";
+  return address || null;
+}
+
 export async function isCompanyEmailConfigured(companyId: string): Promise<boolean> {
   return isConfigured(await getSmtpSettings(companyId));
 }
