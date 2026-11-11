@@ -1668,6 +1668,9 @@ model Job {
   draftNumber         String      @unique @default(cuid())
   status              JobStatus   @default(TO_BE_COLLECTED)
   type                JobType
+  // 2026-11-11: warranty is a tickbox on a job, not a job type of its own (see src/lib/jobs/warranty.ts). The retired WARRANTY
+  // JobType value stays in the enum so old rows and history still read; the migration moves those jobs to Standard repair + this flag.
+  isWarranty          Boolean     @default(false)
   customerId          String
   customerReference   String?
   customerPo          String?

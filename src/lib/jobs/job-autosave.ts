@@ -7,7 +7,7 @@
 /** The form keys the job screen's autosave looks after (every key that feeds jobPayloadFromForm). */
 export const JOB_FORM_KEYS = [
   "customerId", "dateReceived", "customerReference", "purchaseOrderNumber", "machineMake", "machineModel", "machineSerial",
-  "component", "componentModel", "componentType", "componentSerial", "componentPartNumber", "description", "notes", "type",
+  "component", "componentModel", "componentType", "componentSerial", "componentPartNumber", "description", "notes", "type", "isWarranty",
   "etaDate", "mechanicEtaDate", "stripMechanicId", "buildMechanicId", "relationshipNotes", "quoteNumber", "quoteDate",
   "salesOrderNumber", "salesOrderDate", "invoiceNumber", "invoiceDate", "purchaseOrderDate", "purchaseOrderStatus",
   "deliveryDate", "deliveryType", "receivingTransport", "kmsTravelled", "siteContactName", "siteContactPhone", "siteAddress",
@@ -16,7 +16,7 @@ export const JOB_FORM_KEYS = [
 ] as const;
 
 /** Payload fields that change names / people shown elsewhere on the screen, so the job is reloaded soon after they are saved. */
-export const RELATION_PAYLOAD_KEYS = ["customerId", "stripMechanicId", "buildMechanicId", "salesRepresentativeId", "type"];
+export const RELATION_PAYLOAD_KEYS = ["customerId", "stripMechanicId", "buildMechanicId", "salesRepresentativeId", "type", "isWarranty"];
 
 export type JobFormValues = Record<string, string>;
 export type JobSavePayload = Record<string, string | number | boolean | null>;
@@ -39,6 +39,7 @@ export function jobPayloadFromForm(form: JobFormValues): JobSavePayload {
     description: form.description || null,
     notes: form.notes || null,
     type: form.type,
+    isWarranty: form.isWarranty === "true",
     etaDate: form.etaDate || null,
     mechanicEtaDate: form.mechanicEtaDate || null,
     stripMechanicId: form.stripMechanicId || null,

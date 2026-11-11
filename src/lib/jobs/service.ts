@@ -56,6 +56,7 @@ import { MAX_ITEMS_PER_JOB, deliveryNoteItemCount, deliveryNoteNumber, itemTag, 
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
 import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relinkJobPartLineToActivePartTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
+import { jobIsWarranty, normalizeWarranty } from "@/lib/jobs/warranty";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { parsePartsPaste, type ParsedPartLineRow } from "@/lib/jobs/parts-paste";
@@ -742,6 +743,9 @@ const ITEM_MANAGED_JOB_FIELDS = ["machineMake", "machineModel", "machineSerial",
 export async function createJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string; initialStatus?: JobStatus }) {
   const companyId = requireJobs(ctx, "JOBS_CREATE");
   const input = jobCreateInput.parse(raw);
+  // 2026-11-11: warranty is a tickbox on the job, not a job type. An old client sending type WARRANTY becomes Standard repair + the tickbox.
+  const warrantyChoice = normalizeWarranty(input.type, input.isWarranty);
+  input.type = warrantyChoice.type as typeof input.type;
   requireJobTypeModule(ctx, input.type);
   await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
@@ -794,6 +798,7 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
         description: input.description,
         notes: input.notes,
         type: input.type as JobType,
+        isWarranty: warrantyChoice.isWarranty,
         etaDate: input.etaDate,
         mechanicEtaDate: input.mechanicEtaDate,
         relationshipNotes: input.relationshipNotes,
@@ -830,6 +835,8 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
       },
       include: { customer: true },
     });
+    // A warranty job starts with a Pending claim, so the Warranty tab and the header pill have a record to show from the first save.
+    if (warrantyChoice.isWarranty) await ensureJobWarrantyTx(tx, companyId, created.id, ctx.userId);
     if (input.component) {
       await tx.jobComponent.create({
         data: {
@@ -940,7 +947,7 @@ async function getJobForUpdate(companyId: string, id: string) {
   const job = await prisma.job.findFirst({
     where: { id, companyId },
     select: {
-      id: true, type: true, status: true, stripMechanicId: true, buildMechanicId: true, salesRepresentativeId: true,
+      id: true, type: true, isWarranty: true, status: true, stripMechanicId: true, buildMechanicId: true, salesRepresentativeId: true,
       component: true, componentType: true, componentSerial: true, componentPartNumber: true, returnedUnrepaired: true,
       jobItems: { select: { id: true }, take: 1 },
     },
@@ -970,6 +977,11 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
   const buildMechanicId = input.buildMechanicId === undefined ? existing.buildMechanicId : await getMechanicOrNull(companyId, input.buildMechanicId);
   const salesRepresentativeId = input.salesRepresentativeId === undefined ? existing.salesRepresentativeId : await getSalesRepresentativeOrNull(companyId, input.salesRepresentativeId);
   if (input.relatedJobId) await getJobScoped(companyId, input.relatedJobId);
+  // 2026-11-11: the type and the "Is warranty" tickbox are decided together, so a type that cannot be warranty always clears the tickbox.
+  const wasWarranty = jobIsWarranty(existing);
+  const warrantyUpdate = input.type !== undefined || input.isWarranty !== undefined
+    ? normalizeWarranty(input.type ?? existing.type, input.isWarranty ?? wasWarranty)
+    : null;
   const updated = await prisma.$transaction(async (tx) => {
     const job = await tx.job.update({
       where: { id: existing.id },
@@ -988,7 +1000,7 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
         ...(input.componentPartNumber !== undefined ? { componentPartNumber: input.componentPartNumber } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
-        ...(input.type !== undefined ? { type: input.type as JobType } : {}),
+        ...(warrantyUpdate ? { type: warrantyUpdate.type as JobType, isWarranty: warrantyUpdate.isWarranty } : {}),
         ...(input.etaDate !== undefined ? { etaDate: input.etaDate } : {}),
         ...(input.mechanicEtaDate !== undefined ? { mechanicEtaDate: input.mechanicEtaDate } : {}),
         ...(input.relationshipNotes !== undefined ? { relationshipNotes: input.relationshipNotes } : {}),
@@ -1049,6 +1061,10 @@ export async function updateJob(ctx: RequestContext, id: string, raw: unknown) {
     }
 
     await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", "Job details updated.", { updatedFields: Object.keys(input as Record<string, unknown>) });
+    if (warrantyUpdate && warrantyUpdate.isWarranty !== wasWarranty) {
+      if (warrantyUpdate.isWarranty) await ensureJobWarrantyTx(tx, companyId, existing.id, ctx.userId);
+      await addActivity(tx, ctx, existing.id, "WARRANTY_UPDATED", warrantyUpdate.isWarranty ? "Job marked as a warranty job." : "Job is no longer a warranty job.", { isWarranty: warrantyUpdate.isWarranty });
+    }
 
     // Covers a save that changes an existing job's type TO PEX_SUPPLY —
     // same "create the PexRecord if one doesn't already exist" as
@@ -1275,12 +1291,21 @@ export async function upsertJobFieldService(ctx: RequestContext, jobId: string, 
   return updated;
 }
 
+// Makes sure a warranty job has its claim record (status Pending). Safe to call again: an existing record is left exactly as it is.
+async function ensureJobWarrantyTx(tx: Prisma.TransactionClient, companyId: string, jobId: string, userId: string) {
+  await tx.jobWarranty.upsert({
+    where: { jobId },
+    create: { companyId, jobId, status: "PENDING", updatedById: userId },
+    update: {},
+  });
+}
+
 export async function upsertJobWarranty(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
   const input = jobWarrantyInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
-  if (job.type !== "WARRANTY") throw new Error("Warranty information is only available for warranty jobs.");
+  if (!jobIsWarranty(job)) throw new Error("Warranty information is only available for warranty jobs. Tick \"Is warranty\" on the job first.");
   const updated = await prisma.$transaction(async (tx) => {
     const record = await tx.jobWarranty.upsert({
       where: { jobId },

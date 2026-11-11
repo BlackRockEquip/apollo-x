@@ -39,13 +39,14 @@ import { ViewFolderButton } from "@/components/StorageFolderBrowser";
 import { JobFileUploader, type StagedUpload } from "./job-files/JobFileUploader";
 import { AttachmentTagChip } from "./job-files/AttachmentTagChip";
 import { fileBadge, formatFileSize } from "@/lib/jobs/attachment-tags";
+import { canBeWarranty, jobIsWarranty } from "@/lib/jobs/warranty";
 import { RELATION_PAYLOAD_KEYS, createSerialRunner, diffPayload, jobPayloadFromForm, mergeServerForm, nextBaseline, pickFormKeys, type JobFormValues } from "@/lib/jobs/job-autosave";
 import { quoteLineToCell } from "./quote-compare/compare-model";
 import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
 import { PickSlipStateBadge } from "@/components/PickSlipStateBadge";
-import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
+import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantyStatusPill, warrantyStatusLabel, ReturnUnrepairedPill, BreakdownPill } from "@/components/StatusPill";
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
 import { JobTestingCard } from "@/components/testing/JobTestingCard";
@@ -221,6 +222,8 @@ type JobDetail = Row & {
   // 2026-10-20 - see Job.breakdown in schema.prisma: the red "Breakdown" pill switched on by the button above the status stepper.
   breakdown?: boolean;
   type: keyof typeof JOB_TYPE_LABELS;
+  // 2026-11-11: the "Is warranty" tickbox (warranty is no longer a job type of its own).
+  isWarranty?: boolean;
   customerId: string;
   customer: CustomerSelection & { contacts?: Row[]; addresses?: Row[]; branches?: Row[] };
   company?: Row & { legalName?: string | null; tradingName?: string | null };
@@ -446,8 +449,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const fieldAccess = accessOf("FIELD_SERVICE");
   const pexAccess = accessOf("PEX_STOCK");
   // Job types that belong to an optional module are only offered when that module is on (a job that already has such a type keeps it).
+  // 2026-11-11: Warranty is no longer a job type (it is the "Is warranty" tickbox), so it is only listed for a job still saved with it.
   function jobTypeOptions(current: string) {
-    const options = JOB_TYPES.map(([value]) => [value, typeLabels[value as keyof typeof typeLabels]] as [string, string]).filter(([value]) => value === current || (value === "FIELD_SERVICE" ? fieldAccess === "FULL" : value === "PEX_SUPPLY" || value === "PEX_RETURN" ? pexAccess === "FULL" : true));
+    const options = JOB_TYPES.map(([value]) => [value, typeLabels[value as keyof typeof typeLabels]] as [string, string]).filter(([value]) => value === current || (value === "WARRANTY" ? false : value === "FIELD_SERVICE" ? fieldAccess === "FULL" : value === "PEX_SUPPLY" || value === "PEX_RETURN" ? pexAccess === "FULL" : true));
     // Engineering lists its job types in its own order: Outright sale, Standard repair, Partial repair, Warranty repair.
     if (industryBuild === "ENGINEERING") {
       const order = ["OUTRIGHT_SALE", "STANDARD_REPAIR", "PARTIAL_REPAIR", "WARRANTY"];
@@ -971,6 +975,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     componentPartNumber: "",
     description: "",
     type: "STANDARD_REPAIR",
+    isWarranty: "",
     etaDate: "",
     mechanicEtaDate: "",
     stripMechanicId: "",
@@ -1074,6 +1079,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         description: body.description || "",
         notes: body.notes || "",
         type: body.type || "STANDARD_REPAIR",
+        isWarranty: jobIsWarranty(body) ? "true" : "",
         etaDate: body.etaDate ? String(body.etaDate).slice(0, 10) : "",
         mechanicEtaDate: body.mechanicEtaDate ? String(body.mechanicEtaDate).slice(0, 10) : "",
         stripMechanicId: body.stripMechanicId || "",
@@ -1387,8 +1393,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   function updateField(key: string, value: string) {
     if (FIELD_REPORT_KEYS.includes(key)) { fieldReportDirty.current = true; fieldReportVersion.current += 1; }
-    formRef.current = { ...formRef.current, [key]: value };
-    setForm((current) => ({ ...current, [key]: value }));
+    // A job type that cannot be warranty (PEX, Outright sale) clears the "Is warranty" tickbox with it.
+    const patch: Record<string, string> = key === "type" && !canBeWarranty(value) ? { [key]: value, isWarranty: "" } : { [key]: value };
+    formRef.current = { ...formRef.current, ...patch };
+    setForm((current) => ({ ...current, ...patch }));
   }
 
   // Every scalar Job field the edit form itself can set — factored out of
@@ -4463,12 +4471,21 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     </section>
   );
 
+  // 2026-11-11, user request: warranty is an add-on to a job type, not a job type. The tickbox shows for the job types that can be warranty
+  // (Standard repair, Partial repair, Field service); ticking it adds the Warranty tab and pill. Used on the new job form and the job screen.
+  const warrantyTickbox = canBeWarranty(form.type) ? (
+    <label className="inline-check" style={{ gap: 8 }}>
+      <input type="checkbox" checked={form.isWarranty === "true"} onChange={(e) => updateField("isWarranty", e.target.checked ? "true" : "")} />
+      <span style={{ margin: 0, fontSize: 12, fontWeight: 800 }}>Is warranty</span>
+      <span className="muted" style={{ margin: 0, fontSize: 11, fontWeight: 500 }}>Adds a Warranty tab to this job.</span>
+    </label>
+  ) : null;
   const jobDetailsSection = (
     <section className={isFieldForm ? "detail-panel wide-panel" : "detail-panel"}>
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
         {!isFieldForm && (
           <>
         <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
@@ -5358,7 +5375,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Work requested</h2><p>What the customer wants done, and the machine it is on.</p></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
         {fieldMachineFields}
@@ -5466,7 +5483,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     showSpecifications: !!specificationsSection,
     showTesting: !!testingSection,
     showPex: hasPexPanel,
-    showWarranty: !!job && job.type === "WARRANTY",
+    showWarranty: !!job && jobIsWarranty(job),
     showActivity: !!activitySection,
     // With items, the counts follow the selected item (all items = everything), like the item mockup's tabs.
     partsCount: job ? job.partLines.filter((line) => matchesItemFilter(line.itemId, activeItemFilter)).length : 0,
@@ -5913,11 +5930,12 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
                 {job.breakdown && <BreakdownPill />}
                 {pexInStock && <PexAllocatedPill />}
+                {jobIsWarranty(job) && <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} label={`Warranty · ${warrantyStatusLabel(job.warranty?.status ? String(job.warranty.status) : "PENDING")}`} />}
               </div>
               <p className="jw-subline">
                 {/* The customer name is customer information, so it is gated by canViewCustomer like the Customer details section. */}
                 {job.customer && canViewCustomer && <Link href={`/customers/${job.customer.id}`} className="jw-customer">{job.customer.name}</Link>}
-                <span>{typeLabels[(job.type || "STANDARD_REPAIR") as keyof typeof typeLabels]}{job.type === "WARRANTY" && <> <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} /></>}</span>
+                <span>{typeLabels[(job.type || "STANDARD_REPAIR") as keyof typeof typeLabels]}</span>
                 {headerMachineLine && <span>{headerMachineLine}</span>}
               </p>
             </div>
@@ -6746,7 +6764,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               and upsertJobWarranty both reject this role via
               requireNotMechanicRestricted regardless. */}
 
-          {job.type === "WARRANTY" && activeTab === "warranty" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Capture the current warranty state supported by Phase 4A.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
+          {jobIsWarranty(job) && activeTab === "warranty" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Where this job stands with the warranty claim.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
 
 
 

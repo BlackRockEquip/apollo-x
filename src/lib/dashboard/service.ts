@@ -174,7 +174,7 @@ async function loadCompletionDates(companyId: string, since: Date): Promise<Date
 // customer — a plain form field, independent of the job status stepper,
 // see its own comment above the DeliveryType enum in schema.prisma) rather
 // than createdAt/closedAt as each used before. Each metric's own filter
-// (completed = closedAt set i.e. actually closed, warranty = type WARRANTY)
+// (completed = closedAt set i.e. actually closed, warranty = the job's "Is warranty" tickbox since 2026-11-11)
 // is unchanged — only the date used to place a job on the X axis changed,
 // so jobs-completed still only counts jobs that are actually closed, just
 // bucketed by delivery date rather than when Close was clicked. Both
@@ -191,7 +191,7 @@ const ANALYTICS_METRIC_FETCHERS: Record<DashboardAnalyticsMetricKey, (companyId:
     (await prisma.job.findMany({ where: { companyId, dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
   "jobs-completed": async (companyId, since) => loadCompletionDates(companyId, since),
   "warranty-jobs": async (companyId, since) =>
-    (await prisma.job.findMany({ where: { companyId, type: "WARRANTY", dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
+    (await prisma.job.findMany({ where: { companyId, isWarranty: true, dateReceived: { gte: since } }, select: { dateReceived: true } })).map((row) => row.dateReceived).filter((d): d is Date => d != null),
   "support-tickets-opened": async (companyId, since, ownTicketsOnly) =>
     (await prisma.supportTicket.findMany({ where: { companyId, tenantDeletedAt: null, createdAt: { gte: since }, ...(ownTicketsOnly ? { reportedById: ownTicketsOnly } : {}) }, select: { createdAt: true } })).map((row) => row.createdAt),
 };

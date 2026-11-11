@@ -161,7 +161,7 @@ export async function listCustomerJobs(ctx: RequestContext, customerId: string, 
   const [groups, overdue, warranty, total, rows] = await Promise.all([
     prisma.job.groupBy({ by: ["status", "returnedUnrepaired"], where: { companyId, customerId }, _count: { _all: true } }),
     prisma.job.count({ where: { companyId, customerId, returnedUnrepaired: false, status: { notIn: SENT_BACK }, etaDate: { lt: startOfDay(now) } } }),
-    prisma.job.count({ where: { companyId, customerId, type: "WARRANTY" } }),
+    prisma.job.count({ where: { companyId, customerId, isWarranty: true } }),
     prisma.job.count({ where }),
     prisma.job.findMany({
       where,

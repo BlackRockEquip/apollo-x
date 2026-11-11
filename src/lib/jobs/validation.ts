@@ -63,6 +63,8 @@ export const jobCreateInput = z.object({
   description: longText,
   notes: longText,
   type: jobTypeEnum,
+  // 2026-11-11: the "Is warranty" tickbox. Forced off server-side for job types that cannot be warranty (see normalizeWarranty).
+  isWarranty: z.boolean().optional(),
   etaDate: optionalDate,
   mechanicEtaDate: optionalDate,
   relationshipNotes: longText,

@@ -93,14 +93,14 @@ export async function getJobsPerCustomerReport(ctx: RequestContext, params: { mo
   const since = sinceFor(params.months);
   const jobs = await prisma.job.findMany({
     where: { companyId, ...(params.customerId ? { customerId: params.customerId } : {}), ...(since ? { dateReceived: { gte: since } } : {}) },
-    select: { customerId: true, closedAt: true, type: true, customer: { select: { name: true } } },
+    select: { customerId: true, closedAt: true, isWarranty: true, customer: { select: { name: true } } },
   });
   const byCustomer = new Map<string, JobsPerCustomerRow>();
   for (const job of jobs) {
     const row = byCustomer.get(job.customerId) ?? { customerId: job.customerId, customerName: job.customer?.name ?? "—", total: 0, open: 0, closed: 0, warranty: 0 };
     row.total += 1;
     if (job.closedAt) row.closed += 1; else row.open += 1;
-    if (job.type === "WARRANTY") row.warranty += 1;
+    if (job.isWarranty) row.warranty += 1;
     byCustomer.set(job.customerId, row);
   }
   return Array.from(byCustomer.values()).sort((a, b) => b.total - a.total);
@@ -139,7 +139,7 @@ export async function getWarrantyBreakdownReport(ctx: RequestContext, params: { 
   const companyId = authorize(ctx);
   const since = sinceFor(params.months);
   const jobs = await prisma.job.findMany({
-    where: { companyId, type: "WARRANTY", ...(params.customerId ? { customerId: params.customerId } : {}), ...(since ? { dateReceived: { gte: since } } : {}) },
+    where: { companyId, isWarranty: true, ...(params.customerId ? { customerId: params.customerId } : {}), ...(since ? { dateReceived: { gte: since } } : {}) },
     select: { component: true, customerId: true, customer: { select: { name: true } }, warranty: { select: { status: true } } },
   });
 
@@ -188,7 +188,7 @@ export async function getMonthlyReport(ctx: RequestContext, params: { months?: n
   const [created, completed, warranty] = await Promise.all([
     prisma.job.findMany({ where: { companyId, ...customerFilter, dateReceived: { gte: since } }, select: { dateReceived: true } }).then((rows) => rows.map((r) => r.dateReceived).filter((d): d is Date => d != null)),
     prisma.job.findMany({ where: { companyId, ...customerFilter, deliveryDate: { gte: since }, closedAt: { not: null } }, select: { deliveryDate: true } }).then((rows) => rows.map((r) => r.deliveryDate).filter((d): d is Date => d != null)),
-    prisma.job.findMany({ where: { companyId, ...customerFilter, type: "WARRANTY", dateReceived: { gte: since } }, select: { dateReceived: true } }).then((rows) => rows.map((r) => r.dateReceived).filter((d): d is Date => d != null)),
+    prisma.job.findMany({ where: { companyId, ...customerFilter, isWarranty: true, dateReceived: { gte: since } }, select: { dateReceived: true } }).then((rows) => rows.map((r) => r.dateReceived).filter((d): d is Date => d != null)),
   ]);
 
   return {
@@ -216,7 +216,7 @@ export async function getRatiosReport(ctx: RequestContext, params: { months?: nu
   const [jobs, rfqJobs, rfqGeneral, movements] = await Promise.all([
     prisma.job.findMany({
       where: { companyId, ...(periodWhere ? { dateReceived: periodWhere } : {}) },
-      select: { id: true, type: true, customerId: true, closedAt: true, dateReceived: true, etaDate: true, deliveryDate: true },
+      select: { id: true, type: true, isWarranty: true, customerId: true, closedAt: true, dateReceived: true, etaDate: true, deliveryDate: true },
     }),
     prisma.jobRfqRequest.findMany({ where: { companyId, ...(periodWhere ? { createdAt: periodWhere } : {}) }, select: { status: true } }),
     prisma.generalRfqRequest.findMany({ where: { companyId, ...(periodWhere ? { createdAt: periodWhere } : {}) }, select: { status: true } }),
@@ -240,7 +240,7 @@ export async function getRatiosReport(ctx: RequestContext, params: { months?: nu
   ]);
 
   const totalJobs = jobs.length;
-  const warrantyJobs = jobs.filter((j) => j.type === "WARRANTY").length;
+  const warrantyJobs = jobs.filter((j) => j.isWarranty).length;
   const closedJobs = jobs.filter((j) => j.closedAt).length;
   const jobsWithBothDates = jobs.filter((j) => j.etaDate && j.deliveryDate);
   const onTimeJobs = jobsWithBothDates.filter((j) => j.deliveryDate! <= j.etaDate!);
