@@ -1532,7 +1532,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     form.purchaseOrderNumber, form.purchaseOrderDate, form.purchaseOrderStatus, form.deliveryDate, form.deliveryType,
     form.receivingTransport, form.kmsTravelled, form.paymentDateReceived, form.paymentNotApplicable, form.machineHours,
     form.plantNumber, form.reportNumber, form.importTrackingNumber, form.previousJobNumber, form.salesRepresentativeId,
-    form.siteContactName, form.siteContactPhone, form.siteAddress, form.accessNotes,
+    form.siteContactName, form.siteContactPhone, form.siteAddress, form.accessNotes, form.isWarranty,
   ]);
 
   // Switching to another tab saves at once; leaving the page (closing the tab, or moving to another screen) sends whatever is still
@@ -5483,6 +5483,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     (pexAllocatedDirect && job.type !== "PEX_RETURN" && canSendToPex && !job.pexAsReturn?.consumedByJob) ||
     (job.type === "PEX_RETURN" && !!job.pexAsReturn)
   );
+  // 2026-11-11: the Warranty tab and pill follow the tickbox as it is clicked, not only once the saved job comes back.
+  const warrantyOn = !!job && jobIsWarranty({ type: form.type || job.type, isWarranty: form.isWarranty === "true" });
   const jobTabs = buildJobTabs({
     showParts: showPartsBlock,
     showPickSlips: showPickSlipsTab,
@@ -5491,7 +5493,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     showSpecifications: !!specificationsSection,
     showTesting: !!testingSection,
     showPex: hasPexPanel,
-    showWarranty: !!job && jobIsWarranty(job),
+    showWarranty: warrantyOn,
     showActivity: !!activitySection,
     // With items, the counts follow the selected item (all items = everything), like the item mockup's tabs.
     partsCount: job ? job.partLines.filter((line) => matchesItemFilter(line.itemId, activeItemFilter)).length : 0,
@@ -5938,7 +5940,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
                 {job.returnedUnrepaired && job.status !== "COMPLETE" && <ReturnUnrepairedPill />}
                 {job.breakdown && <BreakdownPill />}
                 {pexInStock && <PexAllocatedPill />}
-                {jobIsWarranty(job) && <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} label={`Warranty · ${warrantyStatusLabel(job.warranty?.status ? String(job.warranty.status) : "PENDING")}`} />}
+                {warrantyOn && <WarrantyStatusPill status={job.warranty?.status ? String(job.warranty.status) : "PENDING"} label={`Warranty · ${warrantyStatusLabel(job.warranty?.status ? String(job.warranty.status) : "PENDING")}`} />}
               </div>
               <p className="jw-subline">
                 {/* The customer name is customer information, so it is gated by canViewCustomer like the Customer details section. */}
@@ -6772,7 +6774,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               and upsertJobWarranty both reject this role via
               requireNotMechanicRestricted regardless. */}
 
-          {jobIsWarranty(job) && activeTab === "warranty" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Where this job stands with the warranty claim.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
+          {warrantyOn && activeTab === "warranty" && <section className="detail-panel"><header><div><h2>Warranty</h2><p>Where this job stands with the warranty claim.</p></div></header><fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset"><div className="drawer-fields"><label><span>Warranty status</span><select value={form.warrantyStatus} onChange={(e) => updateField("warrantyStatus", e.target.value)}><option value="PENDING">Pending</option><option value="GRANTED">Granted</option><option value="DECLINED">Declined</option></select></label><label><span>Historical source status</span><input value={form.warrantyHistorical} onChange={(e) => updateField("warrantyHistorical", e.target.value)} /></label><label className="wide"><span>Warranty notes</span><textarea rows={4} value={form.warrantyNotes} onChange={(e) => updateField("warrantyNotes", e.target.value)} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || mechanicFieldsLocked} onClick={() => void putAction(`/api/v1/jobs/${job.id}/warranty`, { status: form.warrantyStatus, notes: form.warrantyNotes || null, historicalSourceStatus: form.warrantyHistorical || null })}>Save warranty info</button></footer></fieldset></section>}
 
 
 
