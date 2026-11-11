@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FocusEvent } from "react";
-import { FileText, Loader2, Plus, Search } from "lucide-react";
+import { Loader2, Plus, Search } from "lucide-react";
 import { useTenantPermissions } from "@/components/AppShell";
 import { readListState, writeListState } from "./list-state";
 import { ScrollRestore } from "./ScrollRestore";
@@ -25,7 +25,7 @@ type JobKit = {
   totalQuantity?: string;
   lines?: JobKitLine[];
 };
-type KitLinesImportResult = { addedCount: number; incrementedCount: number; createdCount: number; skipped: Array<{ partNumber: string; reason: string }> };
+type KitLinesImportResult = { addedCount: number; incrementedCount: number; createdCount: number; descriptionUpdatedCount?: number; skipped: Array<{ partNumber: string; reason: string }> };
 
 function text(value: unknown) { return value == null || value === "" ? "—" : String(value); }
 
@@ -65,7 +65,7 @@ export function JobKitsWorkspace() {
   const [status, setStatus] = useState(() => readListState("job-kits", { query: "", status: "active" }).status);
   const [partQuery, setPartQuery] = useState("");
   const [partOptions, setPartOptions] = useState<PartOption[]>([]);
-  const [form, setForm] = useState({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "", sortOrder: "0" });
+  const [form, setForm] = useState({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "" });
   const [editorOpen, setEditorOpen] = useState(false);
   // 2026-09-15, user request: "when adding a kit, make it that you can add a
   // part list/import a list that gets saved in table form for that specific
@@ -74,7 +74,6 @@ export function JobKitsWorkspace() {
   // that endpoint's own comment for why bulk add shares the single-line
   // add's route rather than a new nested one.
   const [bulkKitLines, setBulkKitLines] = useState("");
-  const [kitLinesImportFile, setKitLinesImportFile] = useState<File | null>(null);
   const [importSummary, setImportSummary] = useState<KitLinesImportResult | null>(null);
 
   const loadList = useCallback(async () => {
@@ -95,13 +94,13 @@ export function JobKitsWorkspace() {
 
   async function openKit(id: string) {
     setEditorOpen(true);
-    setSaving(true); setError(""); setImportSummary(null); setBulkKitLines(""); setKitLinesImportFile(null);
+    setSaving(true); setError(""); setImportSummary(null); setBulkKitLines("");
     try {
       const response = await fetch(`/api/v1/job-kits/${id}`, { cache: "no-store" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to load job kit.");
       setSelectedKit(body);
-      setForm({ name: body.name || "", description: body.description || "", machineMake: body.machineMake || "", machineModel: body.machineModel || "", componentType: body.componentType || "", active: body.active !== false, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "", sortOrder: String((body.lines?.length || 0)) });
+      setForm({ name: body.name || "", description: body.description || "", machineMake: body.machineMake || "", machineModel: body.machineModel || "", componentType: body.componentType || "", active: body.active !== false, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load job kit.");
     } finally {
@@ -202,11 +201,11 @@ export function JobKitsWorkspace() {
     if (!selectedKit || !form.partNumber.trim()) return;
     setSaving(true); setError("");
     try {
-      const response = await fetch(`/api/v1/job-kits/${selectedKit.id}/lines`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ partId: form.partId || null, partNumber: form.partNumber.trim(), description: form.partDescription.trim() || null, quantityDefault: form.quantityDefault, notes: form.notes || null, sortOrder: Number(form.sortOrder || 0) }) });
+      const response = await fetch(`/api/v1/job-kits/${selectedKit.id}/lines`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ partId: form.partId || null, partNumber: form.partNumber.trim(), description: form.partDescription.trim() || null, quantityDefault: form.quantityDefault, notes: form.notes || null }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to add kit line.");
       setSelectedKit(body);
-      setForm((current) => ({ ...current, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "", sortOrder: String((body.lines?.length || 0)) }));
+      setForm((current) => ({ ...current, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "" }));
       setPartQuery("");
       await loadList();
     } catch (e) {
@@ -216,11 +215,11 @@ export function JobKitsWorkspace() {
     }
   }
 
-  async function updateLine(line: JobKitLine, patch: Partial<{ quantityDefault: string; notes: string | null; sortOrder: number; partNumber: string; description: string | null }>) {
+  async function updateLine(line: JobKitLine, patch: Partial<{ quantityDefault: string; notes: string | null; partNumber: string; description: string | null }>) {
     if (!selectedKit) return;
     setSaving(true); setError("");
     try {
-      const response = await fetch(`/api/v1/job-kits/${selectedKit.id}/lines/${line.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(patch.partNumber !== undefined ? { partNumber: patch.partNumber } : {}), ...(patch.description !== undefined ? { description: patch.description } : {}), quantityDefault: patch.quantityDefault ?? line.quantityDefault, notes: patch.notes ?? line.notes ?? null, sortOrder: patch.sortOrder ?? line.sortOrder }) });
+      const response = await fetch(`/api/v1/job-kits/${selectedKit.id}/lines/${line.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(patch.partNumber !== undefined ? { partNumber: patch.partNumber } : {}), ...(patch.description !== undefined ? { description: patch.description } : {}), quantityDefault: patch.quantityDefault ?? line.quantityDefault, notes: patch.notes ?? line.notes ?? null }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message || "Unable to update kit line.");
       setSelectedKit(body);
@@ -230,19 +229,6 @@ export function JobKitsWorkspace() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result || "");
-        const comma = result.indexOf(",");
-        resolve(comma >= 0 ? result.slice(comma + 1) : result);
-      };
-      reader.onerror = () => reject(reader.error || new Error("Unable to read file."));
-      reader.readAsDataURL(file);
-    });
   }
 
   async function addKitLinesFromPaste() {
@@ -261,41 +247,6 @@ export function JobKitsWorkspace() {
     } finally {
       setSaving(false);
     }
-  }
-
-  async function importKitLinesFile(file: File) {
-    if (!selectedKit) return;
-    setSaving(true); setError(""); setImportSummary(null);
-    try {
-      const contentBase64 = await fileToBase64(file);
-      const response = await fetch(`/api/v1/job-kits/${selectedKit.id}/lines`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", contentBase64 }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error?.message || "Unable to import kit lines file.");
-      setSelectedKit(body);
-      setImportSummary(body.importResult || null);
-      setKitLinesImportFile(null);
-      await loadList();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to import kit lines file.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Matches JobWorkspace's downloadPartsTemplate — a static client-side CSV,
-  // no network round trip needed. No description column here (kit lines
-  // don't have one — the part's own catalog description is shown instead).
-  function downloadKitLinesTemplate() {
-    const csv = "Part number,Qty,Description\nPN-1001,2,Hydraulic seal kit\nPN-2044,4,\n";
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "job-kit-parts-template.csv";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }
 
   async function removeLine(lineId: string) {
@@ -323,7 +274,7 @@ export function JobKitsWorkspace() {
         <select value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option></select>
         <TablePrintButton tableId="job-kits-table" title="Job Kits" noun="kit" />
         {!loading && <TableColumnFilters tableId="job-kits-table" storageKey="job-kits" noun="kit" />}
-        <button type="button" className="gold-button" onClick={() => { setSelectedKit(null); setForm({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "", sortOrder: "0" }); setEditorOpen(true); }}><Plus size={15} /> New job kit</button>
+        <button type="button" className="gold-button" onClick={() => { setSelectedKit(null); setForm({ name: "", description: "", machineMake: "", machineModel: "", componentType: "", active: true, partId: "", partNumber: "", partDescription: "", quantityDefault: "1", notes: "" }); setEditorOpen(true); }}><Plus size={15} /> New job kit</button>
       </div>
       {loading ? <div className="table-state"><Loader2 className="spin" size={20} /> Loading…</div> : <div className="data-table-wrap"><table id="job-kits-table" className="data-table"><thead><tr><th>Kit</th><th>Applicability</th><th>Lines</th><th>Total Qty</th><th>Status</th><th></th></tr></thead><tbody>{kits.map((kit) => <tr key={kit.id}><td data-filter-values={kit.name}><strong>{kit.name}</strong><div className="muted small-line">{text(kit.description)}</div></td><td>{[kit.machineMake, kit.machineModel, kit.componentType].filter(Boolean).join(" · ") || "—"}</td><td>{kit.lineCount ?? kit.lines?.length ?? 0}</td><td>{text(kit.totalQuantity)}</td><td><span className={`status-pill ${kit.active ? "" : "neutral"}`}>{kit.active ? "Active" : "Inactive"}</span></td><td className="actions"><button type="button" className="table-action" onClick={() => void openKit(kit.id)}>Open</button> <button type="button" className="table-action" disabled={deletingId === kit.id} onClick={() => void removeKit(kit)}>{deletingId === kit.id ? "Deleting…" : "Delete"}</button></td></tr>)}{kits.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">No job kits found.</td></tr>}</tbody></table></div>}
       {/* 2026-09-15, user request: "Back button to take you back to where
@@ -337,31 +288,34 @@ export function JobKitsWorkspace() {
     before this change) gets that value added as its own extra option
     instead of silently disappearing from the field. */}
 <label><span>Machine make</span><select value={form.machineMake} onChange={(e) => setForm((c) => ({ ...c, machineMake: e.target.value }))}><option value="">—</option>{form.machineMake && !manufacturerOptions.some((m) => m.name === form.machineMake) && <option value={form.machineMake}>{form.machineMake}</option>}{manufacturerOptions.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}</select></label><label><span>Machine model</span><input value={form.machineModel} onChange={(e) => setForm((c) => ({ ...c, machineModel: e.target.value }))} /></label><label><span>Component type</span><input value={form.componentType} onChange={(e) => setForm((c) => ({ ...c, componentType: e.target.value }))} /></label><label className="wide"><span>Description</span><textarea rows={4} value={form.description} onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !selectedKit} onClick={() => void toggleActive(!(selectedKit?.active ?? true))}>{selectedKit?.active ? "Deactivate" : "Reactivate"}</button><button type="button" className="gold-button" disabled={saving || !canSaveKit} onClick={() => void saveKit()}>{saving ? "Saving…" : "Save job kit"}</button></footer></section>}
-    {editorOpen && <section className="detail-panel"><header><div><h2>Kit lines</h2><p>Type in the parts this kit needs{stockOn ? " (or pick them from Stock levels)" : ""}.</p></div></header>{selectedKit ? <>
-      {/* 2026-09-15, user request: "when adding a kit, make it that you can
-          add a part list/import a list that gets saved in table form for
-          that specific kit." Mirrors the Job Parts list's own paste box +
-          file import, above the existing one-at-a-time "Part" form below. */}
-      <div className="drawer-fields">
-        <label className="wide"><span>Paste parts list (one per line — part number required, quantity optional and defaults to 1, description optional: &quot;PN-1001, 2, Hydraulic seal&quot;)</span><textarea rows={4} value={bulkKitLines} onChange={(e) => setBulkKitLines(e.target.value)} placeholder={"PN-1001, 2\nPN-2044, 4"} /></label>
-        <label className="wide">
-          <span>Or import a parts list file (.xlsx, .xls or .csv — needs Part number / Qty columns, Description optional)</span>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setKitLinesImportFile(e.target.files?.[0] || null)} />
-            <button type="button" className="quiet-button" disabled={saving || !kitLinesImportFile} onClick={() => kitLinesImportFile && void importKitLinesFile(kitLinesImportFile)}>Import</button>
-            <button type="button" className="quiet-button" title="Download a blank parts-list template" aria-label="Download parts-list template" onClick={downloadKitLinesTemplate}><FileText size={15} /></button>
-          </div>
-        </label>
-      </div>
-      <footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !bulkKitLines.trim()} onClick={() => void addKitLinesFromPaste()}><Plus size={15} /> Add pasted lines to kit</button></footer>
-      {importSummary && (importSummary.addedCount > 0 || importSummary.incrementedCount > 0 || importSummary.createdCount > 0 || importSummary.skipped.length > 0) && (
+    {editorOpen && <section className="detail-panel"><header><div><h2>Kit lines</h2><p>Paste the parts this kit needs, or add them one at a time{stockOn ? " (or pick them from Stock levels)" : ""}.</p></div>{selectedKit && <span className="status-pill neutral">{lines.length} line{lines.length === 1 ? "" : "s"}</span>}</header>{selectedKit ? <>
+      {/* 2026-11-11, user request: remove the file import, make "Add pasted parts" a gold button, correct the hint
+          to "PN1001, 2, Description" / "PN1002, 4", let a typed description replace an "Imported part..." stand-in,
+          and drop the Order column. The paste box stays above the one-part-at-a-time row. */}
+      {importSummary && (importSummary.addedCount > 0 || importSummary.incrementedCount > 0 || importSummary.createdCount > 0 || (importSummary.descriptionUpdatedCount ?? 0) > 0 || importSummary.skipped.length > 0) && (
         <div className={importSummary.skipped.length > 0 ? "inline-error" : "inline-success"}>
-          Added {importSummary.addedCount} new line{importSummary.addedCount === 1 ? "" : "s"}, increased quantity on {importSummary.incrementedCount} already in this kit.
+          <strong>Added {importSummary.addedCount} new line{importSummary.addedCount === 1 ? "" : "s"}</strong>, increased quantity on {importSummary.incrementedCount} already in this kit.
           {importSummary.createdCount > 0 && <> {importSummary.createdCount} part number{importSummary.createdCount === 1 ? "" : "s"} {importSummary.createdCount === 1 ? "wasn't" : "weren't"} in the Parts Catalog yet, so {importSummary.createdCount === 1 ? "it was" : "they were"} added there too — fill in the rest of the details (manufacturer, pricing, bin, etc.) from Stock Levels when you get a chance.</>}
+          {(importSummary.descriptionUpdatedCount ?? 0) > 0 && <> {importSummary.descriptionUpdatedCount} description{importSummary.descriptionUpdatedCount === 1 ? " was" : "s were"} updated from the &ldquo;Imported part&rdquo; stand-in.</>}
           {importSummary.skipped.length > 0 && <> {importSummary.skipped.length} part number{importSummary.skipped.length === 1 ? "" : "s"} could not be added: {importSummary.skipped.map((s) => s.partNumber).join(", ")}.</>}
         </div>
       )}
-      <div className="drawer-fields">{stockOn && <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPartOptions([]))}><span>Find in Stock levels (optional)</span><div><Search size={15} /><input value={partQuery} onChange={(e) => setPartQuery(e.target.value)} placeholder="Search part number or description to fill in the fields below" /></div>{partOptions.length > 0 && <div className="selector-results">{partOptions.map((part) => <button key={part.id} type="button" onClick={() => { setForm((c) => ({ ...c, partId: part.id, partNumber: part.partNumber || "", partDescription: part.description || "" })); setPartQuery(""); setPartOptions([]); }}>{part.partNumber} · {part.description}</button>)}</div>}</label>}<label><span>Part number *</span><input value={form.partNumber} onChange={(e) => setForm((c) => ({ ...c, partNumber: e.target.value, partId: "" }))} placeholder="e.g. PN-1001" /></label><label><span>Description</span><input value={form.partDescription} onChange={(e) => setForm((c) => ({ ...c, partDescription: e.target.value }))} placeholder="Optional" /></label><label><span>Quantity</span><input type="number" min="0.0001" step="0.0001" value={form.quantityDefault} onChange={(e) => setForm((c) => ({ ...c, quantityDefault: e.target.value }))} /></label><label><span>Sort order</span><input type="number" min="0" step="1" value={form.sortOrder} onChange={(e) => setForm((c) => ({ ...c, sortOrder: e.target.value }))} /></label><label className="wide"><span>Notes</span><textarea rows={3} value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} /></label></div><footer className="detail-actions"><button type="button" className="quiet-button" disabled={saving || !form.partNumber.trim()} onClick={() => void addLine()}>Add kit line</button></footer><div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Description</th><th>Qty</th><th>Notes</th><th>Order</th><th></th></tr></thead><tbody>{lines.map((line) => <tr key={line.id}>{line.partId ? <><td className="mono">{line.part?.partNumber ?? line.partNumber}</td><td>{line.part?.description ?? line.description}</td></> : <><td><input className="mono" defaultValue={line.partNumber || ""} onBlur={(e) => { const next = e.target.value.trim(); if (next && next !== (line.partNumber || "")) void updateLine(line, { partNumber: next }); }} /></td><td><input defaultValue={line.description || ""} onBlur={(e) => { const next = e.target.value.trim(); if (next !== (line.description || "")) void updateLine(line, { description: next || null }); }} /></td></>}<td><input type="number" min="0.0001" step="0.0001" defaultValue={line.quantityDefault} onBlur={(e) => { const next = e.target.value; if (next !== line.quantityDefault) void updateLine(line, { quantityDefault: next }); }} /></td><td><input defaultValue={line.notes || ""} onBlur={(e) => { const next = e.target.value; if (next !== (line.notes || "")) void updateLine(line, { notes: next || null }); }} /></td><td><input type="number" min="0" step="1" defaultValue={String(line.sortOrder)} onBlur={(e) => { const next = Number(e.target.value); if (next !== line.sortOrder) void updateLine(line, { sortOrder: next }); }} /></td><td className="actions"><button type="button" className="table-action" onClick={() => void removeLine(line.id)}>Remove</button></td></tr>)}{lines.length === 0 && <tr><td colSpan={6} className="table-state compact-empty-state">This job kit does not have any lines yet.</td></tr>}</tbody></table></div></> : <div className="table-state compact-empty-state">Save or open a job kit to manage its lines.</div>}</section>}
+      <div className="drawer-fields">
+        <label className="wide"><span>Paste parts list</span><textarea rows={4} value={bulkKitLines} onChange={(e) => setBulkKitLines(e.target.value)} placeholder={"PN1001, 2, Description\nPN1002, 4"} /></label>
+      </div>
+      <footer className="detail-actions" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <p className="muted small-line" style={{ margin: 0, maxWidth: 760 }}>One part per line: <strong>part number, quantity, description</strong>. Quantity is optional and becomes 1 if left out. Description is optional, and when you type one it replaces any &ldquo;Imported part&rdquo; stand-in.</p>
+        <button type="button" className="gold-button" disabled={saving || !bulkKitLines.trim()} onClick={() => void addKitLinesFromPaste()}><Plus size={15} /> Add pasted parts</button>
+      </footer>
+      <div className="drawer-fields">
+        <p className="muted small-line" style={{ gridColumn: "1 / -1", margin: 0, fontWeight: 800 }}>Or add one part</p>
+        {stockOn && <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setPartOptions([]))}><span>Find in Stock levels (optional)</span><div><Search size={15} /><input value={partQuery} onChange={(e) => setPartQuery(e.target.value)} placeholder="Search part number or description to fill in the fields below" /></div>{partOptions.length > 0 && <div className="selector-results">{partOptions.map((part) => <button key={part.id} type="button" onClick={() => { setForm((c) => ({ ...c, partId: part.id, partNumber: part.partNumber || "", partDescription: part.description || "" })); setPartQuery(""); setPartOptions([]); }}>{part.partNumber} · {part.description}</button>)}</div>}</label>}
+        <label><span>Part number *</span><input value={form.partNumber} onChange={(e) => setForm((c) => ({ ...c, partNumber: e.target.value, partId: "" }))} placeholder="e.g. PN1001" /></label>
+        <label><span>Description</span><input value={form.partDescription} onChange={(e) => setForm((c) => ({ ...c, partDescription: e.target.value }))} placeholder="Optional" /></label>
+        <label><span>Quantity</span><input type="number" min="0.0001" step="0.0001" value={form.quantityDefault} onChange={(e) => setForm((c) => ({ ...c, quantityDefault: e.target.value }))} /></label>
+        <label><span>Notes</span><input value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} placeholder="Optional" /></label>
+      </div>
+      <footer className="detail-actions"><button type="button" className="gold-button" disabled={saving || !form.partNumber.trim()} onClick={() => void addLine()}>Add part</button></footer>
+      <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Part</th><th>Description</th><th>Qty</th><th>Notes</th><th></th></tr></thead><tbody>{lines.map((line) => <tr key={line.id}>{line.partId ? <><td className="mono">{line.part?.partNumber ?? line.partNumber}</td><td>{line.part?.description ?? line.description}</td></> : <><td><input className="mono" defaultValue={line.partNumber || ""} onBlur={(e) => { const next = e.target.value.trim(); if (next && next !== (line.partNumber || "")) void updateLine(line, { partNumber: next }); }} /></td><td><input defaultValue={line.description || ""} onBlur={(e) => { const next = e.target.value.trim(); if (next !== (line.description || "")) void updateLine(line, { description: next || null }); }} /></td></>}<td><input type="number" min="0.0001" step="0.0001" defaultValue={line.quantityDefault} onBlur={(e) => { const next = e.target.value; if (next !== line.quantityDefault) void updateLine(line, { quantityDefault: next }); }} /></td><td><input defaultValue={line.notes || ""} onBlur={(e) => { const next = e.target.value; if (next !== (line.notes || "")) void updateLine(line, { notes: next || null }); }} /></td><td className="actions"><button type="button" className="table-action" onClick={() => void removeLine(line.id)}>Remove</button></td></tr>)}{lines.length === 0 && <tr><td colSpan={5} className="table-state compact-empty-state">This job kit does not have any lines yet. Paste a list above to start.</td></tr>}</tbody></table></div></> : <div className="table-state compact-empty-state">Save or open a job kit to manage its lines.</div>}</section>}
   </div>;
 }
-/* eslint-enable react-hooks/set-state-in-effect */

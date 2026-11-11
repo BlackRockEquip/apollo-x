@@ -8,6 +8,7 @@ import { reserveStockTx } from "@/lib/inventory/service";
 import { jobKitActiveInput, jobKitCreateInput, jobKitLineBulkAddInput, jobKitLineInput, jobKitLineUpdateInput, jobKitListQuery, jobKitUpdateInput } from "./validation";
 import { findPartByNumber, numberAlreadyInUse } from "@/lib/inventory/parts-lookup";
 import { looseNormalized, normalized as normalizedPartNumber } from "@/lib/master-data/validation";
+import { descriptionAfterTyped, isPlaceholderDescription, placeholderDescription, typedDescription } from "./description";
 
 function notFound(): never { throw new Error("NOT_FOUND"); }
 function normalized(value: string) { return value.trim().replace(/\s+/g, " ").toUpperCase(); }
@@ -224,8 +225,16 @@ export async function addJobKitLine(ctx: RequestContext, id: string, raw: unknow
   if (!existing) notFound();
   const parts = await resolveKitLineParts(ctx, companyId, input);
   const match = await findKitLineMatch(prisma, companyId, id, parts);
+  // 2026-11-11: a typed description replaces an "Imported part ..." stand-in on the catalog part and on the line.
+  const typed = typedDescription(input.description);
+  if (typed && parts.partId) {
+    const catalogPart = await prisma.part.findFirst({ where: { id: parts.partId, companyId }, select: { description: true } });
+    if (catalogPart && isPlaceholderDescription(catalogPart.description)) await prisma.part.update({ where: { id: parts.partId }, data: { description: typed } });
+  }
+  // 2026-11-11: the Order column is gone, so a new line simply goes to the end of the kit.
+  const currentMax = match ? null : await prisma.jobKitLine.aggregate({ where: { jobKitId: id, companyId }, _max: { sortOrder: true } });
   const line = match
-    ? await prisma.jobKitLine.update({ where: { id: match.id }, data: { quantityDefault: match.quantityDefault.plus(input.quantityDefault) } })
+    ? await prisma.jobKitLine.update({ where: { id: match.id }, data: { quantityDefault: match.quantityDefault.plus(input.quantityDefault), description: descriptionAfterTyped(match.description, typed) } })
     : await prisma.jobKitLine.create({
         data: {
           companyId,
@@ -235,7 +244,7 @@ export async function addJobKitLine(ctx: RequestContext, id: string, raw: unknow
           description: parts.description,
           quantityDefault: new Prisma.Decimal(input.quantityDefault),
           notes: input.notes,
-          sortOrder: input.sortOrder ?? 0,
+          sortOrder: input.sortOrder ?? (currentMax?._max.sortOrder ?? -1) + 1,
         },
       });
   await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKitLine", entityId: line.id, action: match ? "UPDATE" : "CREATE", afterData: { jobKitId: id, partId: parts.partId, partNumber: parts.partNumber } });
@@ -284,11 +293,10 @@ const MAX_KIT_LINES_IMPORT_FILE_BYTES = 8_000_000;
 
 type ParsedKitLineRow = { partNumber: string; quantity: number; description?: string | null };
 
-// "PN-1001, 2" or a tab-separated paste straight out of Excel — part number
-// required, quantity optional (defaults to 1, since a kit's part list is
-// often just "these parts belong to this kit" with no particular quantity
-// in mind until someone edits it). No description column in the paste
-// format — only the spreadsheet-import path (below) can supply one.
+// "PN1001, 2, Description" or a tab-separated paste straight out of Excel —
+// part number required, quantity optional (defaults to 1, since a kit's
+// part list is often just "these parts belong to this kit" with no
+// particular quantity in mind until someone edits it), description optional.
 function parseBulkKitLineRow(raw: string): ParsedKitLineRow | null {
   const cells = (raw.includes("\t") ? raw.split("\t") : raw.split(",")).map((c) => c.trim());
   const partNumber = cells[0] || "";
@@ -304,6 +312,7 @@ export type AddJobKitLinesBulkResult = {
   addedCount: number;
   incrementedCount: number;
   createdCount: number;
+  descriptionUpdatedCount: number;
   skipped: Array<{ partNumber: string; reason: string }>;
 };
 
@@ -333,6 +342,7 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
   let addedCount = 0;
   let incrementedCount = 0;
   let createdCount = 0;
+  let descriptionUpdatedCount = 0;
   const skipped: AddJobKitLinesBulkResult["skipped"] = [];
 
   if (rows.length > 0) {
@@ -347,7 +357,9 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
           const typedNumber = looseNormalized(row.partNumber) ?? row.partNumber;
           const sameLine = await tx.jobKitLine.findFirst({ where: { jobKitId: id, companyId, partNumber: typedNumber } });
           if (sameLine) {
-            await tx.jobKitLine.update({ where: { id: sameLine.id }, data: { quantityDefault: sameLine.quantityDefault.plus(row.quantity), description: sameLine.description || row.description?.trim() || null } });
+            const nextDescription = descriptionAfterTyped(sameLine.description, row.description);
+            if (nextDescription !== (sameLine.description?.trim() || null) && typedDescription(row.description)) descriptionUpdatedCount += 1;
+            await tx.jobKitLine.update({ where: { id: sameLine.id }, data: { quantityDefault: sameLine.quantityDefault.plus(row.quantity), description: nextDescription } });
             incrementedCount += 1;
           } else {
             await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId: null, partNumber: typedNumber, description: row.description?.trim() || null, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
@@ -366,6 +378,8 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
         let partId: string;
         let lineNumber: string;
         let lineDescription: string | null;
+        let partDescriptionUpdated = false;
+        const typed = typedDescription(row.description);
         if (part) {
           // An existing but deactivated/historical part is still skipped
           // and reported — reactivating it automatically wasn't asked
@@ -375,6 +389,12 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
           partId = part.id;
           lineNumber = part.partNumber;
           lineDescription = part.description;
+          // 2026-11-11: a real description replaces the "Imported part ..." stand-in, on the catalog part too.
+          if (typed && isPlaceholderDescription(part.description)) {
+            await tx.part.update({ where: { id: part.id }, data: { description: typed } });
+            lineDescription = typed;
+            partDescriptionUpdated = true;
+          }
         } else {
           const cleanNumber = looseNormalized(row.partNumber) ?? row.partNumber;
           // A number already recorded as some OTHER part's alternate
@@ -389,7 +409,7 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
               companyId,
               partNumber: cleanNumber,
               partNumberNormalized: normalizedPartNumber(cleanNumber)!,
-              description: row.description && row.description.trim().length >= 2 ? row.description.trim() : `Imported part ${cleanNumber}`,
+              description: typed ?? placeholderDescription(cleanNumber),
               unitOfMeasure: "EA",
               active: true,
             },
@@ -402,23 +422,27 @@ export async function addJobKitLinesBulk(ctx: RequestContext, id: string, raw: u
 
         const existingLine = await tx.jobKitLine.findFirst({ where: { jobKitId: id, companyId, partId } });
         if (existingLine) {
-          await tx.jobKitLine.update({ where: { id: existingLine.id }, data: { quantityDefault: existingLine.quantityDefault.plus(row.quantity) } });
+          // The line's own copy of the description is fixed too when it still holds the stand-in.
+          const nextDescription = descriptionAfterTyped(existingLine.description, typed ?? (isPlaceholderDescription(lineDescription) ? null : lineDescription));
+          if (partDescriptionUpdated || nextDescription !== (existingLine.description?.trim() || null)) descriptionUpdatedCount += 1;
+          await tx.jobKitLine.update({ where: { id: existingLine.id }, data: { quantityDefault: existingLine.quantityDefault.plus(row.quantity), description: nextDescription } });
           incrementedCount += 1;
         } else {
           await tx.jobKitLine.create({ data: { companyId, jobKitId: id, partId, partNumber: lineNumber, description: lineDescription, quantityDefault: new Prisma.Decimal(row.quantity), sortOrder: nextSortOrder } });
           nextSortOrder += 1;
           addedCount += 1;
+          if (partDescriptionUpdated) descriptionUpdatedCount += 1;
         }
       }
     });
 
     if (addedCount > 0 || incrementedCount > 0) {
-      await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKit", entityId: id, action: "UPDATE", afterData: { id, bulkImport: { addedCount, incrementedCount, createdCount, skippedCount: skipped.length } } });
+      await recordAudit(ctx, { source: "UI", module: "JOB_KITS", entityType: "JobKit", entityId: id, action: "UPDATE", afterData: { id, bulkImport: { addedCount, incrementedCount, createdCount, descriptionUpdatedCount, skippedCount: skipped.length } } });
     }
   }
 
   const kit = await getJobKitById(ctx, id);
-  return { ...kit, importResult: { addedCount, incrementedCount, createdCount, skipped } };
+  return { ...kit, importResult: { addedCount, incrementedCount, createdCount, descriptionUpdatedCount, skipped } };
 }
 
 export async function updateJobKitLine(ctx: RequestContext, id: string, lineId: string, raw: unknown) {
