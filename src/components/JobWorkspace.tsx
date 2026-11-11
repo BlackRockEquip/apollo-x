@@ -4475,7 +4475,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // (Standard repair, Partial repair, Field service); ticking it adds the Warranty tab and pill. Used on the new job form and the job screen.
   const warrantyTickbox = canBeWarranty(form.type) ? (
     <label className="inline-check" style={{ gap: 8 }}>
-      <input type="checkbox" checked={form.isWarranty === "true"} onChange={(e) => updateField("isWarranty", e.target.checked ? "true" : "")} />
+      <input type="checkbox" style={{ flex: "none", width: 16, height: 16, minWidth: 16, padding: 0, margin: 0 }} checked={form.isWarranty === "true"} onChange={(e) => updateField("isWarranty", e.target.checked ? "true" : "")} />
       <span style={{ margin: 0, fontSize: 12, fontWeight: 800 }}>Is warranty</span>
       <span className="muted" style={{ margin: 0, fontSize: 11, fontWeight: 500 }}>Adds a Warranty tab to this job.</span>
     </label>
@@ -4489,8 +4489,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
+        {isFieldForm ? <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label> : <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>}
         {isFieldForm && previousJobField}
+        {isFieldForm && warrantyTickbox}
         {!isFieldForm && (
           <>
         <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
@@ -5380,8 +5381,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Work requested</h2><p>What the customer wants done, and the machine it is on.</p></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
+        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {previousJobField}
+        {warrantyTickbox}
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
         {fieldMachineFields}
