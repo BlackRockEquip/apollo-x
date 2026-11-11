@@ -4480,12 +4480,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <span className="muted" style={{ margin: 0, fontSize: 11, fontWeight: 500 }}>Adds a Warranty tab to this job.</span>
     </label>
   ) : null;
+  // 2026-11-11, user request: "on field jobs, add the previous job field". One field, shown on every job type (field jobs had no way to enter it).
+  const previousJobField = (
+    <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
+  );
   const jobDetailsSection = (
     <section className={isFieldForm ? "detail-panel wide-panel" : "detail-panel"}>
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
         <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
+        {isFieldForm && previousJobField}
         {!isFieldForm && (
           <>
         <label><span>ETA date</span><input type="date" value={form.etaDate} onChange={(e) => updateField("etaDate", e.target.value)} /></label>
@@ -4506,7 +4511,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         </label>
         {mode === "detail" && ((job?.jobItems?.length ?? 0) > 0) && <span className="muted small-line wide">Items can have their own machinists (see the item list above). An item without its own follows these.</span>}
         <label><span>Import tracking number</span><input value={form.importTrackingNumber} onChange={(e) => updateField("importTrackingNumber", e.target.value)} /></label>
-        <label><span>Previous job number</span><input value={form.previousJobNumber} onChange={(e) => updateField("previousJobNumber", e.target.value)} />{job?.pexConsumedBy && <span className="muted small-line">Redeployed a PEX unit returned on {text(job?.pexConsumedBy?.returnJob?.jobNumber || job?.pexConsumedBy?.returnJob?.draftNumber)}.</span>}</label>
+        {previousJobField}
           </>
         )}
         <label className="wide"><span>Job description</span><textarea rows={2} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
@@ -5376,6 +5381,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
         <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>
+        {previousJobField}
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
         <p className="field-subhead wide">Machine / component</p>
         {fieldMachineFields}
