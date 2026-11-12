@@ -18,6 +18,8 @@ export type ReportDetail = {
   id: string; number: number; label: string; status: TestStatus; result: TestResultId | null; summary: ReportSummary;
   spec: TestSpec; readings: TestReadings;
   machineModel: string; serialNumber: string; customerName: string; testDate: string; inputRpm: number | null; testType: string;
+  /** From the linked job (empty when the test has no job). The customer's order / reference is empty for anyone who cannot see customers. */
+  machineMake: string; customerReference: string;
   testers: string[]; comments: string; completedAt: string | null; updatedAt: string;
   /** Set when the tester passed an out-of-spec test on the strength of their comments. */
   passedOnComments: { by: string; at: string } | null;

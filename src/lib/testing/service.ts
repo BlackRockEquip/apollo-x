@@ -281,7 +281,7 @@ export async function getTestReport(ctx: RequestContext, id: string) {
   const row = await prisma.testReport.findFirst({
     where: { id, companyId },
     include: {
-      job: { select: { id: true, jobNumber: true, draftNumber: true } },
+      job: { select: { id: true, jobNumber: true, draftNumber: true, machineMake: true, customerReference: true } },
       template: { select: { id: true, name: true, revision: true, active: true } },
       retestOf: { select: { id: true, number: true } },
       retests: { select: { id: true, number: true, status: true, result: true }, orderBy: { number: "asc" } },
@@ -307,6 +307,9 @@ export async function getTestReport(ctx: RequestContext, id: string) {
     testDate: isoDate(row.testDate),
     inputRpm: row.inputRpm,
     testType: row.testType ?? "",
+    // 2026-11-12: the test certificate prints the make and the customer's order / reference from the job.
+    machineMake: row.job?.machineMake ?? "",
+    customerReference: canSeeCustomer(ctx) ? row.job?.customerReference ?? "" : "",
     testers: row.testers,
     comments: row.comments ?? "",
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,

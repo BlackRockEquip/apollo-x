@@ -219,7 +219,7 @@ export async function getCompanyPrintDetails(ctx: RequestContext) {
     select: {
       legalName: true,
       tradingName: true,
-      settings: { select: { registrationNumber: true, vatNumber: true, mainTelephone: true, mainEmail: true, hidePoweredBy: true, documentHeaderText: true, documentFooterText: true } },
+      settings: { select: { registrationNumber: true, vatNumber: true, mainTelephone: true, mainEmail: true, website: true, hidePoweredBy: true, documentHeaderText: true, documentFooterText: true } },
       addresses: { orderBy: [{ isPrimary: "desc" }, { type: "asc" }], take: 1 },
     },
   });
@@ -234,6 +234,8 @@ export async function getCompanyPrintDetails(ctx: RequestContext) {
     vatNumber: company.settings?.vatNumber ?? null,
     contact: company.settings?.mainTelephone ?? null,
     email: company.settings?.mainEmail ?? null,
+    // 2026-11-12: the company web address, shown under the company name on the test certificate.
+    website: company.settings?.website ?? null,
     // 2026-10-21: server-made PDFs leave out "Powered by Flo X Integrations" when the platform admin has switched it off.
     hidePoweredBy: company.settings?.hidePoweredBy ?? false,
     // 2026-10-29: the company's own header / footer wording for every server-made PDF (see DocLetterhead in documents/pdf.ts).
