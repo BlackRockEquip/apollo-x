@@ -53,7 +53,7 @@ export function TestingReportsWorkspace({ canEdit, canManage, showCustomer }: { 
   return (
     <div>
       <header className="page-header compact">
-        <div><p className="eyebrow">Testing</p><h1>Testing Reports</h1><p>Transmission dyno test sheets, checked against the spec for each machine as the readings are typed in.</p></div>
+        <div><p className="eyebrow">Testing</p><h1>Transmissions</h1><p>Transmission dyno test sheets, checked against the spec for each machine as the readings are typed in.</p></div>
         <div className="tr-bar">
           {canManage && <Link href="/testing-reports/templates" className="quiet-button"><Settings2 size={14} /> Spec templates</Link>}
           {canEdit && <button type="button" className="gold-button" onClick={() => setCreating(true)}><Plus size={15} /> New test</button>}

@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
@@ -18,6 +18,7 @@ import { SupportRequestDialog } from "@/components/SupportRequestDialog";
 import { BroadcastBanner } from "@/components/BroadcastBanner";
 import { SidebarAd } from "@/components/SidebarAd";
 import { DemoBanner } from "@/components/DemoBanner";
+import { TESTING_KINDS } from "@/lib/testing/nav";
 import { SETTINGS_NAV_ITEMS, settingsNavModuleAllowed, settingsNavModuleReadOnly, settingsNavPermissionAllowed } from "@/lib/settings-nav";
 
 // 2026-10-01 — `hiddenForMechanic` added for Suppliers: a User/Mechanic
@@ -113,6 +114,7 @@ const SETTINGS_ICONS: Record<string, typeof LayoutDashboard> = {
 // allowed to use, not just one their company hasn't licensed (`module`,
 // checked separately). See permissions.ts's DEFAULT_TENANT_PERMISSIONS for
 // what each role actually has.
+const TESTING_ICONS: Record<(typeof TESTING_KINDS)[number]["key"], typeof LayoutDashboard> = { transmissions: Cog, engines: Settings2, brakes: Disc3, "torque-converters": CircleDot };
 const NAV_GROUPS: NavGroup[] = [
   // 2026-09-19 — user request: rename the "CRM" sidebar group to
   // "Customers/Suppliers" (clearer than the internal acronym for what's
@@ -131,7 +133,8 @@ const NAV_GROUPS: NavGroup[] = [
   { key: "inventory", label: "Inventory", icon: Boxes, items: [{ key: "inventory", label: "Stock Levels", href: "/inventory", module: "INVENTORY", permission: "INVENTORY_VIEW", icon: Boxes }, { key: "storage-locations", label: "Storage Locations", href: "/storage-locations", module: "STORAGE", permission: "STORAGE_LOCATIONS_VIEW", icon: MapPin }, { key: "manufacturers", label: "Manufacturers", href: "/manufacturers", module: "INVENTORY", permission: "MANUFACTURERS_VIEW", icon: Factory }] },
   // 2026-11-07, Testing Reports (transmission dyno test sheets). Its own sidebar group so a Testing Technician, who holds nothing
   // else, does not see a "Jobs" group with a single item in it.
-  { key: "testing", label: "Testing", icon: Gauge, items: [{ key: "testing-reports", label: "Testing Reports", href: "/testing-reports", module: "TESTING_REPORTS", permission: "TESTING_VIEW", icon: Gauge }] },
+  // 2026-11-12: split by what is tested - Transmissions (the existing test sheets), Engines, Brakes and Torque Converters (see lib/testing/nav.ts).
+  { key: "testing", label: "Testing", icon: Gauge, items: TESTING_KINDS.map((kind) => ({ key: `testing-${kind.key}`, label: kind.label, href: kind.href, module: "TESTING_REPORTS" as const, permission: "TESTING_VIEW" as const, icon: TESTING_ICONS[kind.key] })) },
   { key: "settings", label: "Settings", icon: Settings, footer: true, items: SETTINGS_NAV_ITEMS.map((item) => ({ ...item, icon: SETTINGS_ICONS[item.key] ?? Settings })) },
 ];
 
