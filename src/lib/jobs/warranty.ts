@@ -21,6 +21,15 @@ export function normalizeWarranty(type: string, isWarranty: boolean | null | und
   return { type, isWarranty: canBeWarranty(type) && isWarranty === true };
 }
 
+/**
+ * The warranty status to show as a pill beside a job's status (Jobs & WIP table and board, the job header): null when the job is not a
+ * warranty job, otherwise its claim status ("PENDING" until a claim row says otherwise).
+ */
+export function jobWarrantyStatus(job: { type?: string | null; isWarranty?: boolean | null; warranty?: { status?: string | null } | null } | null | undefined): string | null {
+  if (!jobIsWarranty(job)) return null;
+  return job?.warranty?.status ? String(job.warranty.status) : "PENDING";
+}
+
 /** A job counts as a warranty job when the flag is on, or when it is still saved with the retired Warranty type (before the migration ran). */
 export function jobIsWarranty(job: { type?: string | null; isWarranty?: boolean | null } | null | undefined): boolean {
   return !!job && (job.isWarranty === true || job.type === "WARRANTY");

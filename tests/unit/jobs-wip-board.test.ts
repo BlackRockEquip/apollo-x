@@ -11,6 +11,14 @@ function job(over: Partial<BoardJobInput> = {}): BoardJobInput {
   };
 }
 
+describe("the warranty pill on a board card", () => {
+  it("carries the warranty status of a warranty job and nothing for any other job", () => {
+    expect(toBoardCard(job({ warrantyStatus: "PENDING" }), undefined, NOW).warrantyStatus).toBe("PENDING");
+    expect(toBoardCard(job(), undefined, NOW).warrantyStatus).toBeNull();
+    expect(toBoardCard(job({ warrantyStatus: null }), undefined, NOW).warrantyStatus).toBeNull();
+  });
+});
+
 describe("layout choice", () => {
   it("is the table unless the board was chosen", () => {
     expect(normalizeJobsLayout(undefined)).toBe("table");

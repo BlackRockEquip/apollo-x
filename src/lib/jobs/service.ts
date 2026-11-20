@@ -89,6 +89,9 @@ const jobListSelect = {
   // app/(tenant)/jobs/page.tsx.
   returnedUnrepaired: true,
   breakdown: true,
+  // 2026-11-20, user request: the warranty status pill shows beside the status on the Jobs & WIP table and board.
+  isWarranty: true,
+  warranty: { select: { status: true } },
   // 2026-10-30: the job's own machinists, shown on items that have none of their own when a multi-item job is opened in the list.
   stripMechanic: { select: { name: true } },
   buildMechanic: { select: { name: true } },

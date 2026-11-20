@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WARRANTY_ELIGIBLE_TYPES, canBeWarranty, jobIsWarranty, normalizeWarranty } from "@/lib/jobs/warranty";
+import { WARRANTY_ELIGIBLE_TYPES, canBeWarranty, jobIsWarranty, jobWarrantyStatus, normalizeWarranty } from "@/lib/jobs/warranty";
 import { jobCreateInput, jobUpdateInput } from "@/lib/jobs/validation";
 import { JOB_FORM_KEYS, RELATION_PAYLOAD_KEYS, diffPayload, jobPayloadFromForm } from "@/lib/jobs/job-autosave";
 import { buildJobTabs } from "@/components/job-screen/job-tabs";
@@ -35,6 +35,24 @@ describe("warranty is a tickbox on a job, not a job type", () => {
     expect(jobIsWarranty({ type: "STANDARD_REPAIR", isWarranty: false })).toBe(false);
     expect(jobIsWarranty({ type: "STANDARD_REPAIR" })).toBe(false);
     expect(jobIsWarranty(null)).toBe(false);
+  });
+});
+
+describe("the warranty pill beside a job's status", () => {
+  it("shows nothing for a job that is not warranty", () => {
+    expect(jobWarrantyStatus({ type: "STANDARD_REPAIR", isWarranty: false, warranty: { status: "PENDING" } })).toBeNull();
+    expect(jobWarrantyStatus({ type: "PEX_SUPPLY", isWarranty: false })).toBeNull();
+    expect(jobWarrantyStatus(null)).toBeNull();
+  });
+
+  it("shows the claim status of a warranty job, Pending until a claim row says otherwise", () => {
+    expect(jobWarrantyStatus({ type: "FIELD_SERVICE", isWarranty: true, warranty: { status: "GRANTED" } })).toBe("GRANTED");
+    expect(jobWarrantyStatus({ type: "STANDARD_REPAIR", isWarranty: true, warranty: null })).toBe("PENDING");
+    expect(jobWarrantyStatus({ type: "STANDARD_REPAIR", isWarranty: true })).toBe("PENDING");
+  });
+
+  it("still shows it for a job saved with the old Warranty type", () => {
+    expect(jobWarrantyStatus({ type: "WARRANTY", isWarranty: false, warranty: { status: "DECLINED" } })).toBe("DECLINED");
   });
 });
 

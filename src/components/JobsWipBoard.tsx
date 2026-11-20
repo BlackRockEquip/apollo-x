@@ -3,7 +3,7 @@
 import "./jobs-board.css";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { BreakdownPill, PexAllocatedPill, ReturnUnrepairedPill, StatusPill } from "@/components/StatusPill";
+import { BreakdownPill, PexAllocatedPill, ReturnUnrepairedPill, StatusPill, WarrantyStatusPill, warrantyStatusLabel } from "@/components/StatusPill";
 import { JOBS_BOARD_PREFS_COOKIE, boardSummary, buildBoardLanes, filterBoardCards, serializeBoardPrefs, type BoardCard, type BoardLaneMode, type BoardPrefs } from "@/lib/jobs/wip-board";
 
 // ---------------------------------------------------------------------------
@@ -168,6 +168,7 @@ function BoardCardView({ card, build, canOpen }: { card: BoardCard; build?: stri
         {card.returnedUnrepaired && card.status !== "COMPLETE" && <ReturnUnrepairedPill />}
         {card.breakdown && <BreakdownPill />}
         {card.pex && <PexAllocatedPill />}
+        {card.warrantyStatus && <WarrantyStatusPill status={card.warrantyStatus} label={`Warranty · ${warrantyStatusLabel(card.warrantyStatus)}`} />}
       </div>
       <div className="jb-foot">
         <span className="jb-person" title={card.people.join(", ")}>

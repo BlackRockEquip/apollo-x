@@ -87,6 +87,8 @@ export type BoardJobInput = {
   returnedUnrepaired: boolean;
   breakdown: boolean;
   pex: boolean;
+  /** The job's warranty claim status ("PENDING", ...) when it is a warranty job, otherwise null / left out. */
+  warrantyStatus?: string | null;
   itemStatuses: string[];
   people: Array<string | null | undefined>;
   mechanicEtaDate: Date | string | null;
@@ -105,6 +107,7 @@ export type BoardCard = {
   returnedUnrepaired: boolean;
   breakdown: boolean;
   pex: boolean;
+  warrantyStatus: string | null;
   itemCount: number;
   mixed: boolean;
   people: string[];
@@ -147,6 +150,7 @@ export function toBoardCard(job: BoardJobInput, build?: BuildKey, now: Date = ne
     returnedUnrepaired: job.returnedUnrepaired,
     breakdown: job.breakdown,
     pex: job.pex,
+    warrantyStatus: job.warrantyStatus ?? null,
     itemCount: job.itemStatuses.length > 1 ? job.itemStatuses.length : 0,
     mixed: job.itemStatuses.length > 1 && new Set(job.itemStatuses).size > 1,
     people,

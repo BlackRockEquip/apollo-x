@@ -2,7 +2,8 @@ import { Fragment } from "react";
 import { ChevronRight, FileText, Search, Plus } from "lucide-react";
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, jobStatusLabel } from "@/components/StatusPill";
+import { StatusPill, ReturnUnrepairedPill, BreakdownPill, PexAllocatedPill, WarrantyStatusPill, warrantyStatusLabel, jobStatusLabel } from "@/components/StatusPill";
+import { jobWarrantyStatus } from "@/lib/jobs/warranty";
 import { ItemsStatusBadge, itemsAreMixed } from "@/components/job-items/ItemsStatusBadge";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ScrollRestore } from "@/components/ScrollRestore";
@@ -63,6 +64,8 @@ function statusFilterValues(job: JobRow, build?: string | null): string {
   if (job.returnedUnrepaired && job.status !== "COMPLETE") values.push("Return Unrepaired");
   if (job.breakdown) values.push("Breakdown");
   if (job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)) values.push("Pex");
+  // 2026-11-20: a warranty job also answers to "Warranty" in the Status filter.
+  if (jobWarrantyStatus(job)) values.push("Warranty");
   return values.join(FILTER_SEP);
 }
 
@@ -136,6 +139,8 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
         {job.breakdown && <> <BreakdownPill /></>}
         {job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId) && <> <PexAllocatedPill /></>}
+        {/* 2026-11-20, user request: the warranty status pill shows beside the status, like the job screen header. */}
+        {jobWarrantyStatus(job) && <> <WarrantyStatusPill status={jobWarrantyStatus(job)!} label={`Warranty · ${warrantyStatusLabel(jobWarrantyStatus(job)!)}`} /></>}
       </>;
     case "dateReceived":
       return fmtDate(job.dateReceived);
@@ -312,6 +317,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
     returnedUnrepaired: job.returnedUnrepaired,
     breakdown: Boolean(job.breakdown),
     pex: Boolean(job.pexAsReturn && job.pexAsReturn.status !== "SCRAPPED" && !job.pexAsReturn.consumedByJobId && (job.status !== "TO_BE_RECEIVED" || !job.pexAsReturn.supplyJobId)),
+    warrantyStatus: jobWarrantyStatus(job),
     itemStatuses: job.jobItems.map((item) => item.status),
     people: [job.buildMechanic?.name, job.stripMechanic?.name],
     mechanicEtaDate: job.mechanicEtaDate,
