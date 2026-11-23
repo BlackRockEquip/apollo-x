@@ -784,6 +784,13 @@ a.metric-card.clickable-metric-card:hover, button.metric-card.clickable-metric-c
 .job-edit-grid .wide-panel { grid-column: span 2; }
 .job-edit-grid .full-row { grid-column: 1 / -1; }
 .job-edit-grid > .detail-panel { min-width: 0; }
+/* 2026-11-23, user request: on the job view the Notes card is the same size as the Customer details card beside it. Both stretch to the
+   height of their row, and the notes box fills the card. */
+.job-edit-grid > .job-customer-panel, .job-edit-grid > .job-notes-panel { align-self: stretch; }
+.job-edit-grid > .job-notes-panel { display: flex; flex-direction: column; }
+.job-edit-grid > .job-notes-panel > .drawer-fields { flex: 1 1 auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.job-edit-grid > .job-notes-panel > .drawer-fields > label { display: flex; flex-direction: column; height: 100%; }
+.job-edit-grid > .job-notes-panel > .drawer-fields textarea { flex: 1 1 auto; min-height: 96px; resize: vertical; }
 
 /* Customer details spans the full width of the row and has exactly 3
    fields after the full-width customer selector (Customer reference,

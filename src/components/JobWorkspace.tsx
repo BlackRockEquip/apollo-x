@@ -4522,7 +4522,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   );
 
   const customerSection = (mode !== "detail" || canViewCustomer) ? (
-        <section className={`detail-panel ${job && mode === "detail" ? "wide-panel" : "full-row"}`}>
+        <section className={`detail-panel ${job && mode === "detail" ? "wide-panel job-customer-panel" : "full-row"}`}>
           <header><div><h2>{form.type === "FIELD_SERVICE" ? "Customer & site" : "Customer details"}</h2></div></header>
           <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields customer-fields">
