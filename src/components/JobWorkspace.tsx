@@ -5624,6 +5624,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-29, user request (Engineering): the header stepper shows where the items are, and a click moves the selected item (or,
   // with no item selected on a job with several, every item after a question).
   const itemsStepperOn = itemsListOn;
+  // The tabbed jobs bar (JobItemsPanel `tabs`) is drawn once the job really holds jobs; Engineering keeps its item list where it was.
+  const jobTabsAtTop = itemsListOn && insideNoun === "job" && jobItemRows.length > 0;
   // 2026-11-25, "multiple jobs within a job": inside jobs of different types follow different steps, so they are grouped by the steps they
   // share. One group is the familiar single stepper; several groups (e.g. a field job and a repair) get one stepper each until a job is
   // selected, then only that job's stepper shows.
@@ -6133,10 +6135,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {tabletBody}
           {tabletBar}
           {tabletSheets}
+          {/* 2026-11-25, tabbed layout: the Overview / job tabs sit at the very top of the page content, straight under the fixed header,
+              above every section (facts strip, job cards, the open job's details and tabs). */}
+          {!tabletLayout && jobTabsAtTop && itemsPanelSection}
           {!tabletLayout && <JobFactsStrip items={factItems} />}
           {/* 2026-10-29, user request: the item list sits above the item header and the tabs (as in the item mockup), so it is on screen whatever tab is open. */}
           {jobCardsAboveItems && <form className="job-layout" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobTopSections}</form>}
-          {!tabletLayout && itemsPanelSection}
+          {!tabletLayout && !jobTabsAtTop && itemsPanelSection}
           {!tabletLayout && itemsListOn && (
             <ItemHeader
               tag={selectedItem ? itemTag(job.jobNumber, selectedItem.sequence) : jobItemRows.length === 0 ? itemTag(job.jobNumber, 1) : `JOB ${job.jobNumber ?? job.draftNumber ?? ""}`}
