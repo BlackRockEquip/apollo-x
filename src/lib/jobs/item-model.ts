@@ -6,6 +6,29 @@
 // (or had a second item added later).
 export const MAX_ITEMS_PER_JOB = 200;
 
+// ----------------------------------------------------------------------------
+// 2026-11-25, user request: "multiple jobs within a job" (e.g. a Field service job and a Repair job inside one job). An item is now
+// one of those inside jobs: it can have its OWN job type, which decides its status steps, its layout and its printed document.
+// item.type is empty while it follows the job's own type (everything saved before this change). Job.type always mirrors item 1.
+// PEX jobs keep their own PEX record, so they never carry items; Warranty is a tickbox on a job, not a type.
+// ----------------------------------------------------------------------------
+export const ITEM_JOB_TYPES = ["STANDARD_REPAIR", "PARTIAL_REPAIR", "FIELD_SERVICE", "OUTRIGHT_SALE"] as const;
+export type ItemJobType = (typeof ITEM_JOB_TYPES)[number];
+
+export function isItemJobType(value: unknown): value is ItemJobType {
+  return typeof value === "string" && (ITEM_JOB_TYPES as readonly string[]).includes(value);
+}
+
+/** PEX Supply / Return jobs are tracked through their PEX record and cannot hold several jobs. */
+export function jobTypeAllowsItems(jobType: string | null | undefined): boolean {
+  return jobType !== "PEX_SUPPLY" && jobType !== "PEX_RETURN";
+}
+
+/** The type an item works as: its own, else the job's. */
+export function itemEffectiveType(itemType: string | null | undefined, jobType: string): string {
+  return itemType || jobType;
+}
+
 // Item tag = job number + "-" + the item's position, e.g. BRE1122-3. Falls back to the position alone before a number exists.
 export function itemTag(jobNumber: string | null | undefined, sequence: number): string {
   const number = (jobNumber ?? "").trim();
@@ -62,6 +85,46 @@ export function summarizeItemStatuses(statuses: readonly string[], steps: readon
     status,
     counts,
   };
+}
+
+// 2026-11-25: items of different job types follow different step lists (a field job has five steps, a workshop repair has thirteen),
+// so "least advanced" is judged by how far through ITS OWN list each item is. When every item uses the same list this is exactly
+// summarizeItemStatuses. `steps` is each item's own flow.
+export type FlowItem = { status: string; steps: readonly string[] };
+
+function flowKey(steps: readonly string[]): string {
+  return steps.join("|");
+}
+
+export function itemsShareOneFlow(items: readonly FlowItem[]): boolean {
+  return new Set(items.map((item) => flowKey(item.steps))).size <= 1;
+}
+
+/** 0 at the first step, 1 at the last. A status outside its list (cancelled, closed) counts as the end. */
+export function flowProgress(status: string, steps: readonly string[]): number {
+  const index = steps.indexOf(status);
+  if (index === -1 || steps.length <= 1) return 1;
+  return index / (steps.length - 1);
+}
+
+export function summarizeFlowItems(items: readonly FlowItem[]): ItemRollup {
+  if (items.length === 0) return { total: 0, ready: 0, mixed: false, status: null, counts: [] };
+  if (itemsShareOneFlow(items)) return summarizeItemStatuses(items.map((item) => item.status), items[0].steps);
+  const live = items.filter((item) => item.status !== "CANCELLED");
+  const progress = (item: FlowItem) => flowProgress(item.status, item.steps);
+  const tally = new Map<string, { count: number; progress: number }>();
+  for (const item of items) {
+    const entry = tally.get(item.status);
+    if (entry) entry.count += 1;
+    else tally.set(item.status, { count: 1, progress: progress(item) });
+  }
+  const counts = [...tally.entries()]
+    .map(([status, entry]) => ({ status, count: entry.count, progress: entry.progress }))
+    .sort((a, b) => a.progress - b.progress || a.status.localeCompare(b.status))
+    .map(({ status, count }) => ({ status, count }));
+  // The least advanced live item sets the job's status; the first one wins a tie so the job follows item 1.
+  const status = live.length === 0 ? "CANCELLED" : live.reduce((lowest, current) => (progress(current) < progress(lowest) ? current : lowest)).status;
+  return { total: items.length, ready: items.filter((item) => isItemReady(item.status)).length, mixed: tally.size > 1, status, counts };
 }
 
 // The job-level fields that mirror item 1, so the Jobs list, search, PEX unit description and printed documents (which read

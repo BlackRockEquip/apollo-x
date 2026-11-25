@@ -1,6 +1,6 @@
 import { jobStatusLabelsFor, statusStepsForJobType } from "@/lib/jobs/ui";
 import type { JobType } from "@prisma/client";
-import { summarizeItemStatuses } from "@/lib/jobs/item-model";
+import { itemEffectiveType, summarizeFlowItems } from "@/lib/jobs/item-model";
 import { jobStatusTone } from "@/components/StatusPill";
 
 // 2026-10-29, user request (Engineering): when the items on one job are at different steps the job shows "Mixed" with a bar -
@@ -12,15 +12,19 @@ export function itemsAreMixed(statuses: readonly string[] | null | undefined): b
   return !!statuses && statuses.length > 1 && new Set(statuses).size > 1;
 }
 
-export function ItemsStatusBadge({ statuses, jobType, build, size = "normal" }: {
+export function ItemsStatusBadge({ statuses, jobType, build, size = "normal", itemTypes }: {
   statuses: readonly string[];
   jobType: string;
   build?: string | null;
   size?: "normal" | "compact";
+  /** 2026-11-25: the job type each inside job works as (same order as `statuses`; empty / null = the job's own). Each is judged by its own steps. */
+  itemTypes?: ReadonlyArray<string | null | undefined>;
 }) {
-  const steps = statusStepsForJobType(jobType as JobType, build as Parameters<typeof statusStepsForJobType>[1]);
   const labels = jobStatusLabelsFor(build as Parameters<typeof jobStatusLabelsFor>[0]);
-  const rollup = summarizeItemStatuses(statuses, steps);
+  const rollup = summarizeFlowItems(statuses.map((status, index) => ({
+    status,
+    steps: statusStepsForJobType(itemEffectiveType(itemTypes?.[index], jobType) as JobType, build as Parameters<typeof statusStepsForJobType>[1]),
+  })));
   // One segment per item, ordered by how far along it is.
   const ordered = rollup.counts.flatMap(({ status, count }) => Array.from({ length: count }, () => status));
   const detail = rollup.counts.map(({ status, count }) => `${count} ${labels[status as keyof typeof labels] ?? status}`).join(" · ");

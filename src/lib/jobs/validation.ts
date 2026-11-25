@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ALL_ATTACHMENT_TAGS } from "@/lib/jobs/attachment-tags";
+import { ITEM_JOB_TYPES } from "@/lib/jobs/item-model";
 
 const optionalText = z.string().trim().max(500).optional().nullable();
 const longText = z.string().trim().max(4000).optional().nullable();
@@ -390,6 +391,8 @@ const itemLongText = z.string().trim().max(4000).optional().nullable();
 // One item as typed on the New Job screen, or when an item is added to / edited on an existing job. The first item on the
 // screen also fills the job's own machine / component fields (see jobFieldsFromFirstItem).
 export const jobItemInput = z.object({
+  // 2026-11-25, "multiple jobs within a job": the job type this inside job works as (left out / null = the job's own type).
+  type: z.enum(ITEM_JOB_TYPES).optional().nullable(),
   component: itemText,
   componentModel: itemText,
   componentSerial: itemText,

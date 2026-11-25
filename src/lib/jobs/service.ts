@@ -52,7 +52,7 @@ import {
   type JobItemInput,
   type JobsListQuery,
 } from "@/lib/jobs/validation";
-import { MAX_ITEMS_PER_JOB, deliveryNoteItemCount, deliveryNoteNumber, itemTag, jobFieldsFromFirstItem, readDeliveryNoteLines, summarizeItemStatuses } from "@/lib/jobs/item-model";
+import { MAX_ITEMS_PER_JOB, deliveryNoteItemCount, deliveryNoteNumber, itemEffectiveType, itemTag, jobFieldsFromFirstItem, jobTypeAllowsItems, readDeliveryNoteLines, summarizeFlowItems } from "@/lib/jobs/item-model";
 import { createPexRecordForSupplyJob, syncPexRedeployment, syncPexStatusFromJobStatus, syncPexAwaitCoreFromDeliveryDate, syncPexUnitDescription } from "@/lib/pex/service";
 import { reserveStockTx, releaseReservationTx, issueStockForJobPartLineTx, relinkJobPartLineToActivePartTx, returnStockForJobPartLineTx, reconcileJobPartLineReservationTx, reserveJobPartLineStockTx } from "@/lib/inventory/service";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
@@ -60,7 +60,7 @@ import { jobIsWarranty, normalizeWarranty } from "@/lib/jobs/warranty";
 import { StockError } from "@/lib/http/errors";
 import { extractPartLinesFromSpreadsheet } from "@/lib/jobs/parts-import";
 import { parsePartsPaste, type ParsedPartLineRow } from "@/lib/jobs/parts-paste";
-import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, machinistFieldLabels, statusStepsForJobType } from "@/lib/jobs/ui";
+import { MAIN_WORKSHOP_STATUS_STEPS, FIELD_SERVICE_STATUS_STEPS, ENGINEERING_STATUS_STEPS, UNIVERSAL_STATUSES, canMarkReturnedUnrepaired, flowFamilyForJobType, machinistFieldLabels, statusStepsForJobType } from "@/lib/jobs/ui";
 
 type JobStatus = Prisma.JobGetPayload<{ select: { status: true } }>["status"];
 type JobType = Prisma.JobGetPayload<{ select: { type: true } }>["type"];
@@ -98,7 +98,7 @@ const jobListSelect = {
   // 2026-10-29, Engineering multi-item jobs: each item's status, so the list can show "Mixed" with a colour bar (empty for a one-item job).
   // The Jobs & WIP list also opens a multi-item job into its items (tag, component, machine, status, ETAs), so it needs more than the status.
   jobItems: {
-    select: { id: true, sequence: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true, stripMechanic: { select: { name: true } }, buildMechanic: { select: { name: true } } },
+    select: { id: true, sequence: true, type: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true, stripMechanic: { select: { name: true } }, buildMechanic: { select: { name: true } } },
     orderBy: { sequence: "asc" as const },
   },
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
@@ -738,7 +738,13 @@ export async function addMachineMakeToManufacturers(ctx: RequestContext, raw: un
 }
 
 // The job fields that mirror item 1 on a multi-item job (see JobItem in schema.prisma).
-const ITEM_MANAGED_JOB_FIELDS = ["machineMake", "machineModel", "machineSerial", "component", "componentModel", "componentType", "componentSerial", "componentPartNumber", "plantNumber", "machineHours"] as const;
+const ITEM_MANAGED_JOB_FIELDS = ["machineMake", "machineModel", "machineSerial", "component", "componentModel", "componentType", "componentSerial", "componentPartNumber", "plantNumber", "machineHours", "type"] as const;
+
+// The first step of an inside job. It uses the job's start status when it works as the same flow as the job (so an import's chosen
+// status still applies); an inside job of another type starts at the beginning of its own list.
+function itemStartStatus(itemType: string, jobType: string, jobStart: JobStatus, build: string | null | undefined): JobStatus {
+  return flowFamilyForJobType(itemType as JobType, build) === flowFamilyForJobType(jobType as JobType, build) ? jobStart : statusStepsForJobType(itemType as JobType, build)[0];
+}
 
 // Creates a job, numbered and active straight away: it starts at the first
 // stage of its own flow (or `options.initialStatus` when a caller such as the
@@ -746,10 +752,17 @@ const ITEM_MANAGED_JOB_FIELDS = ["machineMake", "machineModel", "machineSerial",
 export async function createJob(ctx: RequestContext, raw: unknown, options?: { literalJobNumber?: string; initialStatus?: JobStatus }) {
   const companyId = requireJobs(ctx, "JOBS_CREATE");
   const input = jobCreateInput.parse(raw);
+  // 2026-11-25, "multiple jobs within a job": the New Job screen sends one entry per inside job, each with its own job type. Job.type
+  // mirrors item 1, so the first item's type decides what the job itself is. PEX jobs never carry items.
+  const rawItems = (raw as { items?: unknown } | null)?.items;
+  let itemsInput = rawItems !== undefined && rawItems !== null ? jobItemsInput.parse(rawItems) : null;
+  if (itemsInput?.[0]?.type) input.type = itemsInput[0].type;
+  if (!jobTypeAllowsItems(input.type)) itemsInput = null;
   // 2026-11-11: warranty is a tickbox on the job, not a job type. An old client sending type WARRANTY becomes Standard repair + the tickbox.
   const warrantyChoice = normalizeWarranty(input.type, input.isWarranty);
   input.type = warrantyChoice.type as typeof input.type;
   requireJobTypeModule(ctx, input.type);
+  for (const itemType of new Set((itemsInput ?? []).map((item) => item.type).filter((type): type is NonNullable<typeof type> => !!type))) requireJobTypeModule(ctx, itemType);
   await getCustomerOrThrow(companyId, input.customerId);
   const stripMechanicId = await getMechanicOrNull(companyId, input.stripMechanicId);
   const buildMechanicId = await getMechanicOrNull(companyId, input.buildMechanicId);
@@ -758,8 +771,6 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
   // 2026-10-29, Engineering multi-item jobs: the New Job screen sends every item the customer brought in. Only Engineering companies
   // use this; with several items the job gets one JobItem row each and item 1 also fills the job's own machine / component
   // fields (so lists, search and printed documents keep working). One item is just an ordinary job.
-  const rawItems = (raw as { items?: unknown } | null)?.items;
-  const itemsInput = ctx.industryBuild === "ENGINEERING" && input.type !== "FIELD_SERVICE" && rawItems !== undefined && rawItems !== null ? jobItemsInput.parse(rawItems) : null;
   const multiItems = itemsInput && itemsInput.length >= 2 ? itemsInput : null;
   if (multiItems) for (const item of multiItems) await checkItemMachinists(companyId, item);
   if (itemsInput) Object.assign(input, jobFieldsFromFirstItem(itemsInput[0]), { machineHours: itemsInput[0].machineHours ?? null });
@@ -858,7 +869,9 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
           companyId,
           jobId: created.id,
           sequence: index + 1,
-          status: startStatus,
+          // Each inside job works as its own type (empty = the job's) and starts at the first step of that type's flow.
+          type: (item.type ?? input.type) as JobType,
+          status: itemStartStatus(item.type ?? input.type, input.type, startStatus, ctx.industryBuild),
           component: item.component,
           componentModel: item.componentModel,
           componentSerial: item.componentSerial,
@@ -1100,14 +1113,20 @@ export async function changeJobStatus(ctx: RequestContext, id: string, raw: unkn
   requireNotMechanicRestricted(ctx);
   const input = jobStatusChangeInput.parse(raw);
   const existing = await getJobScoped(companyId, id);
-  const allowedStatuses = [...statusStepsForJobType(existing.type as JobType, ctx.industryBuild), ...UNIVERSAL_STATUSES];
+  // 2026-11-25: a step of any inside job's own type is allowed too (it then moves only the inside jobs that have that step).
+  const allowedStatuses = [...statusStepsForJobType(existing.type as JobType, ctx.industryBuild), ...existing.jobItems.flatMap((item) => itemSteps(item, existing.type, ctx.industryBuild)), ...UNIVERSAL_STATUSES];
   if (!allowedStatuses.includes(input.status as JobStatus)) {
     throw new Error(`Status ${input.status} is not valid for a ${existing.type} job.`);
   }
   const updated = await prisma.$transaction(async (tx) => {
-    const job = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
-    // The job-level stepper moves every item that has not been cancelled (items can also be moved one at a time).
-    await tx.jobItem.updateMany({ where: { jobId: existing.id, companyId, status: { not: "CANCELLED" } }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
+    let job = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
+    // The job-level stepper moves every item that has not been cancelled (items can also be moved one at a time). 2026-11-25: an
+    // inside job of another type (e.g. a field job on a repair job) only moves when this step is one of ITS steps; otherwise it stays
+    // where it is and the job's status is worked out from all of them again below.
+    const items = await tx.jobItem.findMany({ where: { jobId: existing.id, companyId, status: { not: "CANCELLED" } }, select: { id: true, type: true } });
+    const movable = items.filter((item) => itemSteps(item, existing.type, ctx.industryBuild).includes(input.status) || UNIVERSAL_STATUSES.includes(input.status as JobStatus));
+    if (movable.length > 0) await tx.jobItem.updateMany({ where: { id: { in: movable.map((item) => item.id) } }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
+    if (movable.length < items.length) job = await rollUpJobStatusTx(tx, ctx, companyId, existing.id);
     await addActivity(tx, ctx, existing.id, "STATUS_CHANGED", `Status changed from ${existing.status} to ${input.status}.`, { from: existing.status, to: input.status, reason: input.reason ?? null });
     await syncPexStatusFromJobStatus(tx, ctx, companyId, job, job.status as JobStatus);
     if (RESERVATION_RELEASE_STATUSES.includes(job.status)) await releaseJobPartReservationsTx(tx, ctx, companyId, job.id);
@@ -1151,7 +1170,12 @@ export async function reopenJob(ctx: RequestContext, id: string, raw: unknown) {
   }
   const updated = await prisma.$transaction(async (tx) => {
     const reopened = await tx.job.update({ where: { id: existing.id }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
-    await tx.jobItem.updateMany({ where: { jobId: existing.id, companyId }, data: { status: input.status as JobStatus, updatedById: ctx.userId } });
+    // 2026-11-25: an inside job of another type goes back to its own first step when the chosen step is not one of its steps.
+    const reopenItems = await tx.jobItem.findMany({ where: { jobId: existing.id, companyId }, select: { id: true, type: true } });
+    for (const item of reopenItems) {
+      const steps = itemSteps(item, existing.type, ctx.industryBuild);
+      await tx.jobItem.update({ where: { id: item.id }, data: { status: (steps.includes(input.status) ? input.status : steps[0]) as JobStatus, updatedById: ctx.userId } });
+    }
     await addActivity(tx, ctx, existing.id, "JOB_REOPENED", `Job reopened to ${input.status}.`, { from: existing.status, to: input.status, reason: input.reason ?? null, previousClosedAt: existing.closedAt });
     await syncPexStatusFromJobStatus(tx, ctx, companyId, reopened, reopened.status as JobStatus);
     return reopened;
@@ -1251,7 +1275,8 @@ export async function upsertJobFieldService(ctx: RequestContext, jobId: string, 
   requireNotMechanicRestricted(ctx);
   const input = jobFieldServiceInput.parse(raw);
   const job = await getJobScoped(companyId, jobId);
-  if (job.type !== "FIELD_SERVICE") throw new Error("Field-service information is only available for field service jobs.");
+  // 2026-11-25: also open to a job that has a Field service job inside it (one field report per job).
+  if (job.type !== "FIELD_SERVICE" && !job.jobItems.some((item) => item.type === "FIELD_SERVICE")) throw new Error("Field-service information is only available for field service jobs.");
   const updated = await prisma.$transaction(async (tx) => {
     // `hours` is the total. When any of the split hours (normal / overtime /
     // travel) is sent, the total is their sum so reports that read `hours`
@@ -2371,12 +2396,19 @@ export async function deleteJobAttachment(ctx: RequestContext, jobId: string, at
 // ----------------------------------------------------------------------------
 const ITEM_LOCKED_JOB_STATUSES: readonly string[] = ["COMPLETE", "CLOSED", "CANCELLED"];
 
-function requireItemsBuild(ctx: RequestContext) {
-  if (ctx.industryBuild !== "ENGINEERING") throw new Error("Several items on one job is only available to Engineering companies.");
+// 2026-11-25: several jobs inside one job is open to every build now (Workshop too), not just Engineering. Only PEX jobs are left out.
+function requireItemsJobType(jobType: string) {
+  if (!jobTypeAllowsItems(jobType)) throw new Error("A PEX job cannot hold several jobs. Create a separate job instead.");
+}
+
+// The steps an inside job follows: those of the type it works as (its own, else the job's).
+function itemSteps(item: { type?: string | null }, jobType: string, build: string | null | undefined): string[] {
+  return statusStepsForJobType(itemEffectiveType(item.type, jobType) as JobType, build);
 }
 
 function itemData(item: JobItemInput) {
   return {
+    type: item.type === undefined ? undefined : ((item.type || null) as JobType | null),
     component: item.component,
     componentModel: item.componentModel,
     componentSerial: item.componentSerial,
@@ -2408,6 +2440,8 @@ async function mirrorFirstItemTx(tx: Prisma.TransactionClient, jobId: string) {
   await tx.job.update({
     where: { id: jobId },
     data: {
+      // 2026-11-25: the job is the type of its first inside job (an item with no type of its own follows the job, so nothing changes).
+      ...(first.type ? { type: first.type } : {}),
       component: first.component,
       componentModel: first.componentModel,
       componentSerial: first.componentSerial,
@@ -2424,9 +2458,9 @@ async function mirrorFirstItemTx(tx: Prisma.TransactionClient, jobId: string) {
 // The job's status follows its items: the least advanced one. Called after any item is added, moved or removed.
 async function rollUpJobStatusTx(tx: Prisma.TransactionClient, ctx: RequestContext, companyId: string, jobId: string) {
   const job = await tx.job.findFirstOrThrow({ where: { id: jobId, companyId } });
-  const items = await tx.jobItem.findMany({ where: { jobId, companyId }, select: { status: true } });
-  const steps = statusStepsForJobType(job.type as JobType, ctx.industryBuild);
-  const rollup = summarizeItemStatuses(items.map((item) => item.status), steps);
+  const items = await tx.jobItem.findMany({ where: { jobId, companyId }, select: { status: true, type: true } });
+  // Each inside job is judged against its own list of steps (a field job has fewer steps than a workshop repair).
+  const rollup = summarizeFlowItems(items.map((item) => ({ status: item.status, steps: itemSteps(item, job.type, ctx.industryBuild) })));
   if (!rollup.status || rollup.status === job.status) return job;
   const updated = await tx.job.update({ where: { id: job.id }, data: { status: rollup.status as JobStatus, updatedById: ctx.userId } });
   await addActivity(tx, ctx, job.id, "STATUS_CHANGED", `Status changed from ${job.status} to ${rollup.status} (follows the items).`, { from: job.status, to: rollup.status, reason: "items" });
@@ -2438,13 +2472,17 @@ async function rollUpJobStatusTx(tx: Prisma.TransactionClient, ctx: RequestConte
 export async function addJobItem(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
-  requireItemsBuild(ctx);
   const input = jobItemInput.parse(raw);
   await checkItemMachinists(companyId, input);
   const existing = await getJobScoped(companyId, jobId);
+  requireItemsJobType(existing.type);
   if (ITEM_LOCKED_JOB_STATUSES.includes(existing.status)) throw new Error("Reopen the job before adding items to it.");
   if (existing.jobItems.length >= MAX_ITEMS_PER_JOB) throw new Error(`A job can hold at most ${MAX_ITEMS_PER_JOB} items.`);
-  const steps = statusStepsForJobType(existing.type as JobType, ctx.industryBuild);
+  // 2026-11-25: the new inside job works as the type chosen for it (the job's own type when none is given).
+  const newType = (input.type || existing.type) as JobType;
+  if (!jobTypeAllowsItems(newType)) throw new Error("A PEX job cannot be added inside another job.");
+  requireJobTypeModule(ctx, newType);
+  const steps = statusStepsForJobType(newType, ctx.industryBuild);
   const created = await prisma.$transaction(async (tx) => {
     // First time a second item is added: the job's current machine / component details become item 1, at the job's status.
     if (existing.jobItems.length === 0) {
@@ -2453,6 +2491,8 @@ export async function addJobItem(ctx: RequestContext, jobId: string, raw: unknow
           companyId,
           jobId: existing.id,
           sequence: 1,
+          // Item 1 is the job as it already is, so it keeps the job's own type.
+          type: existing.type,
           status: existing.status,
           component: existing.component,
           componentModel: existing.componentModel,
@@ -2480,6 +2520,7 @@ export async function addJobItem(ctx: RequestContext, jobId: string, raw: unknow
         sequence,
         status: steps[0],
         ...itemData(input),
+        type: newType,
         etaDate: input.etaDate ?? existing.etaDate ?? null,
         mechanicEtaDate: input.mechanicEtaDate ?? existing.mechanicEtaDate ?? null,
         stripMechanicId: input.stripMechanicId || null,
@@ -2507,16 +2548,25 @@ async function getJobItemScoped(companyId: string, jobId: string, itemId: string
 export async function updateJobItem(ctx: RequestContext, jobId: string, itemId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
-  requireItemsBuild(ctx);
   const input = jobItemUpdateInput.parse(raw);
   await checkItemMachinists(companyId, input);
   const existing = await getJobItemScoped(companyId, jobId, itemId);
-  if (ITEM_LOCKED_JOB_STATUSES.includes(existing.job.status) && input.status !== undefined) throw new Error("Reopen the job before moving its items.");
-  if (input.status !== undefined) {
-    const allowed = [...statusStepsForJobType(existing.job.type as JobType, ctx.industryBuild), "CANCELLED"];
-    if (!allowed.includes(input.status)) throw new Error(`Status ${input.status} is not valid for a ${existing.job.type} job.`);
+  if (ITEM_LOCKED_JOB_STATUSES.includes(existing.job.status) && (input.status !== undefined || input.type)) throw new Error("Reopen the job before changing its items.");
+  // 2026-11-25: changing what type of job an inside job is. A different flow starts again at its first step (steps do not translate).
+  const oldType = itemEffectiveType(existing.type, existing.job.type);
+  const typeChanged = !!input.type && input.type !== oldType;
+  if (typeChanged) {
+    requireJobTypeModule(ctx, input.type as string);
+    if (existing.status === "CANCELLED") throw new Error("Reopen the cancelled job before changing its type.");
   }
-  const { status, ...fields } = input;
+  const effectiveType = (typeChanged ? input.type : oldType) as JobType;
+  const restartFlow = typeChanged && flowFamilyForJobType(effectiveType, ctx.industryBuild) !== flowFamilyForJobType(oldType as JobType, ctx.industryBuild);
+  if (input.status !== undefined) {
+    const allowed = [...statusStepsForJobType(effectiveType, ctx.industryBuild), "CANCELLED"];
+    if (!allowed.includes(input.status)) throw new Error(`Status ${input.status} is not valid for a ${effectiveType} job.`);
+  }
+  const { status: requestedStatus, ...fields } = input;
+  const status = requestedStatus !== undefined ? requestedStatus : restartFlow ? statusStepsForJobType(effectiveType, ctx.industryBuild)[0] : undefined;
   const data = itemData(fields);
   const updated = await prisma.$transaction(async (tx) => {
     const item = await tx.jobItem.update({
@@ -2528,9 +2578,12 @@ export async function updateJobItem(ctx: RequestContext, jobId: string, itemId: 
       },
     });
     const tag = itemTag(existing.job.jobNumber, existing.sequence);
+    if (typeChanged) {
+      await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} changed from ${oldType} to ${effectiveType}${restartFlow ? ", back at the first step" : ""}.`, { itemId: existing.id, sequence: existing.sequence, from: oldType, to: effectiveType });
+    }
     if (status !== undefined && status !== existing.status) {
       await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} status changed from ${existing.status} to ${status}.`, { itemId: existing.id, sequence: existing.sequence, from: existing.status, to: status });
-    } else if (Object.keys(fields).some((key) => key !== "stripMechanicId" && key !== "buildMechanicId")) {
+    } else if (!typeChanged && Object.keys(fields).some((key) => key !== "stripMechanicId" && key !== "buildMechanicId")) {
       await addActivity(tx, ctx, existing.jobId, "ITEM_UPDATED", `Item ${tag} details updated.`, { itemId: existing.id, sequence: existing.sequence });
     }
     // 2026-10-30: who is working on the item is its own history line ("Item BRE12-2 Machinist 'Assess': Piet -> Sipho").
@@ -2560,7 +2613,6 @@ export async function updateJobItem(ctx: RequestContext, jobId: string, itemId: 
 export async function removeJobItem(ctx: RequestContext, jobId: string, itemId: string) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
   requireNotMechanicRestricted(ctx);
-  requireItemsBuild(ctx);
   const existing = await getJobItemScoped(companyId, jobId, itemId);
   if (ITEM_LOCKED_JOB_STATUSES.includes(existing.job.status)) throw new Error("Reopen the job before removing items from it.");
   const remaining = await prisma.jobItem.count({ where: { jobId, companyId } });
@@ -2715,11 +2767,10 @@ export async function listDeliveryNoteRegister(ctx: RequestContext, raw: unknown
 
 // ----------------------------------------------------------------------------
 // 2026-10-29, "link parts, specs, photos etc" to an item. Moves one existing record to an item of the job, or back to the whole
-// job. The same call serves every kind of record so the screens share one picker. Engineering companies only (only they have items).
+// job. The same call serves every kind of record so the screens share one picker. Any build now (2026-11-25); a job without items has nothing to link to.
 // ----------------------------------------------------------------------------
 export async function setJobRecordItem(ctx: RequestContext, jobId: string, raw: unknown) {
   const companyId = requireJobs(ctx, "JOBS_EDIT");
-  requireItemsBuild(ctx);
   const input = itemLinkInput.parse(raw);
   const job = await prisma.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, jobNumber: true, draftNumber: true } });
   if (!job) notFound();

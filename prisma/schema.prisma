@@ -1866,6 +1866,9 @@ model JobItem {
   companyId           String
   jobId               String
   sequence            Int
+  // 2026-11-25, "multiple jobs within a job": the job type this inside job works as (decides its steps, layout and print).
+  // null = follows the job's own type (every item saved before this change). Job.type mirrors item 1.
+  type                JobType?
   status              JobStatus @default(TO_BE_RECEIVED)
   component           String?
   componentModel      String?

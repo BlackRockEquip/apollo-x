@@ -19,7 +19,7 @@ import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
 import { JobsWipBoard } from "@/components/JobsWipBoard";
 import { JobsWipLayoutSwitch } from "@/components/JobsWipLayoutSwitch";
-import { itemTag, machinistSummary } from "@/lib/jobs/item-model";
+import { itemEffectiveType, itemTag, machinistSummary } from "@/lib/jobs/item-model";
 import { JOBS_BOARD_PREFS_COOKIE, JOBS_LAYOUT_COOKIE, normalizeJobsLayout, parseBoardPrefs, toBoardCard } from "@/lib/jobs/wip-board";
 import { jobHref } from "@/lib/jobs/job-href";
 import { requireRequestContext } from "@/lib/auth/session";
@@ -50,6 +50,16 @@ function fmtDate(value: Date | string | null | undefined): string {
 
 function fmtEnum(value: string | null | undefined): string {
   return value ? value.replaceAll("_", " ") : "—";
+}
+
+// 2026-11-25, "multiple jobs within a job": what the inside jobs of a job are called. Engineering keeps "items"; the other builds say "jobs".
+function insideNoun(build: string | null | undefined, count: number): string {
+  if (build === "ENGINEERING") return count === 1 ? "item" : "items";
+  return count === 1 ? "job" : "jobs";
+}
+// The types the inside jobs work as (an item with no type of its own works as the job's).
+function insideTypes(job: JobRow): string[] {
+  return [...new Set(job.jobItems.map((item) => itemEffectiveType(item.type, job.type)))];
 }
 
 // 2026-10-09 — values the Status column's header filter offers for a job: its
@@ -113,9 +123,9 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
     case "jobNumber":
       return <>
         {/* 2026-10-29, user request: a multi-item job opens into its items, like the list mockup (JobsWipItemsToggle flips the row). */}
-        {job.jobItems.length > 1 && <button type="button" className="jobs-chev" aria-expanded="false" aria-label={`Show the ${job.jobItems.length} items of job ${job.jobNumber || job.draftNumber}`} title="Show items"><ChevronRight size={15} strokeWidth={2.5} aria-hidden="true" /></button>}
+        {job.jobItems.length > 1 && <button type="button" className="jobs-chev" aria-expanded="false" aria-label={`Show the ${job.jobItems.length} ${insideNoun(build, job.jobItems.length)} of job ${job.jobNumber || job.draftNumber}`} title={`Show ${insideNoun(build, 2)}`}><ChevronRight size={15} strokeWidth={2.5} aria-hidden="true" /></button>}
         {viewOnlyRows ? <strong className="mono">{job.jobNumber || job.draftNumber}</strong> : <Link href={jobHref(job)} className="stretched-link"><strong className="mono">{job.jobNumber || job.draftNumber}</strong></Link>}
-        {job.jobItems.length > 1 && <span className="ji-chip">{job.jobItems.length} items</span>}
+        {job.jobItems.length > 1 && <span className="ji-chip">{job.jobItems.length} {insideNoun(build, job.jobItems.length)}</span>}
       </>;
     case "customerName":
       return job.customer.name;
@@ -126,7 +136,8 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
     case "customerPo":
       return job.customerPo || "—";
     case "type":
-      return jobTypeLabelsFor(build)[job.type];
+      // 2026-11-25: a job holding jobs of different types (e.g. a field job and a repair) says so instead of showing one type.
+      return job.jobItems.length > 1 && insideTypes(job).length > 1 ? "Several" : jobTypeLabelsFor(build)[job.type];
     case "status":
       // 2026-10-01 — same "pill next to status, folded in once Completed"
       // treatment as the job detail header (JobWorkspace.tsx) — see
@@ -134,7 +145,7 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
       // StatusPill.tsx.
       return <>
         {itemsAreMixed(job.jobItems?.map((item) => item.status))
-          ? <ItemsStatusBadge statuses={job.jobItems.map((item) => item.status)} jobType={job.type} build={build} size="compact" />
+          ? <ItemsStatusBadge statuses={job.jobItems.map((item) => item.status)} jobType={job.type} itemTypes={job.jobItems.map((item) => item.type)} build={build} size="compact" />
           : <StatusPill status={job.status} returnedUnrepaired={job.returnedUnrepaired} build={build} />}
         {job.returnedUnrepaired && job.status !== "COMPLETE" && <> <ReturnUnrepairedPill /></>}
         {job.breakdown && <> <BreakdownPill /></>}
@@ -428,15 +439,16 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                     {multi && (
                       <tr className="jobs-item-row">
                         <td className="table-state jobs-item-cell" colSpan={columnSpan}>
-                          <ul className="jobs-item-list" aria-label={`Items of job ${job.jobNumber || job.draftNumber}`}>
+                          <ul className="jobs-item-list" aria-label={`${insideNoun(ctx.industryBuild, 2)} of job ${job.jobNumber || job.draftNumber}`}>
                             {job.jobItems.map((item) => {
                               const eta = item.etaDate ?? job.etaDate;
                               const late = etaOverdueDays(eta, item.status);
                               const machine = [item.machineMake, item.machineModel].filter(Boolean).join(" ") || job.machineModel || "";
                               return (
-                                <li key={item.id} className="jobs-item">
+                                <li key={item.id} className={insideTypes(job).length > 1 ? "jobs-item has-type" : "jobs-item"}>
                                   <span className="ji-tag">{itemTag(job.jobNumber || job.draftNumber, item.sequence)}</span>
                                   <span className="jobs-item-what"><strong>{item.component || job.component || "Item"}</strong>{item.componentModel ? <span className="jobs-item-model"> {item.componentModel}</span> : null}{item.componentSerial ? <span className="jobs-item-model"> · S/N {item.componentSerial}</span> : null}</span>
+                                  {insideTypes(job).length > 1 && <span className="ji-type">{jobTypeLabelsFor(ctx.industryBuild)[itemEffectiveType(item.type, job.type) as keyof ReturnType<typeof jobTypeLabelsFor>]}</span>}
                                   <StatusPill status={item.status} build={ctx.industryBuild} />
                                   <span className="jobs-item-machine">{machine || "—"}</span>
                                   <span className="jobs-item-mach" title="Machinists (Assess / Final)">{machinistSummary(item.stripMechanic?.name ?? job.stripMechanic?.name, item.buildMechanic?.name ?? job.buildMechanic?.name) || "—"}</span>

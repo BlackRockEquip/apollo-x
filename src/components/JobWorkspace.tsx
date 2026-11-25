@@ -28,7 +28,7 @@ import { PrintTagsDialog } from "./job-items/PrintTagsDialog";
 import { ItemsStatusBadge, itemsAreMixed } from "./job-items/ItemsStatusBadge";
 import { JobDeliveryNotes, type JobDeliveryNoteRow } from "./job-items/JobDeliveryNotes";
 import { blankDraft, draftToPayload, isBlankDraft, type ItemDraft, type ItemRow } from "./job-items/item-draft";
-import { DELIVERED_STATUS, activityMatchesItemFilter, itemMachinists, machinistSummary, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, itemIdsOnNotes, itemsOfferedForDelivery, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
+import { DELIVERED_STATUS, activityMatchesItemFilter, isItemJobType, itemEffectiveType, jobTypeAllowsItems, itemMachinists, machinistSummary, stepperDisplayStatus, countItemLinks, deliveryNoteSuffix, itemDeliveryLine, itemTag, itemsToMarkDelivered, itemIdsOnNotes, itemsOfferedForDelivery, defaultDeliveryPicks, matchesItemFilter, normalizeItemFilter, withItemTag, type ItemLinkKind } from "@/lib/jobs/item-model";
 import { ItemChip, ItemField, ItemFilterBar, ItemLinkControl, ItemSelect } from "./job-items/ItemLink";
 import { QuotePickDialog, type PickLine, type PickSupplier } from "./quote-compare/QuotePickDialog";
 import { buildQuoteComparisonRows, quoteComparisonWidths, type ExportQuote } from "@/lib/jobs/quote-comparison-export";
@@ -960,6 +960,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // 2026-10-29, Engineering multi-item jobs: the items typed on the New Job screen (see JobItemsEditor).
   const [newItems, setNewItems] = useState<ItemDraft[]>(() => [blankDraft()]);
+  // 2026-11-25, "multiple jobs within a job": a Workshop company's New Job screen stays an ordinary single job until "Add another job to
+  // this job" is pressed, which turns the machine / component card into the list of jobs (Engineering always shows the list).
+  const [createMulti, setCreateMulti] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
     customerId: "",
     dateReceived: "",
@@ -1404,12 +1407,31 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // exact same payload shape without a second, drifting copy of this list.
   // 2026-10-29, Engineering multi-item jobs: every Engineering job (except field service) takes its machine / component details as
   // a list of items. One item is an ordinary job; several are saved on the one job.
-  function itemsBuildOn() { return industryBuild === "ENGINEERING" && form.type !== "FIELD_SERVICE"; }
+  // 2026-11-25: now any job except PEX can hold several jobs, each with its own job type (Workshop too, once "Add another job" is pressed).
+  // A row counts when it has anything typed, or when a different job type was picked for it (an empty field job is still a job).
+  function rowFilled(draft: ItemDraft, index: number) {
+    return !isBlankDraft(draft) || (index > 0 && !!draft.type && draft.type !== form.type);
+  }
+  function startCreateMulti() {
+    // The machine / component details typed so far become job 1; job 2 starts as the other usual kind (field <-> repair).
+    const first: ItemDraft = {
+      ...blankDraft(),
+      component: form.component, componentModel: form.componentModel, componentSerial: form.componentSerial, componentPartNumber: form.componentPartNumber,
+      machineMake: form.machineMake, machineModel: form.machineModel, machineSerial: form.machineSerial, plantNumber: form.plantNumber, machineHours: form.machineHours,
+      workRequested: form.description, etaDate: form.etaDate, mechanicEtaDate: form.mechanicEtaDate,
+    };
+    const fieldOk = fieldAccess === "FULL";
+    const otherType = form.type === "FIELD_SERVICE" || !fieldOk ? "STANDARD_REPAIR" : "FIELD_SERVICE";
+    setNewItems([first, { ...blankDraft(), type: otherType }]);
+    setCreateMulti(true);
+  }
+  function itemsBuildOn() { return jobTypeAllowsItems(form.type) && (industryBuild === "ENGINEERING" || createMulti); }
 
   function buildJobPayload() {
     const base = buildBaseJobPayload();
     if (mode !== "create" || !itemsBuildOn()) return base;
-    const items = newItems.filter((item) => !isBlankDraft(item)).map(draftToPayload);
+    // Each row works as its own job type; a row with none follows the job's type (row 1 IS the job's type).
+    const items = newItems.filter(rowFilled).map((draft) => ({ ...draftToPayload(draft), type: draft.type || form.type }));
     return items.length > 0 ? { ...base, items } : base;
   }
 
@@ -1564,7 +1586,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // is a job field and autosaves with the rest of the job. No reload after
   // the save — what was typed is already what is saved.
   async function runFieldReportAutosave() {
-    if (!jobId || jobRef.current?.type !== "FIELD_SERVICE" || !fieldReportDirty.current) return;
+    if (!jobId || !(jobRef.current?.type === "FIELD_SERVICE" || (jobRef.current?.jobItems ?? []).some((row) => row.type === "FIELD_SERVICE")) || !fieldReportDirty.current) return;
     const version = fieldReportVersion.current;
     setAutosaveState("saving");
     setError("");
@@ -4263,7 +4285,17 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // workshop job (component part number, ETAs, mechanics, delivery logistics...).
   // Keyed off the form (not the saved job) so the create form follows the Job type
   // dropdown straight away.
-  const isFieldForm = form.type === "FIELD_SERVICE";
+  // 2026-11-25, "multiple jobs within a job": on a job with inside jobs the screen follows the job that is selected (a field job gets the
+  // field layout, a repair the workshop one); with none selected it follows the job's own type (= item 1's).
+  const insideRows = job?.jobItems ?? [];
+  const insideSelected = insideRows.find((row) => row.id === normalizeItemFilter(itemFilter, insideRows.map((r) => r.id))) ?? null;
+  // The saved layout (what the screen is built for) and the form's own type (follows the Job type box straight away, as before).
+  const savedLayoutType = mode === "detail" && job ? (insideSelected ? itemEffectiveType(insideSelected.type, String(job.type)) : String(job.type)) : form.type;
+  const formLayoutType = mode === "detail" && insideSelected && job ? itemEffectiveType(insideSelected.type, String(job.type)) : form.type;
+  // New Job: a field job anywhere in the list means the site details are needed too.
+  const createHasFieldJob = mode === "create" && itemsBuildOn() && newItems.some((draft, index) => (index === 0 ? form.type : draft.type || form.type) === "FIELD_SERVICE");
+  const isFieldForm = formLayoutType === "FIELD_SERVICE";
+  const showSiteFields = isFieldForm || createHasFieldJob;
 
   // 2026-10-26, user request: field service jobs lay the machine / component fields out as two rows -
   // row 1: Machine make, Machine model, Machine serial, Plant number, Machine hours; row 2: Component, Component model, Component serial.
@@ -4345,7 +4377,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   // 2026-10-29, user request (Engineering): several items on one job.
   // New Job: the machine / component card is replaced by the "Items received" list.
-  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} onCreateMechanic={(name) => createStaffOption("mechanic", name)} />;
+  // 2026-11-25: the job types an inside job can work as (no PEX, no Warranty; Field service only where that module is on).
+  const insideTypeOptions = jobTypeOptions("").filter(([value]) => isItemJobType(value));
+  const insideNoun: "item" | "job" = industryBuild === "ENGINEERING" && String(job?.type ?? form.type) !== "FIELD_SERVICE" ? "item" : "job";
+  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} jobType={form.type} typeOptions={insideTypeOptions} onJobTypeChange={(type) => updateField("type", type)} noun={insideNoun} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} onCreateMechanic={(name) => createStaffOption("mechanic", name)} />;
   // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
   // Machine / component card and offers "Add another item" beneath it.
   const jobItemRows = job?.jobItems ?? [];
@@ -4355,10 +4390,15 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const itemLinkCounts = job ? countItemLinks({ parts: job.partLines, outwork: job.outworkItems, attachments: job.attachments, reports: job.dimensionReports ?? [] }) : {};
   const itemJobNumber = job ? (job.jobNumber ?? job.draftNumber) : null;
   // An ordinary one-item Engineering job shows the same item list with its one item, built from the job's own fields.
-  const itemsListOn = mode === "detail" && !!job && itemsBuildOn();
-  const virtualItem = job && itemsListOn && jobItemRows.length === 0 ? {
+  // 2026-11-25: any build, any job except PEX. Engineering always shows the item list; the other builds show it once a second job has
+  // been added (until then an ordinary job gets only the slim "Add job to this job" strip, so nothing else on the screen moves).
+  const itemsAllowed = !!job && mode === "detail" && jobTypeAllowsItems(String(job.type));
+  const itemsListOn = itemsAllowed && ((industryBuild === "ENGINEERING" && String(job?.type) !== "FIELD_SERVICE") || jobItemRows.length > 0);
+  const addJobStripOn = itemsAllowed && !itemsListOn;
+  const virtualItem = job && (itemsListOn || addJobStripOn) && jobItemRows.length === 0 ? {
     id: "job-item-1",
     sequence: 1,
+    type: null as string | null,
     status: String(job.status),
     component: (job.component as string | null) ?? null,
     componentModel: (job.componentModel as string | null) ?? null,
@@ -4376,7 +4416,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   } : null;
   const selectedItem = jobItemRows.find((item) => item.id === activeItemFilter) ?? null;
   // Workshop build (no item list): the job's own fields make the one tag for the whole job.
-  const wholeJobTagItem = job && mode === "detail" && !itemsListOn ? {
+  const wholeJobTagItem = job && mode === "detail" && !itemsListOn && !addJobStripOn ? {
     id: "job-tag",
     sequence: 1,
     component: (job.component as string | null) ?? null,
@@ -4392,7 +4432,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     const row = itemId ? jobItemRows.find((entry) => entry.id === itemId) : undefined;
     return row ? itemTag(job?.jobNumber, row.sequence) : "";
   };
-  const itemsPanelSection = job && itemsListOn && (jobItemRows.length > 0 || virtualItem) ? (
+  const itemsPanelSection = job && (itemsListOn || addJobStripOn) && (jobItemRows.length > 0 || virtualItem) ? (
     <JobItemsPanel
       jobId={job.id}
       jobNumber={job.jobNumber}
@@ -4400,7 +4440,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       build={industryBuild}
       items={jobItemRows.length > 0 ? jobItemRows : virtualItem ? [virtualItem] : []}
       virtual={jobItemRows.length === 0}
-      steps={statusStepsForJobType(job.type, industryBuild)}
+      stepsForType={(type) => statusStepsForJobType(type as typeof job.type, industryBuild)}
+      typeLabels={typeLabels as Record<string, string>}
+      typeOptions={insideTypeOptions}
+      noun={insideNoun}
       statusLabels={statusLabels}
       staffEtaLabel={machinist.eta}
       canEdit={!mechanicFieldsLocked}
@@ -4426,7 +4469,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     : null;
   // The header status: "Mixed" with a colour bar while the items are at different steps, otherwise the ordinary pill.
   const jobStatusBadge = job && itemsAreMixed(jobItemRows.map((item) => item.status))
-    ? <ItemsStatusBadge statuses={jobItemRows.map((item) => item.status)} jobType={job.type} build={industryBuild} />
+    ? <ItemsStatusBadge statuses={jobItemRows.map((item) => item.status)} jobType={job.type} itemTypes={jobItemRows.map((item) => item.type)} build={industryBuild} />
     : null;
 
   const commercialSection = (
@@ -4489,7 +4532,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Job details</h2></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        {isFieldForm ? <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label> : <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>}
+        {isFieldForm ? <label><span>Job type *</span><select value={form.type} disabled={mode === "detail" && jobItemRows.length > 0} title={mode === "detail" && jobItemRows.length > 0 ? "The job follows job 1. Change the type of job 1 in the list above." : undefined} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label> : <div style={{ display: "grid", gap: 7, alignContent: "start" }}><label><span>Job type *</span><select value={form.type} disabled={mode === "detail" && jobItemRows.length > 0} title={mode === "detail" && jobItemRows.length > 0 ? "The job follows job 1. Change the type of job 1 in the list above." : undefined} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{warrantyTickbox}</div>}
         {isFieldForm && previousJobField}
         {isFieldForm && warrantyTickbox}
         {!isFieldForm && (
@@ -4523,7 +4566,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
   const customerSection = (mode !== "detail" || canViewCustomer) ? (
         <section className={`detail-panel ${job && mode === "detail" ? "wide-panel job-customer-panel" : "full-row"}`}>
-          <header><div><h2>{form.type === "FIELD_SERVICE" ? "Customer & site" : "Customer details"}</h2></div></header>
+          <header><div><h2>{showSiteFields ? "Customer & site" : "Customer details"}</h2></div></header>
           <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
           <div className="drawer-fields customer-fields">
             <label className="wide party-selector" onBlur={closeDropdownUnlessWithin(() => setShowCustomerOptions(false))}>
@@ -4560,7 +4603,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
             {/* 2026-10-06 — field service jobs: where the work is and how to get in.
                 Shown on the create form too (follows the Job type dropdown). */}
-            {form.type === "FIELD_SERVICE" && (
+            {showSiteFields && (
               <>
                 <p className="field-subhead wide">Site</p>
                 <label><span>Site contact name</span><input value={form.siteContactName} onChange={(e) => updateField("siteContactName", e.target.value)} placeholder="Name and position" /></label>
@@ -4662,6 +4705,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             since a role-specific order has come back before and may
             again. */}
         {mode === "create" && itemsBuildOn() ? itemsCreateSection : (<><div ref={setSelectedItemSlot} style={{ display: "contents" }} />{(!itemsPanelSection || jobItemRows.length === 0) && machineSection}</>)}
+        {/* 2026-11-25: Workshop New Job stays an ordinary single job; this turns the machine card into a list of jobs (each with its own type). */}
+        {mode === "create" && !itemsBuildOn() && industryBuild !== "ENGINEERING" && jobTypeAllowsItems(form.type) && (
+          <section className="detail-panel full-row ji-add-job-strip">
+            <button type="button" className="section-action-button" onClick={startCreateMulti} disabled={saving}><Plus size={14} /> Add another job to this job</button>
+            <span className="muted small-line">For example a field job and a repair under one job number. Each keeps its own type, steps and layout.</span>
+          </section>
+        )}
         {deliveryNotesSection}
         {jobDetailsSection}
         {commercialSection}
@@ -4670,7 +4720,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   );
 
   // Field service jobs (detail mode) use the field layout — see fieldJobLayout below.
-  const fieldLayout = mode === "detail" && !!job && job.type === "FIELD_SERVICE";
+  const fieldLayout = mode === "detail" && !!job && savedLayoutType === "FIELD_SERVICE";
   // Design C: only the Mechanic role (tenantRole USER), not the view-only role.
   const tabletLayout = mode === "detail" && !!job && tenantRole === "USER";
 
@@ -5381,7 +5431,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <header><div><h2>Work requested</h2><p>What the customer wants done, and the machine it is on.</p></div></header>
       <fieldset disabled={mechanicFieldsLocked} className="unstyled-fieldset">
       <div className="drawer-fields">
-        <label><span>Job type *</span><select value={form.type} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><span>Job type *</span><select value={form.type} disabled={mode === "detail" && jobItemRows.length > 0} title={mode === "detail" && jobItemRows.length > 0 ? "The job follows job 1. Change the type of job 1 in the list above." : undefined} onChange={(e) => updateField("type", e.target.value)}>{jobTypeOptions(mode === "detail" ? String(job?.type ?? "") : "").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {previousJobField}
         {warrantyTickbox}
         <label className="wide"><span>Job description</span><textarea rows={3} value={form.description} onChange={(e) => updateField("description", e.target.value)} /></label>
@@ -5530,10 +5580,13 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     now: today ?? undefined,
   }) : [];
 
+  const insideTypeList = job ? (jobItemRows.length > 0 ? jobItemRows.map((row) => itemEffectiveType(row.type, String(job.type))) : [String(job.type)]) : [];
+  const printsFieldReport = insideTypeList.includes("FIELD_SERVICE");
+  const printsJobCard = insideTypeList.some((type) => type !== "FIELD_SERVICE");
   const printMenuItems: ActionMenuItem[] = job && mode === "detail" && !mechanicFieldsLocked ? [
-    job.type === "FIELD_SERVICE"
-      ? { key: "field-report", label: "Field report", onSelect: () => void offerToSave(printFieldReport(), "FIELD_REPORT", fieldReportSpec) }
-      : { key: "job-card", label: "Job card", onSelect: () => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec) },
+    // 2026-11-25: a job with a field job inside prints a Field report for it, and a Job card for the workshop work (both when it has both).
+    ...(printsFieldReport ? [{ key: "field-report", label: "Field report", onSelect: () => void offerToSave(printFieldReport(), "FIELD_REPORT", fieldReportSpec) }] : []),
+    ...(printsJobCard ? [{ key: "job-card", label: "Job card", onSelect: () => void offerToSave(printJobCard(), "JOB_CARD", jobCardSpec) }] : []),
     { key: "job-history", label: "Job history", onSelect: () => void offerToSave(printJobHistory(), "JOB_HISTORY", jobHistorySpec) },
     { key: "delivery-note", label: "Delivery note", onSelect: openJobDeliveryNoteDialog },
     { key: "job-tags", label: "Job tags", onSelect: () => setTagsOpen(true) },
@@ -5557,8 +5610,26 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-10-29, user request (Engineering): the header stepper shows where the items are, and a click moves the selected item (or,
   // with no item selected on a job with several, every item after a question).
   const itemsStepperOn = itemsListOn;
-  const stepperItemStatuses = jobItemRows.length > 0 ? jobItemRows.map((item) => String(item.status)) : job ? [String(job.status)] : [];
-  async function moveFromItemsStepper(step: string) {
+  // 2026-11-25, "multiple jobs within a job": inside jobs of different types follow different steps, so they are grouped by the steps they
+  // share. One group is the familiar single stepper; several groups (e.g. a field job and a repair) get one stepper each until a job is
+  // selected, then only that job's stepper shows.
+  const typeFlow = (type: string) => (statusStepsForJobType(type as NonNullable<typeof job>["type"], industryBuild) as string[]).filter((step) => step !== "TO_BE_COLLECTED");
+  const insideFlowGroups: Array<{ key: string; type: string; steps: string[]; statuses: string[]; itemIds: string[] }> = [];
+  if (job) {
+    for (const row of jobItemRows) {
+      const type = itemEffectiveType(row.type, String(job.type));
+      const steps = typeFlow(type);
+      const key = steps.join("|");
+      let group = insideFlowGroups.find((entry) => entry.key === key);
+      if (!group) { group = { key, type, steps, statuses: [], itemIds: [] }; insideFlowGroups.push(group); }
+      group.statuses.push(String(row.status));
+      group.itemIds.push(row.id);
+    }
+  }
+  const flowsDiffer = insideFlowGroups.length > 1;
+  const activeGroup = selectedItem ? insideFlowGroups.find((group) => group.itemIds.includes(selectedItem.id)) : insideFlowGroups.length === 1 ? insideFlowGroups[0] : undefined;
+  const stepperItemStatuses = activeGroup ? activeGroup.statuses : jobItemRows.length > 0 ? jobItemRows.map((item) => String(item.status)) : job ? [String(job.status)] : [];
+  async function moveFromItemsStepper(step: string, group?: { itemIds: string[]; type: string }) {
     if (!job) return;
     if (needsDocumentCheck(industryBuild, step) && !(await confirm(DOCUMENT_CHECK_CONFIRM))) return;
     const stepLabel = step === "TO_BE_RECEIVED" ? "To be received/collected" : ((statusLabels as Record<string, string>)[step] ?? step);
@@ -5577,13 +5648,14 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       }
       return;
     }
-    const live = jobItemRows.filter((item) => item.status !== "CANCELLED").length;
-    if (live > 1 && !(await confirm({ message: `Move all ${live} items to "${stepLabel}"? Select an item first to move just that one.`, tone: "warning", confirmLabel: "Move all items" }))) return;
+    const live = jobItemRows.filter((item) => item.status !== "CANCELLED" && (!group || group.itemIds.includes(item.id))).length;
+    const word = insideNoun === "job" ? "jobs" : "items";
+    if (live > 1 && !(await confirm({ message: `Move all ${live} ${group && flowsDiffer ? `${(typeLabels as Record<string, string>)[group.type] ?? ""} ` : ""}${word} to "${stepLabel}"? Select one first to move just that one.`.replace("  ", " "), tone: "warning", confirmLabel: `Move all ${word}` }))) return;
     await postAction(`/api/v1/jobs/${job.id}/status`, { status: step, reason: null });
   }
 
   // Status stepper: TO_BE_COLLECTED is merged into TO_BE_RECEIVED and WAITING_FOR_PARTS into AWAIT_OUTWORK for display (see the comments at the stepper below).
-  const stepperSteps = job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
+  const stepperSteps = activeGroup ? activeGroup.steps : job ? statusStepsForJobType(job.type, industryBuild).filter((step) => step !== "TO_BE_COLLECTED") : [];
   const stepperStatus = job ? (job.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : job.status === "TO_BE_COLLECTED" ? "TO_BE_RECEIVED" : job.status) : "TO_BE_RECEIVED";
   const stepNumber = (stepperSteps as string[]).indexOf(String(stepperStatus)) + 1;
   // ---------------------------------------------------------------------
@@ -5919,7 +5991,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
             </div>
             <div className="header-actions-stack">
               <div className="header-actions">
-                <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : itemsBuildOn() && newItems.filter((item) => !isBlankDraft(item)).length > 1 ? `Create job with ${newItems.filter((item) => !isBlankDraft(item)).length} items` : "Create job"}</button>
+                <button type="submit" form="job-edit-form" className="gold-button" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : itemsBuildOn() && newItems.filter(rowFilled).length > 1 ? `Create job with ${newItems.filter(rowFilled).length} ${insideNoun === "job" ? "jobs" : "items"}` : "Create job"}</button>
               </div>
             </div>
           </header>
@@ -5974,8 +6046,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
 
           <div className="job-header-stepper jw-status-card">
             <div className="jw-status-top">
-              <span className="jw-status-title">{itemsStepperOn ? "Where the items are" : "Job status"}{!itemsStepperOn && stepNumber > 0 && !["CLOSED", "CANCELLED"].includes(job.status) ? <em> · Step {stepNumber} of {stepperSteps.length}</em> : null}</span>
-              {!["CLOSED", "CANCELLED"].includes(job.status) && <span className="jw-status-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office team." : itemsStepperOn ? (selectedItem ? `Click a step to move ${itemTag(job.jobNumber, selectedItem.sequence)} straight there. The number is how many items are on that step.` : jobItemRows.length > 1 ? "The number is how many items are on each step. Select an item to move just that one; clicking a step now moves all of them." : "Click a stage to move the job straight there — saves immediately.") : "Click a stage to move the job straight there — saves immediately."}</span>}
+              <span className="jw-status-title">{itemsStepperOn ? (insideNoun === "job" ? "Where the jobs are" : "Where the items are") : "Job status"}{!itemsStepperOn && stepNumber > 0 && !["CLOSED", "CANCELLED"].includes(job.status) ? <em> · Step {stepNumber} of {stepperSteps.length}</em> : null}</span>
+              {!["CLOSED", "CANCELLED"].includes(job.status) && <span className="jw-status-hint">{mechanicFieldsLocked ? "Status changes for this job are managed by your office team." : itemsStepperOn ? (selectedItem ? `Click a step to move ${itemTag(job.jobNumber, selectedItem.sequence)} straight there. The number is how many ${insideNoun === "job" ? "jobs" : "items"} are on that step.` : jobItemRows.length > 1 ? `The number is how many ${insideNoun === "job" ? "jobs" : "items"} are on each step. Select one to move just that one${flowsDiffer ? "; clicking a step moves all of that type." : "; clicking a step now moves all of them."}` : "Click a stage to move the job straight there — saves immediately.") : "Click a stage to move the job straight there — saves immediately."}</span>}
               {/* 2026-10-20, user request: a Breakdown button which adds a red "Breakdown" pill to the job's status (Job.breakdown). Press it again to clear.
                   Not offered to a Mechanic or the view-only user, and only while the job is still open (it can always be cleared). */}
               {!mechanicFieldsLocked && !viewOnly && (job.breakdown || !jobEnded) && (
@@ -5986,6 +6058,22 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}){mechanicFieldsLocked ? "." : " — use Reopen above to bring it back onto the stepper."}
               </p>
+            ) : itemsStepperOn && flowsDiffer && !selectedItem ? (
+              <div className="ji-flow-steppers">
+                {insideFlowGroups.map((group) => (
+                  <div key={group.key} className="ji-flow">
+                    <span className="ji-flow-title">{(typeLabels as Record<string, string>)[group.type] ?? group.type}</span>
+                    <ItemsStepper
+                      steps={group.steps}
+                      labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" } as Record<string, string>}
+                      statuses={group.statuses}
+                      selectedStatus={null}
+                      disabled={saving || mechanicFieldsLocked}
+                      onSelect={(step) => void moveFromItemsStepper(step, group)}
+                    />
+                  </div>
+                ))}
+              </div>
             ) : itemsStepperOn ? (
               <ItemsStepper
                 steps={stepperSteps as string[]}
@@ -6035,8 +6123,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {!tabletLayout && itemsListOn && (
             <ItemHeader
               tag={selectedItem ? itemTag(job.jobNumber, selectedItem.sequence) : jobItemRows.length === 0 ? itemTag(job.jobNumber, 1) : `JOB ${job.jobNumber ?? job.draftNumber ?? ""}`}
-              title={selectedItem ? (selectedItem.component || "Item") : jobItemRows.length === 0 ? (String(job.component || "") || "Item") : "All items"}
-              subtitle={selectedItem || jobItemRows.length === 0 ? undefined : `${jobItemRows.length} items. Select one in the list above to focus its parts, outwork, photos and history.`}
+              title={selectedItem ? (selectedItem.component || (insideNoun === "job" ? "Job" : "Item")) : jobItemRows.length === 0 ? (String(job.component || "") || (insideNoun === "job" ? "Job" : "Item")) : (insideNoun === "job" ? "All jobs" : "All items")}
+              subtitle={selectedItem || jobItemRows.length === 0 ? undefined : `${jobItemRows.length} ${insideNoun === "job" ? "jobs" : "items"}. Select one in the list above to focus its parts, outwork, photos and history.`}
               steps={stepperSteps as string[]}
               labels={{ ...statusLabels, TO_BE_RECEIVED: "To be received/collected" } as Record<string, string>}
               status={selectedItem ? stepperDisplayStatus(String(selectedItem.status)) : jobItemRows.length === 0 ? stepperDisplayStatus(String(job.status)) : null}

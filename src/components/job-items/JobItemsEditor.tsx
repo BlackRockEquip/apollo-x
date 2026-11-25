@@ -20,9 +20,18 @@ type Props = {
   machinistLabels?: { strip: string; build: string };
   /** Adds a machinist that is not in the list yet (typed in a picker); resolves with the new option. */
   onCreateMechanic?: (name: string) => Promise<NamedOption>;
+  /**
+   * 2026-11-25, "multiple jobs within a job": every row is one inside job with its own job type. `jobType` is the job's own type (what a
+   * row with no type of its own works as; row 1 IS the job's type). `typeOptions` are the types the person may pick.
+   */
+  jobType?: string;
+  typeOptions?: Array<[string, string]>;
+  onJobTypeChange?: (type: string) => void;
+  /** What a row is called: Engineering says "item", the other builds say "job". */
+  noun?: "item" | "job";
 };
 
-export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mechanics = [], machinistLabels, onCreateMechanic }: Props) {
+export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mechanics = [], machinistLabels, onCreateMechanic, jobType = "", typeOptions, onJobTypeChange, noun = "item" }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [several, setSeveral] = useState(4);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -64,6 +73,7 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
     const first = items[0] ?? blankDraft();
     const copies = Array.from({ length: count }, (): ItemDraft => ({
       ...blankDraft(),
+      type: first.type,
       component: first.component, componentModel: first.componentModel,
       machineMake: first.machineMake, machineModel: first.machineModel,
       workRequested: first.workRequested, conditionOnReceipt: first.conditionOnReceipt,
@@ -85,10 +95,10 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
     <section className="detail-panel full-row ji-card">
       <header className="ji-card-head">
         <div>
-          <h2>Items received</h2>
-          <p>One job, every item the customer brought in. Each item is tracked on its own from here on.</p>
+          <h2>{noun === "job" ? "Jobs in this job" : "Items received"}</h2>
+          <p>{noun === "job" ? "One job number and customer, with a job for each piece of work. Pick a job type for each: it decides that job's steps and layout." : "One job, every item the customer brought in. Each item is tracked on its own from here on."}</p>
         </div>
-        <span className="ji-count" aria-live="polite">{filled > 0 ? filled : items.length} {(filled > 0 ? filled : items.length) === 1 ? "item" : "items"}</span>
+        <span className="ji-count" aria-live="polite">{filled > 0 ? filled : items.length} {(filled > 0 ? filled : items.length) === 1 ? noun : `${noun}s`}</span>
       </header>
       {/* Enter inside a box must not submit the New Job form (the job would be created half way through typing the list). */}
       <fieldset disabled={disabled} className="unstyled-fieldset" onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault(); }}>
@@ -97,6 +107,7 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
             <thead>
               <tr>
                 <th className="ji-num">#</th>
+                {typeOptions && <th>Job type</th>}
                 <th>Component</th>
                 <th>Component model</th>
                 <th>Component serial</th>
@@ -110,7 +121,8 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
               {items.map((item, index) => {
                 const isOpen = open.has(item.key);
                 return (
-                  <ItemRows key={item.key} item={item} index={index} isOpen={isOpen} staffEtaLabel={staffEtaLabel} canDuplicate={room > 0}
+                  <ItemRows key={item.key} item={item} index={index} isOpen={isOpen} staffEtaLabel={staffEtaLabel} canDuplicate={room > 0} noun={noun}
+                    jobType={jobType} typeOptions={typeOptions} onJobTypeChange={onJobTypeChange}
                     mechanics={items.length >= 2 ? mechanics : []} machinistLabels={machinistLabels} onCreateMechanic={onCreateMechanic}
                     onPatch={(field, value) => patch(item.key, field, value)} onToggle={() => toggle(item.key)}
                     onDuplicate={() => duplicate(item.key)} onRemove={() => remove(item.key)} />
@@ -120,10 +132,10 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
           </table>
         </div>
         <div className="ji-toolbar">
-          <button type="button" className="section-action-button" onClick={addOne} disabled={room <= 0}><Plus size={14} /> Add item</button>
+          <button type="button" className="section-action-button" onClick={addOne} disabled={room <= 0}><Plus size={14} /> {noun === "job" ? "Add another job" : "Add item"}</button>
           <span className="ji-several">
             <input type="number" min={1} max={Math.max(room, 1)} value={several} aria-label="How many more items" onChange={(e) => setSeveral(Number(e.target.value) || 1)} />
-            <button type="button" className="quiet-button" onClick={addSeveral} disabled={room <= 0}><Copy size={13} /> Add {several} more like item 1</button>
+            <button type="button" className="quiet-button" onClick={addSeveral} disabled={room <= 0}><Copy size={13} /> Add {several} more like {noun} 1</button>
           </span>
           <button type="button" className="quiet-button" onClick={() => setPasteOpen((v) => !v)}><ClipboardList size={13} /> Paste from spreadsheet</button>
           {room <= 0 && <span className="ji-note">The most a job can hold is {MAX_ITEMS_PER_JOB} items.</span>}
@@ -148,12 +160,15 @@ export function JobItemsEditor({ items, onChange, disabled, staffEtaLabel, mecha
   );
 }
 
-function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics, machinistLabels, onCreateMechanic, onPatch, onToggle, onDuplicate, onRemove }: {
-  item: ItemDraft; index: number; isOpen: boolean; staffEtaLabel: string; canDuplicate: boolean;
+function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, noun, jobType, typeOptions, onJobTypeChange, mechanics, machinistLabels, onCreateMechanic, onPatch, onToggle, onDuplicate, onRemove }: {
+  item: ItemDraft; index: number; isOpen: boolean; staffEtaLabel: string; canDuplicate: boolean; noun: "item" | "job";
+  jobType: string; typeOptions?: Array<[string, string]>; onJobTypeChange?: (type: string) => void;
   mechanics: Array<{ id: string; label: string }>; machinistLabels?: { strip: string; build: string }; onCreateMechanic?: (name: string) => Promise<NamedOption>;
   onPatch: (field: keyof ItemDraft, value: string) => void; onToggle: () => void; onDuplicate: () => void; onRemove: () => void;
 }) {
-  const label = `Item ${index + 1}`;
+  const label = `${noun === "job" ? "Job" : "Item"} ${index + 1}`;
+  // The row works as its own type, else the job's. Row 1 is the job itself, so changing it changes the job's type.
+  const shownType = item.type || jobType;
   const cell = (field: keyof ItemDraft, name: string) => (
     <td><input value={item[field]} onChange={(e) => onPatch(field, e.target.value)} aria-label={`${label} ${name}`} /></td>
   );
@@ -161,6 +176,13 @@ function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics,
     <>
       <tr className={isOpen ? "ji-row open" : "ji-row"}>
         <td className="ji-num"><span className="ji-badge">{index + 1}</span></td>
+        {typeOptions && (
+          <td>
+            <select value={shownType} aria-label={`${label} job type`} onChange={(e) => { if (index === 0) onJobTypeChange?.(e.target.value); else onPatch("type", e.target.value); }}>
+              {typeOptions.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+            </select>
+          </td>
+        )}
         {cell("component", "component")}
         {cell("componentModel", "component model")}
         {cell("componentSerial", "component serial")}
@@ -176,7 +198,7 @@ function ItemRows({ item, index, isOpen, staffEtaLabel, canDuplicate, mechanics,
       {isOpen && (
         <tr className="ji-more">
           <td />
-          <td colSpan={7}>
+          <td colSpan={typeOptions ? 8 : 7}>
             <div className="ji-more-grid">
               <label><span>Part number</span><input value={item.componentPartNumber} onChange={(e) => onPatch("componentPartNumber", e.target.value)} /></label>
               <label><span>Machine serial</span><input value={item.machineSerial} onChange={(e) => onPatch("machineSerial", e.target.value)} /></label>

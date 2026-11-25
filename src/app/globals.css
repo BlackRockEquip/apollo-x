@@ -2836,3 +2836,11 @@ button.sfv-name { cursor: pointer; }
 @media (max-width: 820px) {
   .jfu-staged.files .jfu-body { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* 2026-11-25, "multiple jobs within a job": the job type of an inside job, one stepper per kind of job, and the Workshop "Add another job" strip. */
+.ji-type { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; background: #fdf3d9; color: #7a5a00; font-size: 11px; font-weight: 750; white-space: nowrap; vertical-align: middle; }
+.ji-table td .ji-type, .jobs-item .ji-type { margin-left: 0; }
+.jobs-item.has-type { grid-template-columns: 110px minmax(160px, 1.6fr) auto auto minmax(110px, 1fr) minmax(110px, 1fr) minmax(120px, auto); }
+.ji-flow-steppers { display: grid; gap: 16px; }
+.ji-flow-title { display: block; margin-bottom: 2px; color: var(--ink-500); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.ji-add-job-strip { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 16px; }

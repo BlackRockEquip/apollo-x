@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, UserCog, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import { NamedPicker, type NamedOption } from "@/components/NamedPicker";
-import { itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeItemStatuses, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
+import { itemEffectiveType, itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeFlowItems, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
 import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } from "./item-draft";
 
@@ -21,7 +21,14 @@ type Props = {
   jobType: string;
   build: string | null | undefined;
   items: ItemRow[];
-  steps: string[];
+  /**
+   * 2026-11-25, "multiple jobs within a job": the steps of each job type (an inside job follows the steps of the type it works as),
+   * the type names, and the types a person may pick. `noun` is what an inside job is called: Engineering "item", other builds "job".
+   */
+  stepsForType: (type: string) => string[];
+  typeLabels: Record<string, string>;
+  typeOptions: Array<[string, string]>;
+  noun?: "item" | "job";
   statusLabels: Record<string, string>;
   staffEtaLabel: string;
   /** May this person change items (Jobs edit rights, not view-only, not the mechanic role)? */
@@ -66,7 +73,7 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {}, onCreateMechanic }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsForType, typeLabels, typeOptions, noun = "item", statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {}, onCreateMechanic }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
@@ -81,7 +88,17 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     return { ...m, stripName: mechanicName(m.strip), buildName: mechanicName(m.build) };
   };
 
-  const rollup = summarizeItemStatuses(items.map((item) => item.status), steps);
+  const typeOf = (item: ItemRow) => itemEffectiveType(item.type, jobType);
+  const rollup = summarizeFlowItems(items.map((item) => ({ status: item.status, steps: stepsForType(typeOf(item)) })));
+  const nouns = `${noun}s`;
+  // Workshop (and other non-Engineering) jobs that are still one job show a slim "Add job" strip instead of the whole list.
+  const compact = virtual && (noun === "job" || jobType === "FIELD_SERVICE");
+  // More than one type among the inside jobs: the table shows each one's type.
+  const typesDiffer = new Set(items.map(typeOf)).size > 1;
+  // What "Add job" starts as: a different type from the job's, since that is the usual reason to add one.
+  const typeValues = typeOptions.map(([value]) => value);
+  const wanted = jobType === "FIELD_SERVICE" ? "STANDARD_REPAIR" : "FIELD_SERVICE";
+  const otherType = typeValues.includes(wanted) ? wanted : (typeValues.find((value) => value !== jobType) ?? jobType);
   const editable = canEdit && !locked && !virtual;
   const canAdd = canEdit && !locked;
   const selected = virtual ? undefined : items.find((item) => item.id === selectedId);
@@ -128,7 +145,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     const tag = itemTag(jobNumber, item.sequence);
     const tied = itemLinkTotal(links?.[item.id]);
     const tiedNote = tied > 0 ? ` The ${tied} record${tied === 1 ? "" : "s"} tied to it (${itemLinkSummary(links?.[item.id])}) stay on the job, as whole-job records.` : "";
-    if (!(await confirm({ message: `Remove item ${tag}${item.component ? ` (${item.component})` : ""} from this job? This cannot be undone.${tiedNote}`, tone: "warning", confirmLabel: "Remove item" }))) return;
+    if (!(await confirm({ message: `Remove ${noun} ${tag}${item.component ? ` (${item.component})` : ""} from this job? This cannot be undone.${tiedNote}`, tone: "warning", confirmLabel: `Remove ${noun}` }))) return;
     await call(item.id, `${base}?itemId=${item.id}`, { method: "DELETE" });
   }
   async function saveNew() {
@@ -144,6 +161,16 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     </label>
   );
 
+  // The job type of an inside job. Changing it to a type with other steps puts the job back at that type's first step (said in the hint).
+  const typeField = (target: ItemDraft, set: (next: ItemDraft) => void, current: string) => (
+    <label>
+      <span>Job type</span>
+      <select value={target.type || current} onChange={(e) => set({ ...target, type: e.target.value })}>
+        {typeOptions.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
+      </select>
+    </label>
+  );
+
   const selectedTag = selected ? itemTag(jobNumber, selected.sequence) : "";
   const selectedMachine = selected ? [selected.machineMake, selected.machineModel].filter(Boolean).join(" ") : "";
   const detail = (label: string, value: string | number | null | undefined) => (
@@ -154,12 +181,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
       <section className="detail-panel full-row ji-card ji-selected" aria-label={`Selected item ${selectedTag}`}>
         <header className="ji-card-head">
           <div>
-            <h2>Details of {selectedTag}</h2>
-            <p>The tabs below show only this item. Use the status steps above, or Change status, to move it.</p>
+            <h2>Details of {selectedTag}{typesDiffer && selected && <span className="ji-type">{typeLabels[typeOf(selected)] ?? typeOf(selected)}</span>}</h2>
+            <p>The tabs below show only this {noun}. Use the status steps above, or Change status, to move it.</p>
           </div>
           <div className="ji-head-right">
             {editable && mechanics.length > 0 && <button type="button" className="quiet-button" onClick={() => setReassign(reassign?.id === selected.id ? null : { id: selected.id, strip: selected.stripMechanicId ?? "", build: selected.buildMechanicId ?? "" })} aria-expanded={reassign?.id === selected.id}><UserCog size={13} /> Reassign machinist</button>}
-            {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit item</button>}
+            {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit {noun}</button>}
           </div>
         </header>
         <div className="ji-selected-body">
@@ -209,26 +236,29 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
     <section className="detail-panel full-row ji-card">
       <header className="ji-card-head">
         <div>
-          <h2>Items on this job</h2>
-          <p>{virtual ? "This job has one item. Add another if the customer sent more." : "Select an item to see its details, parts, outwork and history. The job follows the least advanced item."}</p>
+          <h2>{noun === "job" ? "Jobs in this job" : "Items on this job"}</h2>
+          <p>{virtual
+            ? (noun === "job" ? `This job is one ${typeLabels[jobType] ?? "job"}. Add another job to it, for example a field job and a repair, and each keeps its own steps.` : "This job has one item. Add another if the customer sent more.")
+            : `Select ${noun === "job" ? "a job" : "an item"} to see its details, parts, outwork and history. The job follows the least advanced ${noun}.`}</p>
         </div>
         <div className="ji-head-right">
-          {itemsAreMixed(items.map((item) => item.status))
-            ? <ItemsStatusBadge statuses={items.map((item) => item.status)} jobType={jobType} build={build} />
-            : rollup.status && <StatusPill status={rollup.status} build={build} />}
-          <span className="ji-count">{items.length} {items.length === 1 ? "item" : "items"}</span>
-          {selected && onSelect && <button type="button" className="quiet-button" onClick={() => onSelect("")}>Show all items</button>}
+          {!compact && (itemsAreMixed(items.map((item) => item.status))
+            ? <ItemsStatusBadge statuses={items.map((item) => item.status)} jobType={jobType} itemTypes={items.map((item) => item.type)} build={build} />
+            : rollup.status && <StatusPill status={rollup.status} build={build} />)}
+          {!compact && <span className="ji-count">{items.length} {items.length === 1 ? noun : nouns}</span>}
+          {selected && onSelect && <button type="button" className="quiet-button" onClick={() => onSelect("")}>Show all {nouns}</button>}
           {onPrintTags && <button type="button" className="quiet-button" onClick={onPrintTags}><Printer size={13} /> Print tags</button>}
           {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
-          <button type="button" className={`quiet-button ji-fold${collapsed ? " is-closed" : ""}`} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} title={collapsed ? "Show the item list" : "Hide the item list"}><ChevronDown size={14} /> {collapsed ? "Show list" : "Hide list"}</button>
+          {!compact && <button type="button" className={`quiet-button ji-fold${collapsed ? " is-closed" : ""}`} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} title={collapsed ? "Show the item list" : "Hide the item list"}><ChevronDown size={14} /> {collapsed ? "Show list" : "Hide list"}</button>}
         </div>
       </header>
 
-      {!collapsed && <div className="ji-scroll">
+      {!collapsed && !compact && <div className="ji-scroll">
         <table className="ji-table readonly">
           <thead>
             <tr>
               <th>Tag</th>
+              {typesDiffer && <th>Job type</th>}
               <th>Component</th>
               <th>Machine</th>
               <th>Status</th>
@@ -245,11 +275,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
               const isEditing = editing === item.id && draft;
               const isSelected = !virtual && selectedId === item.id;
               return (
-                <ItemRowView key={item.id} isEditing={!!isEditing} columns={editable ? 8 : 7}
+                <ItemRowView key={item.id} isEditing={!!isEditing} columns={(editable ? 8 : 7) + (typesDiffer ? 1 : 0)}
                   main={(
                     <tr className={`ji-row${isEditing ? " open" : ""}${isSelected ? " selected" : ""}${onSelect && !virtual ? " pickable" : ""}`} aria-selected={isSelected || undefined}
                       onClick={(event) => { if (!onSelect || virtual || (event.target as HTMLElement).closest("button, select, input, a")) return; onSelect(isSelected ? "" : item.id); }}>
                       <td><span className="ji-tag">{tag}</span></td>
+                      {typesDiffer && <td><span className="ji-type">{typeLabels[typeOf(item)] ?? typeOf(item)}</span></td>}
                       <td>
                         {onSelect && !virtual
                           ? <button type="button" className="ji-pick" onClick={() => onSelect(isSelected ? "" : item.id)} aria-pressed={isSelected}><strong>{item.component || "-"}</strong></button>
@@ -260,7 +291,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                       <td>
                         {editable ? (
                           <select className="ji-status-select" value={item.status} disabled={busy === item.id} aria-label={`Status of ${tag}`} onChange={(e) => void moveItem(item, e.target.value)}>
-                            {steps.map((step) => <option key={step} value={step}>{statusLabels[step] ?? step}</option>)}
+                            {stepsForType(typeOf(item)).map((step) => <option key={step} value={step}>{statusLabels[step] ?? step}</option>)}
                             <option value="CANCELLED">{statusLabels.CANCELLED ?? "Cancelled"}</option>
                           </select>
                         ) : <StatusPill status={item.status} build={build} />}
@@ -284,6 +315,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                   )}
                   editor={isEditing && draft ? (
                     <div className="ji-more-grid">
+                      {!virtual && typeField(draft, setDraft, typeOf(item))}
                       {field(draft, setDraft, "component", "Component")}
                       {field(draft, setDraft, "componentModel", "Component model")}
                       {field(draft, setDraft, "componentSerial", "Component serial")}
@@ -304,7 +336,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                       {field(draft, setDraft, "workRequested", "Work requested", { wide: true })}
                       {field(draft, setDraft, "conditionOnReceipt", "Condition on receipt", { wide: true })}
                       <div className="ji-wide ji-edit-actions">
-                        <button type="button" className="gold-button" disabled={busy === item.id} onClick={() => void saveEdit(item)}>Save item</button>
+                        <button type="button" className="gold-button" disabled={busy === item.id} onClick={() => void saveEdit(item)}>Save {noun}</button>
                         <button type="button" className="quiet-button" onClick={() => { setEditing(null); setDraft(null); }}>Cancel</button>
                       </div>
                     </div>
@@ -316,15 +348,16 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
         </table>
       </div>}
 
-      {canAdd && !collapsed && (
+      {canAdd && (!collapsed || compact) && (
         <div className="ji-foot">
           {adding ? (
             <div className="ji-add">
               <div className="ji-paste-head">
-                <strong>Add an item to this job</strong>
-                <button type="button" className="ji-icon" onClick={() => setAdding(null)} aria-label="Cancel adding an item"><X size={15} /></button>
+                <strong>{noun === "job" ? "Add a job to this job" : "Add an item to this job"}</strong>
+                <button type="button" className="ji-icon" onClick={() => setAdding(null)} aria-label={`Cancel adding ${noun === "job" ? "a job" : "an item"}`}><X size={15} /></button>
               </div>
               <div className="ji-more-grid">
+                {typeField(adding, setAdding, otherType)}
                 {field(adding, setAdding, "component", "Component")}
                 {field(adding, setAdding, "componentModel", "Component model")}
                 {field(adding, setAdding, "componentSerial", "Component serial")}
@@ -335,12 +368,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, steps, 
                 {field(adding, setAdding, "conditionOnReceipt", "Condition on receipt", { wide: true })}
               </div>
               <div className="ji-edit-actions">
-                <button type="button" className="gold-button" disabled={busy === "new"} onClick={() => void saveNew()}>Add item</button>
+                <button type="button" className="gold-button" disabled={busy === "new"} onClick={() => void saveNew()}>{noun === "job" ? "Add job" : "Add item"}</button>
                 <button type="button" className="quiet-button" onClick={() => setAdding(null)}>Cancel</button>
               </div>
             </div>
           ) : (
-            <button type="button" className="section-action-button" onClick={() => { setEditing(null); setDraft(null); setAdding(blankDraft()); }}><Plus size={14} /> Add item</button>
+            <button type="button" className="section-action-button" onClick={() => { setEditing(null); setDraft(null); setAdding({ ...blankDraft(), type: otherType }); }}><Plus size={14} /> {noun === "job" ? "Add job to this job" : "Add item"}</button>
           )}
         </div>
       )}

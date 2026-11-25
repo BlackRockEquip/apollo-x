@@ -3,6 +3,8 @@
 
 export type ItemDraft = {
   key: string;
+  /** 2026-11-25, "multiple jobs within a job": the job type this inside job works as; "" = the job's own type. */
+  type: string;
   component: string;
   componentModel: string;
   componentSerial: string;
@@ -24,6 +26,8 @@ export type ItemDraft = {
 export type ItemRow = {
   id: string;
   sequence: number;
+  /** The job type this inside job works as; empty / null = the job's own. */
+  type?: string | null;
   status: string;
   component: string | null;
   componentModel: string | null;
@@ -51,6 +55,7 @@ export function newItemKey(): string {
 export function blankDraft(): ItemDraft {
   return {
     key: newItemKey(),
+    type: "",
     component: "", componentModel: "", componentSerial: "", componentPartNumber: "",
     machineMake: "", machineModel: "", machineSerial: "", plantNumber: "", machineHours: "",
     workRequested: "", conditionOnReceipt: "", etaDate: "", mechanicEtaDate: "", stripMechanicId: "", buildMechanicId: "",
@@ -74,6 +79,7 @@ function text(value: string): string | null {
 // What the API takes for one item (empty boxes become null; the server trims and limits lengths).
 export function draftToPayload(draft: ItemDraft) {
   return {
+    type: text(draft.type),
     component: text(draft.component),
     componentModel: text(draft.componentModel),
     componentSerial: text(draft.componentSerial),
@@ -96,6 +102,7 @@ export function rowToDraft(row: ItemRow): ItemDraft {
   const date = (value: string | null) => (value ? value.slice(0, 10) : "");
   return {
     key: row.id,
+    type: row.type ?? "",
     component: row.component ?? "", componentModel: row.componentModel ?? "", componentSerial: row.componentSerial ?? "",
     componentPartNumber: row.componentPartNumber ?? "", machineMake: row.machineMake ?? "", machineModel: row.machineModel ?? "",
     machineSerial: row.machineSerial ?? "", plantNumber: row.plantNumber ?? "",
