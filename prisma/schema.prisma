@@ -78,6 +78,8 @@ enum ModuleKey {
   // 2026-11-25 — Commissions (sales rep commission tracking). Switched per company like the other optional tiles, and then
   // visible only to Company Admins who have it switched on in their own user profile (see src/lib/commissions/access.ts).
   COMMISSIONS
+  // 2026-11-25 — Failure Reports module.
+  FAILURE_REPORTS
 }
 
 // The platform hosts more than one product line under one shared
@@ -648,6 +650,10 @@ model Company {
   jobDimensionReports JobDimensionReport[]
   testSpecTemplates TestSpecTemplate[]
   testReports TestReport[]
+  // 2026-11-25 — Failure Reports module.
+  failureReports        FailureReport[]
+  failureReportPhotos   FailureReportPhoto[]
+  failureReportProfiles FailureReportProfile[]
   jobDimensionLines JobDimensionLine[]
   specificationFormSettings SpecificationFormSettings?
   jobPartLines      JobPartLine[]
@@ -1833,6 +1839,7 @@ model Job {
   attachments         JobAttachment[]
   dimensionReports    JobDimensionReport[]
   testReports         TestReport[]
+  failureReports      FailureReport[]
   noteEntries         JobNote[]
   activities          JobActivity[]
   fieldServiceReport  JobFieldServiceReport?
@@ -3504,4 +3511,101 @@ model CommissionPayout {
   salesRepresentative SalesRepresentative @relation(fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
 
   @@index([companyId, salesRepresentativeId, month])
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-25 — Failure Reports module: the Failure Report Builder (github.com/BoshoffGP/failure-report-builder) brought into
+// Apollo as its own module. A report may be linked to a job (its details are copied in when it is made and can be refreshed);
+// every field stays editable. The .pptx is built in the browser exactly as the builder does and, for a linked report, a copy
+// is saved in the job's files.
+// ---------------------------------------------------------------------------
+model FailureReport {
+  id            String    @id @default(cuid())
+  companyId     String
+  jobId         String?
+  profileId     String?
+  // { job, client, component, serial, make, model, plant, site, date_delivery, date_report, repair_type, artisan,
+  //   doc_no, impl_date, rev_no, rev_date, intro, comments } - the builder's own field names (see src/lib/failure-reports/model.ts).
+  fields        Json      @default("{}")
+  // na | granted | declined - always chosen by a person, never set from the job.
+  warranty      String    @default("na")
+  perPage       Int       @default(4)
+  descHeading   String    @default("DESCRIPTION")
+  replaceItems  String[]
+  repairItems   String[]
+  missingItems  String[]
+  // What the linked job gave when its details were last pulled in - lets Refresh from job tell an edited field from an untouched one.
+  jobValues     Json?
+  // How many times Create Report was used, and when last.
+  timesCreated  Int       @default(0)
+  lastCreatedAt DateTime?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company               @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  job     Job?                  @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  profile FailureReportProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  photos  FailureReportPhoto[]
+
+  @@index([companyId, updatedAt])
+  @@index([companyId, jobId])
+}
+
+model FailureReportPhoto {
+  id        String   @id @default(cuid())
+  companyId String
+  reportId  String
+  sortOrder Int
+  fileName  String?
+  mimeType  String   @default("image/jpeg")
+  width     Int
+  height    Int
+  // The photo as added (downsized to 1600 px, JPEG) or as rotated in the mark editor. Damage marks are kept separately so
+  // they can be edited later, and drawn on when the report is made.
+  data      Bytes
+  caption   String   @default("")
+  // [{ t: arrow|ellipse|box|text, x1, y1, x2?, y2?, c, th, text? }] in 0..1 photo coordinates.
+  marks     Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  report  FailureReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, sortOrder])
+}
+
+// A company profile = the logo, colours and details a report is printed with (our own company, or a client that wants its
+// own branding). Kept per Apollo company, so every user and every PC sees the same profiles.
+model FailureReportProfile {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String
+  legalName   String?
+  // PNG/JPEG data URL, trimmed and downsized in the browser.
+  logoData    String?
+  logoAspect  Float    @default(1.4)
+  logoDark    Boolean  @default(false)
+  accent      String   @default("F0B429")
+  dark        String   @default("14213D")
+  accentText  String?
+  // auto | light | band
+  headerStyle String   @default("auto")
+  // { address, phone, email, website, coreg, vat, extra }
+  details     Json     @default("{}")
+  footer      String?
+  showDetails Boolean  @default(false)
+  isDefault   Boolean  @default(false)
+  active      Boolean  @default(true)
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reports FailureReport[]
+
+  @@index([companyId, active])
 }

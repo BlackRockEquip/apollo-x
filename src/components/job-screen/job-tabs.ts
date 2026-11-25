@@ -9,6 +9,7 @@ export type JobTabKey =
   | "outwork"
   | "specifications"
   | "testing"
+  | "failure"
   | "attachments"
   | "pex"
   | "warranty"
@@ -24,6 +25,8 @@ export type JobTabInput = {
   showSpecifications: boolean;
   /** 2026-11-07, Testing Reports module: the job's dyno test sheets. Optional so screens that do not know about it need no change. */
   showTesting?: boolean;
+  /** 2026-11-25, Failure Reports module: the job's photo failure reports. Optional so screens that do not know about it need no change. */
+  showFailureReports?: boolean;
   showPex: boolean;
   showWarranty: boolean;
   showActivity: boolean;
@@ -38,7 +41,7 @@ export type JobTabInput = {
   activityCount?: number;
 };
 
-export const JOB_TAB_KEYS: JobTabKey[] = ["overview", "parts", "pickslips", "followup", "outwork", "specifications", "testing", "attachments", "pex", "warranty", "activity"];
+export const JOB_TAB_KEYS: JobTabKey[] = ["overview", "parts", "pickslips", "followup", "outwork", "specifications", "testing", "failure", "attachments", "pex", "warranty", "activity"];
 
 export function buildJobTabs(input: JobTabInput): JobTab[] {
   const itemView = !!input.itemView;
@@ -49,6 +52,7 @@ export function buildJobTabs(input: JobTabInput): JobTab[] {
   if (input.showOutwork) tabs.push({ key: "outwork", label: "Outwork", count: input.outworkCount });
   if (input.showSpecifications) tabs.push({ key: "specifications", label: "Specifications", ...(itemView && typeof input.reportsCount === "number" ? { count: input.reportsCount } : {}) });
   if (input.showTesting) tabs.push({ key: "testing", label: "Testing" });
+  if (input.showFailureReports) tabs.push({ key: "failure", label: "Failure reports" });
   tabs.push({ key: "attachments", label: itemView ? "Photos & files" : "Photos & attachments", count: input.attachmentsCount });
   if (input.showPex) tabs.push({ key: "pex", label: "PEX" });
   if (input.showWarranty) tabs.push({ key: "warranty", label: "Warranty" });

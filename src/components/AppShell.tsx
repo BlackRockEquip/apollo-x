@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot, HandCoins } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot, HandCoins, FileImage } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
@@ -125,12 +125,13 @@ const NAV_GROUPS: NavGroup[] = [
   // Parts Outstanding), Outwork, PEX Stock, PEX Tracking. Parts and Outwork
   // keep the old Suppliers-section rule: hidden for a Mechanic (see
   // hiddenForMechanic and requireNotMechanicPage on those pages).
-  { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", permission: "JOB_KITS_VIEW", icon: PackageOpen }, { key: "parts", label: "Parts", href: "/parts", module: "JOB_PARTS", permission: "JOBS_VIEW", icon: Package, hiddenForMechanic: true }, { key: "outwork", label: "Outwork", href: "/outwork", module: "OUTWORK", permission: "JOBS_VIEW", icon: Truck, hiddenForMechanic: true }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW", icon: Repeat }] },
+  { key: "jobs", label: "Jobs", icon: BriefcaseBusiness, items: [{ key: "jobs", label: "Jobs & WIP", href: "/jobs", module: "JOBS_WIP", permission: "JOBS_VIEW", icon: BriefcaseBusiness }, { key: "job-kits", label: "Job Kits", href: "/job-kits", module: "JOB_KITS", permission: "JOB_KITS_VIEW", icon: PackageOpen }, { key: "parts", label: "Parts", href: "/parts", module: "JOB_PARTS", permission: "JOBS_VIEW", icon: Package, hiddenForMechanic: true }, { key: "outwork", label: "Outwork", href: "/outwork", module: "OUTWORK", permission: "JOBS_VIEW", icon: Truck, hiddenForMechanic: true }, { key: "failure-reports", label: "Failure Reports", href: "/failure-reports", module: "FAILURE_REPORTS", permission: "JOBS_VIEW", icon: FileImage }, { key: "pex-stock", label: "PEX Stock", href: "/pex-stock", module: "PEX_STOCK", permission: "PEX_STOCK_VIEW", icon: Repeat }, { key: "pex-tracking", label: "PEX Tracking", href: "/pex-tracking", module: "PEX_TRACKING", permission: "PEX_TRACKING_VIEW", icon: Repeat }] },
   // 2026-09-10 — Parts Catalog folded into Stock Levels (single merged
   // page at /inventory: catalog fields + stock columns + bin location +
   // create/edit/delete), so its own nav item is gone; /parts now redirects
   // there (see src/app/(tenant)/parts/page.tsx).
   { key: "inventory", label: "Inventory", icon: Boxes, items: [{ key: "inventory", label: "Stock Levels", href: "/inventory", module: "INVENTORY", permission: "INVENTORY_VIEW", icon: Boxes }, { key: "storage-locations", label: "Storage Locations", href: "/storage-locations", module: "STORAGE", permission: "STORAGE_LOCATIONS_VIEW", icon: MapPin }, { key: "manufacturers", label: "Manufacturers", href: "/manufacturers", module: "INVENTORY", permission: "MANUFACTURERS_VIEW", icon: Factory }] },
+  // 2026-11-25: Failure Reports (photo failure reports, the Failure Report Builder as a module) sits in the Jobs group after Outwork.
   // 2026-11-07, Testing Reports (transmission dyno test sheets). Its own sidebar group so a Testing Technician, who holds nothing
   // else, does not see a "Jobs" group with a single item in it.
   // 2026-11-12: split by what is tested - Transmissions (the existing test sheets), Engines, Brakes and Torque Converters (see lib/testing/nav.ts).

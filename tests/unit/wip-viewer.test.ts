@@ -63,8 +63,8 @@ describe("WIP View (View Only) is offered to both builds", () => {
     expect(tenantRoleLabelsFor("WORKSHOP").WIP_VIEWER).toBe("WIP View (View Only)");
     expect(tenantRoleLabelsFor("ENGINEERING").WIP_VIEWER).toBe("WIP View (View Only)");
   });
-  it("Workshop keeps its other user types", () => {
-    expect(tenantRolesFor("WORKSHOP")).toEqual(["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "FINANCE", "WIP_VIEWER"]);
+  it("Workshop keeps its other user types (Finance is no longer offered, Testing Technician is)", () => {
+    expect(tenantRolesFor("WORKSHOP")).toEqual(["COMPANY_ADMIN", "MANAGER", "USER", "STORE_CONTROLLER", "SALES", "WIP_VIEWER", "TESTING_TECHNICIAN"]);
   });
   it("Workshop view-only users see the Mechanic ETA date wording", () => {
     const labels = wipColumnLabelsFor("WORKSHOP");

@@ -50,6 +50,7 @@ import { PexAllocatedPill, PexStatusPill, pexStatusLabel, StatusPill, WarrantySt
 import { useTenantPermissions } from "@/components/AppShell";
 import { JobDimensionReports } from "@/components/JobDimensionReports";
 import { JobTestingCard } from "@/components/testing/JobTestingCard";
+import { JobFailureReportsCard } from "@/components/failure-reports/JobFailureReportsCard";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { TableColumnFilters } from "@/components/TableColumnFilters";
 import { partLineQuantities } from "@/lib/jobs/part-line-quantities";
@@ -5475,6 +5476,16 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     />
   ) : null;
 
+  // 2026-11-25, Failure Reports module: the job's photo failure reports. Hidden when the module is off for the company or user.
+  const failureAccess = accessOf("FAILURE_REPORTS");
+  const failureReportsSection = job && failureAccess !== "DENIED" && tenantPermissions.has("JOBS_VIEW") ? (
+    <JobFailureReportsCard
+      jobId={job.id}
+      jobLabel={String(job.jobNumber || job.draftNumber || "")}
+      canEdit={failureAccess === "FULL" && tenantPermissions.has("JOBS_EDIT")}
+    />
+  ) : null;
+
   const fieldServiceSection = job && fieldLayout ? (
     <section className="detail-panel">
       <header><div><h2>Field service</h2><p>Who is going, when, and what was done.</p></div></header>
@@ -5542,6 +5553,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
     showOutwork: !!outworkSection,
     showSpecifications: !!specificationsSection,
     showTesting: !!testingSection,
+    showFailureReports: !!failureReportsSection,
     showPex: hasPexPanel,
     showWarranty: warrantyOn,
     showActivity: !!activitySection,
@@ -6605,6 +6617,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
           {activeTab === "outwork" && outworkSection}
           {activeTab === "specifications" && specificationsSection}
           {activeTab === "testing" && testingSection}
+          {activeTab === "failure" && failureReportsSection}
 
           {/* 2026-10-06 — user request: Attachments and Send to PEX side by
               side. The PEX panels (mutually exclusive: Send job to PEX / In PEX

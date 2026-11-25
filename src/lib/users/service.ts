@@ -73,6 +73,7 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   SPECIFICATIONS: "Engineering",
   TESTING_REPORTS: "Workshop",
   COMMISSIONS: "Commercial",
+  FAILURE_REPORTS: "Workshop",
 };
 
 export async function companyEntitledModules(companyId: string) {
@@ -127,6 +128,8 @@ function modulePermissions(moduleKey: ModuleKey) {
     // 2026-11-25: none on purpose. COMMISSIONS_* belong to the Company Admin role and the module is gated by its own opt-in switch
     // (src/lib/commissions/access.ts), so a module save never sweeps or grants them.
     COMMISSIONS: [],
+    // 2026-11-25: Failure Reports uses the job permissions (JOBS_VIEW / JOBS_EDIT), like Job parts - nothing of its own to sweep.
+    FAILURE_REPORTS: [],
   };
   return new Set(prefixMap[moduleKey] ?? []);
 }
