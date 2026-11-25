@@ -31,6 +31,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   PICK_SLIPS: "Pick Slips",
   SPECIFICATIONS: "Specifications",
   TESTING_REPORTS: "Testing Reports",
+  COMMISSIONS: "Commissions",
 };
 
 export const TENANT_ROLE_LABELS: Record<TenantRole, string> = {

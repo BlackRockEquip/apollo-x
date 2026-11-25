@@ -41,6 +41,9 @@ export const TENANT_PERMISSIONS = [
   "REPORTS_VIEW", "REPORTS_EXPORT", "USERS_MANAGE", "SETTINGS_MANAGE", "AUDIT_VIEW",
   // 2026-11-07, Testing Reports: see the reports, fill in and complete them, and (Admin / Manager) change the spec templates.
   "TESTING_VIEW", "TESTING_EDIT", "TESTING_MANAGE",
+  // 2026-11-25, Commissions: see the commission tracker, and add / change lines, fuel, rep rates and payouts. Company Admins only
+  // (and then only those with the module switched on in their user profile - see src/lib/commissions/access.ts).
+  "COMMISSIONS_VIEW", "COMMISSIONS_EDIT",
 ] as const;
 
 export type TenantPermission = (typeof TENANT_PERMISSIONS)[number];
@@ -75,11 +78,13 @@ const MANAGER_SETTINGS_PERMISSIONS = new Set<TenantPermission>([
   "SETTINGS_MANAGE", "USERS_MANAGE", "COMPANY_SETTINGS_VIEW", "COMPANY_SETTINGS_EDIT", "NUMBERING_VIEW", "NUMBERING_EDIT",
   "TAX_CODES_VIEW", "TAX_CODES_CREATE", "TAX_CODES_EDIT", "COMMERCIAL_TERMS_VIEW", "COMMERCIAL_TERMS_CREATE", "COMMERCIAL_TERMS_EDIT",
 ]);
+// 2026-11-25: commission figures (sales, profit, pay) are for Company Admins only, so a Manager never holds them.
+const COMPANY_ADMIN_ONLY_PERMISSIONS = new Set<TenantPermission>(["COMMISSIONS_VIEW", "COMMISSIONS_EDIT"]);
 const MANAGER_KEPT_DEACTIVATIONS = new Set<TenantPermission>([
   "CUSTOMER_BRANCH_DEACTIVATE", "CUSTOMER_CONTACT_DEACTIVATE", "CUSTOMER_ADDRESS_DEACTIVATE", "SUPPLIER_CONTACT_DEACTIVATE", "SUPPLIER_ADDRESS_DEACTIVATE",
 ]);
 const MANAGER = new Set<TenantPermission>(TENANT_PERMISSIONS.filter((permission) => {
-  if (MANAGER_SETTINGS_PERMISSIONS.has(permission)) return false;
+  if (MANAGER_SETTINGS_PERMISSIONS.has(permission) || COMPANY_ADMIN_ONLY_PERMISSIONS.has(permission)) return false;
   if (permission.endsWith("_DEACTIVATE") || permission.endsWith("_DELETE")) return MANAGER_KEPT_DEACTIVATIONS.has(permission);
   return true;
 }));

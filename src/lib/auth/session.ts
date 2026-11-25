@@ -17,6 +17,7 @@ import {
 import { evaluateModuleAccess, type ModuleAccessMode } from "@/lib/entitlements/policy";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { applyTileDependencies } from "@/lib/builds/definitions";
+import { commissionsAllowedForMember } from "@/lib/commissions/access";
 
 export async function createSession(userId: string, membershipId: string | null, supportAccessId: string | null = null) {
   const user = await prisma.userIdentity.findUniqueOrThrow({ where: { id: userId }, select: { sessionVersion: true } });
@@ -120,6 +121,12 @@ export async function resolveSessionToken(token: string, database: SessionDataba
       for (const key of userDisabledModules(session.membership.permissions)) {
         if (moduleAccess.has(key as ModuleKey)) moduleAccess.set(key as ModuleKey, "DENIED");
       }
+    }
+    // 2026-11-25: Commissions is opt-in per user and for Company Admins only (see src/lib/commissions/access.ts). Whatever the
+    // company licence says, it is denied unless this member is a Company Admin with it switched on in their profile; never in a
+    // platform support session.
+    if (!session.membership || !commissionsAllowedForMember({ role: session.membership.role, rows: session.membership.permissions, supportSession: Boolean(support) })) {
+      moduleAccess.set("COMMISSIONS", "DENIED");
     }
     applyTileDependencies(moduleAccess);
   }

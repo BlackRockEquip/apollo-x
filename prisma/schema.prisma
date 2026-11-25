@@ -75,6 +75,9 @@ enum ModuleKey {
   SPECIFICATIONS
   // 2026-11-07 — Testing Reports (transmission dyno test sheets). Switched per company like the other optional tiles.
   TESTING_REPORTS
+  // 2026-11-25 — Commissions (sales rep commission tracking). Switched per company like the other optional tiles, and then
+  // visible only to Company Admins who have it switched on in their own user profile (see src/lib/commissions/access.ts).
+  COMMISSIONS
 }
 
 // The platform hosts more than one product line under one shared
@@ -637,6 +640,10 @@ model Company {
   jobKits           JobKit[]
   mechanics         Mechanic[]
   salesRepresentatives SalesRepresentative[]
+  commissionRepSettings CommissionRepSetting[]
+  commissionLines       CommissionLine[]
+  commissionFuelMonths  CommissionFuelMonth[]
+  commissionPayouts     CommissionPayout[]
   jobKitLines       JobKitLine[]
   jobDimensionReports JobDimensionReport[]
   testSpecTemplates TestSpecTemplate[]
@@ -1810,6 +1817,7 @@ model Job {
   stripMechanic       Mechanic?     @relation("JobStripMechanic", fields: [stripMechanicId], references: [id], onDelete: SetNull)
   buildMechanic       Mechanic?     @relation("JobBuildMechanic", fields: [buildMechanicId], references: [id], onDelete: SetNull)
   salesRepresentative SalesRepresentative? @relation(fields: [salesRepresentativeId], references: [id], onDelete: SetNull)
+  commissionLines     CommissionLine[]
   createdBy           UserIdentity  @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy           UserIdentity  @relation("JobUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   closedBy            UserIdentity? @relation("JobClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
@@ -1992,6 +2000,11 @@ model SalesRepresentative {
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   jobs    Job[]
+  // 2026-11-25 — Commissions module.
+  commissionSetting    CommissionRepSetting?
+  commissionLines      CommissionLine[]
+  commissionFuelMonths CommissionFuelMonth[]
+  commissionPayouts    CommissionPayout[]
 
   @@unique([companyId, name])
   @@index([companyId, active])
@@ -3368,4 +3381,124 @@ model TestReport {
   @@unique([companyId, number])
   @@index([companyId, status])
   @@index([companyId, jobId])
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-25 — Commissions module (sales rep commission tracking), built from the company's own commission spreadsheet.
+// One CommissionLine per invoiced job for one sales rep. Profit = invoices - costs - fuel charge - other expenses.
+// Each month starts at minus the rep's monthly target (their cost to company); every line's profit moves that balance, and
+// commission = rate x whatever the month ends above the target (rate x every line's profit when the rep has no target).
+// The maths lives in src/lib/commissions/calc.ts. Money is stored ex VAT, in the company currency.
+// ---------------------------------------------------------------------------
+model CommissionRepSetting {
+  id                    String   @id @default(cuid())
+  companyId             String
+  salesRepresentativeId String   @unique
+  // 0.15 = 15%
+  rate                  Decimal  @db.Decimal(6, 4)
+  // 0 = no target: commission on every line's profit.
+  monthlyTarget         Decimal  @default(0) @db.Decimal(14, 2)
+  updatedById           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  salesRepresentative SalesRepresentative @relation(fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+}
+
+model CommissionLine {
+  id                    String    @id @default(cuid())
+  companyId             String
+  salesRepresentativeId String
+  // Optional link to the job in Apollo X; jobReference is what is shown (BRE1178), so lines can be added for jobs not in the system.
+  jobId                 String?
+  jobReference          String
+  description           String?
+  // "YYYY-MM" of the earliest invoice date: the month whose target this line counts towards. Set by the service on every save.
+  periodMonth           String
+  fuelCharge            Decimal   @default(0) @db.Decimal(14, 2)
+  otherExpenses         Decimal   @default(0) @db.Decimal(14, 2)
+  otherExpensesNote     String?
+  // Only used for a rep with no target: a different rate for this line, or no commission at all.
+  rateOverride          Decimal?  @db.Decimal(6, 4)
+  noCommission          Boolean   @default(false)
+  notes                 String?
+  createdById           String?
+  updatedById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  salesRepresentative SalesRepresentative @relation(fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
+  job                 Job?                @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  invoices            CommissionInvoice[]
+  costs               CommissionCost[]
+
+  @@index([companyId, salesRepresentativeId, periodMonth])
+  @@index([companyId, periodMonth])
+}
+
+model CommissionInvoice {
+  id            String         @id @default(cuid())
+  lineId        String
+  invoiceNumber String
+  invoicedOn    DateTime       @db.Date
+  amountExVat   Decimal        @db.Decimal(14, 2)
+  // The client's final payment for this invoice; commission is due at the end of the month after the last one is paid.
+  clientPaidOn  DateTime?      @db.Date
+  sortOrder     Int            @default(0)
+
+  line CommissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+}
+
+model CommissionCost {
+  id          String         @id @default(cuid())
+  lineId      String
+  description String?
+  amount      Decimal        @db.Decimal(14, 2)
+  sortOrder   Int            @default(0)
+
+  line CommissionLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+}
+
+// The rep's own fuel spend for a month. For keeping an eye on cost only: never taken off commission.
+model CommissionFuelMonth {
+  id                    String   @id @default(cuid())
+  companyId             String
+  salesRepresentativeId String
+  month                 String
+  amount                Decimal  @db.Decimal(14, 2)
+  updatedById           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  salesRepresentative SalesRepresentative @relation(fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
+
+  @@unique([salesRepresentativeId, month])
+  @@index([companyId])
+}
+
+// Commission paid to a rep for a month (several rows for one month = part payments).
+model CommissionPayout {
+  id                    String   @id @default(cuid())
+  companyId             String
+  salesRepresentativeId String
+  month                 String
+  amount                Decimal  @db.Decimal(14, 2)
+  paidOn                DateTime @db.Date
+  note                  String?
+  createdById           String?
+  createdAt             DateTime @default(now())
+
+  company             Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  salesRepresentative SalesRepresentative @relation(fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, salesRepresentativeId, month])
 }

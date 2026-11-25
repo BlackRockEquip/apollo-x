@@ -46,6 +46,9 @@ export const TILES: Record<string, BuildTile> = {
   OUTWORK: { id: "OUTWORK", label: "Outwork", note: "Jobs sent to other shops", modules: ["OUTWORK"] },
   FIELD_SERVICE: { id: "FIELD_SERVICE", label: "Field service", note: "Field service jobs and field report", modules: ["FIELD_SERVICE"] },
   TESTING_REPORTS: { id: "TESTING_REPORTS", label: "Testing Reports", note: "Transmission dyno test sheets checked against the spec for each machine model, kept with the job", modules: ["TESTING_REPORTS"] },
+  // 2026-11-25: Commissions. Switching the tile on makes it available to the company; each Company Admin who should see it then
+  // has it switched on in their own user profile (it is never on by default - see src/lib/commissions/access.ts).
+  COMMISSIONS: { id: "COMMISSIONS", label: "Commissions", note: "Sales rep commission per month against their target. Company Admins only, switched on per admin in their user profile", modules: ["COMMISSIONS"] },
   SPECIFICATIONS: { id: "SPECIFICATIONS", label: "Specifications", note: "Dimensions, tolerances and spec notes, with before-work and after-work report uploads", modules: ["SPECIFICATIONS"] },
 };
 
@@ -68,7 +71,7 @@ export const BUILDS: Record<IndustryBuildId, BuildDefinition> = {
     label: "Workshop Business",
     description: "Repair, rebuild and field service workshops that quote parts, issue pick slips and track components through the shop.",
     example: "Repair and rebuild workshop",
-    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE", "TESTING_REPORTS"],
+    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE", "TESTING_REPORTS", "COMMISSIONS"],
     defaultOn: ["JOB_PARTS", "RFQ", "OUTWORK", "FIELD_SERVICE"],
     wording: ["Job", "Component", "Pick slip", "Delivery note", "Mechanic"],
   },
@@ -77,7 +80,7 @@ export const BUILDS: Record<IndustryBuildId, BuildDefinition> = {
     label: "Engineering Business",
     description: "Engineering shops that run work through the same job flow as a workshop, without PEX inventory, supplier RFQs or field service.",
     example: "Subset of the Workshop modules",
-    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "STOCK", "PICK_SLIPS", "OUTWORK", "SPECIFICATIONS"],
+    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "STOCK", "PICK_SLIPS", "OUTWORK", "SPECIFICATIONS", "COMMISSIONS"],
     defaultOn: ["JOB_PARTS", "OUTWORK", "SPECIFICATIONS"],
     wording: ["Job", "Pick slip", "Delivery note"],
   },

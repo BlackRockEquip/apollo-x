@@ -20,6 +20,14 @@ export class TestingError extends Error {
   }
 }
 
+// 2026-11-25 — Commissions (commissions/service.ts): a rule of the module was broken. Carries its own plain-words message.
+export class CommissionError extends Error {
+  constructor(public code: string, message: string, public status: 400 | 409 = 400) {
+    super(message);
+    this.name = "CommissionError";
+  }
+}
+
 // 2026-09-29 — SMTP "Test connection" button (company-settings-service.ts's
 // testCompanySmtpConnection). A failed test isn't really a 5xx server
 // error and isn't a Zod validation error either — it's the SMTP server (or
@@ -36,6 +44,7 @@ export class SmtpTestError extends Error {
 
 export function apiError(error: unknown) {
   if (error instanceof StockError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: 409 });
+  if (error instanceof CommissionError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
   if (error instanceof TestingError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
   if (error instanceof SmtpTestError) return NextResponse.json({ error: { code: "SMTP_TEST_FAILED", message: error.message } }, { status: 422 });
   if (error instanceof AuthorizationError) return NextResponse.json({ error: { code: "FORBIDDEN", message: error.message } }, { status: 403 });
@@ -114,6 +123,8 @@ export function apiError(error: unknown) {
   if (error instanceof Error && error.message === "LOCATION_CODE_EXISTS") return NextResponse.json({ error: { code: "LOCATION_CODE_EXISTS", message: "A storage location with that code already exists. Use a different code." } }, { status: 409 });
   if (error instanceof Error && error.message === "LOCATION_CODE_EXISTS_INACTIVE") return NextResponse.json({ error: { code: "LOCATION_CODE_EXISTS_INACTIVE", message: "A storage location with that code already exists but is inactive (deleted locations that are still in use are kept as inactive). Set the status filter to All or Inactive to find and reactivate it, or use a different code." } }, { status: 409 });
   if (error instanceof Error && error.message === "SEQUENCE_TYPE_EXISTS") return NextResponse.json({ error: { code: "SEQUENCE_TYPE_EXISTS", message: "A numbering sequence for that document type already exists. Edit the existing one instead." } }, { status: 409 });
+  // 2026-11-25 — Commissions module (commissions/service.ts, users/service.ts).
+  if (error instanceof Error && error.message === "SALES_REP_HAS_COMMISSIONS") return NextResponse.json({ error: { code: "SALES_REP_HAS_COMMISSIONS", message: "This sales representative has commission records, so they can't be deleted. Switch them off (inactive) instead." } }, { status: 409 });
   if (error instanceof Error && error.message === "ROLE_NOT_ALLOWED") return NextResponse.json({ error: { code: "ROLE_NOT_ALLOWED", message: "That user type is not available for this company." } }, { status: 400 });
   // 2026-10-20 - Email button on the Jobs & WIP table (jobs/wip-email.ts).
   if (error instanceof Error && error.message === "INVALID_RECIPIENTS") return NextResponse.json({ error: { code: "INVALID_RECIPIENTS", message: "Enter a valid email address (up to 5, separated by commas)." } }, { status: 400 });

@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot, HandCoins } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
@@ -135,6 +135,9 @@ const NAV_GROUPS: NavGroup[] = [
   // else, does not see a "Jobs" group with a single item in it.
   // 2026-11-12: split by what is tested - Transmissions (the existing test sheets), Engines, Brakes and Torque Converters (see lib/testing/nav.ts).
   { key: "testing", label: "Testing", icon: Gauge, items: TESTING_KINDS.map((kind) => ({ key: `testing-${kind.key}`, label: kind.label, href: kind.href, module: "TESTING_REPORTS" as const, permission: "TESTING_VIEW" as const, icon: TESTING_ICONS[kind.key] })) },
+  // 2026-11-25: Commissions - only shown to a Company Admin with the module switched on for the company and in their own profile
+  // (session.ts denies the module for everyone else, so this filter hides it).
+  { key: "commissions", label: "Sales", icon: HandCoins, items: [{ key: "commissions", label: "Commissions", href: "/commissions", module: "COMMISSIONS", permission: "COMMISSIONS_VIEW", icon: HandCoins }] },
   { key: "settings", label: "Settings", icon: Settings, footer: true, items: SETTINGS_NAV_ITEMS.map((item) => ({ ...item, icon: SETTINGS_ICONS[item.key] ?? Settings })) },
 ];
 

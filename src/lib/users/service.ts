@@ -8,6 +8,7 @@ import { MODULE_LABELS, tenantRoleLabelsFor, tenantRolesFor } from "@/lib/consta
 import { applyTileDependencies, buildTiles, isIndustryBuildId, tileWorking, type IndustryBuildId } from "@/lib/builds/definitions";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/security/passwords";
+import { COMMISSIONS_OPT_IN, commissionsAllowedForMember, hasCommissionsOptIn, isOptInModule, optInRows, roleCanOptIn } from "@/lib/commissions/access";
 
 const userInput = z.object({
   email: z.string().trim().email(),
@@ -71,6 +72,7 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   PICK_SLIPS: "Workshop",
   SPECIFICATIONS: "Engineering",
   TESTING_REPORTS: "Workshop",
+  COMMISSIONS: "Commercial",
 };
 
 export async function companyEntitledModules(companyId: string) {
@@ -122,6 +124,9 @@ function modulePermissions(moduleKey: ModuleKey) {
     PICK_SLIPS: [],
     SPECIFICATIONS: [],
     TESTING_REPORTS: TENANT_PERMISSIONS.filter((p) => p.startsWith("TESTING_")),
+    // 2026-11-25: none on purpose. COMMISSIONS_* belong to the Company Admin role and the module is gated by its own opt-in switch
+    // (src/lib/commissions/access.ts), so a module save never sweeps or grants them.
+    COMMISSIONS: [],
   };
   return new Set(prefixMap[moduleKey] ?? []);
 }
@@ -176,7 +181,9 @@ function computeOverrides(role: TenantRole, allowedModules: ModuleKey[], explici
 // for a user when it has not been switched off for them and, for modules that carry permissions, at least one of those
 // permissions is in effect. Modules without permissions (RFQs, Outwork, Pick slips, Specifications...) are controlled only by
 // the MODULE_OFF marker (see permissions.ts).
-function moduleIsOn(moduleKey: ModuleKey, effective: ReadonlySet<string>, off: ReadonlySet<string>) {
+function moduleIsOn(moduleKey: ModuleKey, effective: ReadonlySet<string>, off: ReadonlySet<string>, role?: TenantRole) {
+  // 2026-11-25: an opt-in module (Commissions) is on only when switched on for the user, and only for a Company Admin.
+  if (isOptInModule(moduleKey)) return roleCanOptIn(role) && effective.has(COMMISSIONS_OPT_IN);
   if (off.has(moduleKey)) return false;
   const permissions = modulePermissions(moduleKey);
   if (permissions.size === 0) return moduleKey === "DASHBOARD" ? effective.has("DASHBOARD_VIEW") : true;
@@ -198,12 +205,15 @@ function switchableModuleKeys(build: IndustryBuildId, entitled: ReadonlySet<Modu
 // The permission override rows to store for a save, plus a MODULE_OFF marker for every switchable module that is off.
 // Modules that are not on the screen (their tile is not enabled for the company) are left as they are: never revoked, and
 // any switch already stored for them is kept.
-function overridesWithModuleSwitches(role: TenantRole, switchable: ModuleKey[], moduleKeys: ModuleKey[], explicit: Array<{ permission: string; allowed: boolean }>, existingOff: ReadonlySet<string> = new Set()) {
+// 2026-11-25: opt-in modules (Commissions) never get a MODULE_OFF marker; they get a MODULE_ON marker when switched on for a user
+// whose type allows it. When the Commissions tile is not on the screen (not enabled for the company) an existing switch is kept.
+function overridesWithModuleSwitches(role: TenantRole, switchable: ModuleKey[], moduleKeys: ModuleKey[], explicit: Array<{ permission: string; allowed: boolean }>, existingOff: ReadonlySet<string> = new Set(), keepOptIn = false) {
   const allowedForPermissions = [...moduleKeys, ...Object.values(ModuleKey).filter((key) => !switchable.includes(key))];
   const rows = computeOverrides(role, allowedForPermissions, explicit.filter((row) => !row.permission.startsWith(MODULE_OFF_PREFIX)));
-  const off = new Set<string>(switchable.filter((key) => !moduleKeys.includes(key)));
-  for (const key of existingOff) if (!switchable.includes(key as ModuleKey)) off.add(key);
-  return [...rows, ...Array.from(off).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
+  const off = new Set<string>(switchable.filter((key) => !moduleKeys.includes(key) && !isOptInModule(key)));
+  for (const key of existingOff) if (!switchable.includes(key as ModuleKey) && !isOptInModule(key)) off.add(key);
+  const optIn = switchable.includes("COMMISSIONS") ? optInRows(role, moduleKeys) : (keepOptIn && roleCanOptIn(role) ? [{ permission: COMMISSIONS_OPT_IN, allowed: true }] : []);
+  return [...rows, ...Array.from(off).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false })), ...optIn];
 }
 
 // 2026-10-19, user report: "when enabling and disabling other modules nothing happens, e.g. Job WIP" (Store Controller). A module
@@ -245,7 +255,7 @@ export async function listTenantUsersCore(companyId: string) {
   return memberships.map((membership) => {
     const effective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[membership.role], membership.permissions);
     const off = userDisabledModules(membership.permissions);
-    const modules = Array.from(entitledModules).filter((moduleKey) => moduleIsOn(moduleKey, effective, off));
+    const modules = Array.from(entitledModules).filter((moduleKey) => moduleIsOn(moduleKey, effective, off, membership.role));
     return { id: membership.id, userId: membership.userId, email: membership.user.email, displayName: membership.user.displayName, active: membership.user.active, membershipStatus: membership.status, role: membership.role, roleLabel: roleLabels[membership.role], moduleKeys: modules, moduleLabels: modules.map((row) => MODULE_LABELS[row]), permissionOverrides: membership.permissions.filter((row) => !row.permission.startsWith(MODULE_OFF_PREFIX)) };
   });
 }
@@ -273,21 +283,24 @@ export async function getTenantUserEditorDataCore(companyId: string, membershipI
   const effectiveAccess = new Map<ModuleKey, "FULL" | "READ_ONLY" | "DENIED">(Object.values(ModuleKey).map((key) => [key, entitledSet.has(key) ? "FULL" : "DENIED"]));
   const userOff = editorMembership ? userDisabledModules(editorMembership.permissions) : new Set<string>();
   for (const key of userOff) effectiveAccess.set(key as ModuleKey, "DENIED");
+  if (editorMembership && !commissionsAllowedForMember({ role: editorMembership.role, rows: editorMembership.permissions })) effectiveAccess.set("COMMISSIONS", "DENIED");
   applyTileDependencies(effectiveAccess);
   const tileState = (tile: (typeof shownTiles)[number]): { working: boolean; reason: string } => {
     const main = tile.modules[0];
     if ((effectiveAccess.get(main) ?? "DENIED") !== "DENIED") return { working: true, reason: "" };
     if (!entitledSet.has(main)) return { working: false, reason: "not licensed for this company" };
+    if (isOptInModule(main) && editorMembership && !roleCanOptIn(editorMembership.role)) return { working: false, reason: "Company Administrators only" };
+    if (isOptInModule(main) && editorMembership && !hasCommissionsOptIn(editorMembership.permissions)) return { working: false, reason: "not switched on for this user" };
     if (userOff.has(main)) return { working: false, reason: "switched off for this user" };
     const missingTiles = (tile.requires ?? []).map((id) => shownTiles.find((t) => t.id === id)).filter((t) => !t || (effectiveAccess.get(t.modules[0]) ?? "DENIED") === "DENIED").map((t) => t?.label ?? "a required module");
     return { working: false, reason: missingTiles.length > 0 ? `needs ${missingTiles.join(" and ")}` : "turned off" };
   };
-  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, requires: tile.requires ?? [], state: editorMembership ? tileState(tile) : null, licensed: true, roleHas: editorEffective ? tileRoleHas(tile.modules, editorEffective) : true, permissionedKeys: tile.modules.filter((moduleKey) => modulePermissions(moduleKey).size > 0) }));
+  const tiles = shownTiles.map((tile) => ({ id: tile.id, label: tile.label, note: tile.note, core: Boolean(tile.core), moduleKeys: tile.modules, controllable: tile.modules, requires: tile.requires ?? [], state: editorMembership ? tileState(tile) : null, licensed: true, adminOnly: isOptInModule(tile.modules[0]), roleHas: editorEffective ? tileRoleHas(tile.modules, editorEffective) : true, permissionedKeys: tile.modules.filter((moduleKey) => modulePermissions(moduleKey).size > 0) }));
   const switchable = switchableModuleKeys(build, entitledSet);
   const editor = membershipId ? await prisma.companyMembership.findFirst({ where: { id: membershipId, companyId }, include: { user: true, permissions: true } }) : null;
   if (membershipId && !editor) throw new Error("NOT_FOUND");
   const selectedModuleKeys = editor
-    ? switchable.filter((moduleKey) => moduleIsOn(moduleKey, mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[editor.role], editor.permissions), userDisabledModules(editor.permissions)))
+    ? switchable.filter((moduleKey) => moduleIsOn(moduleKey, mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[editor.role], editor.permissions), userDisabledModules(editor.permissions), editor.role))
     : ["DASHBOARD", "JOBS_WIP"].filter((moduleKey) => entitled.includes(moduleKey as ModuleKey));
   return {
     availableModules,
@@ -372,7 +385,7 @@ export async function updateTenantUserCore(ctx: RequestContext, companyId: strin
       const roleAfter = input.role ?? before.role;
       const beforeOff = userDisabledModules(before.permissions);
       const beforeEffective = mergePermissionOverrides(DEFAULT_TENANT_PERMISSIONS[before.role], before.permissions);
-      const wasOn = new Set(switchable.filter((moduleKey) => moduleIsOn(moduleKey, beforeEffective, beforeOff)));
+      const wasOn = new Set(switchable.filter((moduleKey) => moduleIsOn(moduleKey, beforeEffective, beforeOff, before.role)));
       // Only a tile's main module grants access (Jobs & WIP, Stock levels, PEX Stock...); the extra modules behind a tile, such as
       // Job kits under "Job parts & ordering" (which Pick slips needs), are never granted on their own.
       const mainModules = new Set(buildTiles(build).map((tile) => tile.modules[0]));
@@ -381,12 +394,15 @@ export async function updateTenantUserCore(ctx: RequestContext, companyId: strin
       const explicit = new Map<string, { permission: string; allowed: boolean }>();
       // A tile switched off takes the access that was granted through it away again.
       const switchedOffGrants = new Set(Array.from(mainModules).filter((moduleKey) => switchable.includes(moduleKey) && !input.moduleKeys.includes(moduleKey)).flatMap((moduleKey) => Array.from(modulePermissions(moduleKey))));
-      for (const row of before.permissions) if (row.allowed && !row.permission.startsWith(MODULE_OFF_PREFIX) && !switchedOffGrants.has(row.permission)) explicit.set(row.permission, { permission: row.permission, allowed: true });
+      for (const row of before.permissions) if (row.allowed && !row.permission.startsWith(MODULE_OFF_PREFIX) && row.permission !== COMMISSIONS_OPT_IN && !switchedOffGrants.has(row.permission)) explicit.set(row.permission, { permission: row.permission, allowed: true });
       for (const row of grantsForNewModules(roleAfter, newlyOn)) explicit.set(row.permission, row);
       for (const row of input.permissionOverrides ?? []) explicit.set(row.permission, row);
+      // 2026-11-25: the Commissions switch is kept when the module switches were not sent, or the tile is not on the screen, as long
+      // as the user is (still) a Company Admin.
+      const keepOptIn = hasCommissionsOptIn(before.permissions);
       const overrides = input.moduleKeys
-        ? overridesWithModuleSwitches(roleAfter, switchable, input.moduleKeys, Array.from(explicit.values()), beforeOff)
-        : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false }))];
+        ? overridesWithModuleSwitches(roleAfter, switchable, input.moduleKeys, Array.from(explicit.values()), beforeOff, keepOptIn)
+        : [...computeOverrides(input.role ?? before.role, [], input.permissionOverrides ?? []), ...Array.from(userDisabledModules(before.permissions)).map((key) => ({ permission: `${MODULE_OFF_PREFIX}${key}`, allowed: false })), ...(keepOptIn && roleCanOptIn(roleAfter) ? [{ permission: COMMISSIONS_OPT_IN, allowed: true }] : [])];
       if (overrides.length > 0) await tx.membershipPermission.createMany({ data: overrides.map((row) => ({ membershipId, permission: row.permission, allowed: row.allowed })) });
     }
     await tx.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source, module: "USERS", entityType: "CompanyMembership", entityId: membershipId, action: "TENANT_USER_UPDATED", correlationId: ctx.correlationId, beforeData: JSON.parse(JSON.stringify({ ...before, user: { id: before.user.id, email: before.user.email, displayName: before.user.displayName, active: before.user.active } })) as Prisma.InputJsonValue, afterData: JSON.parse(JSON.stringify(membership)) as Prisma.InputJsonValue } });
@@ -551,7 +567,15 @@ export async function deleteSalesRepresentative(ctx: RequestContext, id: string)
   // Job.salesRepresentativeId is onDelete: SetNull, so deleting a sales
   // representative currently assigned to a job is never blocked — those
   // jobs just lose the assignment, same tradeoff as deleteMechanic.
-  await prisma.salesRepresentative.delete({ where: { id } });
+  // 2026-11-25: a rep with commission lines or payouts keeps their history - they can be switched off (inactive) instead. Their
+  // commission rate / target and monthly fuel entries are removed with them.
+  const commissionHistory = (await prisma.commissionLine.count({ where: { salesRepresentativeId: id } })) + (await prisma.commissionPayout.count({ where: { salesRepresentativeId: id } }));
+  if (commissionHistory > 0) throw new Error("SALES_REP_HAS_COMMISSIONS");
+  await prisma.$transaction([
+    prisma.commissionRepSetting.deleteMany({ where: { salesRepresentativeId: id } }),
+    prisma.commissionFuelMonth.deleteMany({ where: { salesRepresentativeId: id } }),
+    prisma.salesRepresentative.delete({ where: { id } }),
+  ]);
   await prisma.auditEvent.create({ data: { companyId, actorId: ctx.userId, supportAccessId: ctx.supportAccessId, source: "API", module: "USERS", entityType: "SalesRepresentative", entityId: id, action: "SALES_REPRESENTATIVE_DELETED", correlationId: ctx.correlationId, beforeData: { name: before.name } } });
   return { id };
 }

@@ -14,7 +14,14 @@ export type TileOption = {
   permissionedKeys?: string[];
   requires?: string[];
   state?: { working: boolean; reason: string } | null;
+  // 2026-11-25: an opt-in tile (Commissions) - off unless switched on, and only for a Company Administrator.
+  adminOnly?: boolean;
 };
+
+/** An admin-only tile cannot be switched on for any other user type. */
+export function tileBlockedForRole(tile: TileOption, role: string): boolean {
+  return Boolean(tile.adminOnly) && role !== "COMPANY_ADMIN";
+}
 
 /** The module keys that decide whether the tile is on for the user. */
 export function gateKeys(tile: TileOption): string[] {
@@ -49,8 +56,9 @@ export function toggleTile(tile: TileOption, selected: readonly string[]): strin
 }
 
 /** A new user starts with everything the company has switched on; the user type's own permissions still decide what they can do. */
+// 2026-11-25: opt-in tiles (Commissions) are left off - they are switched on one admin at a time on purpose.
 export function allModuleKeys(tiles: readonly TileOption[], availableModules: ReadonlyArray<{ moduleKey: string }> = []): string[] {
-  if (tiles.length > 0) return Array.from(new Set(tiles.flatMap((tile) => tile.controllable)));
+  if (tiles.length > 0) return Array.from(new Set(tiles.filter((tile) => !tile.adminOnly).flatMap((tile) => tile.controllable)));
   return availableModules.slice(0, 2).map((m) => m.moduleKey);
 }
 

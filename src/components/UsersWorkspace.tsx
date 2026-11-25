@@ -11,7 +11,7 @@ type UserRow = { id: string; email: string; displayName: string; active: boolean
 // 2026-10-16: module access is shown as the same module tiles the platform admin sees for this company (see PlatformIndustryBuild.tsx).
 // controllable = the module keys behind the tile that can be switched for a user (all of them - licensed or not).
 // Only tiles enabled for the company by the platform admin are sent at all.
-type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean; roleHas?: boolean; permissionedKeys?: string[]; requires?: string[]; state?: { working: boolean; reason: string } | null };
+type TileOption = { id: string; label: string; note: string; core: boolean; moduleKeys: string[]; controllable: string[]; licensed?: boolean; roleHas?: boolean; permissionedKeys?: string[]; requires?: string[]; state?: { working: boolean; reason: string } | null; adminOnly?: boolean };
 type EditorPayload = { availableModules: ModuleOption[]; industryBuild?: string; tiles?: TileOption[]; roles: Array<{ role: string; label: string }>; editor: null | { membershipId: string; email: string; displayName: string; role: string; active: boolean; membershipStatus: string; selectedModuleKeys: string[] } };
 
 type ListPayload = { users: UserRow[]; editor: EditorPayload };
@@ -19,7 +19,8 @@ type ListPayload = { users: UserRow[]; editor: EditorPayload };
 // A new user starts with every module the company has switched on; the user type's own permissions still decide what they can do.
 function defaultModuleKeys(seed: EditorPayload | null): string[] {
   if (!seed) return [];
-  if (seed.tiles && seed.tiles.length > 0) return Array.from(new Set(seed.tiles.flatMap((tile) => tile.controllable)));
+  // 2026-11-25: opt-in tiles (Commissions) stay off until switched on for a Company Admin on purpose.
+  if (seed.tiles && seed.tiles.length > 0) return Array.from(new Set(seed.tiles.filter((tile) => !tile.adminOnly).flatMap((tile) => tile.controllable)));
   return seed.availableModules.slice(0, 2).map((m) => m.moduleKey);
 }
 
@@ -372,7 +373,9 @@ export function UsersWorkspace({ canManageUsers = true }: { canManageUsers?: boo
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10, alignItems: "start" }}>
               {editorSeed!.tiles!.map((tile) => {
-                const controllable = tile.controllable.length > 0;
+                // 2026-11-25: Commissions can only be switched on for a Company Administrator.
+                const blocked = Boolean(tile.adminOnly) && form.role !== "COMPANY_ADMIN";
+                const controllable = tile.controllable.length > 0 && !blocked;
                 const roleHas = tile.roleHas !== false;
                 const keysOf = (t: TileOption) => (t.roleHas !== false ? t.controllable : (t.permissionedKeys ?? t.controllable));
                 const tileOn = (t: TileOption) => keysOf(t).length === 0 || keysOf(t).some((key) => form.selectedModuleKeys.includes(key));
@@ -380,7 +383,7 @@ export function UsersWorkspace({ canManageUsers = true }: { canManageUsers?: boo
                 // user the tile does not work, whatever its own switch says.
                 const missing = (tile.requires ?? []).map((id) => editorSeed!.tiles!.find((t) => t.id === id)).filter((t): t is TileOption => Boolean(t) && !tileOn(t as TileOption));
                 const gateKeys = keysOf(tile);
-                const on = controllable ? gateKeys.some((key) => form.selectedModuleKeys.includes(key)) : true;
+                const on = blocked ? false : controllable ? gateKeys.some((key) => form.selectedModuleKeys.includes(key)) : true;
                 const tone = !controllable ? { border: "1px solid var(--ink-300)", bg: "var(--ink-100)", box: "var(--ink-500)" }
                   : on ? { border: "2px solid var(--blue-700)", bg: "var(--blue-100)", box: "var(--blue-700)" }
                   : { border: "1px dashed var(--ink-300)", bg: "var(--surface)", box: "var(--ink-300)" };
@@ -393,7 +396,7 @@ export function UsersWorkspace({ canManageUsers = true }: { canManageUsers?: boo
                       <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                         <strong style={{ fontSize: 14, fontWeight: 600 }}>{tile.label}</strong>
                         <span style={{ fontSize: 12, color: "var(--ink-500)" }}>{tile.note}</span>
-                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{!controllable ? "Included – follows company licence" : `${on ? (missing.length > 0 ? "Switched on, but not working" : "Access") : "No access"}${tile.licensed === false ? " · not in company licence" : ""}`}</span>
+                        <span style={{ fontSize: 12, fontWeight: 650, color: on && controllable ? "var(--blue-700)" : "var(--ink-500)" }}>{blocked ? "Company Administrators only" : !controllable ? "Included – follows company licence" : `${on ? (missing.length > 0 ? "Switched on, but not working" : "Access") : tile.adminOnly ? "No access - switch on for each admin who should see it" : "No access"}${tile.licensed === false ? " · not in company licence" : ""}`}</span>
                         {tile.state && <span style={{ fontSize: 11, color: tile.state.working ? "var(--ink-500)" : "var(--amber-700, #92400e)" }}>Saved for this user: {tile.state.working ? "working" : `not working - ${tile.state.reason}`}</span>}
                         {on && controllable && missing.length > 0 && <span style={{ fontSize: 12, color: "var(--amber-700, #92400e)" }}>Needs {missing.map((t) => t.label).join(" and ")} switched on as well.</span>}
                       </span>

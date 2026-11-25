@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, KeyRound, Lock, MoreHorizontal, Plus, Search, ShieldAlert, Trash2, X } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
-import { allModuleKeys, filterUsers, missingTiles, moduleSummary, tileIsLocked, tileIsOn, toggleTile, userInitials, userStatus, type TileOption } from "@/lib/users/module-tiles";
+import { allModuleKeys, filterUsers, missingTiles, moduleSummary, tileBlockedForRole, tileIsLocked, tileIsOn, toggleTile, userInitials, userStatus, type TileOption } from "@/lib/users/module-tiles";
 
 // 2026-11-03, user request: "under platform admin, inside a company where I add users, it should allow me to manage users from this
 // screen, not tell me to enter the company users page" (mockup "Platform company view mockup", Users tab + Edit user drawer).
@@ -281,15 +281,16 @@ export function PlatformCompanyUsers({ companyId, companyActive, onCount }: { co
                 <div className="pcu-tiles">
                   {tiles.map((tile) => {
                     const locked = tileIsLocked(tile);
-                    const on = locked ? true : tileIsOn(tile, selected);
+                    const blocked = tileBlockedForRole(tile, form.role);
+                    const on = locked ? true : !blocked && tileIsOn(tile, selected);
                     const missing = on && !locked ? missingTiles(tile, tiles, selected) : [];
                     return (
-                      <button key={tile.id} type="button" className={`pcu-tile${on ? " on" : ""}${locked ? " locked" : ""}`} disabled={locked || !companyActive || busy} aria-pressed={on} onClick={() => update({ selectedModuleKeys: toggleTile(tile, selected) })}>
+                      <button key={tile.id} type="button" className={`pcu-tile${on ? " on" : ""}${locked ? " locked" : ""}`} disabled={locked || blocked || !companyActive || busy} aria-pressed={on} onClick={() => update({ selectedModuleKeys: toggleTile(tile, selected) })}>
                         <span className="pcu-tile-box">{locked ? <Lock size={11} /> : on ? <Check size={13} strokeWidth={3} /> : null}</span>
                         <span className="pcu-tile-text">
                           <b>{tile.label}</b>
                           <small>{tile.note}</small>
-                          <em>{locked ? "Included - follows the company licence" : on ? (missing.length > 0 ? "Switched on, but not working" : "Access") : "No access"}{tile.licensed === false ? " · not in company licence" : ""}</em>
+                          <em>{locked ? "Included - follows the company licence" : blocked ? "Company Administrators only" : on ? (missing.length > 0 ? "Switched on, but not working" : "Access") : tile.adminOnly ? "No access - switch on for each admin who should see it" : "No access"}{tile.licensed === false ? " · not in company licence" : ""}</em>
                           {tile.state && panel !== "new" && !tile.state.working ? <small className="warn">Saved for this user: not working - {tile.state.reason}</small> : null}
                           {missing.length > 0 ? <small className="warn">Needs {missing.map((t) => t.label).join(" and ")} switched on as well.</small> : null}
                         </span>
