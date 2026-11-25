@@ -52,6 +52,8 @@
 .cm-pill-OVERDUE { background: #fdecea; color: #9a1c12; }
 .cm-pill-PART_PAID { background: #fdecea; color: #9a1c12; }
 .cm-pill-PAID { background: #dcfce7; color: #087a55; }
+.cm-pill-OVERPAID { background: #fdecea; color: #9a1c12; }
+.cm-table tfoot td { border-top: 2px solid var(--ink-150, #e2e6ec); }
 
 .cm-table td, .cm-table th { white-space: nowrap; vertical-align: top; }
 .cm-table td.wrap { white-space: normal; min-width: 160px; }

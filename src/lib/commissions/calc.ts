@@ -28,7 +28,8 @@ export type CalcLine = {
   createdAt?: string;
 };
 export type CalcRep = { rate: number; monthlyTarget: number };
-export type MonthStatus = "NONE" | "WAITING_CLIENT" | "DUE" | "OVERDUE" | "PART_PAID" | "PAID";
+// OVERPAID (2026-11-25): more was paid out for the month than it works out to. Shown, never carried into another month.
+export type MonthStatus = "NONE" | "WAITING_CLIENT" | "DUE" | "OVERDUE" | "PART_PAID" | "PAID" | "OVERPAID";
 
 export type LineResult = {
   id: string;
@@ -57,6 +58,8 @@ export type MonthResult = {
   commission: number;
   paid: number;
   owed: number;
+  /** Paid out above what the month works out to (0 when not overpaid). Not carried into another month. */
+  overpaid: number;
   status: MonthStatus;
   /** "YYYY-MM-DD": end of the month after the last client payment, once every invoice in the month is paid. */
   dueOn: string | null;
@@ -140,8 +143,10 @@ export function computeMonth(month: string, rep: CalcRep, lines: readonly CalcLi
   const allPaid = allInvoices.length > 0 && paidInvoices === allInvoices.length;
   const lastPaid = allInvoices.map((inv) => inv.clientPaidOn).filter((d): d is string => Boolean(d)).sort().pop() ?? null;
   const dueOn = allPaid && lastPaid ? endOfFollowingMonth(lastPaid) : null;
+  const overpaid = money(Math.max(0, paidRounded - commission));
   let status: MonthStatus;
-  if (commission < 0.005) status = paidRounded > 0 ? "PAID" : "NONE";
+  if (overpaid >= 0.005) status = "OVERPAID";
+  else if (commission < 0.005) status = "NONE";
   else if (paidRounded >= commission - 0.005) status = "PAID";
   else if (paidRounded > 0) status = "PART_PAID";
   else if (dueOn) status = today > dueOn ? "OVERDUE" : "DUE";
@@ -159,6 +164,7 @@ export function computeMonth(month: string, rep: CalcRep, lines: readonly CalcLi
     commission,
     paid: paidRounded,
     owed,
+    overpaid,
     status,
     dueOn,
     paidInvoices,
@@ -195,4 +201,5 @@ export const MONTH_STATUS_LABELS: Record<MonthStatus, string> = {
   OVERDUE: "Overdue",
   PART_PAID: "Part paid",
   PAID: "Paid",
+  OVERPAID: "Paid more than due",
 };

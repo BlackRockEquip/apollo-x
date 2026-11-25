@@ -113,6 +113,29 @@ describe("dates and status", () => {
     expect(lineMonth([{ invoicedOn: "2026-11-13" }, { invoicedOn: "2026-10-30" }])).toBe("2026-10");
     expect(lineMonth([])).toBeNull();
   });
+  it("Vernon August 2026: paid R9 967.50 for a month that works out to R8 152.50 - overpaid R1 815, nothing carried over", () => {
+    const lines = [
+      line("BRE1019", [[7200, "2026-08-03", "2026-08-03"]], 10800),
+      line("BRE989", [[110000, "2026-08-13", "2026-09-30"]], 49500),
+      line("BRE1040", [[55000, "2026-08-19", "2026-09-30"]], 30550),
+      line("BRE1059", [[48000, "2026-08-26", "2026-09-30"]], 30000),
+    ];
+    const month = computeMonth("2026-08", VERNON, lines, 9967.5, "2026-11-25");
+    expect(month.commission).toBe(8152.5);
+    expect(month.status).toBe("OVERPAID");
+    expect(month.overpaid).toBe(1815);
+    expect(month.owed).toBe(0);
+    const months = computeRepMonths({ rep: VERNON, today: "2026-11-25", payouts: [{ month: "2026-08", amount: 9967.5 }], lines: [
+      ...lines.map((l) => ({ ...l, periodMonth: "2026-08" })),
+      { ...line("BRE1238", [[67500, "2026-11-24", null]], 0), periodMonth: "2026-11" },
+    ] });
+    expect(months["2026-11"].owed).toBe(3375);
+  });
+  it("a payment for a month with no commission shows as overpaid", () => {
+    const month = computeMonth("2026-07", VERNON, [line("a", [[10000, "2026-07-01", null]], 0)], 500, "2026-11-25");
+    expect(month.status).toBe("OVERPAID");
+    expect(month.overpaid).toBe(500);
+  });
   it("overdue once the due date has passed and nothing was paid", () => {
     const lines = [line("x", [[100000, "2026-08-19", "2026-08-25"]], 0)];
     const month = computeMonth("2026-08", VERNON, lines, 0, "2026-11-25");

@@ -2,9 +2,10 @@
 
 import "./commissions.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
+import { FileDown, Loader2, Pencil, Plus, Trash2, Wallet, X } from "lucide-react";
 import { MONTH_STATUS_LABELS, type MonthResult } from "@/lib/commissions/calc";
 import { LineDialog } from "./LineDialog";
+import { printRepStatement } from "./printStatement";
 import {
   commissionsApi, formatDate, formatMoney, formatMoneyShort, initials, monthLabel, parseMoney, repRule, shortMonth, yearMonths,
   type LineView, type Overview, type RepView,
@@ -26,6 +27,7 @@ export function CommissionsWorkspace() {
   const [month, setMonth] = useState("");
   const [editing, setEditing] = useState<LineView | "new" | null>(null);
   const [paying, setPaying] = useState<{ rep: RepView; month: string; owed: number } | null>(null);
+  const [exporting, setExporting] = useState<{ repId: string; month: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -83,12 +85,13 @@ export function CommissionsWorkspace() {
             <button type="button" role="tab" aria-selected={tab === "reps"} onClick={() => setTab("reps")}>Rep settings</button>
           </div>
           {data.reps.length === 0 && <div className="cm-banner">No sales representatives yet. Add them under Settings &gt; Users &gt; User Setup, then set each one&rsquo;s rate and target on the Rep settings tab.</div>}
-          {tab === "tracker" && rep && <TrackerTab data={data} rep={rep} year={year} month={activeMonth} onRep={(id) => { setRepId(id); setMonth(""); }} onMonth={setMonth} onEdit={(line) => setEditing(line)} onPay={(m, owed) => setPaying({ rep, month: m, owed })} onChanged={load} />}
-          {tab === "payouts" && <PayoutsTab data={data} rows={owedRows} onPay={(r, m, owed) => setPaying({ rep: r, month: m, owed })} onChanged={load} />}
+          {tab === "tracker" && rep && <TrackerTab data={data} rep={rep} year={year} month={activeMonth} onRep={(id) => { setRepId(id); setMonth(""); }} onMonth={setMonth} onEdit={(line) => setEditing(line)} onPay={(m, owed) => setPaying({ rep, month: m, owed })} onExport={() => setExporting({ repId: rep.id, month: activeMonth })} onChanged={load} />}
+          {tab === "payouts" && <PayoutsTab data={data} year={year} onPay={(r, m, owed) => setPaying({ rep: r, month: m, owed })} onExport={(id) => setExporting({ repId: id || repId, month: "" })} onChanged={load} />}
           {tab === "reps" && <RepSettingsTab data={data} onChanged={load} />}
         </>
       )}
       {editing && data && <LineDialog reps={data.reps} line={editing === "new" ? null : editing} defaultRepId={repId} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}
+      {exporting && data && <ExportDialog data={data} year={year} initialRepId={exporting.repId} initialMonth={exporting.month} onClose={() => setExporting(null)} />}
       {paying && <PayoutDialog rep={paying.rep} month={paying.month} owed={paying.owed} today={data?.today ?? ""} onClose={() => setPaying(null)} onSaved={() => { setPaying(null); void load(); }} />}
     </div>
   );
@@ -101,9 +104,9 @@ function StatusPill({ result }: { result: Pick<MonthResult, "status" | "dueOn" |
   return <span className={`cm-pill cm-pill-${result.status}`}>{text}</span>;
 }
 
-function TrackerTab({ data, rep, year, month, onRep, onMonth, onEdit, onPay, onChanged }: {
+function TrackerTab({ data, rep, year, month, onRep, onMonth, onEdit, onPay, onExport, onChanged }: {
   data: Overview; rep: RepView; year: number; month: string; onRep: (id: string) => void; onMonth: (m: string) => void;
-  onEdit: (line: LineView) => void; onPay: (month: string, owed: number) => void; onChanged: () => Promise<void>;
+  onEdit: (line: LineView) => void; onPay: (month: string, owed: number) => void; onExport: () => void; onChanged: () => Promise<void>;
 }) {
   const months = yearMonths(year);
   const inYear = months.map((m) => rep.months[m]).filter((r): r is MonthResult => Boolean(r));
@@ -127,19 +130,22 @@ function TrackerTab({ data, rep, year, month, onRep, onMonth, onEdit, onPay, onC
 
   return (
     <>
-      <div className="cm-reps" role="group" aria-label="Sales reps">
-        {data.reps.map((r) => (
-          <button key={r.id} type="button" className="cm-rep" aria-pressed={r.id === rep.id} onClick={() => onRep(r.id)}>
-            <i>{initials(r.name)}</i><span><b>{r.name}{!r.active && " (inactive)"}</b><small>{repRule(r.setting)}</small></span>
-          </button>
-        ))}
+      <div className="cm-row" style={{ justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div className="cm-reps" role="group" aria-label="Sales reps" style={{ marginBottom: 0 }}>
+          {data.reps.map((r) => (
+            <button key={r.id} type="button" className="cm-rep" aria-pressed={r.id === rep.id} onClick={() => onRep(r.id)}>
+              <i>{initials(r.name)}</i><span><b>{r.name}{!r.active && " (inactive)"}</b><small>{repRule(r.setting)}</small></span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="quiet-button" onClick={onExport}><FileDown size={14} /> Export statement</button>
       </div>
 
       {!rep.setting && <div className="cm-banner">{rep.name} has no commission rate yet. Set it on the Rep settings tab before adding jobs.</div>}
 
       <div className="cm-kpis">
         <div className="cm-kpi"><span>Commission earned · {year}</span><b>{formatMoney(inYear.reduce((s, r) => s + r.commission, 0))}</b><small>{inYear.reduce((s, r) => s + r.lineCount, 0)} invoiced jobs</small></div>
-        <div className="cm-kpi"><span>Paid out</span><b className="cm-good">{formatMoney(inYear.reduce((s, r) => s + r.paid, 0))}</b><small>Recorded payouts for {year}</small></div>
+        <div className="cm-kpi"><span>Paid out</span><b className="cm-good">{formatMoney(inYear.reduce((s, r) => s + r.paid, 0))}</b><small>{inYear.some((r) => r.overpaid > 0.004) ? `Includes ${formatMoney(inYear.reduce((s, r) => s + r.overpaid, 0))} paid over` : `Recorded payouts for ${year}`}</small></div>
         <div className="cm-kpi"><span>Not paid yet</span><b className="cm-bad">{formatMoney(inYear.reduce((s, r) => s + r.owed, 0))}</b><small>Due, overdue or waiting on clients</small></div>
         <div className="cm-kpi"><span>Fuel used · not in commission</span><b>{fuelTotal ? formatMoney(fuelTotal) : "Not entered"}</b><small>{fuel.length ? `${fuel.length} month${fuel.length > 1 ? "s" : ""} entered · avg ${formatMoneyShort(fuelTotal / fuel.length)}` : "Add it per month below"}</small></div>
       </div>
@@ -188,7 +194,7 @@ function TrackerTab({ data, rep, year, month, onRep, onMonth, onEdit, onPay, onC
                 </>
               )}
               {result && target <= 0 && <div className="cm-calc"><span>No target: commission on every job&rsquo;s profit. Profit <strong>{formatMoney(result.profit)}</strong></span><span className="op">=</span><span className="total">{formatMoney(result.commission)}</span></div>}
-              {result && result.paid > 0 && <div className="cm-sub" style={{ marginTop: 8 }}>Paid {formatMoney(result.paid)}{result.owed > 0.004 ? ` · ${formatMoney(result.owed)} still owed` : ""}</div>}
+              {result && result.paid > 0 && <div className={`cm-sub${result.overpaid > 0.004 ? " cm-bad" : ""}`} style={{ marginTop: 8 }}>Paid {formatMoney(result.paid)}{result.owed > 0.004 ? ` · ${formatMoney(result.owed)} still owed` : ""}{result.overpaid > 0.004 ? ` · ${formatMoney(result.overpaid)} more than due (not carried over)` : ""}</div>}
             </div>
           </section>
           <FuelBox key={`${rep.id}-${month}-${data.fuel.find((f) => f.salesRepresentativeId === rep.id && f.month === month)?.amount ?? 0}`} data={data} rep={rep} month={month} profit={result?.profit ?? 0} onChanged={onChanged} />
@@ -265,10 +271,20 @@ function FuelBox({ data, rep, month, profit, onChanged }: { data: Overview; rep:
   );
 }
 
-function PayoutsTab({ data, rows, onPay, onChanged }: { data: Overview; rows: Array<{ rep: RepView; result: MonthResult }>; onPay: (rep: RepView, month: string, owed: number) => void; onChanged: () => Promise<void> }) {
+// 2026-11-25: every month in the year that has commission or a payment, with the amount due and the amount paid side by side.
+// A month paid above what it works out to shows the difference; it is never carried into another month.
+function PayoutsTab({ data, year, onPay, onExport, onChanged }: { data: Overview; year: number; onPay: (rep: RepView, month: string, owed: number) => void; onExport: (repId: string) => void; onChanged: () => Promise<void> }) {
+  const [repFilter, setRepFilter] = useState("");
   const repName = (id: string) => data.reps.find((r) => r.id === id)?.name ?? "—";
-  const total = rows.reduce((s, row) => s + row.result.owed, 0);
-  const dueNow = rows.filter((row) => row.result.status !== "WAITING_CLIENT").reduce((s, row) => s + row.result.owed, 0);
+  const rows = data.reps.filter((r) => !repFilter || r.id === repFilter).flatMap((r) => Object.values(r.months)
+    .filter((m) => m.month.startsWith(String(year)) && (m.commission > 0.004 || m.paid > 0.004))
+    .map((result) => ({ rep: r, result })))
+    .sort((a, b) => a.rep.name.localeCompare(b.rep.name) || a.result.month.localeCompare(b.result.month));
+  const allOwed = data.reps.flatMap((r) => Object.values(r.months)).filter((m) => m.owed > 0.004);
+  const dueNow = allOwed.filter((m) => m.status !== "WAITING_CLIENT").reduce((s, m) => s + m.owed, 0);
+  const waiting = allOwed.filter((m) => m.status === "WAITING_CLIENT").reduce((s, m) => s + m.owed, 0);
+  const totals = rows.reduce((t, { result }) => ({ due: t.due + result.commission, paid: t.paid + result.paid, owed: t.owed + result.owed, over: t.over + result.overpaid }), { due: 0, paid: 0, owed: 0, over: 0 });
+  const payments = data.payouts.filter((p) => p.month.startsWith(String(year)) && (!repFilter || p.salesRepresentativeId === repFilter));
 
   async function removePayout(id: string) {
     if (!window.confirm("Delete this payment record? The month will show as not paid again.")) return;
@@ -278,38 +294,53 @@ function PayoutsTab({ data, rows, onPay, onChanged }: { data: Overview; rows: Ar
 
   return (
     <>
-      <div className="cm-kpis" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+      <div className="cm-kpis">
         <div className="cm-kpi"><span>Due now (client has paid)</span><b className="cm-bad">{formatMoney(dueNow)}</b><small>Due, overdue and part-paid months</small></div>
-        <div className="cm-kpi"><span>Earned, waiting on client payment</span><b className="cm-warn">{formatMoney(total - dueNow)}</b><small>Becomes due once the clients pay</small></div>
+        <div className="cm-kpi"><span>Earned, waiting on client payment</span><b className="cm-warn">{formatMoney(waiting)}</b><small>Becomes due once the clients pay</small></div>
+        <div className="cm-kpi"><span>Paid · {year}{repFilter ? ` · ${repName(repFilter)}` : ""}</span><b className="cm-good">{formatMoney(totals.paid)}</b><small>Against {formatMoney(totals.due)} due</small></div>
+        <div className="cm-kpi"><span>Paid more than due · {year}</span><b className={totals.over > 0.004 ? "cm-bad" : ""}>{formatMoney(totals.over)}</b><small>Shown per month, not carried over</small></div>
       </div>
       <section className="cm-card">
-        <header><h2>Commission not paid yet</h2></header>
-        {rows.length === 0 ? <div className="cm-empty">Nothing outstanding.</div> : (
+        <header>
+          <h2>Commission by month · {year}</h2>
+          <label className="cm-field" style={{ minWidth: 170 }}><span className="sr-only">Sales rep</span><select aria-label="Sales rep" value={repFilter} onChange={(e) => setRepFilter(e.target.value)}><option value="">All reps</option>{data.reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+          <button type="button" className="quiet-button" onClick={() => onExport(repFilter)}><FileDown size={14} /> Export statement</button>
+        </header>
+        {rows.length === 0 ? <div className="cm-empty">No commission or payments in {year}.</div> : (
           <div className="data-table-wrap">
             <table className="data-table cm-table">
-              <thead><tr><th>Rep</th><th>Month</th><th className="cm-num">Commission</th><th className="cm-num">Paid</th><th className="cm-num">Still owed</th><th>Status</th>{data.canEdit && <th />}</tr></thead>
+              <thead><tr><th>Rep</th><th>Month</th><th className="cm-num">Amount due</th><th className="cm-num">Amount paid</th><th className="cm-num">Difference</th><th>Status</th>{data.canEdit && <th aria-label="Actions" />}</tr></thead>
               <tbody>
                 {rows.map(({ rep, result }) => (
                   <tr key={`${rep.id}-${result.month}`}>
                     <td><strong>{rep.name}</strong></td><td>{monthLabel(result.month)}</td>
-                    <td className="cm-num">{formatMoney(result.commission)}</td><td className="cm-num">{result.paid ? formatMoney(result.paid) : "—"}</td>
-                    <td className="cm-num"><strong>{formatMoney(result.owed)}</strong></td><td><StatusPill result={result} /></td>
-                    {data.canEdit && <td><button type="button" className="quiet-button" onClick={() => onPay(rep, result.month, result.owed)}><Wallet size={13} /> Record payment</button></td>}
+                    <td className="cm-num"><strong>{formatMoney(result.commission)}</strong></td>
+                    <td className="cm-num">{result.paid ? formatMoney(result.paid) : "—"}</td>
+                    <td className="cm-num">{result.overpaid > 0.004 ? <span className="cm-bad">{formatMoney(result.overpaid)} paid over</span> : result.owed > 0.004 ? <span className="cm-warn">{formatMoney(result.owed)} still owed</span> : "—"}</td>
+                    <td><StatusPill result={result} /></td>
+                    {data.canEdit && <td>{result.owed > 0.004 && <button type="button" className="quiet-button" onClick={() => onPay(rep, result.month, result.owed)}><Wallet size={13} /> Record payment</button>}</td>}
                   </tr>
                 ))}
               </tbody>
+              <tfoot><tr>
+                <td colSpan={2}><strong>Total</strong></td>
+                <td className="cm-num"><strong>{formatMoney(totals.due)}</strong></td>
+                <td className="cm-num"><strong>{formatMoney(totals.paid)}</strong></td>
+                <td className="cm-num">{totals.owed > 0.004 && <span className="cm-warn">{formatMoney(totals.owed)} still owed</span>}{totals.owed > 0.004 && totals.over > 0.004 && <br />}{totals.over > 0.004 && <span className="cm-bad">{formatMoney(totals.over)} paid over</span>}</td>
+                <td />{data.canEdit && <td />}
+              </tr></tfoot>
             </table>
           </div>
         )}
       </section>
       <section className="cm-card">
-        <header><h2>Payments recorded</h2></header>
-        {data.payouts.length === 0 ? <div className="cm-empty">No payments recorded yet.</div> : (
+        <header><h2>Payments recorded · {year}</h2></header>
+        {payments.length === 0 ? <div className="cm-empty">No payments recorded for {year}.</div> : (
           <div className="data-table-wrap">
             <table className="data-table cm-table">
-              <thead><tr><th>Paid on</th><th>Rep</th><th>For month</th><th className="cm-num">Amount</th><th>Note</th>{data.canEdit && <th />}</tr></thead>
+              <thead><tr><th>Paid on</th><th>Rep</th><th>For month</th><th className="cm-num">Amount</th><th>Note</th>{data.canEdit && <th aria-label="Actions" />}</tr></thead>
               <tbody>
-                {data.payouts.map((p) => (
+                {payments.map((p) => (
                   <tr key={p.id}>
                     <td>{formatDate(p.paidOn)}</td><td>{repName(p.salesRepresentativeId)}</td><td>{monthLabel(p.month)}</td><td className="cm-num">{formatMoney(p.amount)}</td><td className="wrap">{p.note || <span className="muted">—</span>}</td>
                     {data.canEdit && <td><button type="button" className="cm-icon danger" aria-label="Delete payment" onClick={() => void removePayout(p.id)}><Trash2 size={13} /></button></td>}
@@ -321,6 +352,46 @@ function PayoutsTab({ data, rows, onPay, onChanged }: { data: Overview; rows: Ar
         )}
       </section>
     </>
+  );
+}
+
+// Export a commission statement for ONE rep (so no rep ever sees another's figures), for the whole year or one month.
+function ExportDialog({ data, year, initialRepId, initialMonth, onClose }: { data: Overview; year: number; initialRepId: string; initialMonth: string; onClose: () => void }) {
+  const [repId, setRepId] = useState(data.reps.some((r) => r.id === initialRepId) ? initialRepId : data.reps[0]?.id ?? "");
+  const [period, setPeriod] = useState<"year" | "month">(initialMonth ? "month" : "year");
+  const [month, setMonth] = useState(initialMonth || `${year}-${String(new Date().getMonth() + 1).padStart(2, "0")}`);
+  const [includeJobs, setIncludeJobs] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true); setError("");
+    const months = period === "year" ? yearMonths(year) : [month];
+    const message = await printRepStatement(data, { repId, months, includeJobs, title: period === "year" ? String(year) : monthLabel(month, true) });
+    setBusy(false);
+    if (message) setError(message); else onClose();
+  }
+
+  return (
+    <div className="drawer-backdrop" role="dialog" aria-modal="true" aria-label="Export commission statement">
+      <div className="form-drawer compact-dialog" style={{ maxWidth: 480 }}>
+        <div className="cm-dialog">
+          <div className="cm-row"><h2>Export commission statement</h2><button type="button" className="cm-icon" aria-label="Close" onClick={onClose}><X size={15} /></button></div>
+          <p className="cm-sub" style={{ margin: 0 }}>A statement for one rep to send them: amount due and paid per month, each job and the payments. Use Save as PDF in the print window. Fuel used is not included.</p>
+          {error && <div className="inline-error" style={{ borderRadius: 7 }}>{error}</div>}
+          <label className="cm-field"><span>Sales rep</span><select value={repId} onChange={(e) => setRepId(e.target.value)}>{data.reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+          <div className="cm-grid2">
+            <label className="cm-field"><span>Period</span><select value={period} onChange={(e) => setPeriod(e.target.value as "year" | "month")}><option value="year">Whole year {year}</option><option value="month">One month</option></select></label>
+            {period === "month" && <label className="cm-field"><span>Month</span><select value={month} onChange={(e) => setMonth(e.target.value)}>{yearMonths(year).map((m) => <option key={m} value={m}>{monthLabel(m, true)}</option>)}</select></label>}
+          </div>
+          <label className="cm-check"><input type="checkbox" checked={includeJobs} onChange={(e) => setIncludeJobs(e.target.checked)} /> Include each job (invoice, costs, profit, target balance)</label>
+          <div className="cm-foot">
+            <button type="button" className="quiet-button" onClick={onClose} disabled={busy}>Cancel</button>
+            <button type="button" className="gold-button" onClick={() => void run()} disabled={busy || !repId}><FileDown size={14} /> {busy ? "Preparing…" : "Export"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
