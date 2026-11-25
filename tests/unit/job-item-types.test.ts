@@ -4,12 +4,15 @@ import {
   ITEM_JOB_TYPES,
   flowProgress,
   isItemJobType,
+  itemEffectivePo,
   itemEffectiveType,
   itemsShareOneFlow,
+  jobPoNumbers,
   jobTypeAllowsItems,
   summarizeFlowItems,
   summarizeItemStatuses,
 } from "@/lib/jobs/item-model";
+import { blankDraft, draftToPayload, rowToDraft } from "@/components/job-items/item-draft";
 import { FIELD_SERVICE_STATUS_STEPS, MAIN_WORKSHOP_STATUS_STEPS, ENGINEERING_STATUS_STEPS, statusStepsForJobType } from "@/lib/jobs/ui";
 import { jobItemInput, jobItemUpdateInput } from "@/lib/jobs/validation";
 
@@ -137,5 +140,37 @@ describe("rolling up inside jobs that follow different steps", () => {
 
   it("handles no inside jobs", () => {
     expect(summarizeFlowItems([])).toEqual({ total: 0, ready: 0, mixed: false, status: null, counts: [] });
+  });
+});
+
+// 2026-11-25: each inside job can have its own customer PO; the job's own PO is the default for one without.
+describe("customer PO on an inside job", () => {
+  it("uses the job's own PO unless the inside job has one", () => {
+    expect(itemEffectivePo("PO-77311", "PO-77204")).toBe("PO-77311");
+    expect(itemEffectivePo(null, "PO-77204")).toBe("PO-77204");
+    expect(itemEffectivePo("  ", "PO-77204")).toBe("PO-77204");
+    expect(itemEffectivePo(undefined, null)).toBe("");
+  });
+
+  it("lists every distinct PO across the jobs, in order", () => {
+    expect(jobPoNumbers("PO-1", [{ customerPo: null }, { customerPo: "PO-2" }, { customerPo: "PO-2" }])).toEqual(["PO-1", "PO-2"]);
+    expect(jobPoNumbers("PO-1", [{ customerPo: "PO-2" }, { customerPo: "PO-3" }])).toEqual(["PO-2", "PO-3"]);
+    expect(jobPoNumbers("PO-1", [])).toEqual(["PO-1"]);
+    expect(jobPoNumbers(null, [{ customerPo: null }])).toEqual([]);
+  });
+
+  it("is accepted on an item, trimmed, and is optional", () => {
+    expect(jobItemInput.parse({ customerPo: "  PO-77311 " }).customerPo).toBe("PO-77311");
+    expect(jobItemInput.parse({}).customerPo).toBeUndefined();
+    expect(jobItemInput.parse({ customerPo: null }).customerPo).toBeNull();
+  });
+
+  it("goes to and from the screen's draft", () => {
+    const draft = { ...blankDraft(), customerPo: " PO-9 " };
+    expect(draftToPayload(draft).customerPo).toBe("PO-9");
+    expect(draftToPayload(blankDraft()).customerPo).toBeNull();
+    const row = { id: "x", sequence: 2, status: "TO_BE_RECEIVED", customerPo: "PO-5", component: null, componentModel: null, componentSerial: null, componentPartNumber: null, machineMake: null, machineModel: null, machineSerial: null, plantNumber: null, machineHours: null, workRequested: null, conditionOnReceipt: null, etaDate: null, mechanicEtaDate: null };
+    expect(rowToDraft(row).customerPo).toBe("PO-5");
+    expect(rowToDraft({ ...row, customerPo: null }).customerPo).toBe("");
   });
 });

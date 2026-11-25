@@ -5,6 +5,8 @@ export type ItemDraft = {
   key: string;
   /** 2026-11-25, "multiple jobs within a job": the job type this inside job works as; "" = the job's own type. */
   type: string;
+  /** 2026-11-25: this inside job's own customer PO; "" = it follows the job's PO. */
+  customerPo: string;
   component: string;
   componentModel: string;
   componentSerial: string;
@@ -28,6 +30,8 @@ export type ItemRow = {
   sequence: number;
   /** The job type this inside job works as; empty / null = the job's own. */
   type?: string | null;
+  /** This inside job's own customer PO; empty / null = the job's. */
+  customerPo?: string | null;
   status: string;
   component: string | null;
   componentModel: string | null;
@@ -56,6 +60,7 @@ export function blankDraft(): ItemDraft {
   return {
     key: newItemKey(),
     type: "",
+    customerPo: "",
     component: "", componentModel: "", componentSerial: "", componentPartNumber: "",
     machineMake: "", machineModel: "", machineSerial: "", plantNumber: "", machineHours: "",
     workRequested: "", conditionOnReceipt: "", etaDate: "", mechanicEtaDate: "", stripMechanicId: "", buildMechanicId: "",
@@ -80,6 +85,7 @@ function text(value: string): string | null {
 export function draftToPayload(draft: ItemDraft) {
   return {
     type: text(draft.type),
+    customerPo: text(draft.customerPo),
     component: text(draft.component),
     componentModel: text(draft.componentModel),
     componentSerial: text(draft.componentSerial),
@@ -103,6 +109,7 @@ export function rowToDraft(row: ItemRow): ItemDraft {
   return {
     key: row.id,
     type: row.type ?? "",
+    customerPo: row.customerPo ?? "",
     component: row.component ?? "", componentModel: row.componentModel ?? "", componentSerial: row.componentSerial ?? "",
     componentPartNumber: row.componentPartNumber ?? "", machineMake: row.machineMake ?? "", machineModel: row.machineModel ?? "",
     machineSerial: row.machineSerial ?? "", plantNumber: row.plantNumber ?? "",

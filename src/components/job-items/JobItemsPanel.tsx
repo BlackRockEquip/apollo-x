@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, FileText, Pencil, Plus, Printer, Trash2, UserCog, X } from "lucide-react";
 import { StatusPill } from "@/components/StatusPill";
 import { NamedPicker, type NamedOption } from "@/components/NamedPicker";
-import { itemEffectiveType, itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeFlowItems, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
+import { itemEffectivePo, itemEffectiveType, itemLinkSummary, itemLinkTotal, itemMachinists, itemTag, machinistSummary, summarizeFlowItems, type ItemLinkCounts, type MachinistRefs } from "@/lib/jobs/item-model";
 import { ItemsStatusBadge, itemsAreMixed } from "./ItemsStatusBadge";
 import { blankDraft, draftToPayload, rowToDraft, type ItemDraft, type ItemRow } from "./item-draft";
 
@@ -65,7 +65,25 @@ type Props = {
   jobMachinists?: MachinistRefs;
   /** Adds a machinist that is not in the list yet (typed in a picker); resolves with the new option. */
   onCreateMechanic?: (name: string) => Promise<NamedOption>;
+  /**
+   * 2026-11-25, tabbed layout: show the jobs as tabs (an Overview tab with one card per job, a tab for each job, and "Add job") instead of
+   * a table. Used where an inside job is called a "job"; Engineering keeps its item table.
+   */
+  tabs?: boolean;
+  /** The job's own customer PO: what an inside job with no PO of its own works under. */
+  jobCustomerPo?: string | null;
 };
+
+// 2026-11-25: the colour of a job type on its tab and Overview card (field blue, repair gold, partial purple, sale green).
+function typeColor(type: string): string {
+  switch (type) {
+    case "FIELD_SERVICE": return "#155fca";
+    case "STANDARD_REPAIR": return "#d6a83b";
+    case "PARTIAL_REPAIR": return "#8a6bd0";
+    case "OUTRIGHT_SALE": return "#1d8f5a";
+    default: return "#6b7689";
+  }
+}
 
 function fmtDate(value: string | null): string {
   if (!value) return "-";
@@ -73,8 +91,10 @@ function fmtDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("en-ZA");
 }
 
-export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsForType, typeLabels, typeOptions, noun = "item", statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {}, onCreateMechanic }: Props) {
+export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsForType, typeLabels, typeOptions, noun = "item", statusLabels, staffEtaLabel, canEdit, locked, confirm, onChanged, onError, onDeliveryNote, confirmDocuments, links, selectedId = "", onSelect, onPrintTags, virtual = false, selectedSlot, mechanics = [], machinistLabels = { strip: "Machinist 'Assess'", build: "Machinist 'Final'" }, jobMachinists = {}, onCreateMechanic, tabs = false, jobCustomerPo = null }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
+  // The id of the job just added, so the new job opens on its own tab (tabbed layout).
+  const createdId = useRef<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [adding, setAdding] = useState<ItemDraft | null>(null);
@@ -103,6 +123,10 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
   const canAdd = canEdit && !locked;
   const selected = virtual ? undefined : items.find((item) => item.id === selectedId);
   const base = `/api/v1/jobs/${jobId}/items`;
+  // Tabbed layout (2026-11-25): only once there are real jobs; a single job keeps the slim "Add job" strip.
+  const tabsMode = tabs && !virtual;
+  const poOf = (item: ItemRow) => itemEffectivePo(item.customerPo, jobCustomerPo);
+  const poPlaceholder = jobCustomerPo ? `Same as the job (${jobCustomerPo})` : "";
 
   async function call(key: string, url: string, init: RequestInit): Promise<boolean> {
     setBusy(key); onError("");
@@ -110,6 +134,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
       const response = await fetch(url, { ...init, headers: { "content-type": "application/json" } });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body?.error?.message || "Unable to save the item.");
+      createdId.current = init.method === "POST" && typeof body?.id === "string" ? body.id : null;
       await onChanged();
       return true;
     } catch (error) {
@@ -151,7 +176,11 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
   async function saveNew() {
     if (!adding) return;
     const ok = await call("new", base, { method: "POST", body: JSON.stringify(draftToPayload(adding)) });
-    if (ok) setAdding(null);
+    if (ok) {
+      setAdding(null);
+      // Tabbed layout: the job just added opens on its own tab.
+      if (tabs && createdId.current) onSelect?.(createdId.current);
+    }
   }
 
   const field = (target: ItemDraft, set: (next: ItemDraft) => void, key: keyof ItemDraft, label: string, extra?: { type?: string; wide?: boolean; placeholder?: string }) => (
@@ -187,10 +216,12 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
           <div className="ji-head-right">
             {editable && mechanics.length > 0 && <button type="button" className="quiet-button" onClick={() => setReassign(reassign?.id === selected.id ? null : { id: selected.id, strip: selected.stripMechanicId ?? "", build: selected.buildMechanicId ?? "" })} aria-expanded={reassign?.id === selected.id}><UserCog size={13} /> Reassign machinist</button>}
             {editable && <button type="button" className="quiet-button" onClick={() => startEdit(selected)}><Pencil size={13} /> Edit {noun}</button>}
+            {editable && tabsMode && <button type="button" className="quiet-button" disabled={items.length <= 1 || busy === selected.id} title={items.length <= 1 ? "A job needs at least one job inside it" : undefined} onClick={() => void removeItem(selected)}><Trash2 size={13} /> Remove {noun}</button>}
           </div>
         </header>
         <div className="ji-selected-body">
           <dl className="ji-dl">
+            {detail("Customer PO", poOf(selected) ? `${poOf(selected)}${selected.customerPo ? "" : " (from the job)"}` : "")}
             {detail("Component model", selected.componentModel)}
             {detail("Component serial", selected.componentSerial)}
             {detail("Part number", selected.componentPartNumber)}
@@ -231,8 +262,141 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
       </section>
   ) : null;
 
+  const startAdd = () => { setEditing(null); setDraft(null); setAdding({ ...blankDraft(), type: otherType }); };
+  const renderEditor = (item: ItemRow) => draft ? (
+                    <div className="ji-more-grid">
+                      {!virtual && typeField(draft, setDraft, typeOf(item))}
+                      {field(draft, setDraft, "customerPo", "Customer PO", { placeholder: poPlaceholder })}
+                      {field(draft, setDraft, "component", "Component")}
+                      {field(draft, setDraft, "componentModel", "Component model")}
+                      {field(draft, setDraft, "componentSerial", "Component serial")}
+                      {field(draft, setDraft, "componentPartNumber", "Part number")}
+                      {field(draft, setDraft, "machineMake", "Machine make")}
+                      {field(draft, setDraft, "machineModel", "Machine model")}
+                      {field(draft, setDraft, "machineSerial", "Machine serial")}
+                      {field(draft, setDraft, "plantNumber", "Plant number")}
+                      {field(draft, setDraft, "machineHours", "Machine hours", { type: "number" })}
+                      {field(draft, setDraft, "etaDate", "ETA date", { type: "date" })}
+                      {field(draft, setDraft, "mechanicEtaDate", staffEtaLabel, { type: "date" })}
+                      {!virtual && mechanics.length > 0 && (
+                        <>
+                          <label><span>{machinistLabels.strip}</span><NamedPicker value={draft.stripMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.strip} onChange={(id) => setDraft({ ...draft, stripMechanicId: id })} onCreate={onCreateMechanic} /></label>
+                          <label><span>{machinistLabels.build}</span><NamedPicker value={draft.buildMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.build} onChange={(id) => setDraft({ ...draft, buildMechanicId: id })} onCreate={onCreateMechanic} /></label>
+                        </>
+                      )}
+                      {field(draft, setDraft, "workRequested", "Work requested", { wide: true })}
+                      {field(draft, setDraft, "conditionOnReceipt", "Condition on receipt", { wide: true })}
+                      <div className="ji-wide ji-edit-actions">
+                        <button type="button" className="gold-button" disabled={busy === item.id} onClick={() => void saveEdit(item)}>Save {noun}</button>
+                        <button type="button" className="quiet-button" onClick={() => { setEditing(null); setDraft(null); }}>Cancel</button>
+                      </div>
+                    </div>
+  ) : null;
+  const renderAddForm = () => adding ? (
+            <div className="ji-add">
+              <div className="ji-paste-head">
+                <strong>{noun === "job" ? "Add a job to this job" : "Add an item to this job"}</strong>
+                <button type="button" className="ji-icon" onClick={() => setAdding(null)} aria-label={`Cancel adding ${noun === "job" ? "a job" : "an item"}`}><X size={15} /></button>
+              </div>
+              <div className="ji-more-grid">
+                {typeField(adding, setAdding, otherType)}
+                {field(adding, setAdding, "customerPo", "Customer PO", { placeholder: poPlaceholder })}
+                {field(adding, setAdding, "component", "Component")}
+                {field(adding, setAdding, "componentModel", "Component model")}
+                {field(adding, setAdding, "componentSerial", "Component serial")}
+                {field(adding, setAdding, "componentPartNumber", "Part number")}
+                {field(adding, setAdding, "machineMake", "Machine make")}
+                {field(adding, setAdding, "machineModel", "Machine model")}
+                {field(adding, setAdding, "workRequested", "Work requested", { wide: true })}
+                {field(adding, setAdding, "conditionOnReceipt", "Condition on receipt", { wide: true })}
+              </div>
+              <div className="ji-edit-actions">
+                <button type="button" className="gold-button" disabled={busy === "new"} onClick={() => void saveNew()}>{noun === "job" ? "Add job" : "Add item"}</button>
+                <button type="button" className="quiet-button" onClick={() => setAdding(null)}>Cancel</button>
+              </div>
+            </div>
+  ) : null;
+  const addButton = (
+    <button type="button" className="section-action-button" onClick={startAdd}><Plus size={14} /> {noun === "job" ? "Add job to this job" : "Add item"}</button>
+  );
+
+  // ---- Tabbed layout: Overview + a tab per job + Add job ----
+  const editingItem = editing ? items.find((item) => item.id === editing) : undefined;
+  const tabsView = (
+    <section className="detail-panel full-row ji-card ji-tabs-card">
+      <div className="ji-tabbar" role="tablist" aria-label={`${nouns} in this job`}>
+        <button type="button" role="tab" aria-selected={!selected} className={`ji-tab ji-tab-overview${!selected ? " active" : ""}`} onClick={() => onSelect?.("")}>Overview</button>
+        {items.map((item) => {
+          const type = typeOf(item);
+          const isSelected = selectedId === item.id;
+          return (
+            <button key={item.id} type="button" role="tab" aria-selected={isSelected} className={`ji-tab${isSelected ? " active" : ""}`} style={{ "--ji-tab-color": typeColor(type) } as CSSProperties} onClick={() => onSelect?.(item.id)}>
+              <span className="ji-tab-dot" aria-hidden="true" />
+              <span className="ji-tab-text"><b>{itemTag(jobNumber, item.sequence)}</b><small>{typeLabels[type] ?? type}</small></span>
+              <StatusPill status={item.status} build={build} />
+            </button>
+          );
+        })}
+        {canAdd && <button type="button" className="ji-tab-add" onClick={startAdd}><Plus size={14} /> Add job</button>}
+        <span className="ji-tabbar-spacer" />
+        {onPrintTags && <button type="button" className="quiet-button" onClick={onPrintTags}><Printer size={13} /> Print tags</button>}
+        {onDeliveryNote && <button type="button" className="quiet-button" onClick={onDeliveryNote}><FileText size={13} /> Delivery note</button>}
+      </div>
+      {adding && <div className="ji-tab-pane">{renderAddForm()}</div>}
+      {editingItem && draft && (
+        <div className="ji-tab-pane">
+          <div className="ji-paste-head">
+            <strong>Edit {itemTag(jobNumber, editingItem.sequence)}</strong>
+            <button type="button" className="ji-icon" onClick={() => { setEditing(null); setDraft(null); }} aria-label="Close the editor"><X size={15} /></button>
+          </div>
+          {renderEditor(editingItem)}
+        </div>
+      )}
+      {!selected && !adding && !editingItem && (
+        <div className="ji-overview">
+          {items.map((item) => {
+            const type = typeOf(item);
+            const tag = itemTag(jobNumber, item.sequence);
+            const steps = stepsForType(type).filter((step) => step !== "TO_BE_COLLECTED");
+            const position = item.status === "CANCELLED" ? -1 : Math.max(0, steps.indexOf(item.status === "WAITING_FOR_PARTS" ? "AWAIT_OUTWORK" : item.status));
+            const m = machinistsOf(item);
+            const people = machinistSummary(m.stripName, m.buildName);
+            return (
+              <article key={item.id} className="ji-ov-card" style={{ "--ji-tab-color": typeColor(type) } as CSSProperties}>
+                <header><strong>{tag}</strong><span className="ji-type">{typeLabels[type] ?? type}</span></header>
+                <div className="ji-ov-progress">
+                  <div className="ji-ov-bar" aria-hidden="true">{steps.map((step, index) => <span key={step} className={index <= position ? "on" : ""} />)}</div>
+                  <div className="ji-ov-status"><b>{statusLabels[item.status] ?? item.status}</b>{position >= 0 && <small>step {position + 1} of {steps.length}</small>}</div>
+                </div>
+                <dl className="ji-ov-facts">
+                  <div><dt>Component</dt><dd>{item.component || "-"}</dd></div>
+                  <div><dt>Customer PO</dt><dd>{poOf(item) || "-"}{poOf(item) && !item.customerPo && <small> (job&apos;s PO)</small>}</dd></div>
+                  <div><dt>{staffEtaLabel}</dt><dd>{fmtDate(item.mechanicEtaDate ?? item.etaDate)}</dd></div>
+                  <div><dt>People</dt><dd>{people || "-"}</dd></div>
+                </dl>
+                {links?.[item.id] && itemLinkTotal(links[item.id]) > 0 && <small className="ji-links-sub">{itemLinkSummary(links[item.id])}</small>}
+                <div className="ji-ov-actions">
+                  <button type="button" className="quiet-button" onClick={() => onSelect?.(item.id)}>Open {noun}</button>
+                  {editable && (
+                    <select className="ji-status-select" value={item.status} disabled={busy === item.id} aria-label={`Status of ${tag}`} onChange={(e) => void moveItem(item, e.target.value)}>
+                      {stepsForType(type).map((step) => <option key={step} value={step}>{statusLabels[step] ?? step}</option>)}
+                      <option value="CANCELLED">{statusLabels.CANCELLED ?? "Cancelled"}</option>
+                    </select>
+                  )}
+                  {editable && <button type="button" className="ji-icon" onClick={() => startEdit(item)} aria-label={`Edit ${tag}`} title={`Edit ${noun}`}><Pencil size={15} /></button>}
+                </div>
+              </article>
+            );
+          })}
+          {canAdd && <button type="button" className="ji-ov-add" onClick={startAdd}><Plus size={18} /> Add another {noun}</button>}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <>
+    {tabsMode ? tabsView : (
     <section className="detail-panel full-row ji-card">
       <header className="ji-card-head">
         <div>
@@ -285,7 +449,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
                         {onSelect && !virtual
                           ? <button type="button" className="ji-pick" onClick={() => onSelect(isSelected ? "" : item.id)} aria-pressed={isSelected}><strong>{item.component || "-"}</strong></button>
                           : <strong>{item.component || "-"}</strong>}
-                        <small className="ji-sub">{[item.componentModel, item.componentSerial ? `S/N ${item.componentSerial}` : ""].filter(Boolean).join(" · ") || "No model or serial"}</small>
+                        <small className="ji-sub">{[item.componentModel, item.componentSerial ? `S/N ${item.componentSerial}` : "", item.customerPo ? `PO ${item.customerPo}` : ""].filter(Boolean).join(" · ") || "No model or serial"}</small>
                       </td>
                       <td>{machine || "-"}{item.plantNumber && <small className="ji-sub">Plant {item.plantNumber}</small>}</td>
                       <td>
@@ -313,34 +477,7 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
                       )}
                     </tr>
                   )}
-                  editor={isEditing && draft ? (
-                    <div className="ji-more-grid">
-                      {!virtual && typeField(draft, setDraft, typeOf(item))}
-                      {field(draft, setDraft, "component", "Component")}
-                      {field(draft, setDraft, "componentModel", "Component model")}
-                      {field(draft, setDraft, "componentSerial", "Component serial")}
-                      {field(draft, setDraft, "componentPartNumber", "Part number")}
-                      {field(draft, setDraft, "machineMake", "Machine make")}
-                      {field(draft, setDraft, "machineModel", "Machine model")}
-                      {field(draft, setDraft, "machineSerial", "Machine serial")}
-                      {field(draft, setDraft, "plantNumber", "Plant number")}
-                      {field(draft, setDraft, "machineHours", "Machine hours", { type: "number" })}
-                      {field(draft, setDraft, "etaDate", "ETA date", { type: "date" })}
-                      {field(draft, setDraft, "mechanicEtaDate", staffEtaLabel, { type: "date" })}
-                      {!virtual && mechanics.length > 0 && (
-                        <>
-                          <label><span>{machinistLabels.strip}</span><NamedPicker value={draft.stripMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.strip} onChange={(id) => setDraft({ ...draft, stripMechanicId: id })} onCreate={onCreateMechanic} /></label>
-                          <label><span>{machinistLabels.build}</span><NamedPicker value={draft.buildMechanicId} options={mechanics} emptyLabel="Same as the job" ariaLabel={machinistLabels.build} onChange={(id) => setDraft({ ...draft, buildMechanicId: id })} onCreate={onCreateMechanic} /></label>
-                        </>
-                      )}
-                      {field(draft, setDraft, "workRequested", "Work requested", { wide: true })}
-                      {field(draft, setDraft, "conditionOnReceipt", "Condition on receipt", { wide: true })}
-                      <div className="ji-wide ji-edit-actions">
-                        <button type="button" className="gold-button" disabled={busy === item.id} onClick={() => void saveEdit(item)}>Save {noun}</button>
-                        <button type="button" className="quiet-button" onClick={() => { setEditing(null); setDraft(null); }}>Cancel</button>
-                      </div>
-                    </div>
-                  ) : null}
+                  editor={isEditing && draft ? renderEditor(item) : null}
                 />
               );
             })}
@@ -350,34 +487,10 @@ export function JobItemsPanel({ jobId, jobNumber, jobType, build, items, stepsFo
 
       {canAdd && (!collapsed || compact) && (
         <div className="ji-foot">
-          {adding ? (
-            <div className="ji-add">
-              <div className="ji-paste-head">
-                <strong>{noun === "job" ? "Add a job to this job" : "Add an item to this job"}</strong>
-                <button type="button" className="ji-icon" onClick={() => setAdding(null)} aria-label={`Cancel adding ${noun === "job" ? "a job" : "an item"}`}><X size={15} /></button>
-              </div>
-              <div className="ji-more-grid">
-                {typeField(adding, setAdding, otherType)}
-                {field(adding, setAdding, "component", "Component")}
-                {field(adding, setAdding, "componentModel", "Component model")}
-                {field(adding, setAdding, "componentSerial", "Component serial")}
-                {field(adding, setAdding, "componentPartNumber", "Part number")}
-                {field(adding, setAdding, "machineMake", "Machine make")}
-                {field(adding, setAdding, "machineModel", "Machine model")}
-                {field(adding, setAdding, "workRequested", "Work requested", { wide: true })}
-                {field(adding, setAdding, "conditionOnReceipt", "Condition on receipt", { wide: true })}
-              </div>
-              <div className="ji-edit-actions">
-                <button type="button" className="gold-button" disabled={busy === "new"} onClick={() => void saveNew()}>{noun === "job" ? "Add job" : "Add item"}</button>
-                <button type="button" className="quiet-button" onClick={() => setAdding(null)}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="section-action-button" onClick={() => { setEditing(null); setDraft(null); setAdding({ ...blankDraft(), type: otherType }); }}><Plus size={14} /> {noun === "job" ? "Add job to this job" : "Add item"}</button>
-          )}
+          {adding ? renderAddForm() : addButton}
         </div>
       )}
-    </section>
+    </section>)}
 
     {selectedCard && (selectedSlot ? createPortal(selectedCard, selectedSlot) : selectedCard)}
     </>

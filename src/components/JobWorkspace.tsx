@@ -4381,7 +4381,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // 2026-11-25: the job types an inside job can work as (no PEX, no Warranty; Field service only where that module is on).
   const insideTypeOptions = jobTypeOptions("").filter(([value]) => isItemJobType(value));
   const insideNoun: "item" | "job" = industryBuild === "ENGINEERING" && String(job?.type ?? form.type) !== "FIELD_SERVICE" ? "item" : "job";
-  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} jobType={form.type} typeOptions={insideTypeOptions} onJobTypeChange={(type) => updateField("type", type)} noun={insideNoun} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} onCreateMechanic={(name) => createStaffOption("mechanic", name)} />;
+  const itemsCreateSection = <JobItemsEditor items={newItems} onChange={setNewItems} disabled={saving} jobType={form.type} typeOptions={insideTypeOptions} onJobTypeChange={(type) => updateField("type", type)} noun={insideNoun} jobCustomerPo={form.customerPo} staffEtaLabel={machinist.eta} mechanics={mechanics} machinistLabels={{ strip: machinist.strip, build: machinist.build }} onCreateMechanic={(name) => createStaffOption("mechanic", name)} />;
   // Job screen: a job that has items lists them (each with its own status and ETA); an ordinary one-item job keeps its
   // Machine / component card and offers "Add another item" beneath it.
   const jobItemRows = job?.jobItems ?? [];
@@ -4445,6 +4445,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       typeLabels={typeLabels as Record<string, string>}
       typeOptions={insideTypeOptions}
       noun={insideNoun}
+      tabs={insideNoun === "job"}
+      jobCustomerPo={(job.customerPo as string | null) ?? null}
       statusLabels={statusLabels}
       staffEtaLabel={machinist.eta}
       canEdit={!mechanicFieldsLocked}
@@ -6070,6 +6072,9 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <p className="status-stepper-note">
                 This job isn&apos;t on the normal status flow right now ({statusLabels[job.status]}){mechanicFieldsLocked ? "." : " — use Reopen above to bring it back onto the stepper."}
               </p>
+            ) : itemsStepperOn && flowsDiffer && !selectedItem && insideNoun === "job" ? (
+              // 2026-11-25, tabbed layout: on the Overview every job shows its own progress on its card, so the stacked steppers are left out.
+              <p className="status-stepper-note">The jobs follow different steps. Open a job&apos;s tab to see its steps and move it, or use the status box on its card below.</p>
             ) : itemsStepperOn && flowsDiffer && !selectedItem ? (
               <div className="ji-flow-steppers">
                 {insideFlowGroups.map((group) => (

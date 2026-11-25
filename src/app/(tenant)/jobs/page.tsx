@@ -19,7 +19,7 @@ import { JobsWipEmailButton } from "@/components/JobsWipEmailButton";
 import { JobsWipItemsToggle } from "@/components/JobsWipItemsToggle";
 import { JobsWipBoard } from "@/components/JobsWipBoard";
 import { JobsWipLayoutSwitch } from "@/components/JobsWipLayoutSwitch";
-import { itemEffectiveType, itemTag, machinistSummary } from "@/lib/jobs/item-model";
+import { itemEffectiveType, itemTag, jobPoNumbers, machinistSummary } from "@/lib/jobs/item-model";
 import { JOBS_BOARD_PREFS_COOKIE, JOBS_LAYOUT_COOKIE, normalizeJobsLayout, parseBoardPrefs, toBoardCard } from "@/lib/jobs/wip-board";
 import { jobHref } from "@/lib/jobs/job-href";
 import { requireRequestContext } from "@/lib/auth/session";
@@ -109,7 +109,7 @@ function searchText(job: JobRow, canSearchCustomerName: boolean, build: string |
     // Customer (only for viewers allowed to see customers)
     ...(canSearchCustomerName ? [job.customer.name, job.customer.tradingName, job.customer.accountCode] : []),
     // 2026-10-29: a multi-item job is found by what its items are too (they sit in the rows under it).
-    ...(job.jobItems.length > 1 ? job.jobItems.flatMap((item) => [item.component, item.componentModel, item.componentSerial, item.componentPartNumber, item.machineMake, item.machineModel, item.plantNumber]) : []),
+    ...(job.jobItems.length > 1 ? job.jobItems.flatMap((item) => [item.customerPo, item.component, item.componentModel, item.componentSerial, item.componentPartNumber, item.machineMake, item.machineModel, item.plantNumber]) : []),
   ].filter(Boolean).join("\n").toLowerCase();
 }
 
@@ -134,7 +134,8 @@ function renderCell(columnId: JobsWipColumnId, job: JobRow, build?: string | nul
     case "customerReference":
       return job.customerReference || "—";
     case "customerPo":
-      return job.customerPo || "—";
+      // 2026-11-25: each inside job can have its own PO; a job with several shows them all.
+      return (job.jobItems.length > 1 ? jobPoNumbers(job.customerPo, job.jobItems).join(", ") : job.customerPo) || "—";
     case "type":
       // 2026-11-25: a job holding jobs of different types (e.g. a field job and a repair) says so instead of showing one type.
       return job.jobItems.length > 1 && insideTypes(job).length > 1 ? "Several" : jobTypeLabelsFor(build)[job.type];
@@ -447,7 +448,7 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                               return (
                                 <li key={item.id} className={insideTypes(job).length > 1 ? "jobs-item has-type" : "jobs-item"}>
                                   <span className="ji-tag">{itemTag(job.jobNumber || job.draftNumber, item.sequence)}</span>
-                                  <span className="jobs-item-what"><strong>{item.component || job.component || "Item"}</strong>{item.componentModel ? <span className="jobs-item-model"> {item.componentModel}</span> : null}{item.componentSerial ? <span className="jobs-item-model"> · S/N {item.componentSerial}</span> : null}</span>
+                                  <span className="jobs-item-what"><strong>{item.component || job.component || "Item"}</strong>{item.componentModel ? <span className="jobs-item-model"> {item.componentModel}</span> : null}{item.componentSerial ? <span className="jobs-item-model"> · S/N {item.componentSerial}</span> : null}{item.customerPo ? <span className="jobs-item-model"> · PO {item.customerPo}</span> : null}</span>
                                   {insideTypes(job).length > 1 && <span className="ji-type">{jobTypeLabelsFor(ctx.industryBuild)[itemEffectiveType(item.type, job.type) as keyof ReturnType<typeof jobTypeLabelsFor>]}</span>}
                                   <StatusPill status={item.status} build={ctx.industryBuild} />
                                   <span className="jobs-item-machine">{machine || "—"}</span>

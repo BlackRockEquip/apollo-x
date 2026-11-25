@@ -98,7 +98,7 @@ const jobListSelect = {
   // 2026-10-29, Engineering multi-item jobs: each item's status, so the list can show "Mixed" with a colour bar (empty for a one-item job).
   // The Jobs & WIP list also opens a multi-item job into its items (tag, component, machine, status, ETAs), so it needs more than the status.
   jobItems: {
-    select: { id: true, sequence: true, type: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true, stripMechanic: { select: { name: true } }, buildMechanic: { select: { name: true } } },
+    select: { id: true, sequence: true, type: true, customerPo: true, status: true, component: true, componentModel: true, componentSerial: true, componentPartNumber: true, machineMake: true, machineModel: true, plantNumber: true, etaDate: true, mechanicEtaDate: true, stripMechanic: { select: { name: true } }, buildMechanic: { select: { name: true } } },
     orderBy: { sequence: "asc" as const },
   },
   // 2026-10-05 — "Pex" pill next to the status on the Jobs & WIP table
@@ -590,7 +590,7 @@ function mapListWhere(companyId: string, query: JobsListQuery, canSearchCustomer
         { salesRepresentative: { name: contains } },
         { stripMechanic: { name: contains } },
         { buildMechanic: { name: contains } },
-        { jobItems: { some: { OR: [{ component: contains }, { componentModel: contains }, { componentSerial: contains }, { componentPartNumber: contains }, { machineMake: contains }, { machineModel: contains }, { plantNumber: contains }] } } },
+        { jobItems: { some: { OR: [{ customerPo: contains }, { component: contains }, { componentModel: contains }, { componentSerial: contains }, { componentPartNumber: contains }, { machineMake: contains }, { machineModel: contains }, { plantNumber: contains }] } } },
         ...(canSearchCustomerName ? [
           { customer: { name: contains } },
           { customer: { tradingName: contains } },
@@ -872,6 +872,8 @@ export async function createJob(ctx: RequestContext, raw: unknown, options?: { l
           // Each inside job works as its own type (empty = the job's) and starts at the first step of that type's flow.
           type: (item.type ?? input.type) as JobType,
           status: itemStartStatus(item.type ?? input.type, input.type, startStatus, ctx.industryBuild),
+          // 2026-11-25: the inside job's own customer PO (blank = follows the job's).
+          customerPo: item.customerPo || null,
           component: item.component,
           componentModel: item.componentModel,
           componentSerial: item.componentSerial,
@@ -2409,6 +2411,7 @@ function itemSteps(item: { type?: string | null }, jobType: string, build: strin
 function itemData(item: JobItemInput) {
   return {
     type: item.type === undefined ? undefined : ((item.type || null) as JobType | null),
+    customerPo: item.customerPo === undefined ? undefined : (item.customerPo || null),
     component: item.component,
     componentModel: item.componentModel,
     componentSerial: item.componentSerial,

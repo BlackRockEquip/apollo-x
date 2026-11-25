@@ -393,6 +393,8 @@ const itemLongText = z.string().trim().max(4000).optional().nullable();
 export const jobItemInput = z.object({
   // 2026-11-25, "multiple jobs within a job": the job type this inside job works as (left out / null = the job's own type).
   type: z.enum(ITEM_JOB_TYPES).optional().nullable(),
+  // 2026-11-25: this inside job's own customer PO (left out / null = follows the job's).
+  customerPo: itemText,
   component: itemText,
   componentModel: itemText,
   componentSerial: itemText,

@@ -29,6 +29,17 @@ export function itemEffectiveType(itemType: string | null | undefined, jobType: 
   return itemType || jobType;
 }
 
+/** 2026-11-25: the customer PO an inside job works under: its own, else the job's (the "default" PO). Empty when neither is set. */
+export function itemEffectivePo(itemPo: string | null | undefined, jobPo: string | null | undefined): string {
+  return (itemPo ?? "").trim() || (jobPo ?? "").trim();
+}
+
+/** Every distinct customer PO across a job's inside jobs (each one's own, else the job's), in job order. */
+export function jobPoNumbers(jobPo: string | null | undefined, items: Array<{ customerPo?: string | null }>): string[] {
+  const list = items.length > 0 ? items.map((item) => itemEffectivePo(item.customerPo, jobPo)) : [(jobPo ?? "").trim()];
+  return [...new Set(list.filter(Boolean))];
+}
+
 // Item tag = job number + "-" + the item's position, e.g. BRE1122-3. Falls back to the position alone before a number exists.
 export function itemTag(jobNumber: string | null | undefined, sequence: number): string {
   const number = (jobNumber ?? "").trim();
