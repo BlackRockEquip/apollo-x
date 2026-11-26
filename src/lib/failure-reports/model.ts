@@ -131,19 +131,25 @@ export function editedJobFields(current: ReportFields, fromJob: Record<JobFieldK
   return JOB_FIELD_KEYS.filter((key) => current[key].trim() !== "" && current[key].trim() !== fromJob[key]);
 }
 
-/** Page count, as the builder works it out: cover + page 2 + photo pages + findings. */
-export function reportPageCount(photoCount: number, perPage: number): number {
-  if (photoCount === 0) return 3;
-  const per = Math.max(1, Math.min(4, Math.round(perPage) || 4));
-  return 1 + 1 + Math.ceil(Math.max(0, photoCount - 2) / per) + 1;
+/**
+ * Where a photo goes (2026-11-26, user: "photos should be added from page 3, page 1 and 2 a user should be able to select
+ * individually"): the cover photo (page 1) and the page 2 photo are chosen one at a time; everything added in bulk goes to the
+ * photo pages, page 3 onwards. At most one cover and one page 2 photo per report.
+ */
+export const PHOTO_ROLES = ["cover", "intro", "page"] as const;
+export type PhotoRoleKey = (typeof PHOTO_ROLES)[number];
+export const PHOTO_ROLE_LABELS: Record<PhotoRoleKey, string> = { cover: "Page 1 - cover photo", intro: "Page 2 - with the opening remark", page: "Photo pages" };
+
+const perOf = (perPage: number) => Math.max(1, Math.min(4, Math.round(perPage) || 4));
+
+/** Page count: cover + page 2 + the photo pages (from the photos on the photo pages only) + findings. */
+export function reportPageCount(pagePhotoCount: number, perPage: number): number {
+  return 3 + Math.ceil(Math.max(0, pagePhotoCount) / perOf(perPage));
 }
 
-/** Where a photo lands on the report (shown beside it in the photo list). */
-export function photoRole(index: number, perPage: number): string {
-  if (index === 0) return "Cover photo (page 1)";
-  if (index === 1) return "Page 2 - with opening remark";
-  const per = Math.max(1, Math.min(4, Math.round(perPage) || 4));
-  const k = index - 2;
+/** Where the k-th photo on the photo pages lands (page 3 onwards). */
+export function photoPlace(k: number, perPage: number): string {
+  const per = perOf(perPage);
   return `Page ${3 + Math.floor(k / per)} · row ${(k % per) + 1}`;
 }
 

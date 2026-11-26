@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  JOB_FIELD_KEYS, blankFields, editedJobFields, jobToFields, normaliseFields, normaliseMarks, photoRole, refreshFromJob, reportFileName, reportPageCount,
+  JOB_FIELD_KEYS, blankFields, editedJobFields, jobToFields, normaliseFields, normaliseMarks, photoPlace, refreshFromJob, reportFileName, reportPageCount,
   type JobSource,
 } from "@/lib/failure-reports/model";
 import { buildJobTabs } from "@/components/job-screen/job-tabs";
@@ -79,20 +79,18 @@ describe("Refresh from job", () => {
 });
 
 describe("report layout helpers (as in the builder)", () => {
-  it("counts pages: cover + page 2 + photo pages + findings", () => {
+  it("counts pages: cover + page 2 + photo pages (photo-page photos only) + findings", () => {
     expect(reportPageCount(0, 4)).toBe(3);
-    expect(reportPageCount(2, 4)).toBe(3);
-    expect(reportPageCount(3, 4)).toBe(4);
-    expect(reportPageCount(10, 4)).toBe(5);
-    expect(reportPageCount(10, 1)).toBe(11);
+    expect(reportPageCount(1, 4)).toBe(4);
+    expect(reportPageCount(4, 4)).toBe(4);
+    expect(reportPageCount(8, 4)).toBe(5);
+    expect(reportPageCount(8, 1)).toBe(11);
   });
 
-  it("says where each photo lands", () => {
-    expect(photoRole(0, 4)).toBe("Cover photo (page 1)");
-    expect(photoRole(1, 4)).toBe("Page 2 - with opening remark");
-    expect(photoRole(2, 4)).toBe("Page 3 · row 1");
-    expect(photoRole(6, 4)).toBe("Page 4 · row 1");
-    expect(photoRole(3, 2)).toBe("Page 3 · row 2");
+  it("says where each photo on the photo pages lands (page 3 onwards)", () => {
+    expect(photoPlace(0, 4)).toBe("Page 3 · row 1");
+    expect(photoPlace(4, 4)).toBe("Page 4 · row 1");
+    expect(photoPlace(1, 2)).toBe("Page 3 · row 2");
   });
 
   it("names the file after the job", () => {

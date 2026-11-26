@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FIELD_KEYS, WARRANTY_VALUES } from "@/lib/failure-reports/model";
+import { FIELD_KEYS, PHOTO_ROLES, WARRANTY_VALUES } from "@/lib/failure-reports/model";
 
 // Request shapes for the Failure Reports API (2026-11-25). Text limits are generous - the report is free text - but bounded.
 
@@ -38,9 +38,13 @@ export const photoAddInput = z.object({
   width: z.number().int().min(1).max(10000),
   height: z.number().int().min(1).max(10000),
   caption: z.string().max(3000).optional(),
+  /** cover = page 1, intro = page 2, page = the photo pages (default; what bulk adding uses). */
+  role: z.enum(PHOTO_ROLES).default("page"),
 });
 
 export const photoUpdateInput = z.object({
+  /** Move the photo: to page 1, page 2, or back to the photo pages. A photo already in that slot moves to the photo pages. */
+  role: z.enum(PHOTO_ROLES).optional(),
   caption: z.string().max(3000).optional(),
   marks: z.array(z.unknown()).max(200).optional(),
   /** The photo rotated in the mark editor (a new image), with its new size. */

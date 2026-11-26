@@ -3561,6 +3561,9 @@ model FailureReportPhoto {
   companyId String
   reportId  String
   sortOrder Int
+  // 2026-11-26: where the photo goes - "cover" (page 1, one per report), "intro" (page 2 with the opening remark, one per report)
+  // or "page" (the photo pages from page 3, in sortOrder). Photos added in bulk always go to the photo pages.
+  role      String   @default("page")
   fileName  String?
   mimeType  String   @default("image/jpeg")
   width     Int

@@ -1,9 +1,9 @@
-import type { JobFieldKey, PhotoMark, ReportFields, WarrantyValue } from "@/lib/failure-reports/model";
+import type { JobFieldKey, PhotoMark, PhotoRoleKey, ReportFields, WarrantyValue } from "@/lib/failure-reports/model";
 
 // What the Failure Reports screens get back from /api/v1/failure-reports. Written out here (not imported from the service) so
 // the screens never pull server code into the browser.
 
-export type ReportPhoto = { id: string; fileName: string; width: number; height: number; caption: string; marks: PhotoMark[]; src: string };
+export type ReportPhoto = { id: string; role: PhotoRoleKey; fileName: string; width: number; height: number; caption: string; marks: PhotoMark[]; src: string };
 
 export type ReportDetail = {
   id: string; jobId: string | null; jobLabel: string; profileId: string | null; fields: ReportFields; warranty: WarrantyValue;

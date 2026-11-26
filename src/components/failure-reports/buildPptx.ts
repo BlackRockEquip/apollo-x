@@ -8,7 +8,7 @@ import { reportFileName } from "@/lib/failure-reports/model";
 import { composite, readFile } from "./image";
 import { themeOf, type ProfileLike } from "./theme";
 
-export type BuildPhoto = { src: string; w: number; h: number; marks: PhotoMark[]; caption: string };
+export type BuildPhoto = { src: string; w: number; h: number; marks: PhotoMark[]; caption: string; role: "cover" | "intro" | "page" };
 export type BuildInput = {
   fields: ReportFields; warranty: WarrantyValue; perPage: number; descHeading: string;
   replace: string[]; repair: string[]; missing: string[]; photos: BuildPhoto[];
@@ -43,19 +43,26 @@ async function photoData(p: BuildPhoto): Promise<string> {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PptxGenJS option objects are built the same loose way the builder does */
-export async function buildPptx(st: BuildInput, profile: ProfileLike) {
-  const { default: PptxGenJS } = await import("pptxgenjs");
+/**
+ * Lays the report out. With no `deck` it builds the real PowerPoint (PptxGenJS); Print preview passes a recorder with the same
+ * methods (addSlide / addShape / addText / addImage / addTable) so the preview is drawn from exactly this layout code.
+ */
+export async function buildPptx(st: BuildInput, profile: ProfileLike, deck?: () => any) {
   const f = st.fields;
   const PROF = profile, T = themeOf(PROF), LG = T.logo;
   const C = { ...C0, NAVY: T.dark, GOLD: T.accent, GOLDDK: T.accentText, TITLE: T.title, ON_DARK: T.onDark, ON_ACCENT: T.onAccent, NA: T.naFill, NA_T: T.naText };
-  const pptx = new PptxGenJS();
+  const pptx: any = deck ? deck() : new (await import("pptxgenjs")).default();
   pptx.defineLayout({ name: "BRE", width: I(PW), height: I(PH) }); pptx.layout = "BRE";
   pptx.author = PROF.name; pptx.company = PROF.name;
   const job = (f.job || "").trim();
   pptx.title = `Failure Report ${job}` + ((f.make || f.model || f.component) ? " - " + [shortMake(f.make), f.model, f.component].filter(Boolean).join(" ") : "");
-  const photos: Array<{ w: number; h: number; data: string; caption: string }> = [];
-  for (const p of st.photos) photos.push({ w: p.w, h: p.h, data: await photoData(p), caption: p.caption || "" });
-  const cover = photos[0], introPh = photos[1], rest = photos.slice(2), per = st.perPage || 4;
+  // 2026-11-26: page 1 and page 2 photos are chosen one by one (role cover / intro); the photo pages hold the rest in order.
+  const load = async (p: BuildPhoto | undefined) => (p ? { w: p.w, h: p.h, data: await photoData(p), caption: p.caption || "" } : undefined);
+  const cover = await load(st.photos.find((p) => p.role === "cover"));
+  const introPh = await load(st.photos.find((p) => p.role === "intro"));
+  const rest: Array<{ w: number; h: number; data: string; caption: string }> = [];
+  for (const p of st.photos.filter((x) => x.role === "page")) rest.push((await load(p))!);
+  const per = st.perPage || 4;
   const photoPages = Math.ceil(rest.length / per);
   const TOTAL = 1 + 1 + photoPages + 1;
   const mmc = [shortMake(f.make), f.model, f.component].filter(Boolean).join(" ");

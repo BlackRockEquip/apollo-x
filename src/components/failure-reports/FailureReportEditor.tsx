@@ -4,12 +4,13 @@ import "./failure-reports.css";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, Copy, FileDown, Link2, Loader2, PenLine, RefreshCw, Trash2, Unlink } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Copy, Eye, FileDown, Link2, Loader2, PenLine, RefreshCw, Trash2, Unlink } from "lucide-react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import {
-  DESC_HEADING_DEFAULT, FIELD_LABELS, JOB_FIELD_KEYS, photoRole, reportPageCount, type FieldKey, type JobFieldKey, type ListKey, type ReportFields, type WarrantyValue,
+  DESC_HEADING_DEFAULT, FIELD_LABELS, JOB_FIELD_KEYS, photoPlace, reportPageCount, type FieldKey, type PhotoRoleKey, type JobFieldKey, type ListKey, type ReportFields, type WarrantyValue,
 } from "@/lib/failure-reports/model";
-import { buildPptx } from "./buildPptx";
+import { buildPptx, type BuildInput } from "./buildPptx";
+import { PrintPreview } from "./PrintPreview";
 import { base64Of, composite, normalisePhoto, readFile } from "./image";
 import { JobPickerDialog } from "./JobPickerDialog";
 import { PhotoMarkEditor, type MarkResult } from "./PhotoMarkEditor";
@@ -51,9 +52,12 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
   const [editing, setEditing] = useState<ReportPhoto | null>(null);
   const [linking, setLinking] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [preview, setPreview] = useState<BuildInput | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const slotInput = useRef<HTMLInputElement>(null);
+  const slotRole = useRef<"cover" | "intro" | null>(null);
   const pending = useRef<Patch>({});
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const captionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -119,7 +123,11 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
   const profile = useMemo(() => profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.isDefault && p.active) ?? profiles[0] ?? null, [profiles, profileId]);
   const theme = useMemo(() => themeOf(profile ? profileForBuild(profile) : FALLBACK_PROFILE), [profile]);
   const themeVars = { "--fr-dark": `#${theme.dark}`, "--fr-accent": `#${theme.accent}`, "--fr-na": `#${theme.naFill}`, "--fr-na-text": `#${theme.naText}` } as CSSProperties;
-  const pages = reportPageCount(photos.length, perPage);
+  // 2026-11-26: page 1 and page 2 photos are chosen one by one; bulk-added photos go to the photo pages (page 3 on).
+  const coverPhoto = photos.find((p) => p.role === "cover") ?? null;
+  const introPhoto = photos.find((p) => p.role === "intro") ?? null;
+  const pagePhotos = photos.filter((p) => p.role === "page");
+  const pages = reportPageCount(pagePhotos.length, perPage);
   const fromJob = report.jobValues;
   const isFromJob = (key: FieldKey) => !!report.jobId && !!fromJob && (JOB_FIELD_KEYS as readonly string[]).includes(key) && (fromJob[key as JobFieldKey] ?? "") !== "" && fields[key].trim() === fromJob[key as JobFieldKey];
   const isEditedFromJob = (key: FieldKey) => !!report.jobId && !!fromJob && (JOB_FIELD_KEYS as readonly string[]).includes(key) && (fromJob[key as JobFieldKey] ?? "") !== "" && fields[key].trim() !== fromJob[key as JobFieldKey];
@@ -163,19 +171,20 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
   }
 
   // ---- photos ----
-  async function addFiles(files: FileList | File[]) {
+  async function addFiles(files: FileList | File[], role: PhotoRoleKey = "page") {
     if (readOnly) return;
     const list = Array.from(files).filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|gif)$/i.test(f.name));
     if (!list.length) { setPhotoNote({ tone: "err", text: "No photos found in what was dropped." }); return; }
     setPhotoNote(null);
     list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    if (role !== "page") list.splice(1); // page 1 / page 2 hold one photo each
     const bad: string[] = [];
     let latest: ReportDetail | null = null;
     for (let i = 0; i < list.length; i++) {
-      setAdding(`Adding photos… ${i + 1}/${list.length}`);
+      setAdding(role === "page" ? `Adding photos… ${i + 1}/${list.length}` : role === "cover" ? "Adding the cover photo…" : "Adding the page 2 photo…");
       try {
         const r = await normalisePhoto(await readFile(list[i]));
-        latest = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos`, { method: "POST", body: { fileName: list[i].name, contentBase64: base64Of(r.data), width: r.w, height: r.h } });
+        latest = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos`, { method: "POST", body: { fileName: list[i].name, contentBase64: base64Of(r.data), width: r.w, height: r.h, role } });
         setPhotos(latest.photos);
       } catch (e) {
         // Signed out, too many photos, or the server refused: stop and say why (the rest would fail the same way).
@@ -202,19 +211,28 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
     }, 700);
   }
 
+  /** Moves a photo within the photo pages (a and b are positions among the photo-page photos). */
   async function move(a: number, b: number) {
-    if (readOnly || b < 0 || b >= photos.length || a === b) return;
-    const next = [...photos]; const [p] = next.splice(a, 1); next.splice(b, 0, p);
+    if (readOnly || b < 0 || b >= pagePhotos.length || a === b) return;
+    const list = [...pagePhotos]; const [p] = list.splice(a, 1); list.splice(b, 0, p);
+    const next = [...(coverPhoto ? [coverPhoto] : []), ...(introPhoto ? [introPhoto] : []), ...list];
     setPhotos(next);
     try { const r = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos`, { method: "PUT", body: { order: next.map((x) => x.id) } }); setPhotos(r.photos); }
     catch (e) { setMessage({ tone: "err", text: e instanceof Error ? e.message : "Could not move the photo." }); }
   }
 
-  async function removePhoto(index: number) {
-    const p = photos[index];
-    if (!(await confirm({ message: `Delete photo ${index + 1}?`, tone: "danger", confirmLabel: "Delete" }))) return;
+  async function removePhoto(p: ReportPhoto, label: string) {
+    if (!(await confirm({ message: `Delete ${label}?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try { const r = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos/${p.id}`, { method: "DELETE" }); setPhotos(r.photos); }
     catch (e) { setMessage({ tone: "err", text: e instanceof Error ? e.message : "Could not delete the photo." }); }
+  }
+
+  /** Puts a photo on page 1, page 2 or back on the photo pages. A photo already in that slot moves to the photo pages. */
+  async function setRole(photo: ReportPhoto, role: PhotoRoleKey) {
+    try {
+      const r = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos/${photo.id}`, { method: "PUT", body: { role } });
+      setPhotos(r.photos.map((p) => ({ ...p, caption: photos.find((x) => x.id === p.id)?.caption ?? p.caption })));
+    } catch (e) { setPhotoNote({ tone: "err", text: e instanceof Error ? e.message : "Could not move the photo." }); }
   }
 
   async function saveMarks(photo: ReportPhoto, result: MarkResult) {
@@ -229,17 +247,26 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
     } catch (e) { setMessage({ tone: "err", text: e instanceof Error ? e.message : "Could not save the marks." }); }
   }
 
-  // ---- create report ----
+  // ---- create report / print preview ----
+  const buildInput = (): BuildInput => ({ fields, warranty, perPage, descHeading, replace: lists.replace, repair: lists.repair, missing: lists.missing,
+    photos: photos.map((p) => ({ src: p.src, w: p.width, h: p.height, marks: p.marks, caption: p.caption, role: p.role })) });
+
+  function openPreview() {
+    if (!profile) { setMessage({ tone: "err", text: "Add a company profile first (Company profiles)." }); return; }
+    setPreview(buildInput());
+  }
+
   async function createReport() {
     if (!profile) { setMessage({ tone: "err", text: "Add a company profile first (Company profiles)." }); return; }
     if (!fields.job.trim() && !(await confirm({ message: "No job number entered. Create the report anyway?", confirmLabel: "Create anyway" }))) return;
     if (!photos.length && !(await confirm({ message: "No photos added. Create the report anyway?", confirmLabel: "Create anyway" }))) return;
+    if (photos.length && !coverPhoto && !(await confirm({ message: "No cover photo chosen for page 1. Create the report anyway?", confirmLabel: "Create anyway" }))) return;
     setCreating(true); setMessage(null);
     try {
       await flush();
       Object.values(captionTimers.current).forEach((t) => clearTimeout(t));
       for (const p of photos) await frApi(`/api/v1/failure-reports/${report.id}/photos/${p.id}`, { method: "PUT", body: { caption: p.caption } }).catch(() => undefined);
-      const built = await buildPptx({ fields, warranty, perPage, descHeading, replace: lists.replace, repair: lists.repair, missing: lists.missing, photos: photos.map((p) => ({ src: p.src, w: p.width, h: p.height, marks: p.marks, caption: p.caption })) }, profileForBuild(profile));
+      const built = await buildPptx(buildInput(), profileForBuild(profile));
       const blob = (await built.pptx.write({ outputType: "blob", compression: true })) as Blob;
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob); a.download = built.fileName; document.body.append(a); a.click();
@@ -270,6 +297,56 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
     catch (e) { setMessage({ tone: "err", text: e instanceof Error ? e.message : "Unable to delete the report." }); }
   }
 
+  // Page 1 / page 2: one photo each, chosen on its own (a new file, or one of the photos on the photo pages).
+  function renderSlot(role: "cover" | "intro", p: ReportPhoto | null) {
+    const title = role === "cover" ? "Page 1 – cover photo" : "Page 2 – with the opening remark";
+    const pick = () => { slotRole.current = role; slotInput.current?.click(); };
+    return (
+      <div className="fr-slot">
+        <div className="fr-slot-h">{title}</div>
+        {p ? (
+          <>
+            <button type="button" className="fr-slot-img" title={canEdit ? "Click to mark damage" : "View photo"} onClick={() => setEditing(p)}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- a stored photo, served by our own API */}
+              <img src={thumbs[p.id] || p.src} alt={title} />
+              {p.marks.length > 0 && <span className="cnt">{p.marks.length} mark{p.marks.length > 1 ? "s" : ""}</span>}
+              {canEdit && <span className="mark">➜ Mark damage</span>}
+            </button>
+            <label className="fr-field"><span>{descHeading ? descHeading.charAt(0) + descHeading.slice(1).toLowerCase() : "Description"} <span className="where">prints under the photo (optional)</span></span>
+              <textarea value={p.caption} disabled={readOnly} onChange={(e) => setCaption(p, e.target.value)} placeholder="Optional description for this photo (leave empty for none)." />
+            </label>
+            {canEdit && (
+              <div className="fr-bar" style={{ gap: 6 }}>
+                <button type="button" className="quiet-button" onClick={pick} disabled={!!adding}>Replace…</button>
+                <button type="button" className="quiet-button" onClick={() => void setRole(p, "page")}>Move to photo pages</button>
+                <button type="button" className="quiet-button danger" onClick={() => void removePhoto(p, role === "cover" ? "the cover photo" : "the page 2 photo")}><Trash2 size={13} /> Delete</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {canEdit ? (
+              <button type="button" className="fr-slot-empty" onClick={pick} disabled={!!adding}><b>Choose {role === "cover" ? "the cover photo" : "the page 2 photo"}…</b><span>One photo{role === "cover" ? ", shown large on page 1 under the job details" : ", shown on page 2 under the opening remark"}</span></button>
+            ) : <div className="fr-slot-empty"><span>No photo</span></div>}
+            {canEdit && pagePhotos.length > 0 && (
+              <label className="fr-field"><span>…or use a photo from the photo pages</span>
+                <select value="" onChange={(e) => { const ph = pagePhotos.find((x) => x.id === e.target.value); if (ph) void setRole(ph, role); }}>
+                  <option value="">Choose a photo</option>
+                  {pagePhotos.map((x, k) => <option key={x.id} value={x.id}>Photo {k + 1}{x.caption ? ` – ${x.caption.slice(0, 50)}` : ""}</option>)}
+                </select>
+              </label>
+            )}
+          </>
+        )}
+        {role === "intro" && (
+          <label className="fr-field"><span>Opening remark (page 2, above the photo)</span>
+            <textarea value={fields.intro} disabled={readOnly} onChange={(e) => setField("intro", e.target.value)} placeholder="e.g. Transmission was received in an assembled condition. Inspection will commence to assess its overall condition and determine damage/wear." />
+          </label>
+        )}
+      </div>
+    );
+  }
+
   const input = (key: FieldKey) => {
     const listId = SUGGEST.has(key) && suggestions[key]?.length ? `fr-sg-${key}` : undefined;
     return (
@@ -296,6 +373,7 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
         {canEdit && <span className={`fr-save ${save === "dirty" ? "dirty" : save === "error" ? "err" : ""}`}>{saveText}</span>}
         {canEdit && <button type="button" className="quiet-button" onClick={() => void duplicate()} title="Start a new report as a copy of this one"><Copy size={14} /> Copy</button>}
         {canEdit && <button type="button" className="quiet-button" onClick={() => void remove()}><Trash2 size={14} /> Delete</button>}
+        <button type="button" className="quiet-button" onClick={openPreview} disabled={creating || !!adding} title="See the pages before making the report; print or save as PDF from there"><Eye size={14} /> Print preview</button>
         <button type="button" className="gold-button" onClick={() => void createReport()} disabled={creating || !!adding}>{creating ? <Loader2 className="spin" size={15} /> : <FileDown size={15} />} {creating ? "Building report…" : "Create Report"}</button>
       </div>
 
@@ -347,15 +425,13 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
           <span className="fr-sub">{photos.length ? `${photos.length} photo(s) · report will be ${pages} pages` : "No photos yet."}</span>
         </header>
         <div className="fr-body">
-          {canEdit && (
-            <div className={`fr-drop ${over ? "over" : ""}`} role="button" tabIndex={0} onClick={() => fileInput.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInput.current?.click(); }}
-              onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setOver(true); } }} onDragLeave={() => setOver(false)}
-              onDrop={(e) => { e.preventDefault(); setOver(false); if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files); }}>
-              {adding ? <><Loader2 className="spin" size={18} /><b>{adding}</b></> : <><b>Drop photos here, or click to choose</b>You can pick many at once. Photo 1 goes on the cover, photo 2 on page 2 with the opening remark, the rest go on the photo pages in this order.</>}
-            </div>
-          )}
           {photoNote && <div className={photoNote.tone === "err" ? "inline-error" : "inline-success"} style={{ borderRadius: 10 }} role="status">{photoNote.text} <button type="button" className="fr-link" onClick={() => setPhotoNote(null)}>Dismiss</button></div>}
-          <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files?.length) void addFiles(e.target.files); e.target.value = ""; }} />
+          <div className="fr-slots">
+            {renderSlot("cover", coverPhoto)}
+            {renderSlot("intro", introPhoto)}
+          </div>
+
+          <div className="fr-subh">Photo pages (page 3 onwards)</div>
           <div className="fr-bar">
             <label className="fr-field" style={{ width: 160 }}><span>Photos per page</span>
               <select value={perPage} disabled={readOnly} onChange={(e) => { const v = Number(e.target.value); setPerPage(v); queue({ perPage: v }); }}>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</select>
@@ -365,15 +441,19 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
               <datalist id="fr-heading"><option value="DESCRIPTION" /><option value="COMMENTS" /></datalist>
             </label>
           </div>
-          <label className="fr-field"><span>Opening remark (page 2, above photo 2)</span>
-            <textarea value={fields.intro} disabled={readOnly} onChange={(e) => setField("intro", e.target.value)} placeholder="e.g. Transmission was received in an assembled condition. Inspection will commence to assess its overall condition and determine damage/wear." />
-          </label>
+          {canEdit && (
+            <div className={`fr-drop ${over ? "over" : ""}`} role="button" tabIndex={0} onClick={() => fileInput.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInput.current?.click(); }}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setOver(true); } }} onDragLeave={() => setOver(false)}
+              onDrop={(e) => { e.preventDefault(); setOver(false); if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files, "page"); }}>
+              {adding ? <><Loader2 className="spin" size={18} /><b>{adding}</b></> : <><b>Drop photos here, or click to choose</b>You can pick many at once. They go on the photo pages from page 3, in this order. The page 1 and page 2 photos are chosen above.</>}
+            </div>
+          )}
+          <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files?.length) void addFiles(e.target.files, "page"); e.target.value = ""; }} />
+          <input ref={slotInput} type="file" accept="image/*" hidden onChange={(e) => { const role = slotRole.current; if (e.target.files?.length && role) void addFiles(e.target.files, role); e.target.value = ""; }} />
           <div className="fr-photos">
-            {photos.map((p, i) => (
+            {pagePhotos.map((p, i) => (
               <div key={p.id} style={{ display: "grid", gap: 8 }}>
-                {i === 0 && <div className="fr-pagebreak">Page 1 – cover</div>}
-                {i === 1 && <div className="fr-pagebreak">Page 2</div>}
-                {i >= 2 && (i - 2) % perPage === 0 && <div className="fr-pagebreak">Page {3 + (i - 2) / perPage}</div>}
+                {i % perPage === 0 && <div className="fr-pagebreak">Page {3 + i / perPage}</div>}
                 <div className={`fr-ph ${dragFrom === i ? "dragging" : ""} ${dropAt === i && dragFrom !== i ? "dropt" : ""}`}
                   draggable={canEdit}
                   onDragStart={(e) => { if ((e.target as HTMLElement).closest("textarea")) { e.preventDefault(); return; } setDragFrom(i); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); }}
@@ -388,21 +468,23 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
                     {canEdit && <span className="mark">➜ Mark damage</span>}
                   </button>
                   <label className="fr-field">
-                    <span>{descHeading ? descHeading.charAt(0) + descHeading.slice(1).toLowerCase() : "Description"} <span className="where">{photoRole(i, perPage)}{i === 0 ? " · prints under the cover photo" : i === 1 ? " · prints under the page 2 photo" : " · prints beside the photo"}</span></span>
-                    <textarea value={p.caption} disabled={readOnly} onChange={(e) => setCaption(p, e.target.value)}
-                      placeholder={i < 2 ? "Optional description for this photo (leave empty for none)." : "Describe this photo, e.g. Yoke sealing area worn. To be repaired."} />
+                    <span>{descHeading ? descHeading.charAt(0) + descHeading.slice(1).toLowerCase() : "Description"} <span className="where">{photoPlace(i, perPage)} · prints beside the photo</span></span>
+                    <textarea value={p.caption} disabled={readOnly} onChange={(e) => setCaption(p, e.target.value)} placeholder="Describe this photo, e.g. Yoke sealing area worn. To be repaired." />
                   </label>
                   {canEdit && (
                     <div className="acts">
                       <button type="button" className="fr-icon-btn" aria-label="Move up" title="Move up" disabled={i === 0} onClick={() => void move(i, i - 1)}><ArrowUp size={14} /></button>
-                      <button type="button" className="fr-icon-btn" aria-label="Move down" title="Move down" disabled={i === photos.length - 1} onClick={() => void move(i, i + 1)}><ArrowDown size={14} /></button>
+                      <button type="button" className="fr-icon-btn" aria-label="Move down" title="Move down" disabled={i === pagePhotos.length - 1} onClick={() => void move(i, i + 1)}><ArrowDown size={14} /></button>
                       <button type="button" className="fr-icon-btn" aria-label="Mark damage" title="Mark damage" onClick={() => setEditing(p)}><PenLine size={14} /></button>
-                      <button type="button" className="fr-icon-btn danger" aria-label="Delete photo" title="Delete photo" onClick={() => void removePhoto(i)}><Trash2 size={14} /></button>
+                      <button type="button" className="fr-icon-btn" aria-label="Use as cover photo" title="Use as the cover photo (page 1)" onClick={() => void setRole(p, "cover")}>P1</button>
+                      <button type="button" className="fr-icon-btn" aria-label="Use on page 2" title="Use as the page 2 photo" onClick={() => void setRole(p, "intro")}>P2</button>
+                      <button type="button" className="fr-icon-btn danger" aria-label="Delete photo" title="Delete photo" onClick={() => void removePhoto(p, `photo ${i + 1}`)}><Trash2 size={14} /></button>
                     </div>
                   )}
                 </div>
               </div>
             ))}
+            {pagePhotos.length === 0 && <div className="fr-sub">No photos on the photo pages yet.</div>}
           </div>
         </div>
       </section>
@@ -433,6 +515,7 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
         </div>
       </section>
 
+      {preview && profile && <PrintPreview input={preview} profile={profileForBuild(profile)} onClose={() => setPreview(null)} onCreate={() => { setPreview(null); void createReport(); }} />}
       {editing && <PhotoMarkEditor src={editing.src} width={editing.width} height={editing.height} marks={editing.marks} readOnly={readOnly} onCancel={() => setEditing(null)} onDone={(r) => void saveMarks(editing, r)} />}
       {linking && <JobPickerDialog title="Link to a job" intro="The job's details fill in any field that is still empty. Anything you have typed is kept - use Refresh from job afterwards to replace it." onClose={() => setLinking(false)} onPick={(job) => void pickJob(job)} />}
       {dialog}

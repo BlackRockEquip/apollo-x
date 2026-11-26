@@ -9,7 +9,7 @@ import { jobTypeLabelsFor } from "@/lib/jobs/ui";
 import { prisma } from "@/lib/prisma";
 import {
   JOB_FIELD_KEYS, SUGGEST_KEYS, blankFields, editedJobFields, jobToFields, normaliseFields, normaliseList, normaliseMarks, refreshFromJob,
-  reportPageCount, todayIso, type JobFieldKey, type ReportFields,
+  reportPageCount, todayIso, type JobFieldKey, type PhotoRoleKey, type ReportFields,
 } from "@/lib/failure-reports/model";
 import {
   createdInput, linkJobInput, photoAddInput, photoOrderInput, photoUpdateInput, profileInput, reportCreateInput, reportUpdateInput,
@@ -113,7 +113,7 @@ export async function searchJobsForReports(ctx: RequestContext, query: string) {
 
 const reportInclude = {
   job: { select: { id: true, jobNumber: true, draftNumber: true } },
-  photos: { orderBy: { sortOrder: "asc" }, select: { id: true, sortOrder: true, fileName: true, width: true, height: true, caption: true, marks: true, updatedAt: true } },
+  photos: { orderBy: { sortOrder: "asc" }, select: { id: true, sortOrder: true, role: true, fileName: true, width: true, height: true, caption: true, marks: true, updatedAt: true } },
 } satisfies Prisma.FailureReportInclude;
 type ReportRow = Prisma.FailureReportGetPayload<{ include: typeof reportInclude }>;
 
@@ -133,7 +133,7 @@ function reportView(row: ReportRow) {
     missing: row.missingItems,
     jobValues: jobValuesOf(row.jobValues),
     photos: row.photos.map((p) => ({
-      id: p.id, fileName: p.fileName ?? "", width: p.width, height: p.height, caption: p.caption, marks: normaliseMarks(p.marks),
+      id: p.id, role: (p.role === "cover" || p.role === "intro" ? p.role : "page") as PhotoRoleKey, fileName: p.fileName ?? "", width: p.width, height: p.height, caption: p.caption, marks: normaliseMarks(p.marks),
       // The image address carries the update time so a rotated photo is fetched again rather than taken from the browser cache.
       src: `/api/v1/failure-reports/${row.id}/photos/${p.id}?v=${p.updatedAt.getTime()}`,
     })),
@@ -163,7 +163,8 @@ export async function listFailureReports(ctx: RequestContext, options: { jobId?:
     select: {
       id: true, jobId: true, fields: true, timesCreated: true, lastCreatedAt: true, updatedAt: true, createdAt: true,
       job: { select: { jobNumber: true, draftNumber: true } }, profile: { select: { name: true } },
-      photos: { orderBy: { sortOrder: "asc" }, take: 1, select: { id: true, updatedAt: true } },
+      // The cover photo for the thumbnail ("cover" sorts before "intro" and "page"), else the first photo.
+      photos: { orderBy: [{ role: "asc" }, { sortOrder: "asc" }], take: 1, select: { id: true, updatedAt: true } },
       _count: { select: { photos: true } },
     },
   });
@@ -302,7 +303,7 @@ export async function duplicateFailureReport(ctx: RequestContext, id: string) {
       },
     });
     for (const p of photos) {
-      await tx.failureReportPhoto.create({ data: { companyId, reportId: created.id, sortOrder: p.sortOrder, fileName: p.fileName, mimeType: p.mimeType, width: p.width, height: p.height, data: p.data, caption: p.caption, marks: p.marks ?? [] } });
+      await tx.failureReportPhoto.create({ data: { companyId, reportId: created.id, sortOrder: p.sortOrder, role: p.role, fileName: p.fileName, mimeType: p.mimeType, width: p.width, height: p.height, data: p.data, caption: p.caption, marks: p.marks ?? [] } });
     }
     return created;
   });
@@ -337,13 +338,23 @@ export async function recordFailureReportCreated(ctx: RequestContext, id: string
     savedToJob = { attachmentId: attachment.id, fileName: attachment.fileName };
   }
   const row = await prisma.failureReport.update({ where: { id }, data: { timesCreated: { increment: 1 }, lastCreatedAt: new Date(), updatedById: ctx.userId }, include: reportInclude });
-  await recordAudit(ctx, { source: "UI", module: MODULE, entityType: "FailureReport", entityId: id, action: "UPDATE", afterData: { created: input.fileName, savedToJob: !!savedToJob, pages: reportPageCount(row.photos.length, row.perPage) } as Prisma.InputJsonValue });
+  await recordAudit(ctx, { source: "UI", module: MODULE, entityType: "FailureReport", entityId: id, action: "UPDATE", afterData: { created: input.fileName, savedToJob: !!savedToJob, pages: reportPageCount(row.photos.filter((p) => p.role !== "cover" && p.role !== "intro").length, row.perPage) } as Prisma.InputJsonValue });
   return { report: reportView(row), savedToJob };
 }
 
 // ---------------------------------------------------------------------------
 // Photos
 // ---------------------------------------------------------------------------
+
+/** Frees the page 1 / page 2 slot: a photo already there moves to the end of the photo pages (nothing is deleted). */
+async function freeSlot(tx: Prisma.TransactionClient, companyId: string, reportId: string, role: PhotoRoleKey, keepId?: string) {
+  if (role === "page") return;
+  const current = await tx.failureReportPhoto.findMany({ where: { reportId, companyId, role, ...(keepId ? { id: { not: keepId } } : {}) }, select: { id: true } });
+  if (!current.length) return;
+  const last = await tx.failureReportPhoto.findFirst({ where: { reportId, companyId }, orderBy: { sortOrder: "desc" }, select: { sortOrder: true } });
+  let next = (last?.sortOrder ?? 0) + 1;
+  for (const c of current) await tx.failureReportPhoto.update({ where: { id: c.id }, data: { role: "page", sortOrder: next++ } });
+}
 
 function decodeImage(contentBase64: string) {
   const data = Buffer.from(contentBase64.replace(/^data:image\/[a-z]+;base64,/, ""), "base64");
@@ -361,9 +372,12 @@ export async function addFailureReportPhoto(ctx: RequestContext, reportId: strin
   const count = await prisma.failureReportPhoto.count({ where: { reportId, companyId } });
   if (count >= MAX_PHOTOS) throw new FailureReportError("TOO_MANY_PHOTOS", `A report can hold up to ${MAX_PHOTOS} photos.`);
   const image = decodeImage(input.contentBase64);
-  const last = await prisma.failureReportPhoto.findFirst({ where: { reportId, companyId }, orderBy: { sortOrder: "desc" }, select: { sortOrder: true } });
-  await prisma.failureReportPhoto.create({
-    data: { companyId, reportId, sortOrder: (last?.sortOrder ?? -1) + 1, fileName: input.fileName ?? null, mimeType: image.mimeType, width: input.width, height: input.height, data: image.data, caption: input.caption ?? "", marks: [] },
+  await prisma.$transaction(async (tx) => {
+    await freeSlot(tx, companyId, reportId, input.role);
+    const last = await tx.failureReportPhoto.findFirst({ where: { reportId, companyId }, orderBy: { sortOrder: "desc" }, select: { sortOrder: true } });
+    await tx.failureReportPhoto.create({
+      data: { companyId, reportId, sortOrder: (last?.sortOrder ?? -1) + 1, role: input.role, fileName: input.fileName ?? null, mimeType: image.mimeType, width: input.width, height: input.height, data: image.data, caption: input.caption ?? "", marks: [] },
+    });
   });
   await prisma.failureReport.update({ where: { id: reportId }, data: { updatedById: ctx.userId } });
   return reportView(await loadReport(companyId, reportId));
@@ -383,7 +397,18 @@ export async function updateFailureReportPhoto(ctx: RequestContext, reportId: st
     const image = decodeImage(input.image.contentBase64);
     Object.assign(data, { data: image.data, mimeType: image.mimeType, width: input.image.width, height: input.image.height });
   }
-  await prisma.failureReportPhoto.update({ where: { id: photoId }, data });
+  await prisma.$transaction(async (tx) => {
+    if (input.role) {
+      await freeSlot(tx, companyId, reportId, input.role, photoId);
+      data.role = input.role;
+      // Back to the photo pages: goes to the end of them.
+      if (input.role === "page") {
+        const last = await tx.failureReportPhoto.findFirst({ where: { reportId, companyId }, orderBy: { sortOrder: "desc" }, select: { sortOrder: true } });
+        data.sortOrder = (last?.sortOrder ?? 0) + 1;
+      }
+    }
+    await tx.failureReportPhoto.update({ where: { id: photoId }, data });
+  });
   await prisma.failureReport.update({ where: { id: reportId }, data: { updatedById: ctx.userId } });
   return reportView(await loadReport(companyId, reportId));
 }
