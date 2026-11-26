@@ -4,7 +4,7 @@ import { FIELD_KEYS, PHOTO_ROLES, WARRANTY_VALUES } from "@/lib/failure-reports/
 // Request shapes for the Failure Reports API (2026-11-25). Text limits are generous - the report is free text - but bounded.
 
 const idShape = z.string().regex(/^[a-z0-9]{20,40}$/i);
-const fieldsShape = z.object(Object.fromEntries(FIELD_KEYS.map((key) => [key, z.string().max(key === "intro" || key === "comments" ? 6000 : 300).optional()])) as Record<(typeof FIELD_KEYS)[number], z.ZodOptional<z.ZodString>>);
+const fieldsShape = z.object(Object.fromEntries(FIELD_KEYS.map((key) => [key, z.string().max(key === "intro" || key === "comments" || key === "notes" ? 6000 : 300).optional()])) as Record<(typeof FIELD_KEYS)[number], z.ZodOptional<z.ZodString>>);
 const listShape = z.array(z.string().max(200)).max(40);
 
 export const reportCreateInput = z.object({

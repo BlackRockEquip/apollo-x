@@ -512,6 +512,9 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
             ))}
           </div>
           <p className="fr-sub" style={{ margin: 0 }}>Empty lists print as blank lines on the report so they can be filled in by hand.</p>
+          <label className="fr-field"><span>Notes <span className="where">last page, under the lists · leave empty to print ruled lines to write on</span></span>
+            <textarea style={{ minHeight: 80 }} value={fields.notes} disabled={readOnly} onChange={(e) => setField("notes", e.target.value)} placeholder="e.g. Customer to confirm repair before parts are ordered." />
+          </label>
         </div>
       </section>
 

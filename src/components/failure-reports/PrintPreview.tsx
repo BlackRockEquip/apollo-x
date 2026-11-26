@@ -77,7 +77,7 @@ function TableBlock({ rows, o }: { rows: any[][]; o: any }) {
       {rows.flatMap((row, i) => row.map((c, j) => {
         const co = c.options || {}, m = co.margin || [0, 0, 0, 0];
         return (
-          <div key={`${i}-${j}`} style={{ minHeight: `${o.rowH}in`, background: col(co.fill), border: "0.75pt solid #D9DEE5", marginTop: i ? "-0.75pt" : 0, marginLeft: j ? "-0.75pt" : 0,
+          <div key={`${i}-${j}`} style={{ minHeight: `${Array.isArray(o.rowH) ? o.rowH[i] : o.rowH}in`, background: col(co.fill), border: "0.75pt solid #D9DEE5", marginTop: i ? "-0.75pt" : 0, marginLeft: j ? "-0.75pt" : 0,
             padding: `${m[0]}in ${m[1]}in ${m[2]}in ${m[3]}in`, boxSizing: "border-box", display: "flex", alignItems: "center", fontFamily: "Calibri, Carlito, 'Segoe UI', Arial, sans-serif",
             fontSize: `${co.fontSize || 10}pt`, fontWeight: co.bold ? 700 : 400, color: `#${co.color || "1F2937"}`, lineHeight: 1.1, overflow: "hidden" }}>{c.text}</div>
         );

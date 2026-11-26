@@ -16,7 +16,7 @@
 /** The builder's own field names, kept so its layout code and drafts carry straight over. */
 export const FIELD_KEYS = [
   "job", "client", "component", "serial", "make", "model", "plant", "site", "date_delivery", "date_report", "repair_type", "artisan",
-  "doc_no", "impl_date", "rev_no", "rev_date", "intro", "comments",
+  "doc_no", "impl_date", "rev_no", "rev_date", "intro", "comments", "notes",
 ] as const;
 export type FieldKey = (typeof FIELD_KEYS)[number];
 export type ReportFields = Record<FieldKey, string>;
@@ -40,7 +40,7 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   job: "Job number", client: "Client name", component: "Component", serial: "Serial number", make: "Make", model: "Model",
   plant: "Plant number", site: "Site", date_delivery: "Date of delivery", date_report: "Date of report", repair_type: "Repair type",
   artisan: "Artisan", doc_no: "Reference number", impl_date: "Implementation date", rev_no: "Revision number", rev_date: "Revision date",
-  intro: "Opening remark", comments: "Comments",
+  intro: "Opening remark", comments: "Comments", notes: "Notes",
 };
 
 /** Fields whose earlier values are offered as suggestions while typing (the builder's remembered drop-downs). */
@@ -52,7 +52,7 @@ export const todayIso = (now = new Date()) => new Date(now.getTime() - now.getTi
 export function blankFields(today = todayIso()): ReportFields {
   return {
     job: "", client: "", component: "", serial: "", make: "", model: "", plant: "", site: "", date_delivery: "", date_report: today,
-    repair_type: "", artisan: "", doc_no: "BRE/QC//VR/02", impl_date: "01/03/2023", rev_no: "0", rev_date: today, intro: "", comments: "",
+    repair_type: "", artisan: "", doc_no: "BRE/QC//VR/02", impl_date: "01/03/2023", rev_no: "0", rev_date: today, intro: "", comments: "", notes: "",
   };
 }
 
@@ -61,7 +61,7 @@ export function normaliseFields(value: unknown, today = todayIso()): ReportField
   const base = blankFields(today);
   if (!value || typeof value !== "object") return base;
   const raw = value as Record<string, unknown>;
-  for (const key of FIELD_KEYS) if (typeof raw[key] === "string") base[key] = (raw[key] as string).slice(0, key === "intro" || key === "comments" ? 6000 : 300);
+  for (const key of FIELD_KEYS) if (typeof raw[key] === "string") base[key] = (raw[key] as string).slice(0, key === "intro" || key === "comments" || key === "notes" ? 6000 : 300);
   return base;
 }
 

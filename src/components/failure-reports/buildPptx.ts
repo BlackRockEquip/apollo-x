@@ -119,9 +119,9 @@ export async function buildPptx(st: BuildInput, profile: ProfileLike, deck?: () 
     rect(s, x - 1, y - 1, w + 2, h + 2, C.WHITE, C.LINE); img(s, p.data, x, y, w, h); rect(s, x, y + h - 1.2, w, 1.2, C.GOLD);
     return y + h + 1;
   }
-  function framedWithDesc(s: Slide, p: { w: number; h: number; data: string; caption: string }, sx: number, sy: number, sw: number, sh: number) {
+  function framedWithDesc(s: Slide, p: { w: number; h: number; data: string; caption: string }, sx: number, sy: number, sw: number, sh: number, maxImgH = Infinity) {
     const text = (p.caption || "").trim(), dh = underDesc(text, sw);
-    const bottom = framed(s, p, sx, sy, sw, sh - (dh ? dh + 4 : 0));
+    const bottom = framed(s, p, sx, sy, sw, Math.min(maxImgH, sh - (dh ? dh + 4 : 0)));
     if (dh) { const fd = fitDesc(text, sw - 10, dh - 6 - 4.5, 10.5, 8); descBox(s, sx, bottom + 3, sw, dh, fd.text, fd.pt); }
   }
   function woBlock(s: Slide, x: number, y: number, w: number, h: number, fill: string, label: string, size: number, bold: boolean, color: string, name: string) {
@@ -139,13 +139,20 @@ export async function buildPptx(st: BuildInput, profile: ProfileLike, deck?: () 
   opts.forEach(([v, lab, fill, fc], k) => { const on = st.warranty === v; woBlock(s, wx + k * cw, wy + rh, cw, rh, on ? fill : C.WHITE, lab, on ? 9 : 8, on, on ? fc : C.GREY, "WO_" + (v === "na" ? "NA" : lab)); });
   const rows = [["Client Name", f.client, "Job Number", f.job], ["Component", f.component, "Serial Number", f.serial], ["Make", f.make, "Model", f.model],
     ["Plant Number", f.plant, "Site", f.site], ["Date of Delivery", fmtDate(f.date_delivery), "Date of Report", fmtDate(f.date_report)], ["Repair Type", f.repair_type, "Artisan", f.artisan]];
-  s.addTable(rows.map((r) => r.map((v, j) => (j % 2 === 0 ? cell(v.toUpperCase(), C.LIGHT, 7.5, true, C.GREY) : cell(v || "", C.WHITE, 10.5, true, C.TITLE)))), { x: I(L), y: I(51), colW: [I(28), I(57.25), I(28), I(57.25)], rowH: I(8.5), w: I(170.5) });
+  // 2026-11-26: a long value (e.g. a client name on two lines) makes its row taller; work the real row heights out so the company
+  // details and the cover photo sit below the table instead of behind it.
+  const rowHs = rows.map((r) => Math.max(8.5, Math.max(estLines(r[1] || "", 57.25 - 4, 10.5), estLines(r[3] || "", 57.25 - 4, 10.5), estLines(r[0].toUpperCase(), 28 - 4, 7.5), estLines(r[2].toUpperCase(), 28 - 4, 7.5)) * 4.6 + 1.6));
+  const tableEnd = 51 + rowHs.reduce((a, b) => a + b, 0);
+  s.addTable(rows.map((r) => r.map((v, j) => (j % 2 === 0 ? cell(v.toUpperCase(), C.LIGHT, 7.5, true, C.GREY) : cell(v || "", C.WHITE, 10.5, true, C.TITLE)))), { x: I(L), y: I(51), colW: [I(28), I(57.25), I(28), I(57.25)], rowH: rowHs.map(I), w: I(170.5) });
   const D = PROF.details;
   const det1 = [PROF.legalName || PROF.name, D.address].filter((x) => (x || "").trim()).join("  ·  ");
   const det2 = [D.phone && "Tel: " + D.phone, D.email, D.website, D.coreg && "Co Reg: " + D.coreg, D.vat && "VAT: " + D.vat, D.extra].filter((x) => (x || "").trim()).join("  ·  ");
   const showDet = PROF.showDetails && !!(det2 || D.address);
-  if (showDet) txt(s, L, 103.2, CW, 6.6, [run(det1, { size: 7.5, bold: true, color: C.TITLE, br: true }), run(det2, { size: 7, color: C.GREY })], { align: "center", valign: "middle" });
-  if (cover) framedWithDesc(s, cover, L, showDet ? 111.5 : 110, CW, PH - 20 - (showDet ? 111.5 : 110));
+  const detY = tableEnd + 1.2, detH = 1 + estLines(det1, CW, 7.5) * 3.3 + estLines(det2, CW, 7) * 3.1;
+  if (showDet) txt(s, L, detY, CW, detH, [run(det1, { size: 7.5, bold: true, color: C.TITLE, br: true }), run(det2, { size: 7, color: C.GREY })], { align: "center", valign: "middle" });
+  // 2026-11-26, user: "Can the cover image be a little smaller?" - the photo is at most 105 mm high (was up to ~140 mm), centred.
+  const coverTop = showDet ? detY + detH + 1.8 : tableEnd + 6;
+  if (cover) framedWithDesc(s, cover, L, coverTop, CW, PH - 20 - coverTop, 105);
 
   // ---- page 2 intro ----
   s = pptx.addSlide(); s.background = { color: "FFFFFF" };
@@ -214,7 +221,26 @@ export async function buildPptx(st: BuildInput, profile: ProfileLike, deck?: () 
   const CWH = (CW - 4) / 2, y0 = 47 + ch + 6, xR = L + CWH + 4;
   const hRep = listCard(L, y0, CWH, "REPLACE", st.replace, true), hRp = listCard(xR, y0, CWH, "REPAIR", st.repair, true);
   listCard(L, y0, CWH, "REPLACE", st.replace); listCard(xR, y0, CWH, "REPAIR", st.repair);
+  const hMiss = listCard(L, y0, CWH, "MISSING", st.missing, true);
   if (hRp <= hRep) listCard(xR, y0 + hRp + 5, CWH, "MISSING", st.missing); else listCard(L, y0 + hRep + 5, CWH, "MISSING", st.missing);
+  // 2026-11-26, user: "on the last page, add a note section that a user can fill in". Notes typed on the report are printed;
+  // with none, the box is ruled so notes can be written in by hand. It fills the rest of the page.
+  const listsEnd = y0 + (hRp <= hRep ? Math.max(hRep, hRp + 5 + hMiss) : Math.max(hRp, hRep + 5 + hMiss));
+  const notes = (f.notes || "").trim();
+  const ny = listsEnd + 6, nyEnd = PH - 20;
+  if (nyEnd - ny >= 18) {
+    const nh = nyEnd - ny;
+    rect(s, L, ny, CW, nh, C.WHITE, C.LINE); rect(s, L, ny, CW, 10, C.NAVY);
+    txt(s, L + 5, ny, CW - 10, 10, [run("NOTES", { size: 11, bold: true, color: C.ON_DARK })], { valign: "middle" });
+    rect(s, L, ny + 10, CW, 0.9, C.GOLD);
+    if (notes) {
+      const fd = fitDesc(notes, CW - 12, nh - 16, 11, 8);
+      const nl = fd.text.split(/\n/);
+      txt(s, L + 6, ny + 14, CW - 12, nh - 17, nl.map((l, k) => run(l, { size: fd.pt, color: C.INK, br: k < nl.length - 1 })));
+    } else {
+      for (let yy = ny + 19; yy < ny + nh - 3; yy += 7.5) rect(s, L + 5, yy, CW - 10, 0.265, C.LINE);
+    }
+  }
   return { pptx, fileName: reportFileName(job), pages: TOTAL };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
