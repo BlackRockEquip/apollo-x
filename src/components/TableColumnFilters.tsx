@@ -39,6 +39,45 @@ const SEP = "|~|";
 const MAX_LISTED = 300;
 const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
+// 2026-11-26, user request: "on job wip table, when selecting fields on the filter, can they not be grouped like in an excel
+// filter eg: grouped by year, month etc". A column whose values are (nearly all) dates - Date in, Invoice date, Delivery date
+// ... shown as 2026/11/24 - lists them as a tree, Year > Month > Day, each level with its own tick box (ticked / unticked /
+// part-ticked) and row count, like Excel. Ticking a year or month ticks every date in it. Values that are not dates (Blanks,
+// text) are listed underneath as before. Filters are still stored as the unticked values, so nothing stored changes.
+const DATE_RE = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(.*)$/;
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+type DayNode = { value: string; label: string; count: number };
+type MonthNode = { key: string; label: string; days: DayNode[] };
+type YearNode = { key: string; label: string; months: MonthNode[] };
+type DateGroups = { years: YearNode[]; others: Array<[string, number]> };
+
+/** Groups a column's values by year and month when at least 80% of the non-blank values are dates; otherwise null. */
+export function groupDates(options: Array<[string, number]>): DateGroups | null {
+  const nonBlank = options.filter(([v]) => v !== BLANK);
+  if (nonBlank.length < 2) return null;
+  const parsed = nonBlank.map(([v, n]) => ({ v, n, m: DATE_RE.exec(v) })).filter((x) => x.m && Number(x.m[2]) >= 1 && Number(x.m[2]) <= 12);
+  if (parsed.length / nonBlank.length < 0.8) return null;
+  const years = new Map<string, Map<number, DayNode[]>>();
+  for (const { v, n, m } of parsed) {
+    const y = m![1], mo = Number(m![2]);
+    const months = years.get(y) ?? new Map<number, DayNode[]>();
+    years.set(y, months);
+    const days = months.get(mo) ?? [];
+    months.set(mo, days);
+    days.push({ value: v, label: `${String(Number(m![3])).padStart(2, "0")}${m![4] ? ` ${m![4].trim()}` : ""}`, count: n });
+  }
+  const isDate = new Set(parsed.map((p) => p.v));
+  return {
+    years: Array.from(years.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([y, months]) => ({
+      key: y, label: y,
+      months: Array.from(months.entries()).sort((a, b) => a[0] - b[0]).map(([mo, days]) => ({
+        key: `${y}-${mo}`, label: MONTHS[mo - 1], days: days.sort((a, b) => collator.compare(a.value, b.value)),
+      })),
+    })),
+    others: options.filter(([v]) => !isDate.has(v)),
+  };
+}
+
 type Excluded = Record<string, string[]>;
 type Column = { label: string; index: number; th: HTMLTableCellElement };
 
@@ -344,6 +383,12 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
   const needle = search.trim().toLowerCase();
   const listed = needle ? options.filter(([v]) => v.toLowerCase().includes(needle)) : options;
   const currentEx = new Set(popup ? excluded[popup.label] ?? [] : []);
+  const dateGroups = useMemo(() => groupDates(listed), [listed]);
+  // Which years / months are opened. With one year only, it starts open; a search opens everything it matches.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  // Kept per column (the key starts with the column's name), so each column's tree opens as it was left.
+  const isOpen = (key: string) => openGroups[`${popup?.label}|${key}`] ?? (Boolean(needle) || (dateGroups?.years.length === 1 && !key.includes("-")));
+  const flip = (key: string) => setOpenGroups((cur) => ({ ...cur, [`${popup?.label}|${key}`]: !isOpen(key) }));
 
   function setColumn(label: string, ex: Set<string>) {
     setExcluded((cur) => {
@@ -358,6 +403,27 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
     if (ex.has(value)) ex.delete(value); else ex.add(value);
     setColumn(popup.label, ex);
   }
+  /** Ticks or unticks every date in a year or month at once. */
+  function toggleGroup(values: string[]) {
+    if (!popup) return;
+    const ex = new Set(currentEx);
+    const allTicked = values.every((v) => !ex.has(v));
+    for (const v of values) { if (allTicked) ex.add(v); else ex.delete(v); }
+    setColumn(popup.label, ex);
+  }
+  const stateOf = (values: string[]) => {
+    const off = values.filter((v) => currentEx.has(v)).length;
+    return { checked: off === 0, mixed: off > 0 && off < values.length };
+  };
+  const groupBox = (values: string[], label: string) => {
+    const s = stateOf(values);
+    return <input type="checkbox" aria-label={label} checked={s.checked} ref={(el) => { if (el) el.indeterminate = s.mixed; }} onChange={() => toggleGroup(values)} />;
+  };
+  const caret = (key: string, label: string) => (
+    <button type="button" onClick={() => flip(key)} aria-expanded={isOpen(key)} aria-label={`${isOpen(key) ? "Close" : "Open"} ${label}`}
+      style={{ width: 18, height: 18, padding: 0, border: 0, background: "none", cursor: "pointer", color: "inherit", fontSize: 11, flex: "none" }}>{isOpen(key) ? "▾" : "▸"}</button>
+  );
+
   function selectAll() {
     if (!popup) return;
     if (!needle) { setColumn(popup.label, new Set()); return; }
@@ -389,14 +455,58 @@ export function TableColumnFilters({ tableId, storageKey, noun = "row", defaultE
         </div>
         <div className="tcf-list">
           {listed.length === 0 && <div className="tcf-empty">No matching values</div>}
-          {listed.slice(0, MAX_LISTED).map(([value, count]) => (
-            <label key={value}>
-              <input type="checkbox" checked={!currentEx.has(value)} onChange={() => toggle(value)} />
-              <span className="tcf-value">{value}</span>
-              <em>{count}</em>
-            </label>
-          ))}
-          {listed.length > MAX_LISTED && <div className="tcf-empty">Showing the first {MAX_LISTED} of {listed.length} — type in the search box to narrow the list.</div>}
+          {dateGroups ? (
+            <>
+              {dateGroups.years.map((y) => {
+                const yValues = y.months.flatMap((m) => m.days.map((d) => d.value));
+                const yCount = y.months.reduce((n, m) => n + m.days.reduce((k, d) => k + d.count, 0), 0);
+                return (
+                  <div key={y.key}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      {caret(y.key, y.label)}{groupBox(yValues, `Year ${y.label}`)}
+                      <span className="tcf-value" style={{ fontWeight: 700 }}>{y.label}</span><em>{yCount}</em>
+                    </label>
+                    {isOpen(y.key) && y.months.map((m) => {
+                      const mValues = m.days.map((d) => d.value);
+                      return (
+                        <div key={m.key} style={{ paddingLeft: 18 }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            {caret(m.key, `${m.label} ${y.label}`)}{groupBox(mValues, `${m.label} ${y.label}`)}
+                            <span className="tcf-value">{m.label}</span><em>{m.days.reduce((k, d) => k + d.count, 0)}</em>
+                          </label>
+                          {isOpen(m.key) && m.days.map((d) => (
+                            <label key={d.value} style={{ paddingLeft: 40 }} title={d.value}>
+                              <input type="checkbox" checked={!currentEx.has(d.value)} onChange={() => toggle(d.value)} />
+                              <span className="tcf-value">{d.label}</span>
+                              <em>{d.count}</em>
+                            </label>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {dateGroups.others.map(([value, count]) => (
+                <label key={value}>
+                  <input type="checkbox" checked={!currentEx.has(value)} onChange={() => toggle(value)} />
+                  <span className="tcf-value">{value}</span>
+                  <em>{count}</em>
+                </label>
+              ))}
+            </>
+          ) : (
+            <>
+              {listed.slice(0, MAX_LISTED).map(([value, count]) => (
+                <label key={value}>
+                  <input type="checkbox" checked={!currentEx.has(value)} onChange={() => toggle(value)} />
+                  <span className="tcf-value">{value}</span>
+                  <em>{count}</em>
+                </label>
+              ))}
+              {listed.length > MAX_LISTED && <div className="tcf-empty">Showing the first {MAX_LISTED} of {listed.length} — type in the search box to narrow the list.</div>}
+            </>
+          )}
         </div>
         <div className="tcf-foot"><button type="button" onClick={() => setPopup(null)}>Done</button></div>
       </div>,
