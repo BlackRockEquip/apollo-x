@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { WIP_VIEWER_COLUMNS, wipColumnLabel, wipColumnLabelsFor } from "@/lib/jobs/wip-columns";
 import { tenantRoleLabelsFor, tenantRolesFor } from "@/lib/constants";
-import { DOCUMENT_CHECK_CONFIRM, etaOverdueDays, machinistFieldLabels, needsDocumentCheck } from "@/lib/jobs/ui";
+import { DOCUMENT_CHECK_CONFIRM, etaOverdueDays, isEtaFinished, machinistFieldLabels, needsDocumentCheck } from "@/lib/jobs/ui";
+import { buildFacts } from "@/components/job-screen/job-facts";
 
 describe("WIP View user type (Engineering Business)", () => {
   it("sees exactly Job #, Job type, Status, Machine model, Component and Machinist ETA", () => {
@@ -26,6 +27,16 @@ describe("ETA Overdue column", () => {
   it("is not overdue once the work is finished", () => {
     expect(etaOverdueDays("2026-10-01T00:00:00Z", "TO_BE_DELIVERED", now)).toBeNull();
     expect(etaOverdueDays("2026-10-01T00:00:00Z", "COMPLETE", now)).toBeNull();
+  });
+  it("the job screen ETA fact never says overdue for a delivered or finished job", () => {
+    const base = { fieldService: false, etaDate: "2026-10-19", partsTotal: 0, partsReceived: 0, now };
+    const eta = (status: string, returned = false) => buildFacts({ ...base, closed: isEtaFinished(status, returned) }).find((f) => f.key === "eta");
+    expect(eta("WORK_IN_PROGRESS")?.note).toBe("1 day overdue");
+    for (const status of ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "AWAIT_PAYMENT", "COMPLETE", "CLOSED", "CANCELLED"]) {
+      expect(eta(status)?.note).toBeUndefined();
+      expect(eta(status)?.tone).toBe("default");
+    }
+    expect(eta("ASSEMBLY", true)?.note).toBeUndefined();
   });
 });
 

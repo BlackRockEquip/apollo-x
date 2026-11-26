@@ -42,7 +42,7 @@ import { fileBadge, formatFileSize } from "@/lib/jobs/attachment-tags";
 import { canBeWarranty, jobIsWarranty } from "@/lib/jobs/warranty";
 import { RELATION_PAYLOAD_KEYS, createSerialRunner, diffPayload, jobPayloadFromForm, mergeServerForm, nextBaseline, pickFormKeys, type JobFormValues } from "@/lib/jobs/job-autosave";
 import { quoteLineToCell } from "./quote-compare/compare-model";
-import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM } from "@/lib/jobs/ui";
+import { JOB_STATUS_LABELS, JOB_TYPE_LABELS, canMarkReturnedUnrepaired, statusStepsForJobType, jobStatusLabelsFor, jobTypeLabelsFor, machinistFieldLabels, needsDocumentCheck, DOCUMENT_CHECK_CONFIRM, isEtaFinished } from "@/lib/jobs/ui";
 import { StatusStepper } from "@/components/StatusStepper";
 import { PexPreviousJobsTable } from "@/components/PexPreviousJobs";
 import { PickSlipStateBadge } from "@/components/PickSlipStateBadge";
@@ -5576,7 +5576,7 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   const jobEnded = !!job && ["CLOSED", "CANCELLED", "COMPLETE"].includes(job.status);
   const factItems = job ? buildFacts({
     fieldService: fieldLayout,
-    closed: jobEnded,
+    closed: jobEnded || isEtaFinished(String(job.status), !!job.returnedUnrepaired),
     etaDate: form.etaDate,
     quoteNumber: form.quoteNumber,
     quoteDate: form.quoteDate,

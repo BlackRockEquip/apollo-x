@@ -231,6 +231,11 @@ export function machinistFieldLabels(build?: BuildKey): { strip: string; build: 
 // "-" while it is not yet overdue. Same rule as the dashboard's Overdue ETA card: the ETA date is before today (UTC day) and the job is
 // not finished (ready to deliver or later, closed or cancelled).
 const ETA_FINISHED_STATUSES: string[] = ["TO_BE_DELIVERED", "DELIVERED_AWAITING_PAYMENT", "AWAIT_PAYMENT", "COMPLETE", "CLOSED", "CANCELLED", "RETURNED_UNREPAIRED"];
+// True once an ETA no longer matters: ready to deliver or later, closed, cancelled, or flagged Return unrepaired. The job screen's
+// ETA / Scheduled fact uses this too, so a delivered job never shows "overdue".
+export function isEtaFinished(status: string, returnedUnrepaired = false): boolean {
+  return returnedUnrepaired || ETA_FINISHED_STATUSES.includes(status);
+}
 export function etaOverdueDays(eta: Date | string | null | undefined, status: string, now: Date = new Date()): number | null {
   if (!eta || ETA_FINISHED_STATUSES.includes(status)) return null;
   const etaDate = eta instanceof Date ? eta : new Date(eta);
