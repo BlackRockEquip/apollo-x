@@ -2882,3 +2882,33 @@ button.sfv-name { cursor: pointer; }
 .ji-ov-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
 .ji-ov-actions .ji-status-select { flex: 1; min-width: 0; }
 .ji-ov-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 170px; border: 2px dashed #c6cdd8; border-radius: 9px; background: transparent; color: var(--blue-700); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+
+/* 2026-11-26, New Job: two columns (the form, and a summary with the Create button), Commercial & logistics collapsed. */
+.jw-create-cols { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 16px; align-items: start; }
+.jw-create-main { min-width: 0; }
+.jw-create-rail { position: sticky; top: calc(var(--jw-fixed-h, 0px) + 12px); display: grid; gap: 12px; min-width: 0; }
+.jw-sum-list, .jw-sum-checks { list-style: none; margin: 0; padding: 0 16px; display: grid; gap: 9px; }
+.jw-sum-list { padding-top: 12px; }
+.jw-sum-list li { display: flex; align-items: flex-start; gap: 9px; }
+.jw-sum-list li small { display: block; font-size: 11.5px; line-height: 1.35; }
+.jw-sum-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex: none; }
+.jw-sum-checks { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ink-150, #e2e6ec); font-size: 12.5px; }
+.jw-sum-checks li { display: flex; gap: 8px; }
+.jw-sum-checks li span { font-weight: 800; }
+.jw-sum-checks .ok span { color: #1d6b3d; }
+.jw-sum-checks .todo span { color: #9a1c12; }
+.jw-sum-checks .opt { color: #667085; }
+.jw-sum-create { width: calc(100% - 32px); margin: 14px 16px 0; justify-content: center; }
+.jw-sum-note { margin: 8px 16px 14px; text-align: center; }
+.jw-sum-text { margin: 0; padding: 12px 16px 14px; line-height: 1.45; }
+.jw-com { background: #fff; border: 1px solid var(--ink-150, #e2e6ec); border-radius: 9px; overflow: hidden; }
+.jw-com-toggle { width: 100%; display: flex; align-items: center; gap: 12px; border: 0; background: #fff; padding: 12px 16px; font: inherit; text-align: left; cursor: pointer; }
+.jw-com-toggle strong { font-size: 14px; }
+.jw-com-hint { font-size: 12px; flex: 1 1 auto; min-width: 0; }
+.jw-com-show { color: var(--blue-700, #155fca); font-weight: 700; }
+.jw-opt-pill { background: #eef1f6; color: #3a4558; border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.jw-com > .detail-panel { border: 0; border-top: 1px solid var(--ink-150, #e2e6ec); border-radius: 0; }
+@media (max-width: 1100px) {
+  .jw-create-cols { grid-template-columns: minmax(0, 1fr); }
+  .jw-create-rail { position: static; }
+}

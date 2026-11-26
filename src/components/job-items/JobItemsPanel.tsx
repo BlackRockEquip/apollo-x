@@ -75,7 +75,7 @@ type Props = {
 };
 
 // 2026-11-25: the colour of a job type on its tab and Overview card (field blue, repair gold, partial purple, sale green).
-function typeColor(type: string): string {
+export function typeColor(type: string): string {
   switch (type) {
     case "FIELD_SERVICE": return "#155fca";
     case "STANDARD_REPAIR": return "#d6a83b";

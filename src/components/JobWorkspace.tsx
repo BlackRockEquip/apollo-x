@@ -21,7 +21,7 @@ import { countParts, matchesPartFilter, partTone, summaryParts, type PartFilter 
 import { QuoteEntryDialog, type EntryLine, type EntrySupplier } from "./quote-compare/QuoteEntryDialog";
 import { NamedPicker, type NamedOption } from "./NamedPicker";
 import { JobItemsEditor } from "./job-items/JobItemsEditor";
-import { JobItemsPanel } from "./job-items/JobItemsPanel";
+import { JobItemsPanel, typeColor } from "./job-items/JobItemsPanel";
 import { ItemsStepper } from "./job-items/ItemsStepper";
 import { ItemHeader } from "./job-items/ItemHeader";
 import { PrintTagsDialog } from "./job-items/PrintTagsDialog";
@@ -754,6 +754,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
   // markDelivered moves the ticked ready items to Delivered once it is printed.
   // 2026-10-29, Engineering delivery note register: bumped after a note is recorded so the job's list of notes reloads.
   const [dnRefresh, setDnRefresh] = useState(0);
+  // 2026-11-26, New Job: Commercial & logistics starts collapsed (optional, can be filled in any time after creating).
+  const [commercialOpen, setCommercialOpen] = useState(false);
   const [jobDnDraft, setJobDnDraft] = useState<{ items: Array<{ description: string; quantity: string; itemId?: string }>; notes: string; deliveryDate?: string; markDelivered?: boolean; onNoteIds?: string[] } | null>(null);
   // Job header switched from position:sticky to position:fixed — 2026-09-10,
   // user request: sticky's small "catch up" scroll (it only locks in place
@@ -4604,6 +4606,8 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
               <NamedPicker value={form.salesRepresentativeId} options={salesRepresentatives} emptyLabel="—" ariaLabel="Sales representative" onChange={(id) => updateField("salesRepresentativeId", id)} onCreate={(name) => createStaffOption("salesRep", name)} />
             </label>
             <label><span>Report number</span><input value={form.reportNumber} onChange={(e) => updateField("reportNumber", e.target.value)} /></label>
+            {/* 2026-11-26, New Job: the job's Notes are typed here (the Notes card only exists on an open job). */}
+            {mode === "create" && <label className="wide"><span>Notes</span><textarea rows={2} value={form.notes} onChange={(e) => updateField("notes", e.target.value)} placeholder="Anything the whole job should carry" /></label>}
             {/* 2026-10-06 — field service jobs: where the work is and how to get in.
                 Shown on the create form too (follows the Job type dropdown). */}
             {showSiteFields && (
@@ -4717,10 +4721,57 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
         )}
         {deliveryNotesSection}
         {jobDetailsSection}
-        {commercialSection}
+        {mode === "create" ? (
+          <div className="full-row jw-com">
+            <button type="button" className="jw-com-toggle" aria-expanded={commercialOpen} onClick={() => setCommercialOpen((open) => !open)}>
+              <strong>Commercial &amp; logistics</strong>
+              <span className="jw-opt-pill">Optional</span>
+              <span className="muted jw-com-hint">Quote, sales order, PO status, transport. Can be filled in any time after creating.</span>
+              <span className="jw-com-show">{commercialOpen ? "Hide" : "Show"}</span>
+            </button>
+            {commercialOpen && commercialSection}
+          </div>
+        ) : commercialSection}
       </div>
     </>
   );
+
+  // 2026-11-26, New Job: the summary column beside the form. What will be created, what is still needed, and the Create button.
+  const summaryRows = mode !== "create" ? [] : itemsBuildOn()
+    ? newItems.map((draft, index) => ({ draft, index })).filter(({ draft, index }) => rowFilled(draft, index)).map(({ draft, index }) => {
+        const type = draft.type || form.type;
+        return { key: draft.key, name: `${insideNoun === "job" ? "Job" : "Item"} ${index + 1}`, type, label: typeLabels[type as keyof typeof typeLabels] ?? type, detail: [draft.component, draft.machineModel].filter(Boolean).join(" · ") };
+      })
+    : [{ key: "one", name: "Job", type: form.type, label: typeLabels[form.type as keyof typeof typeLabels] ?? form.type, detail: [form.component, form.machineModel].filter(Boolean).join(" · ") }];
+  const summaryHasMachine = summaryRows.some((row) => !!row.detail);
+  const createCount = itemsBuildOn() ? summaryRows.length : 1;
+  const createLabel = createCount > 1 ? `Create job with ${createCount} ${insideNoun === "job" ? "jobs" : "items"}` : "Create job";
+  const createSummary = mode === "create" ? (
+    <aside className="jw-create-rail" aria-label="New job summary">
+      <section className="detail-panel jw-sum">
+        <header><div><h2>Will be created</h2></div></header>
+        <ul className="jw-sum-list">
+          {summaryRows.length === 0 && <li className="muted">Nothing added yet. Fill in the job below.</li>}
+          {summaryRows.map((row) => (
+            <li key={row.key}>
+              <span className="jw-sum-dot" style={{ background: typeColor(row.type) }} aria-hidden="true" />
+              <span><b>{row.name}</b> <span className="muted">{row.label}</span>{row.detail && <small className="muted">{row.detail}</small>}</span>
+            </li>
+          ))}
+        </ul>
+        <ul className="jw-sum-checks">
+          <li className={form.customerId ? "ok" : "todo"}><span aria-hidden="true">{form.customerId ? "✓" : "✕"}</span>{form.customerId ? "Customer chosen" : "Choose a customer"}</li>
+          <li className={summaryHasMachine ? "ok" : "opt"}><span aria-hidden="true">{summaryHasMachine ? "✓" : "–"}</span>{summaryHasMachine ? "Machine or component entered" : "Machine or component (optional)"}</li>
+        </ul>
+        <button type="submit" form="job-edit-form" className="gold-button jw-sum-create" disabled={saving || !form.customerId}><Save size={15} />{saving ? "Creating…" : createLabel}</button>
+        <p className="muted small-line jw-sum-note">{form.customerId ? "Ready to create." : "A customer is needed to create the job."}</p>
+      </section>
+      <section className="detail-panel jw-sum">
+        <header><div><h2>Job number</h2></div></header>
+        <p className="muted jw-sum-text">Allocated when you create, from your Numbering settings.{summaryRows.length > 1 ? " Each job then gets its own suffix." : ""}</p>
+      </section>
+    </aside>
+  ) : null;
 
   // Field service jobs (detail mode) use the field layout — see fieldJobLayout below.
   const fieldLayout = mode === "detail" && !!job && savedLayoutType === "FIELD_SERVICE";
@@ -6127,7 +6178,10 @@ export function JobWorkspace({ mode, jobId }: { mode: "create" | "detail"; jobId
       <div style={{ height: stickyHeaderHeight }} aria-hidden="true" />
 
       {mode === "create" && (
-        <form className="job-layout" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobFormSections}</form>
+        <div className="jw-create-cols">
+          <form className="job-layout jw-create-main" id="job-edit-form" onSubmit={submitDraft} onBlur={flushAutosave}>{jobFormSections}</form>
+          {createSummary}
+        </div>
       )}
 
       {job && (
