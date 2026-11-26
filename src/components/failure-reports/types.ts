@@ -27,6 +27,13 @@ export type Profile = {
 
 export type JobHit = { id: string; jobNumber: string; client: string; component: string; make: string; model: string; serial: string };
 
+export class SignedOutError extends Error {
+  constructor() {
+    super("You have been signed out, so this was not saved. Sign in again in a new tab (your typing on this page is kept), then try again.");
+    this.name = "SignedOutError";
+  }
+}
+
 export async function frApi<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const response = await fetch(url, {
     method: init?.method ?? "GET",
@@ -34,8 +41,17 @@ export async function frApi<T>(url: string, init?: { method?: string; body?: unk
     headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
+  // 2026-11-26 — live report: "it says uploading but then nothing happens". The session had run out while the report was open;
+  // the sign-in check (proxy.ts) sends every signed-out request to /login, the browser follows that silently and gets the login
+  // page back as a 200, so the screen never knew the save failed. Now a signed-out answer is an error the screen shows.
+  if (response.redirected && new URL(response.url).pathname === "/login") {
+    throw new SignedOutError();
+  }
   let body: unknown = null;
   try { body = await response.json(); } catch { /* an empty body is fine */ }
+  if (response.ok && body === null && !(response.headers.get("content-type") ?? "").includes("json") && response.status !== 204) {
+    throw new Error("The server sent back something unexpected. Refresh the page and try again.");
+  }
   if (!response.ok) {
     const message = (body as { error?: { message?: string } } | null)?.error?.message;
     throw new Error(message || "Something went wrong. Please try again.");

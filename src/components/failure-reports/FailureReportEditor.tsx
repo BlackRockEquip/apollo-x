@@ -14,7 +14,7 @@ import { base64Of, composite, normalisePhoto, readFile } from "./image";
 import { JobPickerDialog } from "./JobPickerDialog";
 import { PhotoMarkEditor, type MarkResult } from "./PhotoMarkEditor";
 import { FALLBACK_PROFILE, themeOf } from "./theme";
-import { frApi, profileForBuild, type JobHit, type Profile, type ReportDetail, type ReportPhoto } from "./types";
+import { SignedOutError, frApi, profileForBuild, type JobHit, type Profile, type ReportDetail, type ReportPhoto } from "./types";
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
 type Patch = { fields?: Partial<ReportFields>; warranty?: WarrantyValue; perPage?: number; descHeading?: string; profileId?: string | null; replace?: string[]; repair?: string[]; missing?: string[] };
@@ -45,6 +45,8 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
   const [save, setSave] = useState<SaveState>("saved");
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [adding, setAdding] = useState<string>("");
+  // Messages about adding photos show by the drop zone too - the message bar at the top is out of view while adding photos.
+  const [photoNote, setPhotoNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [over, setOver] = useState(false);
   const [editing, setEditing] = useState<ReportPhoto | null>(null);
   const [linking, setLinking] = useState(false);
@@ -90,6 +92,7 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
     } catch (e) {
       pending.current = { ...body, ...pending.current, fields: { ...body.fields, ...pending.current.fields } };
       setSave("error"); setMessage({ tone: "err", text: e instanceof Error ? e.message : "Could not save. Check the connection and try again." });
+      window.scrollTo({ top: 0, behavior: "smooth" });
       return false;
     }
   }, [report.id]);
@@ -163,7 +166,8 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
   async function addFiles(files: FileList | File[]) {
     if (readOnly) return;
     const list = Array.from(files).filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|gif)$/i.test(f.name));
-    if (!list.length) { setMessage({ tone: "err", text: "No photos found in what was dropped." }); return; }
+    if (!list.length) { setPhotoNote({ tone: "err", text: "No photos found in what was dropped." }); return; }
+    setPhotoNote(null);
     list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     const bad: string[] = [];
     let latest: ReportDetail | null = null;
@@ -174,13 +178,18 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
         latest = await frApi<ReportDetail>(`/api/v1/failure-reports/${report.id}/photos`, { method: "POST", body: { fileName: list[i].name, contentBase64: base64Of(r.data), width: r.w, height: r.h } });
         setPhotos(latest.photos);
       } catch (e) {
+        // Signed out, too many photos, or the server refused: stop and say why (the rest would fail the same way).
+        if (e instanceof SignedOutError || (e instanceof Error && /up to \d+ photos|server|Something went wrong/i.test(e.message))) {
+          setAdding("");
+          setPhotoNote({ tone: "err", text: `${i ? `Added ${i} of ${list.length} photos. ` : ""}${e.message}` });
+          return;
+        }
         bad.push(list[i].name);
-        if (e instanceof Error && /up to \d+ photos/.test(e.message)) { setMessage({ tone: "err", text: e.message }); break; }
       }
     }
     setAdding("");
     if (latest) setReport((r) => ({ ...r, updatedAt: latest!.updatedAt }));
-    setMessage(bad.length ? { tone: "err", text: `Added ${list.length - bad.length} photo(s). Could not read: ${bad.join(", ")} (save HEIC photos as JPG first).` } : { tone: "ok", text: `Added ${list.length} photo(s).` });
+    setPhotoNote(bad.length ? { tone: "err", text: `Added ${list.length - bad.length} photo(s). Could not read: ${bad.join(", ")} (save HEIC photos as JPG first).` } : { tone: "ok", text: `Added ${list.length} photo(s).` });
   }
 
   function setCaption(photo: ReportPhoto, caption: string) {
@@ -345,6 +354,7 @@ export function FailureReportEditor({ initial, canEdit, canOpenJob }: { initial:
               {adding ? <><Loader2 className="spin" size={18} /><b>{adding}</b></> : <><b>Drop photos here, or click to choose</b>You can pick many at once. Photo 1 goes on the cover, photo 2 on page 2 with the opening remark, the rest go on the photo pages in this order.</>}
             </div>
           )}
+          {photoNote && <div className={photoNote.tone === "err" ? "inline-error" : "inline-success"} style={{ borderRadius: 10 }} role="status">{photoNote.text} <button type="button" className="fr-link" onClick={() => setPhotoNote(null)}>Dismiss</button></div>}
           <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => { if (e.target.files?.length) void addFiles(e.target.files); e.target.value = ""; }} />
           <div className="fr-bar">
             <label className="fr-field" style={{ width: 160 }}><span>Photos per page</span>
