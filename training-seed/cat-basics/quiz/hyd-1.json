@@ -1,0 +1,470 @@
+{
+ "course": "hyd-1",
+ "questions": [
+  {
+   "stableKey": "hyd-1-q01",
+   "scope": "FINAL",
+   "prompt": "Which is NOT a primary function of a hydraulic tank?",
+   "options": [
+    "Cools oil",
+    "Increases system pressure",
+    "Allows air to separate and particles to settle",
+    "Stores oil"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The tank stores and cools oil and lets air separate and particles settle; the relief valve, not the tank, sets pressure."
+  },
+  {
+   "stableKey": "hyd-1-q02",
+   "scope": "FINAL",
+   "prompt": "What does the hydraulic pump do?",
+   "options": [
+    "Limits system pressure",
+    "Converts mechanical energy into fluid energy in the form of flow",
+    "Creates pressure on its own",
+    "Converts hydraulic energy into motion"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The pump creates flow; resistance to flow creates pressure."
+  },
+  {
+   "stableKey": "hyd-1-q03",
+   "scope": "FINAL",
+   "prompt": "What does the relief valve do?",
+   "options": [
+    "Determines the path fluid takes",
+    "Limits system pressure",
+    "Cleans the oil",
+    "Stores oil"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The relief (pressure control) valve limits system pressure."
+  },
+  {
+   "stableKey": "hyd-1-q04",
+   "scope": "FINAL",
+   "prompt": "What does an actuator do?",
+   "options": [
+    "Converts hydraulic energy into mechanical energy to do work",
+    "Filters the oil",
+    "Converts mechanical energy into flow",
+    "Stores pressure"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Cylinders and motors are actuators: they convert hydraulic energy into linear or rotary work."
+  },
+  {
+   "stableKey": "hyd-1-q05",
+   "scope": "FINAL",
+   "prompt": "In a parallel circuit...",
+   "options": [
+    "Components have equal access to pump flow",
+    "Fluid passes through one component and then the next",
+    "Only one component can work",
+    "The tank is bypassed"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "In parallel circuits components have equal access to pump flow; in series, fluid passes from one to the next."
+  },
+  {
+   "stableKey": "hyd-1-q06",
+   "scope": "FINAL",
+   "prompt": "What can result from oil viscosity that is too high?",
+   "options": [
+    "Faster cycle times",
+    "Sluggish operation and extra power required",
+    "Less wear",
+    "Lower temperatures"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "High viscosity oil can cause sluggish operation and need more power."
+  },
+  {
+   "stableKey": "hyd-1-q07",
+   "scope": "FINAL",
+   "prompt": "The cycle time of an actuator depends on...",
+   "options": [
+    "System pressure only",
+    "Its colour and length",
+    "Its displacement (volume) and the flow rate",
+    "Oil temperature only"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Cycle time = displacement divided by flow rate."
+  },
+  {
+   "stableKey": "hyd-1-q08",
+   "scope": "FINAL",
+   "prompt": "What does Pascal's Law state?",
+   "options": [
+    "Flow creates pressure",
+    "A force applied to a confined liquid is transmitted equally in all directions",
+    "Liquids compress under load",
+    "Pressure falls with distance"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Pascal's Law: force on a confined liquid is transmitted equally in all directions."
+  },
+  {
+   "stableKey": "hyd-1-q09",
+   "scope": "FINAL",
+   "prompt": "The pressure required to lift a load equals...",
+   "options": [
+    "Load force multiplied by area",
+    "Area divided by force",
+    "Load force divided by the effective piston area",
+    "Flow divided by area"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Pressure = Force / Area, using the effective piston area."
+  },
+  {
+   "stableKey": "hyd-1-q10",
+   "scope": "FINAL",
+   "prompt": "What must always be done before servicing a hydraulic system?",
+   "options": [
+    "Warm the oil",
+    "Remove the tank cap with the engine running",
+    "Raise the implement",
+    "Relieve system pressure"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "System pressure must always be relieved before servicing."
+  },
+  {
+   "stableKey": "hyd-1-q11",
+   "scope": "FINAL",
+   "prompt": "What are the two types of hydraulic tanks?",
+   "options": [
+    "Vented and pressurized",
+    "Open and closed centre",
+    "Single and double acting",
+    "Fixed and variable"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Mobile machines use vented or pressurized tanks."
+  },
+  {
+   "stableKey": "hyd-1-q12",
+   "scope": "FINAL",
+   "prompt": "What do baffle plates in a tank do?",
+   "options": [
+    "Separate the suction and return areas and direct oil flow",
+    "Show oil level",
+    "Filter the oil",
+    "Pressurise the tank"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Baffles separate suction and return areas so oil can settle and cool."
+  },
+  {
+   "stableKey": "hyd-1-q13",
+   "scope": "FINAL",
+   "prompt": "What is the most common type of accumulator on Cat machines?",
+   "options": [
+    "Weighted",
+    "Gas-charged",
+    "Spring",
+    "Diaphragm-free"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The gas-charged accumulator is the most commonly used type."
+  },
+  {
+   "stableKey": "hyd-1-q14",
+   "scope": "FINAL",
+   "prompt": "Which is one of the four basic functions of accumulators?",
+   "options": [
+    "Remove contaminants",
+    "Cool the oil",
+    "Increase pump displacement",
+    "Provide emergency pressure and flow"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Accumulators compensate for flow variations, maintain pressure, absorb shocks and provide emergency pressure and flow."
+  },
+  {
+   "stableKey": "hyd-1-q15",
+   "scope": "FINAL",
+   "prompt": "Which filter protects the pump from coarse contaminants?",
+   "options": [
+    "Pressure filter",
+    "Case drain filter",
+    "Suction filter",
+    "Return filter"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "A suction filter protects pumps from coarse contaminants."
+  },
+  {
+   "stableKey": "hyd-1-q16",
+   "scope": "FINAL",
+   "prompt": "Why are most cartridge and canister filters fitted with bypass valves?",
+   "options": [
+    "To ensure system flow is never blocked",
+    "To clean the filter",
+    "To raise pressure",
+    "To cool the oil"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The bypass valve keeps flow going if the filter clogs, though the oil is then unfiltered."
+  },
+  {
+   "stableKey": "hyd-1-q17",
+   "scope": "FINAL",
+   "prompt": "Which is an indicator of filter failure?",
+   "options": [
+    "Faster cycle times",
+    "Clean oil",
+    "Low oil temperature",
+    "Dirty oil and accelerated valve wear"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Dirty oil, accelerated valve wear, a noisy pump or a bypass alarm point to filter failure."
+  },
+  {
+   "stableKey": "hyd-1-q18",
+   "scope": "FINAL",
+   "prompt": "Which two types of oil coolers are used on Cat machines?",
+   "options": [
+    "Oil-to-fuel and air-to-fuel",
+    "Air-to-oil and water-to-oil",
+    "Plate and drum",
+    "Vented and pressurized"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Cat machines use air-to-oil and water-to-oil coolers."
+  },
+  {
+   "stableKey": "hyd-1-q19",
+   "scope": "FINAL",
+   "prompt": "What are the four primary causes of pump or motor failure?",
+   "options": [
+    "Low voltage, heat, dust, wear",
+    "Seal wear, leaks, noise, pressure",
+    "Cavitation, aeration, contamination, improper fluid",
+    "Overspeed, cold, vibration, age"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The four primary causes are cavitation, aeration, contamination and improper fluid."
+  },
+  {
+   "stableKey": "hyd-1-q20",
+   "scope": "FINAL",
+   "prompt": "What causes cavitation?",
+   "options": [
+    "Too much oil in the tank",
+    "Air leaks on the pressure side",
+    "Thin oil",
+    "The pump receiving little or no oil, so vapour cavities form and collapse"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "When the pump is starved, vapour cavities form and collapse, damaging metal surfaces."
+  },
+  {
+   "stableKey": "hyd-1-q21",
+   "scope": "FINAL",
+   "prompt": "What is aeration?",
+   "options": [
+    "Low viscosity",
+    "Oil boiling",
+    "Air entrapped in the oil, caused by air leaks in the system",
+    "Water in the oil"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Aeration is entrapped air from leaks; both aeration and cavitation give a rattling sound."
+  },
+  {
+   "stableKey": "hyd-1-q22",
+   "scope": "FINAL",
+   "prompt": "How do hydraulic motors compare with hydraulic pumps?",
+   "options": [
+    "Motors create flow",
+    "Motors have no pistons",
+    "They are nearly identical in construction",
+    "They have nothing in common"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Hydraulic motors are nearly identical to pumps but convert hydraulic energy into rotary motion."
+  },
+  {
+   "stableKey": "hyd-1-q23",
+   "scope": "FINAL",
+   "prompt": "When are hydraulic hoses used instead of tubes?",
+   "options": [
+    "Only for return lines",
+    "Only at high temperature",
+    "When components move in relation to each other",
+    "Always"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Hoses are used where flexibility is needed; tubes are rigid steel lines."
+  },
+  {
+   "stableKey": "hyd-1-q24",
+   "scope": "FINAL",
+   "prompt": "Which repair options apply to a leaking connection?",
+   "options": [
+    "Increase pressure",
+    "Weld it",
+    "Add sealant only",
+    "Retorque, replace seals or replace the connector"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "For leaking connections: retorque, replace seals or replace the connector."
+  },
+  {
+   "stableKey": "hyd-1-q25",
+   "scope": "FINAL",
+   "prompt": "What are the three general categories of hydraulic valves?",
+   "options": [
+    "Manual, pilot and electric",
+    "Open, closed and tandem",
+    "Directional, flow and pressure control",
+    "Check, gate and ball"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Valves are grouped as directional control, flow control and pressure control."
+  },
+  {
+   "stableKey": "hyd-1-q26",
+   "scope": "FINAL",
+   "prompt": "What does a make-up valve do?",
+   "options": [
+    "Limits system pressure",
+    "Lets return oil flow to the actuator line when return pressure exceeds actuator line pressure, preventing cavitation",
+    "Reduces pressure to a circuit",
+    "Divides flow between circuits"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A make-up valve is a check valve that refills the actuator line, e.g. when a load drops faster than pump flow."
+  },
+  {
+   "stableKey": "hyd-1-q27",
+   "scope": "FINAL",
+   "prompt": "What does a flow control valve typically do?",
+   "options": [
+    "Regulates actuator speed or divides flow between circuits",
+    "Changes direction of the cylinder",
+    "Limits maximum pressure",
+    "Stores oil"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Flow control valves regulate actuator speed or divide flow."
+  },
+  {
+   "stableKey": "hyd-1-q28",
+   "scope": "FINAL",
+   "prompt": "When is a pressure reducing valve used?",
+   "options": [
+    "When circuit pressure requirements are less than supply pressure",
+    "To stop a cylinder drifting",
+    "When more flow is needed",
+    "To start a pump"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Pressure reducing valves supply a lower pressure to a circuit than the supply pressure."
+  },
+  {
+   "stableKey": "hyd-1-q29",
+   "scope": "FINAL",
+   "prompt": "What does the rod wiper seal do?",
+   "options": [
+    "Seals the head to the tube",
+    "Cushions the stroke",
+    "Seals the piston to the tube",
+    "Keeps dirt from entering the cylinder"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The rod wiper keeps dirt out as the rod retracts."
+  },
+  {
+   "stableKey": "hyd-1-q30",
+   "scope": "FINAL",
+   "prompt": "What is a single acting cylinder?",
+   "options": [
+    "A cylinder hydraulically powered in only one direction",
+    "A telescoping cylinder",
+    "A cylinder with rods on both ends",
+    "A cylinder powered in both directions"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "A single acting cylinder is powered one way; a double acting cylinder is powered both ways."
+  },
+  {
+   "stableKey": "hyd-1-q31",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of a snubber in a cylinder?",
+   "options": [
+    "To lock the rod",
+    "To increase speed",
+    "To filter oil",
+    "To slow the rod near the end of its stroke and protect the cylinder"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The snubber enters a small bore near the end of the stroke, restricting flow and cushioning the stop."
+  }
+ ]
+}

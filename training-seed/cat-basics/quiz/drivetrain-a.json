@@ -1,0 +1,455 @@
+{
+ "course": "drivetrain-a",
+ "questions": [
+  {
+   "stableKey": "drivetrain-a-q01",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of the torque converter?",
+   "options": [
+    "To select forward and reverse",
+    "To cool the transmission oil",
+    "To provide the final gear reduction at the wheels",
+    "To hydraulically transfer torque from the engine flywheel to the transmission"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The torque converter connects the engine to the transmission and uses oil to transfer torque from the flywheel."
+  },
+  {
+   "stableKey": "drivetrain-a-q02",
+   "scope": "FINAL",
+   "prompt": "Which torque converter component is the driving member?",
+   "options": [
+    "Output shaft",
+    "Impeller",
+    "Turbine",
+    "Stator"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The impeller is splined to the flywheel, turns at engine RPM and drives the oil against the turbine."
+  },
+  {
+   "stableKey": "drivetrain-a-q03",
+   "scope": "FINAL",
+   "prompt": "Which torque converter component is the driven member?",
+   "options": [
+    "Carrier",
+    "Impeller",
+    "Turbine",
+    "Stator"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The turbine receives oil flow from the impeller and turns the output shaft."
+  },
+  {
+   "stableKey": "drivetrain-a-q04",
+   "scope": "FINAL",
+   "prompt": "What does the stator do?",
+   "options": [
+    "Redirects oil from the turbine back to the impeller, multiplying torque",
+    "Locks the engine to the transmission",
+    "Pumps oil to the transmission",
+    "Drives the turbine directly"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The stator is the stationary reaction member; changing the oil direction increases torque capacity."
+  },
+  {
+   "stableKey": "drivetrain-a-q05",
+   "scope": "FINAL",
+   "prompt": "The output shaft of a torque converter is splined to the...",
+   "options": [
+    "Impeller",
+    "Stator",
+    "Flywheel",
+    "Turbine"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The output shaft is splined to the turbine and sends torque to the transmission input shaft."
+  },
+  {
+   "stableKey": "drivetrain-a-q06",
+   "scope": "FINAL",
+   "prompt": "A torque converter is a fluid coupling with the addition of a...",
+   "options": [
+    "Second turbine",
+    "Lockup clutch",
+    "Planetary gear set",
+    "Stator"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A fluid coupling has an impeller and turbine; adding a stator makes it a torque converter."
+  },
+  {
+   "stableKey": "drivetrain-a-q07",
+   "scope": "FINAL",
+   "prompt": "Which is a benefit of the torque converter absorbing shock?",
+   "options": [
+    "Higher top speed",
+    "Faster shifting",
+    "Longer powertrain life",
+    "Lower oil temperature"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Absorbing shock gives the powertrain a longer life."
+  },
+  {
+   "stableKey": "drivetrain-a-q08",
+   "scope": "FINAL",
+   "prompt": "Which wheel-type machines are NOT normally fitted with torque converters?",
+   "options": [
+    "Wheel tractor-scrapers",
+    "Wheel loaders",
+    "Off-highway trucks",
+    "Motor graders and hydraulic drive machines"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Wheel machines have torque converters except motor graders and hydraulic drive machines."
+  },
+  {
+   "stableKey": "drivetrain-a-q09",
+   "scope": "FINAL",
+   "prompt": "In a one-way clutch torque converter, what does the one-way clutch do?",
+   "options": [
+    "Locks the stator in one direction and lets it freewheel in the other",
+    "Selects reverse",
+    "Varies impeller capacity",
+    "Connects the engine directly to the transmission"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The clutch locks the stator in one direction of rotation and allows it to freewheel in the opposite direction."
+  },
+  {
+   "stableKey": "drivetrain-a-q10",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of a variable capacity torque converter?",
+   "options": [
+    "To replace the transmission pump",
+    "To let the operator limit torque increase, reducing wheel spin and diverting power to hydraulics",
+    "To lock the converter in direct drive",
+    "To raise top speed"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Limiting torque increase reduces wheel spin and sends more power to the implement hydraulics."
+  },
+  {
+   "stableKey": "drivetrain-a-q11",
+   "scope": "FINAL",
+   "prompt": "What does a lockup clutch torque converter provide when the lockup clutch is engaged?",
+   "options": [
+    "A direct connection between engine and transmission, the highest drivetrain efficiency",
+    "Maximum torque multiplication",
+    "Reduced engine speed",
+    "Neutral"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "With the lockup clutch engaged the converter is in direct drive, giving the highest drivetrain efficiency."
+  },
+  {
+   "stableKey": "drivetrain-a-q12",
+   "scope": "FINAL",
+   "prompt": "When does torque converter stall occur?",
+   "options": [
+    "When the stator freewheels",
+    "When the output shaft speed is zero",
+    "When oil temperature is too high",
+    "When engine speed is zero"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Stall occurs when the output shaft speed is zero; the stall test is used when a converter problem is suspected."
+  },
+  {
+   "stableKey": "drivetrain-a-q13",
+   "scope": "FINAL",
+   "prompt": "What does the torque converter ratio (inlet relief) valve control?",
+   "options": [
+    "Pump displacement",
+    "Clutch modulation",
+    "Lubrication flow",
+    "Maximum pressure to the converter"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The ratio valve controls the maximum pressure to the converter; the outlet relief valve maintains pressure in it."
+  },
+  {
+   "stableKey": "drivetrain-a-q14",
+   "scope": "FINAL",
+   "prompt": "What differentiates a torque divider from a torque converter?",
+   "options": [
+    "It has two turbines",
+    "It has no stator",
+    "It has an integrated planetary gear set in front of the converter",
+    "It uses air instead of oil"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "A torque divider is a conventional torque converter with a planetary gear set in front of it."
+  },
+  {
+   "stableKey": "drivetrain-a-q15",
+   "scope": "FINAL",
+   "prompt": "A benefit of the torque divider permitting direct drive is...",
+   "options": [
+    "Less brake wear",
+    "Increased efficiency and better fuel economy",
+    "Higher hydraulic pressure",
+    "Smoother steering"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Direct drive operation increases efficiency and fuel economy."
+  },
+  {
+   "stableKey": "drivetrain-a-q16",
+   "scope": "FINAL",
+   "prompt": "In a planetary gear set, what is needed to transmit power?",
+   "options": [
+    "All members free",
+    "Two members driving",
+    "One member held, one driving and one driven",
+    "The carrier removed"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "To transmit power through a planetary set one member is held, one drives and one is driven."
+  },
+  {
+   "stableKey": "drivetrain-a-q17",
+   "scope": "FINAL",
+   "prompt": "What happens if no member of a planetary gear set is restrained?",
+   "options": [
+    "Reverse",
+    "The gears idle and no power is transmitted",
+    "High gear",
+    "Direct drive"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "With nothing held the gears idle and no power is transmitted."
+  },
+  {
+   "stableKey": "drivetrain-a-q18",
+   "scope": "FINAL",
+   "prompt": "What is the result if two members of a planetary gear set are locked together?",
+   "options": [
+    "Neutral",
+    "Direct drive",
+    "Overdrive only",
+    "Reverse"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Locking two members gives direct drive."
+  },
+  {
+   "stableKey": "drivetrain-a-q19",
+   "scope": "FINAL",
+   "prompt": "If the planet carrier is held and the sun gear drives, the ring gear turns...",
+   "options": [
+    "In reverse",
+    "In high gear forward",
+    "In direct drive",
+    "Not at all"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Holding the carrier with the sun gear driving drives the ring gear in reverse."
+  },
+  {
+   "stableKey": "drivetrain-a-q20",
+   "scope": "FINAL",
+   "prompt": "In a planetary powershift transmission, what does the modulating relief valve with the load piston do?",
+   "options": [
+    "Controls directional clutch pressure only",
+    "Gives a gradual pressure rise in the clutches and limits maximum speed clutch pressure (P1)",
+    "Cools the clutches",
+    "Controls converter outlet pressure"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The modulating relief valve and load piston provide a controlled pressure rise and limit P1."
+  },
+  {
+   "stableKey": "drivetrain-a-q21",
+   "scope": "FINAL",
+   "prompt": "Which valve controls directional clutch pressure (P2)?",
+   "options": [
+    "Scavenge valve",
+    "Ratio valve",
+    "Pressure differential valve",
+    "Lockup valve"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The pressure differential valve controls directional clutch pressure (P2)."
+  },
+  {
+   "stableKey": "drivetrain-a-q22",
+   "scope": "FINAL",
+   "prompt": "Why is the clutch engagement chart important when troubleshooting a transmission?",
+   "options": [
+    "It shows which clutches are engaged for each speed and direction, so the failed clutch pack can be found",
+    "It lists torque settings",
+    "It shows oil capacities",
+    "It gives the service interval"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Knowing which clutches engage for each gear lets you diagnose which clutch pack has failed."
+  },
+  {
+   "stableKey": "drivetrain-a-q23",
+   "scope": "FINAL",
+   "prompt": "How do countershaft transmissions differ from planetary transmissions?",
+   "options": [
+    "They have only one speed",
+    "They have no clutches",
+    "They use no oil",
+    "They use constant mesh spur gears"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Countershaft transmissions use constant mesh spur gears on clutch shafts."
+  },
+  {
+   "stableKey": "drivetrain-a-q24",
+   "scope": "FINAL",
+   "prompt": "In a countershaft powershift transmission, how many clutches must be engaged to transmit power?",
+   "options": [
+    "One directional clutch and one speed clutch",
+    "Two speed clutches",
+    "Only a speed clutch",
+    "All clutches"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "To transmit power one directional clutch and one speed clutch must be engaged."
+  },
+  {
+   "stableKey": "drivetrain-a-q25",
+   "scope": "FINAL",
+   "prompt": "Countershaft transmission clutches are engaged ___ and disengaged ___.",
+   "options": [
+    "by spring force / hydraulically",
+    "electrically / by gravity",
+    "hydraulically / by spring force",
+    "mechanically / hydraulically"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The clutches are engaged hydraulically and disengaged by spring force."
+  },
+  {
+   "stableKey": "drivetrain-a-q26",
+   "scope": "FINAL",
+   "prompt": "What is an Individual Clutch Modulation (ICM) transmission?",
+   "options": [
+    "A countershaft transmission",
+    "A manual gearbox",
+    "A planetary powershift transmission with each clutch modulated individually",
+    "A hydrostatic drive"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The ICM transmission is a planetary powershift transmission; its advantages include smoother shifts and longer component life."
+  },
+  {
+   "stableKey": "drivetrain-a-q27",
+   "scope": "FINAL",
+   "prompt": "Which benefit is linked to Individual Clutch Modulation?",
+   "options": [
+    "It removes the need for a torque converter",
+    "It doubles top speed",
+    "It removes the transmission pump",
+    "It reduces torque spikes and abrupt shifts, reducing drivetrain wear"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "ICM depresses torque spikes and abrupt shifts and gives smoother shifts."
+  },
+  {
+   "stableKey": "drivetrain-a-q28",
+   "scope": "FINAL",
+   "prompt": "What is a transfer gear case (drop box) used for?",
+   "options": [
+    "Connecting power units, changing the direction and speed of power flow, or dropping the axis of flow",
+    "Charging the accumulators",
+    "Cooling transmission oil",
+    "Steering the machine"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Transfer gears connect units, change direction and speed of power flow, or drop the axis of flow."
+  },
+  {
+   "stableKey": "drivetrain-a-q29",
+   "scope": "FINAL",
+   "prompt": "When is an input transfer gear system most commonly used?",
+   "options": [
+    "When the axles are in line with the transmission",
+    "When the transmission is not in line with the engine and torque converter",
+    "Only on track machines",
+    "On every hydrostatic machine"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "For example, the 988F transmission is mounted lower than the engine, so an input transfer gear is used."
+  },
+  {
+   "stableKey": "drivetrain-a-q30",
+   "scope": "FINAL",
+   "prompt": "Which is a benefit of transfer gears being able to drive auxiliary pumps?",
+   "options": [
+    "It removes the need for additional pump drives",
+    "It increases engine speed",
+    "It removes the need for filters",
+    "It allows direct drive"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Driving auxiliary pumps from the transfer gears eliminates the need for extra pump drives."
+  }
+ ]
+}

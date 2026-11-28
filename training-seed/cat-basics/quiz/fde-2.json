@@ -1,0 +1,455 @@
+{
+ "course": "fde-2",
+ "questions": [
+  {
+   "stableKey": "fde-2-q01",
+   "scope": "FINAL",
+   "prompt": "When testing coolant, which should you determine first?",
+   "options": [
+    "Only the radiator cap pressure",
+    "Either, the order does not matter",
+    "The coolant conditioner concentration, then the antifreeze concentration",
+    "The antifreeze concentration, then the coolant conditioner concentration"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The course says to determine the antifreeze concentration before testing the coolant conditioner concentration."
+  },
+  {
+   "stableKey": "fde-2-q02",
+   "scope": "FINAL",
+   "prompt": "What tool can be used to check antifreeze concentration from a drop of coolant?",
+   "options": [
+    "A multimeter",
+    "A dipstick",
+    "A coolant tester (refractometer) with a sight glass",
+    "A pressure gauge"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "A drop of coolant on the tester's glass gives a reading for antifreeze concentration."
+  },
+  {
+   "stableKey": "fde-2-q03",
+   "scope": "FINAL",
+   "prompt": "When should the radiator cap be tested?",
+   "options": [
+    "Only on marine engines",
+    "Only if it leaks",
+    "During routine cooling system maintenance",
+    "Never, replace it each year"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Test the radiator cap during routine cooling system maintenance."
+  },
+  {
+   "stableKey": "fde-2-q04",
+   "scope": "FINAL",
+   "prompt": "When should you check oil pressure on the gauge?",
+   "options": [
+    "Only when a warning light shows",
+    "Once a month",
+    "Every time you start the engine",
+    "Only at oil changes"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Check oil pressure every time the engine is started."
+  },
+  {
+   "stableKey": "fde-2-q05",
+   "scope": "FINAL",
+   "prompt": "How often should oil level be checked?",
+   "options": [
+    "At every oil change only",
+    "Daily",
+    "Every 500 hours",
+    "Weekly"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Check oil level daily to monitor oil consumption."
+  },
+  {
+   "stableKey": "fde-2-q06",
+   "scope": "FINAL",
+   "prompt": "What happens if too much oil is added to the engine?",
+   "options": [
+    "The filter bypasses",
+    "Nothing",
+    "Oil can be blown out of the seals",
+    "Oil pressure drops to zero"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Overfilling can blow oil out of the seals."
+  },
+  {
+   "stableKey": "fde-2-q07",
+   "scope": "FINAL",
+   "prompt": "Why should you rely on visual inspection of the air filter rather than only the indicator?",
+   "options": [
+    "The indicator only measures dust",
+    "Indicators are never accurate",
+    "Visual checks are required by law",
+    "The indicator can be reset at any time, so a restriction may exist even if it reads normal"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Because the indicator can be reset, inspect the filter itself for clogging."
+  },
+  {
+   "stableKey": "fde-2-q08",
+   "scope": "FINAL",
+   "prompt": "Which test checks whether enough air is entering the intake manifold?",
+   "options": [
+    "Coolant test",
+    "Boost pressure test",
+    "Smoke test",
+    "Dynamic timing"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A boost pressure test shows whether enough air reaches the intake manifold."
+  },
+  {
+   "stableKey": "fde-2-q09",
+   "scope": "FINAL",
+   "prompt": "What do smoke tests measure?",
+   "options": [
+    "Oil consumption only",
+    "Coolant leaks",
+    "Boost pressure",
+    "How thoroughly the engine is burning fuel"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Smoke tests show how completely the fuel is being burned."
+  },
+  {
+   "stableKey": "fde-2-q10",
+   "scope": "FINAL",
+   "prompt": "What information do dynamic timing measurements give?",
+   "options": [
+    "Valve lash",
+    "Compression only",
+    "Injection timing for all cylinders while the engine runs",
+    "Fuel pressure only"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Dynamic timing gives fuel injection information for all cylinders."
+  },
+  {
+   "stableKey": "fde-2-q11",
+   "scope": "FINAL",
+   "prompt": "If you adjust timing advance start, what else must you adjust?",
+   "options": [
+    "Rack setting",
+    "Timing advance stop",
+    "High idle",
+    "Valve lash"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "If timing advance start is adjusted, timing advance stop must also be adjusted."
+  },
+  {
+   "stableKey": "fde-2-q12",
+   "scope": "FINAL",
+   "prompt": "What is pin timing?",
+   "options": [
+    "Measuring injection with a computer",
+    "Physically aligning engine components with metal pins",
+    "Setting valve lash",
+    "Timing using a strobe light"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Pin timing aligns components mechanically with timing pins."
+  },
+  {
+   "stableKey": "fde-2-q13",
+   "scope": "FINAL",
+   "prompt": "What should be done with fuel nozzles that do not open, or open at the wrong pressure?",
+   "options": [
+    "Replace them",
+    "Adjust the transfer pump",
+    "Clean and refit them",
+    "Ignore if the engine starts"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Nozzles that fail to open at the correct pressure should be replaced."
+  },
+  {
+   "stableKey": "fde-2-q14",
+   "scope": "FINAL",
+   "prompt": "Why should you never use compressed air to clean dirt off your clothes or skin?",
+   "options": [
+    "The pressure can force oil and dirt into the skin and eyes",
+    "It is noisy",
+    "It wastes air",
+    "It damages fabric"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Compressed air can drive oil and particles into skin and eyes."
+  },
+  {
+   "stableKey": "fde-2-q15",
+   "scope": "FINAL",
+   "prompt": "Why should rings be removed before mechanical work?",
+   "options": [
+    "They can catch in moving parts and short-circuit electrical connections",
+    "They corrode",
+    "They can scratch paint",
+    "They interfere with gloves"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Rings can get caught in moving parts and short across electrical terminals."
+  },
+  {
+   "stableKey": "fde-2-q16",
+   "scope": "FINAL",
+   "prompt": "Why must NO SMOKING areas be observed around batteries?",
+   "options": [
+    "A cigarette could ignite hydrogen gas fumes and cause an explosion",
+    "Smoke damages batteries",
+    "It discharges the battery",
+    "It is only a company rule"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Batteries give off hydrogen, which can be ignited by a cigarette."
+  },
+  {
+   "stableKey": "fde-2-q17",
+   "scope": "FINAL",
+   "prompt": "Which of these should be done before starting service work?",
+   "options": [
+    "Remove all guards",
+    "Run the engine to warm it",
+    "Disconnect batteries and turn isolator switches OFF, and put warning tags on the engine and in the cab",
+    "Leave the battery connected for diagnostics"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Disconnecting batteries and tagging prevents accidental starts and shorts."
+  },
+  {
+   "stableKey": "fde-2-q18",
+   "scope": "FINAL",
+   "prompt": "How should you check a high pressure fuel line for leaks?",
+   "options": [
+    "By feeling for vibration",
+    "Never with your bare hand; use a board or cardboard",
+    "With the engine at high idle and gloves off",
+    "With your bare hand"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Never use a bare hand on high pressure fuel lines; fuel can penetrate the skin."
+  },
+  {
+   "stableKey": "fde-2-q19",
+   "scope": "FINAL",
+   "prompt": "When using lifting equipment, which is correct?",
+   "options": [
+    "Attach chains at a wide angle",
+    "Hooks face inward",
+    "Lift quickly to reduce swing",
+    "The rated capacity must be higher than the load and the hoist operated slowly"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Make sure capacity exceeds the load, keep chains near perpendicular, hooks facing out, and hoist slowly."
+  },
+  {
+   "stableKey": "fde-2-q20",
+   "scope": "FINAL",
+   "prompt": "Most service procedures should be done on...",
+   "options": [
+    "A hot engine",
+    "A running engine",
+    "A cool engine",
+    "An engine at high idle"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Almost all service procedures should be done on a cool engine."
+  },
+  {
+   "stableKey": "fde-2-q21",
+   "scope": "FINAL",
+   "prompt": "What is the arrangement number on the information plate used for?",
+   "options": [
+    "With the serial number, to access the Cat parts and ordering system",
+    "To find the oil grade",
+    "To set the governor",
+    "To read the S·O·S report"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The six digit arrangement number is used with the serial number for parts ordering."
+  },
+  {
+   "stableKey": "fde-2-q22",
+   "scope": "FINAL",
+   "prompt": "If one belt in a matched set is worn, what should you do?",
+   "options": [
+    "Remove it and run without",
+    "Tighten the others",
+    "Replace only that belt",
+    "Replace all the belts in the set"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "If one belt is worn, replace the whole set."
+  },
+  {
+   "stableKey": "fde-2-q23",
+   "scope": "FINAL",
+   "prompt": "What is the goal of a visual inspection?",
+   "options": [
+    "To replace filters",
+    "To spot problems before they become failures",
+    "To clean the engine",
+    "To record hours"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Visual inspection aims to catch problems before they cause failures."
+  },
+  {
+   "stableKey": "fde-2-q24",
+   "scope": "FINAL",
+   "prompt": "What should you do if you find large quantities of metal in a cut-open oil filter?",
+   "options": [
+    "Fit a new filter and carry on",
+    "Contact your supervisor, as it indicates abnormal wear or a pending failure",
+    "Change to a thinner oil",
+    "Ignore it"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Large amounts of metal point to abnormal wear or a pending failure."
+  },
+  {
+   "stableKey": "fde-2-q25",
+   "scope": "FINAL",
+   "prompt": "What can excessive coolant conditioner cause?",
+   "options": [
+    "Lower boiling point",
+    "Better heat transfer",
+    "Nothing",
+    "Silica dropout that turns coolant into a gel and blocks passages"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Too much conditioner creates silica dropout, which can block coolant passages."
+  },
+  {
+   "stableKey": "fde-2-q26",
+   "scope": "FINAL",
+   "prompt": "On some marine engines, what must be checked during cooling maintenance?",
+   "options": [
+    "Sacrificial zinc rods",
+    "Spark plugs",
+    "Air starter",
+    "Glow plugs"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Zinc rods reduce corrosion in marine cooling systems and must be checked."
+  },
+  {
+   "stableKey": "fde-2-q27",
+   "scope": "FINAL",
+   "prompt": "Before changing fuel filters, what should be drained?",
+   "options": [
+    "The oil pan",
+    "Water from the water separator and fuel tanks",
+    "The air tank",
+    "The coolant"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Drain water from the separator and tanks, then change the primary and final filters."
+  },
+  {
+   "stableKey": "fde-2-q28",
+   "scope": "FINAL",
+   "prompt": "How often should an S·O·S oil sample be collected?",
+   "options": [
+    "Every oil change",
+    "Every 5,000 hours",
+    "Once a year",
+    "Only after a failure"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "An S·O·S sample should be collected at every oil change."
+  },
+  {
+   "stableKey": "fde-2-q29",
+   "scope": "FINAL",
+   "prompt": "What can wear analysis in an S·O·S report reveal?",
+   "options": [
+    "Operator hours",
+    "Fuel price trends",
+    "Tyre wear",
+    "Components wearing faster than normal"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Wear analysis shows components wearing faster than normal, before they fail."
+  },
+  {
+   "stableKey": "fde-2-q30",
+   "scope": "FINAL",
+   "prompt": "What do the chemical and physical tests in an S·O·S detect?",
+   "options": [
+    "Water, fuel and coolant in the oil",
+    "Engine model",
+    "Filter type",
+    "Oil brand"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Chemical and physical tests detect water, fuel and coolant contamination."
+  }
+ ]
+}

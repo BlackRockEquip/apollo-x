@@ -61,6 +61,8 @@ const ROUTES: Route[] = [
   ["POST", "manage/import/prototype", (ctx, _p, b) => courses.importPrototype(ctx, b)],
   ["GET", "manage/import/cat", (ctx) => imports.catBundleStatus(ctx)],
   ["POST", "manage/import/cat", (ctx, _p, b) => imports.importCatBundle(ctx, b)],
+  ["POST", "manage/import/cat/complete", (ctx) => imports.completeCatBundle(ctx)],
+  ["POST", "manage/courses/:id/quiz", (ctx, p, b) => courses.attachQuizPack(ctx, p.id, b)],
   // Learner
   ["GET", "learn", (ctx) => learner.catalogue(ctx)],
   ["GET", "learn/courses/:id", (ctx, p) => learner.courseView(ctx, p.id)],

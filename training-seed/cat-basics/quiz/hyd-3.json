@@ -1,0 +1,380 @@
+{
+ "course": "hyd-3",
+ "questions": [
+  {
+   "stableKey": "hyd-3-q01",
+   "scope": "FINAL",
+   "prompt": "In a simple closed-centre system, what happens to pump flow in the hold (neutral) position?",
+   "options": [
+    "It goes to both cylinders",
+    "It is blocked, causing the main relief valve to open (fixed pump) or the pump to destroke",
+    "It returns freely to tank",
+    "It reverses"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A closed-centre valve blocks pump flow in hold; in a simple fixed pump system the relief opens."
+  },
+  {
+   "stableKey": "hyd-3-q02",
+   "scope": "FINAL",
+   "prompt": "What does 'fixed or variable displacement system' refer to?",
+   "options": [
+    "The tank type",
+    "The type of pump that supplies flow",
+    "The type of cylinder",
+    "The valve actuation"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "It describes the type of pump supplying flow."
+  },
+  {
+   "stableKey": "hyd-3-q03",
+   "scope": "FINAL",
+   "prompt": "Variable displacement systems use pumps that...",
+   "options": [
+    "Have no controls",
+    "Always supply maximum flow",
+    "Only work at idle",
+    "Supply flow on demand"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Variable displacement pumps supply flow on demand."
+  },
+  {
+   "stableKey": "hyd-3-q04",
+   "scope": "FINAL",
+   "prompt": "When the directional control valve returns to hold in a variable displacement load-sensing system, the pump...",
+   "options": [
+    "Moves back to low pressure standby",
+    "Opens the main relief",
+    "Goes to maximum flow",
+    "Stops the engine"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "With no demand, the pump returns to low pressure standby."
+  },
+  {
+   "stableKey": "hyd-3-q05",
+   "scope": "FINAL",
+   "prompt": "In a pilot-operated system, what moves the main control valve spool?",
+   "options": [
+    "The cylinder rod",
+    "Pilot oil sent to one end of the spool",
+    "Gravity",
+    "A cable from the lever"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The pilot valve sends pilot oil to the end of the main spool."
+  },
+  {
+   "stableKey": "hyd-3-q06",
+   "scope": "FINAL",
+   "prompt": "What does load sensing mean?",
+   "options": [
+    "Measuring the weight in the bucket",
+    "Limiting engine speed",
+    "Regulating flow to keep pump supply pressure a fixed amount above the highest workport pressure",
+    "Sensing oil temperature"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Load sensing keeps a constant margin between pump pressure and the highest workport pressure."
+  },
+  {
+   "stableKey": "hyd-3-q07",
+   "scope": "FINAL",
+   "prompt": "How is load sensing done in a fixed displacement system?",
+   "options": [
+    "It cannot be done",
+    "With a swashplate",
+    "With a flow control or dump valve",
+    "With an accumulator"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Fixed displacement load sensing uses a flow control (dump) valve."
+  },
+  {
+   "stableKey": "hyd-3-q08",
+   "scope": "FINAL",
+   "prompt": "How is load sensing done in a variable displacement system?",
+   "options": [
+    "With an orifice in the tank",
+    "With a dump valve only",
+    "With a check valve",
+    "With a variable displacement pump and pump control valve"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A pump control valve adjusts the variable pump's displacement."
+  },
+  {
+   "stableKey": "hyd-3-q09",
+   "scope": "FINAL",
+   "prompt": "A load-sensing system maintains a constant differential pressure between...",
+   "options": [
+    "Tank and return",
+    "Two cylinders",
+    "Pump output pressure and the highest workport pressure",
+    "Pump output and the relief setting"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The margin is between pump output and the highest workport pressure."
+  },
+  {
+   "stableKey": "hyd-3-q10",
+   "scope": "FINAL",
+   "prompt": "How can pressure compensation be achieved?",
+   "options": [
+    "With a bigger cylinder",
+    "With a lockup clutch",
+    "With a larger tank",
+    "With a pressure reducing valve between the pump and the directional control valve"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A pressure reducing (compensator) valve upstream of each control valve gives pressure compensation."
+  },
+  {
+   "stableKey": "hyd-3-q11",
+   "scope": "FINAL",
+   "prompt": "What is the EPUC on electronically controlled hydraulic systems?",
+   "options": [
+    "An electronic power unit control that controls hydraulic flow",
+    "A type of filter",
+    "A pilot valve",
+    "An engine pump"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The EPUC is a microcomputer device that controls hydraulic flow."
+  },
+  {
+   "stableKey": "hyd-3-q12",
+   "scope": "FINAL",
+   "prompt": "What does the Work Mode Selector allow?",
+   "options": [
+    "The operator to configure the machine for particular operations",
+    "Changing the oil",
+    "Starting the engine",
+    "Raising tank pressure"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The work mode selector configures the machine for different tasks."
+  },
+  {
+   "stableKey": "hyd-3-q13",
+   "scope": "FINAL",
+   "prompt": "Which machines typically have sophisticated, computer-controlled hydraulic systems?",
+   "options": [
+    "E-series hydraulic excavators",
+    "Track loaders with simple systems",
+    "Small skid steers only",
+    "None"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Large, high production machines such as E-series excavators have computer-controlled hydraulics."
+  },
+  {
+   "stableKey": "hyd-3-q14",
+   "scope": "FINAL",
+   "prompt": "What is troubleshooting?",
+   "options": [
+    "Reading the schematic only",
+    "An organised, logical method of identifying problems and solving them",
+    "Replacing parts until it works",
+    "Asking the operator only"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Troubleshooting is an organised, logical way to identify and solve problems."
+  },
+  {
+   "stableKey": "hyd-3-q15",
+   "scope": "FINAL",
+   "prompt": "What is the first step of the eight-step troubleshooting approach?",
+   "options": [
+    "Replace the pump",
+    "Make sure a problem really exists",
+    "List possible causes",
+    "Analyse the failure"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Step one is to make sure a problem really does exist."
+  },
+  {
+   "stableKey": "hyd-3-q16",
+   "scope": "FINAL",
+   "prompt": "What is step two of the eight-step approach?",
+   "options": [
+    "State the problem by writing it down in simple terms",
+    "Visually inspect the machine",
+    "Run tests",
+    "Fix the problem"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Step two is to state the problem in simple terms."
+  },
+  {
+   "stableKey": "hyd-3-q17",
+   "scope": "FINAL",
+   "prompt": "What is step three?",
+   "options": [
+    "Analyse the failure",
+    "Fix the problem",
+    "Visually inspect the machine",
+    "Run tests and record data"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Step three is a visual inspection."
+  },
+  {
+   "stableKey": "hyd-3-q18",
+   "scope": "FINAL",
+   "prompt": "What is step four?",
+   "options": [
+    "Verify the problem",
+    "Fix the problem",
+    "Eliminate and isolate",
+    "List all possible causes of the problem"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Step four is to list all possible causes."
+  },
+  {
+   "stableKey": "hyd-3-q19",
+   "scope": "FINAL",
+   "prompt": "What is step five?",
+   "options": [
+    "Fix the problem",
+    "State the problem",
+    "Run tests and record data",
+    "List causes"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Step five is to run tests and record data, using the service manual's specifications."
+  },
+  {
+   "stableKey": "hyd-3-q20",
+   "scope": "FINAL",
+   "prompt": "What is step six?",
+   "options": [
+    "Inspect",
+    "Fix the problem",
+    "Run tests",
+    "Eliminate and isolate"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Step six uses the collected data to eliminate causes and isolate the real one."
+  },
+  {
+   "stableKey": "hyd-3-q21",
+   "scope": "FINAL",
+   "prompt": "What is step seven?",
+   "options": [
+    "Fix the problem, starting with the simplest cause if more than one remains, and rerun the tests",
+    "State the problem",
+    "Analyse the failure",
+    "List causes"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Step seven is to fix the problem, then rerun tests to confirm it is fixed."
+  },
+  {
+   "stableKey": "hyd-3-q22",
+   "scope": "FINAL",
+   "prompt": "What is the final (eighth) step, even after the machine is repaired?",
+   "options": [
+    "Return the machine",
+    "Write the invoice",
+    "Analyse the failure",
+    "Order parts"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Step eight is to analyse the failure so it does not happen again."
+  },
+  {
+   "stableKey": "hyd-3-q23",
+   "scope": "FINAL",
+   "prompt": "If more than one possible cause is left after testing, which should be fixed first?",
+   "options": [
+    "Any at random",
+    "The simplest and easiest to fix",
+    "The most expensive",
+    "The pump always"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Start with the simplest and easiest possible cause."
+  },
+  {
+   "stableKey": "hyd-3-q24",
+   "scope": "FINAL",
+   "prompt": "On a loader, excessive implement drift can indicate...",
+   "options": [
+    "Faulty make-up valves, worn control valve stems or worn piston seals",
+    "A clogged air filter",
+    "A loose fan belt",
+    "Low fuel"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Drift points to leakage past make-up valves, valve stems or piston seals."
+  },
+  {
+   "stableKey": "hyd-3-q25",
+   "scope": "FINAL",
+   "prompt": "In the field service call, after eliminating the engine fuel pump setting and the control valve, which two causes remained?",
+   "options": [
+    "The cooler and breather",
+    "The cylinders and hoses",
+    "The tank and filter",
+    "The main relief valve and the pump"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Testing isolated the main relief valve and the pump as the remaining causes."
+  }
+ ]
+}

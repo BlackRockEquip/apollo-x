@@ -13,7 +13,7 @@ type Item = {
   lessons: number; format: string; learners: number; quizMissing: boolean; imagesMissing: boolean; reviewDue: boolean; reviewOverdue: boolean; nextReviewAt: string | null; owner: string; updatedAt: string | null; hasCover: boolean; archivedAt: string | null;
 };
 type Impact = { inProgress: number; certified: number; positions: string[]; replacements: Array<{ id: string; title: string; code: string }> };
-type CatItem = { id: string; title: string; group: string; lessons: number; pages: number; hasImages: boolean; importedCourseId: string | null };
+type CatItem = { id: string; title: string; group: string; lessons: number; pages: number; hasImages: boolean; hasQuiz: boolean; importedCourseId: string | null; quizNeeded: boolean; imagesNeeded: boolean };
 
 // Course manager (2026-11-28): every course with its life cycle. Draft -> In review -> Published -> Archived (restorable).
 // Only a course that was never published can be deleted; published material holds training records, so it is archived instead.
@@ -36,6 +36,7 @@ export function CourseManager() {
   const shown = useMemo(() => (items ?? []).filter((i) => (tab === "archived" ? i.status === "ARCHIVED" : tab === "drafts" ? !!i.draftStatus || i.status === "DRAFT" : i.status !== "ARCHIVED")).filter((i) => !q.trim() || `${i.title} ${i.code} ${i.group}`.toLowerCase().includes(q.trim().toLowerCase())), [items, tab, q]);
   const counts = useMemo(() => ({ active: (items ?? []).filter((i) => i.status !== "ARCHIVED").length, drafts: (items ?? []).filter((i) => i.draftStatus || i.status === "DRAFT").length, archived: (items ?? []).filter((i) => i.status === "ARCHIVED").length }), [items]);
   const catLeft = (cat ?? []).filter((c) => !c.importedCourseId);
+  const catToComplete = (cat ?? []).filter((c) => c.quizNeeded || c.imagesNeeded);
 
   async function run(fn: () => Promise<unknown>, ok: string) {
     setBusy(true); setError(""); setNotice("");
@@ -55,10 +56,21 @@ export function CourseManager() {
   async function importCat() {
     setBusy(true); setError(""); setNotice("");
     try {
-      const r = await tt<{ imported: Array<{ title: string; lessons: number; images: number }> }>("manage/import/cat", { method: "POST", body: {} });
-      setNotice(`Imported ${r.imported.length} course${r.imported.length === 1 ? "" : "s"}: ${r.imported.map((c) => `${c.title} (${c.lessons} lessons, ${c.images} diagrams)`).join("; ")}. Add a final quiz to each before people can earn certificates.`);
+      const r = await tt<{ imported: Array<{ title: string; lessons: number; images: number; questions: number }> }>("manage/import/cat", { method: "POST", body: {} });
+      const noQuiz = r.imported.filter((c) => !c.questions).length;
+      setNotice(`Imported ${r.imported.length} course${r.imported.length === 1 ? "" : "s"}: ${r.imported.map((c) => `${c.title} (${c.lessons} lessons, ${c.images} diagrams, ${c.questions} quiz questions)`).join("; ")}.${noQuiz ? ` ${noQuiz} still need a final quiz before people can earn certificates.` : ""}`);
       await load(); setCat((await tt<{ items: CatItem[] }>("manage/import/cat")).items);
     } catch (e) { setError(errText(e, "Import failed.")); }
+    finally { setBusy(false); }
+  }
+
+  async function completeCat() {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const r = await tt<{ updated: Array<{ title: string; questions: number; diagrams: number }> }>("manage/import/cat/complete", { method: "POST", body: {} });
+      setNotice(`Updated ${r.updated.map((c) => `${c.title} (${[c.questions && `${c.questions} quiz questions`, c.diagrams && `${c.diagrams} diagrams`].filter(Boolean).join(", ")})`).join("; ")}.`);
+      await load(); setCat((await tt<{ items: CatItem[] }>("manage/import/cat")).items);
+    } catch (e) { setError(errText(e, "Unable to add the quizzes and diagrams.")); }
     finally { setBusy(false); }
   }
 
@@ -77,8 +89,14 @@ export function CourseManager() {
       {notice && <div className="tt-note ok">{notice}</div>}
       {catLeft.length > 0 && (
         <div className="tt-note info" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <PackageOpen size={16} /><span className="tt-grow"><strong>Cat Basics courses ready to import:</strong> {catLeft.map((c) => c.title).join(", ")}. {catLeft.some((c) => !c.hasImages) && `Diagrams are included for ${catLeft.filter((c) => c.hasImages).length} of them; the rest come in as text and the diagrams can be added later.`}</span>
+          <PackageOpen size={16} /><span className="tt-grow"><strong>Cat Basics courses ready to import:</strong> {catLeft.map((c) => c.title).join(", ")}. Each comes with a final quiz. {catLeft.some((c) => !c.hasImages) && `Diagrams are included for ${catLeft.filter((c) => c.hasImages).length} of them; the rest come in as text and the diagrams can be added later.`}</span>
           <button type="button" className="gold-button" disabled={busy} onClick={() => void importCat()}>{busy ? <Loader2 className="spin" size={14} /> : null} Import {catLeft.length} course{catLeft.length === 1 ? "" : "s"}</button>
+        </div>
+      )}
+      {catToComplete.length > 0 && (
+        <div className="tt-note info" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <PackageOpen size={16} /><span className="tt-grow"><strong>Updates ready for imported Cat courses:</strong> {catToComplete.map((c) => `${c.title} (${[c.quizNeeded && "final quiz", c.imagesNeeded && "diagrams"].filter(Boolean).join(" and ")})`).join(", ")}. The quiz is only added to courses that have none; the lesson text does not change.</span>
+          <button type="button" className="gold-button" disabled={busy} onClick={() => void completeCat()}>{busy ? <Loader2 className="spin" size={14} /> : null} Add to {catToComplete.length} course{catToComplete.length === 1 ? "" : "s"}</button>
         </div>
       )}
       <section className="master-panel">

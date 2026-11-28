@@ -6,7 +6,7 @@ import { TrainingError } from "@/lib/http/errors";
 import { prisma } from "@/lib/prisma";
 import { notifyAdminsAndManagers, notifyUser } from "@/lib/notifications/service";
 import { audit, can, canWrite, checkId, iso, notFound, requireTraining, settingsFor, userNames } from "@/lib/training/access";
-import { cleanLesson, contentInput, lessonOrder, lessonRows, questionRows, toDraftLesson, toDraftQuestion, videoUrlOk } from "@/lib/training/content";
+import { cleanLesson, contentInput, lessonOrder, lessonRows, questionInput, questionRows, toDraftLesson, toDraftQuestion, videoUrlOk } from "@/lib/training/content";
 import {
   addMonths, chaptersOf, courseCodeOk, diffLessons, lessonsFromPrototype, MIN_FINAL_QUESTIONS, nextRevisionNumber, questionsSignature, revisionLabel,
   type DraftLesson, type DraftQuestion, type PrototypeCourse, type PrototypeImagePack,
@@ -566,7 +566,21 @@ const prototypeInput = z.object({
   cover: z.string().optional().nullable(),
   code: z.string().trim().optional(),
   publish: z.boolean().optional().default(false),
+  questions: z.array(questionInput).max(600).optional().default([]),
 });
+
+type QuizInput = z.infer<typeof questionInput>;
+
+/** Quiz questions from a seed or a quiz pack: every answer must point at one of the options. */
+function cleanQuiz(questions: QuizInput[]): DraftQuestion[] {
+  const keys = new Set<string>();
+  return questions.map((q) => {
+    if (keys.has(q.stableKey)) throw new TrainingError("FORMAT", `Question ${q.stableKey} is in the quiz twice.`);
+    keys.add(q.stableKey);
+    if (!q.prompt || q.answer.some((a) => a >= q.options.length)) throw new TrainingError("FORMAT", `Question ${q.stableKey} has an answer that is not one of its options.`);
+    return { stableKey: q.stableKey, scope: q.scope, chapterKey: q.chapterKey ?? "", lessonKey: q.lessonKey ?? "", prompt: q.prompt, options: q.options, answer: [...new Set(q.answer)].sort(), explanation: q.explanation ?? "" };
+  });
+}
 
 async function lessonsWithAssets(companyId: string, courseId: string, proto: PrototypeCourse, pack: PrototypeImagePack | null, tx: Prisma.TransactionClient) {
   const assetFor = new Map<string, string>();
@@ -589,6 +603,7 @@ export async function importPrototype(ctx: RequestContext, raw: unknown, importK
   const proto = input.course as PrototypeCourse;
   if (!proto || typeof proto !== "object" || typeof proto.id !== "string" || !Array.isArray(proto.chapters)) throw new TrainingError("FORMAT", "That file is not a course from the Service Tech Training folder (courses.json).");
   const pack = (input.images ?? null) as PrototypeImagePack | null;
+  const quiz = cleanQuiz(input.questions);
   const code = (input.code || proto.id).toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24);
   await assertCode(companyId, code);
   const settings = await settingsFor(companyId);
@@ -607,11 +622,12 @@ export async function importPrototype(ctx: RequestContext, raw: unknown, importK
     // Lessons go in batches: the Cat courses have a few hundred pages each.
     const rows = lessonRows(companyId, rev.id, lessons);
     for (let i = 0; i < rows.length; i += 100) await tx.trainingLesson.createMany({ data: rows.slice(i, i + 100) });
+    if (quiz.length) await tx.trainingQuestion.createMany({ data: questionRows(companyId, rev.id, quiz) });
     if (input.publish) await tx.trainingCourse.update({ where: { id: c.id }, data: { liveRevisionId: rev.id } });
     return { c, lessons: lessons.length, images: lessons.reduce((n, l) => n + l.pageImages.filter(Boolean).length, 0) };
   }, { timeout: 120_000, maxWait: 20_000 });
-  await audit(ctx, "TrainingCourse", course.c.id, "TRAINING_COURSE_IMPORTED", { courseId: course.c.id, code, title: proto.title, lessons: course.lessons, images: course.images, published: input.publish });
-  return { id: course.c.id, code, title: proto.title, lessons: course.lessons, images: course.images };
+  await audit(ctx, "TrainingCourse", course.c.id, "TRAINING_COURSE_IMPORTED", { courseId: course.c.id, code, title: proto.title, lessons: course.lessons, images: course.images, questions: quiz.length, published: input.publish });
+  return { id: course.c.id, code, title: proto.title, lessons: course.lessons, images: course.images, questions: quiz.length };
 }
 
 /** Add the diagrams of a prototype image pack to a course that was imported without them (no change to the text). */
@@ -640,6 +656,27 @@ export async function attachImagePack(ctx: RequestContext, courseId: string, raw
   }, { timeout: 120_000, maxWait: 20_000 });
   await audit(ctx, "TrainingCourse", courseId, "TRAINING_DIAGRAMS_ADDED", { courseId, title: course.title, placed });
   return { placed };
+}
+
+/**
+ * Add a final quiz to a course that has none yet (e.g. a Cat course imported before its quiz existed).
+ * Goes into the live revision and any open draft that has no final questions. A course that already has a
+ * final quiz is changed through a new revision instead, so the record of what each learner was tested on holds.
+ */
+export async function attachQuizPack(ctx: RequestContext, courseId: string, raw: unknown) {
+  const companyId = editor(ctx, "WRITE");
+  const course = await courseOr404(companyId, courseId);
+  const quiz = cleanQuiz(z.object({ questions: z.array(questionInput).min(1).max(600) }).parse(raw).questions);
+  if (quiz.filter((q) => q.scope === "FINAL").length < MIN_FINAL_QUESTIONS) throw new TrainingError("QUIZ_SHORT", `A final quiz needs at least ${MIN_FINAL_QUESTIONS} questions.`);
+  const revisionIds = [course.liveRevisionId, (await draftOf(courseId))?.id].filter((v): v is string => !!v);
+  const counts = await prisma.trainingQuestion.groupBy({ by: ["revisionId"], where: { revisionId: { in: revisionIds }, scope: "FINAL" }, _count: true });
+  const targets = revisionIds.filter((id) => !counts.some((c) => c.revisionId === id && c._count > 0));
+  if (!targets.length) throw new TrainingError("HAS_QUIZ", "This course already has a final quiz. Change it in a new revision.", 409);
+  await prisma.$transaction(async (tx) => {
+    for (const revisionId of targets) await tx.trainingQuestion.createMany({ data: questionRows(companyId, revisionId, quiz) });
+  });
+  await audit(ctx, "TrainingCourse", courseId, "TRAINING_QUIZ_ADDED", { courseId, title: course.title, questions: quiz.length, revisions: targets.length });
+  return { added: quiz.length };
 }
 
 /** Outline for the "Import course folder" preview: what a prototype course holds. */

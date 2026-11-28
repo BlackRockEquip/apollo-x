@@ -1,0 +1,485 @@
+{
+ "course": "fde-1",
+ "questions": [
+  {
+   "stableKey": "fde-1-q01",
+   "scope": "FINAL",
+   "prompt": "In a diesel engine, what ignites the fuel?",
+   "options": [
+    "The exhaust gases",
+    "A spark plug",
+    "A glow plug at all times",
+    "Heat from compressing the air"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Air is compressed until it is hot enough to ignite the injected fuel; diesels need no spark."
+  },
+  {
+   "stableKey": "fde-1-q02",
+   "scope": "FINAL",
+   "prompt": "When is fuel injected in a four-stroke diesel cycle?",
+   "options": [
+    "During the intake stroke",
+    "At bottom dead centre of the power stroke",
+    "During the exhaust stroke",
+    "Near the end of the compression stroke"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Diesel fuel is injected near the end of the compression stroke."
+  },
+  {
+   "stableKey": "fde-1-q03",
+   "scope": "FINAL",
+   "prompt": "How many crankshaft revolutions does one complete four-stroke cycle take?",
+   "options": [
+    "One",
+    "Two",
+    "Half",
+    "Four"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Four strokes of the piston equal two revolutions of the crankshaft."
+  },
+  {
+   "stableKey": "fde-1-q04",
+   "scope": "FINAL",
+   "prompt": "Why are diesel engines generally heavier than gasoline engines?",
+   "options": [
+    "They use cast iron pistons only",
+    "They must withstand higher combustion pressures and temperatures",
+    "They carry more oil",
+    "They have more cylinders"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Higher combustion pressures and temperatures need a heavier construction."
+  },
+  {
+   "stableKey": "fde-1-q05",
+   "scope": "FINAL",
+   "prompt": "Why do diesel engines use higher compression ratios than gasoline engines?",
+   "options": [
+    "To reduce noise",
+    "To lower fuel use at idle only",
+    "To cool the pistons",
+    "To heat the air to combustion temperature"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A diesel relies on compression heat for ignition, so it needs a higher compression ratio."
+  },
+  {
+   "stableKey": "fde-1-q06",
+   "scope": "FINAL",
+   "prompt": "What is torque rise?",
+   "options": [
+    "The torque at high idle",
+    "An increase in torque when the engine is lugged down from rated RPM",
+    "The rise in engine speed under load",
+    "Torque lost to friction"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Torque rise is the increase in torque as the engine is lugged down from rated speed."
+  },
+  {
+   "stableKey": "fde-1-q07",
+   "scope": "FINAL",
+   "prompt": "What does 'stroke' describe?",
+   "options": [
+    "The firing order",
+    "The cylinder diameter",
+    "The distance the piston travels from top dead centre to bottom dead centre",
+    "The valve lift"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Bore is the cylinder diameter; stroke is the piston travel TDC to BDC."
+  },
+  {
+   "stableKey": "fde-1-q08",
+   "scope": "FINAL",
+   "prompt": "Which component transfers the piston's reciprocating motion into rotary motion?",
+   "options": [
+    "Crankshaft",
+    "Rocker arm",
+    "Flywheel",
+    "Camshaft"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The crankshaft converts reciprocating motion into rotary motion."
+  },
+  {
+   "stableKey": "fde-1-q09",
+   "scope": "FINAL",
+   "prompt": "Wet cylinder liners use O-rings to...",
+   "options": [
+    "Control oil flow to the bearings",
+    "Seal the water jacket and prevent coolant leakage",
+    "Reduce piston slap",
+    "Hold the piston rings"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Wet liners are in contact with coolant, so O-rings seal the water jacket."
+  },
+  {
+   "stableKey": "fde-1-q10",
+   "scope": "FINAL",
+   "prompt": "Why do main and connecting rod bearings wear faster than the crankshaft?",
+   "options": [
+    "They get no oil",
+    "They carry no load",
+    "They are made of softer metal",
+    "They turn faster"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Bearings are made of softer metal, so they are designed to wear and be replaced."
+  },
+  {
+   "stableKey": "fde-1-q11",
+   "scope": "FINAL",
+   "prompt": "What do thrust main bearings minimise?",
+   "options": [
+    "Crankshaft back-and-forth (end) movement",
+    "Oil pressure",
+    "Valve float",
+    "Piston rotation"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Thrust bearings limit the end-play of the crankshaft in the block."
+  },
+  {
+   "stableKey": "fde-1-q12",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of the camshaft?",
+   "options": [
+    "To pump coolant",
+    "To control intake and exhaust valve operation",
+    "To drive the wheels",
+    "To balance the crankshaft"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The camshaft lobes open and close the intake and exhaust valves."
+  },
+  {
+   "stableKey": "fde-1-q13",
+   "scope": "FINAL",
+   "prompt": "What do valve rotators do?",
+   "options": [
+    "Adjust valve lash",
+    "Drive the camshaft",
+    "Turn the valve to prevent excessive wear in one spot",
+    "Seal the valve guide"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Rotators turn the valve so it does not wear in one spot."
+  },
+  {
+   "stableKey": "fde-1-q14",
+   "scope": "FINAL",
+   "prompt": "What is the job of the idler gear in the gear train?",
+   "options": [
+    "To drive the water pump only",
+    "To slow the oil pump",
+    "To keep the camshaft gear turning the same direction as the crankshaft gear",
+    "To drive the starter"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The idler gear keeps the camshaft turning in the same direction as the crankshaft."
+  },
+  {
+   "stableKey": "fde-1-q15",
+   "scope": "FINAL",
+   "prompt": "What are timing marks on the gear train used for?",
+   "options": [
+    "To show wear limits",
+    "To align the gears for correct timing",
+    "To mark the firing order",
+    "To show oil level"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Timing marks align the gears so components stay synchronised."
+  },
+  {
+   "stableKey": "fde-1-q16",
+   "scope": "FINAL",
+   "prompt": "In the cooling system, heat always moves...",
+   "options": [
+    "From cold to hot",
+    "From the coolant into the engine",
+    "Only through the radiator cap",
+    "From a hot source to a cooler target"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Heat always moves from a hot source to a cooler target."
+  },
+  {
+   "stableKey": "fde-1-q17",
+   "scope": "FINAL",
+   "prompt": "What does the temperature regulator (thermostat) do?",
+   "options": [
+    "Filters the coolant",
+    "Maintains the proper range of operating temperature by controlling coolant flow to the radiator",
+    "Drives the water pump",
+    "Pressurises the system"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The regulator is the 'traffic cop', sending coolant to the radiator only when needed."
+  },
+  {
+   "stableKey": "fde-1-q18",
+   "scope": "FINAL",
+   "prompt": "Why does a radiator cap keep the cooling system under pressure?",
+   "options": [
+    "To remove air",
+    "To increase flow",
+    "To raise the boiling point of the coolant",
+    "To lower the freezing point"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Pressure raises the boiling point; the cap's valves release excess pressure and admit air when cooling."
+  },
+  {
+   "stableKey": "fde-1-q19",
+   "scope": "FINAL",
+   "prompt": "What antifreeze concentration range gives adequate protection without reducing heat removal?",
+   "options": [
+    "100%",
+    "70-80%",
+    "10-20%",
+    "30-60%"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Below 30% gives inadequate protection; above 60% reduces heat removal and freeze protection and causes silica dropout."
+  },
+  {
+   "stableKey": "fde-1-q20",
+   "scope": "FINAL",
+   "prompt": "What can happen if coolant conditioner concentration is too low?",
+   "options": [
+    "Cylinder liners corrode or suffer cavitation erosion",
+    "The thermostat sticks open",
+    "Silica dropout",
+    "Oil pressure rises"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Too little conditioner allows corrosion and cavitation erosion of liners."
+  },
+  {
+   "stableKey": "fde-1-q21",
+   "scope": "FINAL",
+   "prompt": "Why is water the main ingredient of coolant?",
+   "options": [
+    "It transfers heat better than any other substance",
+    "It is cheapest",
+    "It prevents corrosion",
+    "It lowers the freezing point"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Water transfers heat better than any other substance; glycol and conditioner add protection."
+  },
+  {
+   "stableKey": "fde-1-q22",
+   "scope": "FINAL",
+   "prompt": "In a full flow oil filter system, how much of the oil passes through the filter?",
+   "options": [
+    "100%",
+    "10%",
+    "Only the cold oil",
+    "50%"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "In a full flow system 100% of the oil goes through the filter."
+  },
+  {
+   "stableKey": "fde-1-q23",
+   "scope": "FINAL",
+   "prompt": "When does the oil filter bypass valve open?",
+   "options": [
+    "When the pressure difference across the filter exceeds the valve spring force, e.g. a clogged filter or cold oil",
+    "Never on Cat engines",
+    "At every start",
+    "When the engine is hot"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The bypass protects the engine from oil starvation when the filter is restricted."
+  },
+  {
+   "stableKey": "fde-1-q24",
+   "scope": "FINAL",
+   "prompt": "What does the Total Base Number (TBN) of an oil indicate?",
+   "options": [
+    "Its pour point",
+    "Its viscosity",
+    "The amount of alkalinity additive that neutralises acids",
+    "Its detergent level only"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "TBN shows the alkalinity additive that neutralises acids formed in combustion."
+  },
+  {
+   "stableKey": "fde-1-q25",
+   "scope": "FINAL",
+   "prompt": "What does Viscosity Index (VI) measure?",
+   "options": [
+    "A base oil's ability to resist viscosity change with temperature",
+    "Resistance to flow",
+    "Flash point",
+    "Acid level"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "VI is the resistance to viscosity change as temperature changes."
+  },
+  {
+   "stableKey": "fde-1-q26",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of an aftercooler?",
+   "options": [
+    "To cool fuel",
+    "To cool exhaust gases",
+    "To cool engine oil",
+    "To cool the intake air after it passes through the turbocharger"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Aftercoolers cool the air after the turbocharger compresses (and heats) it."
+  },
+  {
+   "stableKey": "fde-1-q27",
+   "scope": "FINAL",
+   "prompt": "What is the correct order of air flow in a turbocharged aftercooled system?",
+   "options": [
+    "Compressor, precleaner, air filter, intake manifold, aftercooler",
+    "Precleaner, compressor, air filter, intake manifold, aftercooler",
+    "Precleaner, air filter, compressor, aftercooler, intake manifold",
+    "Air filter, precleaner, aftercooler, compressor, intake manifold"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Air goes precleaner, filter, turbo compressor, aftercooler, then intake manifold."
+  },
+  {
+   "stableKey": "fde-1-q28",
+   "scope": "FINAL",
+   "prompt": "How do fuel filters differ from oil filters?",
+   "options": [
+    "There is no difference",
+    "Fuel filters are after the injectors",
+    "Fuel filters have no bypass valve",
+    "Fuel filters are always cleanable"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Unlike oil filters, fuel filters have no bypass valve, so dirty fuel never reaches the injectors."
+  },
+  {
+   "stableKey": "fde-1-q29",
+   "scope": "FINAL",
+   "prompt": "What is the correct fuel flow order in a pump and lines system?",
+   "options": [
+    "Tank, injection pump, primary filter, transfer pump, nozzles",
+    "Tank, transfer pump, nozzles, final filter, injection pump",
+    "Tank, final filter, primary filter, injection pump, nozzles",
+    "Tank, primary filter, transfer pump, final filter, injection pump, high pressure lines, nozzles"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Fuel goes tank, primary filter, transfer pump, final filter, injection pump, high pressure lines, nozzles."
+  },
+  {
+   "stableKey": "fde-1-q30",
+   "scope": "FINAL",
+   "prompt": "What does the Cetane Index of a fuel measure?",
+   "options": [
+    "Its cloud point",
+    "Its specific gravity",
+    "Its sulfur content",
+    "Its ignition quality, which affects starting and acceleration"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Cetane Index measures ignition quality."
+  },
+  {
+   "stableKey": "fde-1-q31",
+   "scope": "FINAL",
+   "prompt": "What is high idle?",
+   "options": [
+    "The rpm at full load",
+    "The maximum rpm the engine is allowed to run under no load",
+    "The speed at peak torque",
+    "The lowest no-load speed"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "High idle is the maximum no-load speed allowed by the governor."
+  },
+  {
+   "stableKey": "fde-1-q32",
+   "scope": "FINAL",
+   "prompt": "On an EUI (electronic unit injector) system, what replaces the mechanical governor, rack and timing advance?",
+   "options": [
+    "The ECM and electronics",
+    "Hydraulic valves",
+    "A second camshaft",
+    "A larger injection pump"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "On EUI systems the ECM and sensors take over governing, timing and fuel ratio control."
+  }
+ ]
+}

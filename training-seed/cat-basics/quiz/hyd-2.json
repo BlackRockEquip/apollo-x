@@ -1,0 +1,380 @@
+{
+ "course": "hyd-2",
+ "questions": [
+  {
+   "stableKey": "hyd-2-q01",
+   "scope": "FINAL",
+   "prompt": "Why do technicians need to read ISO hydraulic schematics?",
+   "options": [
+    "Only for exams",
+    "To order paint",
+    "To understand and troubleshoot complex hydraulic systems",
+    "To set engine timing"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Troubleshooting today's hydraulic systems requires reading and interpreting schematics."
+  },
+  {
+   "stableKey": "hyd-2-q02",
+   "scope": "FINAL",
+   "prompt": "What does ISO stand for in ISO schematics?",
+   "options": [
+    "Industrial Safety Office",
+    "Integrated Symbol Outline",
+    "Internal System Operation",
+    "International Standards Organization"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "ISO schematics follow International Standards Organization symbols."
+  },
+  {
+   "stableKey": "hyd-2-q03",
+   "scope": "FINAL",
+   "prompt": "ISO basic shapes represent which groups?",
+   "options": [
+    "Pumps and motors, fluid conditioners, control valves, lines",
+    "Bolts, nuts, washers, pins",
+    "Wires, fuses, relays, switches",
+    "Engines, gears, wheels, tyres"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The basic shapes represent pumps and motors, fluid conditioners, control valves and lines."
+  },
+  {
+   "stableKey": "hyd-2-q04",
+   "scope": "FINAL",
+   "prompt": "What do ISO schematics show about a component?",
+   "options": [
+    "Its part number",
+    "Its weight",
+    "Its function, not its design or type",
+    "Its exact physical shape"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "ISO schematics indicate component function, not design or type."
+  },
+  {
+   "stableKey": "hyd-2-q05",
+   "scope": "FINAL",
+   "prompt": "When reading lines on a schematic, what must you be able to tell?",
+   "options": [
+    "The hose brand",
+    "The hose colour",
+    "Whether lines are joined or simply cross",
+    "The length of each hose"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "You must determine when lines are joined and when they simply cross."
+  },
+  {
+   "stableKey": "hyd-2-q06",
+   "scope": "FINAL",
+   "prompt": "What is the simplified ISO symbol for a hydraulic tank?",
+   "options": [
+    "A rectangle with a spring",
+    "An open box with a return line",
+    "A diamond",
+    "A circle with a triangle"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A tank is shown as an open box with a return line."
+  },
+  {
+   "stableKey": "hyd-2-q07",
+   "scope": "FINAL",
+   "prompt": "What is the basic ISO symbol for a valve?",
+   "options": [
+    "A circle",
+    "A box, or envelope",
+    "A triangle",
+    "A diamond"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Valves are drawn as one or more boxes (envelopes)."
+  },
+  {
+   "stableKey": "hyd-2-q08",
+   "scope": "FINAL",
+   "prompt": "On a valve symbol, what do short lines drawn perpendicular to the envelope show?",
+   "options": [
+    "External port connections",
+    "Springs",
+    "Drains",
+    "Pilot lines"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Short perpendicular lines show the external port connections."
+  },
+  {
+   "stableKey": "hyd-2-q09",
+   "scope": "FINAL",
+   "prompt": "What does an arrow inside a valve envelope indicate?",
+   "options": [
+    "Direction of flow",
+    "Temperature",
+    "Spring force",
+    "Electrical signal"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "An arrow inside the envelope shows the direction of flow."
+  },
+  {
+   "stableKey": "hyd-2-q10",
+   "scope": "FINAL",
+   "prompt": "A directional control valve is usually drawn with...",
+   "options": [
+    "One envelope only",
+    "Two or more envelopes, one for each position",
+    "No ports",
+    "A circle"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Each envelope shows one valve position."
+  },
+  {
+   "stableKey": "hyd-2-q11",
+   "scope": "FINAL",
+   "prompt": "What does a symbol on the side of a directional control valve show?",
+   "options": [
+    "How the valve is operated (lever, pilot, solenoid, spring)",
+    "Its pressure rating",
+    "Its flow rate",
+    "Its colour"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Side symbols indicate the way the valve is actuated."
+  },
+  {
+   "stableKey": "hyd-2-q12",
+   "scope": "FINAL",
+   "prompt": "The general symbol for a relief valve shows a single envelope that is normally...",
+   "options": [
+    "Open to flow",
+    "Closed to flow",
+    "Blocked by a check ball permanently",
+    "Crossed"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A relief valve is normally closed and opens when pressure overcomes the spring."
+  },
+  {
+   "stableKey": "hyd-2-q13",
+   "scope": "FINAL",
+   "prompt": "How does the pressure reducing valve symbol differ from a pilot-operated relief valve?",
+   "options": [
+    "It has no pilot line",
+    "It has no spring",
+    "It is normally open and senses downstream pressure",
+    "It is normally closed and senses inlet pressure"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The reducing valve is normally open and its pilot senses downstream pressure."
+  },
+  {
+   "stableKey": "hyd-2-q14",
+   "scope": "FINAL",
+   "prompt": "What does a modulating relief valve allow?",
+   "options": [
+    "Instant full pressure",
+    "Flow division",
+    "Free reverse flow",
+    "A gradual build-up of pressure"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A modulating relief valve gives a gradual pressure rise."
+  },
+  {
+   "stableKey": "hyd-2-q15",
+   "scope": "FINAL",
+   "prompt": "A check valve allows flow...",
+   "options": [
+    "In both directions equally",
+    "Only at low temperature",
+    "Only when a solenoid is energised",
+    "In one direction only"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Upstream pressure lifts the check off its seat; reverse flow seats it."
+  },
+  {
+   "stableKey": "hyd-2-q16",
+   "scope": "FINAL",
+   "prompt": "How does the telescoping cylinder symbol differ?",
+   "options": [
+    "It shows the number of rods the cylinder has",
+    "It has no ports",
+    "It is drawn as a circle",
+    "It shows a motor"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The telescoping cylinder symbol indicates the number of rods."
+  },
+  {
+   "stableKey": "hyd-2-q17",
+   "scope": "FINAL",
+   "prompt": "A double acting cylinder is...",
+   "options": [
+    "A rotary actuator",
+    "Powered in one direction only",
+    "A pump",
+    "Hydraulically driven in two directions"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "A double acting cylinder is powered in both directions."
+  },
+  {
+   "stableKey": "hyd-2-q18",
+   "scope": "FINAL",
+   "prompt": "Where do you start when tracing flow through a circuit on a schematic?",
+   "options": [
+    "At the cylinder",
+    "At the relief valve",
+    "Anywhere",
+    "At the tank, following flow through the components back to the tank"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Start at the tank and follow the flow through the components, ending back at the tank."
+  },
+  {
+   "stableKey": "hyd-2-q19",
+   "scope": "FINAL",
+   "prompt": "What are the three basic types of valves shown on schematics?",
+   "options": [
+    "Manual, pilot and electric",
+    "Gate, ball and globe",
+    "Flow, pressure and directional control",
+    "Open, closed and tandem"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The three basic types are flow, pressure and directional control valves."
+  },
+  {
+   "stableKey": "hyd-2-q20",
+   "scope": "FINAL",
+   "prompt": "What is sometimes used on Cat diagrams to indicate system pressures?",
+   "options": [
+    "Numbers only",
+    "Line thickness only",
+    "Colour",
+    "Dotted text"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Colour is sometimes used to show different system pressures."
+  },
+  {
+   "stableKey": "hyd-2-q21",
+   "scope": "FINAL",
+   "prompt": "Which symbols are shown for instruments in schematics?",
+   "options": [
+    "Fuel gauges",
+    "Pressure and temperature gauges",
+    "Clocks",
+    "Speedometers"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Schematics include symbols for pressure and temperature gauges."
+  },
+  {
+   "stableKey": "hyd-2-q22",
+   "scope": "FINAL",
+   "prompt": "Cat schematics sometimes combine which two styles?",
+   "options": [
+    "ISO symbols and orthographic (cutaway) drawings",
+    "Electrical and pneumatic",
+    "Metric and imperial",
+    "Colour and black and white"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "You may see schematics combining ISO symbols with orthographic drawings."
+  },
+  {
+   "stableKey": "hyd-2-q23",
+   "scope": "FINAL",
+   "prompt": "A make-up valve is a type of...",
+   "options": [
+    "Flow divider",
+    "Check valve",
+    "Relief valve",
+    "Reducing valve"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "A make-up valve is a check valve with a light spring."
+  },
+  {
+   "stableKey": "hyd-2-q24",
+   "scope": "FINAL",
+   "prompt": "Pumps on schematics are sometimes shown connected to...",
+   "options": [
+    "The component driving them, such as an engine or electric motor",
+    "The tank cap",
+    "The operator seat",
+    "The cylinder rod"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Pumps may be shown with their prime mover."
+  },
+  {
+   "stableKey": "hyd-2-q25",
+   "scope": "FINAL",
+   "prompt": "In an open-centre directional valve's neutral position, pump flow...",
+   "options": [
+    "Is blocked, so the relief opens",
+    "Stops the pump",
+    "Goes to both work ports",
+    "Returns to tank through the valve"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "An open-centre valve passes pump flow to tank in neutral."
+  }
+ ]
+}

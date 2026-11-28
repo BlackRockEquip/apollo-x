@@ -228,6 +228,15 @@ export function CourseEditor({ courseId }: { courseId: string }) {
     if (!file) return;
     await action(async () => { const r = await tt<{ placed: number }>(`manage/courses/${courseId}/images`, { method: "POST", body: { images: JSON.parse(await file.text()) } }); setNotice(`${r.placed} diagrams placed on their pages.`); }, "Diagrams added.");
   }
+  async function uploadQuiz(file: File | undefined) {
+    if (!file) return;
+    await action(async () => {
+      const parsed = JSON.parse(await file.text()) as { questions?: unknown };
+      const r = await tt<{ added: number }>(`manage/courses/${courseId}/quiz`, { method: "POST", body: { questions: parsed.questions ?? parsed } });
+      setNotice(`${r.added} quiz questions added.`);
+    }, "Quiz added.");
+  }
+
 
   function saveQuestion() {
     if (!editQ) return;
@@ -410,6 +419,7 @@ export function CourseEditor({ courseId }: { courseId: string }) {
             {c.hasCover && <img src={`/api/v1/tech-training/covers/${c.id}?v=${coverVersion}`} alt="" style={{ height: 70, borderRadius: 6 }} />}
             {data.canPublish && <label className="quiet-button" style={{ cursor: "pointer" }}><ImagePlus size={13} /> {c.hasCover ? "Change" : "Add"} cover image<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => void uploadCover(e.target.files?.[0])} /></label>}
             {c.importKey && data.canPublish && <label className="quiet-button" style={{ cursor: "pointer" }}><Upload size={13} /> Add diagrams (image pack .json)<input type="file" accept=".json,application/json" hidden onChange={(e) => void uploadPack(e.target.files?.[0])} /></label>}
+            {data.canPublish && <label className="quiet-button" style={{ cursor: "pointer" }} title="Only for a course with no final quiz yet; otherwise change the quiz in a new revision"><Upload size={13} /> Add final quiz (quiz pack .json)<input type="file" accept=".json,application/json" hidden onChange={(e) => void uploadQuiz(e.target.files?.[0])} /></label>}
           </div>
           {data.impact.positions.length > 0 && <span className="tt-sub">Required for: {data.impact.positions.map((p) => p.name).join(", ")} (change under Training settings &gt; Positions).</span>}
         </div></section>

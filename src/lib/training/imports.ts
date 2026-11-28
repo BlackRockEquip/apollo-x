@@ -1,12 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { RequestContext } from "@/lib/auth/context-types";
 import { TrainingError } from "@/lib/http/errors";
 import { prisma } from "@/lib/prisma";
 import { requireTraining } from "@/lib/training/access";
-import { importPrototype, prototypeOutline } from "@/lib/training/courses";
-import { htmlToSections, isPrototypeCourse, lessonsFromSections, sectionsFromPlainText, wordCount, type PrototypeCourse, type PrototypeImagePack } from "@/lib/training/model";
+import { attachImagePack, attachQuizPack, importPrototype, prototypeOutline } from "@/lib/training/courses";
+import { htmlToSections, isPrototypeCourse, MIN_FINAL_QUESTIONS, lessonsFromSections, sectionsFromPlainText, wordCount, type PrototypeCourse, type PrototypeImagePack } from "@/lib/training/model";
 
 // ---------------------------------------------------------------------------
 // Adding training material (2026-11-28): Word, PDF and text files are turned into chapters and lessons for a preview; nothing is
@@ -82,20 +82,46 @@ async function readSeedCover(id: string): Promise<string | null> {
   try { return `data:image/jpeg;base64,${(await readFile(path.join(SEED_DIR, "covers", `${id}.jpg`))).toString("base64")}`; } catch { return null; }
 }
 
+type SeedQuiz = { questions: unknown[] };
+
+async function seedFileExists(rel: string): Promise<boolean> {
+  try { await access(path.join(SEED_DIR, rel)); return true; } catch { return false; }
+}
+
+async function readSeedQuiz(id: string): Promise<unknown[] | null> {
+  const quiz = await readSeedJson<SeedQuiz>(`quiz/${id}.json`);
+  return Array.isArray(quiz?.questions) && quiz.questions.length ? quiz.questions : null;
+}
+
 export async function catBundleStatus(ctx: RequestContext) {
   const companyId = requireTraining(ctx, "TRAINING_CONTENT_EDIT");
   const courses = (await readSeedJson<PrototypeCourse[]>("courses.json")) ?? [];
-  const imported = await prisma.trainingCourse.findMany({ where: { companyId, importKey: { startsWith: "cat-basics:" } }, select: { importKey: true, id: true, title: true } });
+  const imported = await prisma.trainingCourse.findMany({ where: { companyId, importKey: { startsWith: "cat-basics:" } }, select: { importKey: true, id: true, title: true, liveRevisionId: true } });
+  const live = imported.map((i) => i.liveRevisionId).filter((v): v is string => !!v);
+  const finals = live.length ? await prisma.trainingQuestion.groupBy({ by: ["revisionId"], where: { revisionId: { in: live }, scope: "FINAL" }, _count: true }) : [];
   const items = [];
   for (const c of courses.filter(isPrototypeCourse)) {
-    const hasImages = !!(await readSeedJson<PrototypeImagePack>(`img/${c.id}.json`));
+    const hasImages = await seedFileExists(`img/${c.id}.json`);
+    const hasQuiz = !!(await readSeedQuiz(c.id));
     const done = imported.find((i) => i.importKey === `cat-basics:${c.id}`);
-    items.push({ ...prototypeOutline(c), hasImages, importedCourseId: done?.id ?? null });
+    const finalCount = finals.find((f) => f.revisionId === done?.liveRevisionId)?._count ?? 0;
+    const imagesIn = !!done && (await hasAnyImage(done.liveRevisionId));
+    items.push({
+      ...prototypeOutline(c), hasImages, hasQuiz, importedCourseId: done?.id ?? null,
+      quizNeeded: !!done && hasQuiz && finalCount < MIN_FINAL_QUESTIONS,
+      imagesNeeded: !!done && hasImages && !imagesIn,
+    });
   }
   return { available: items.length > 0, items };
 }
 
-/** Import the Cat Basics courses not imported yet, published (they still need a final quiz before certificates can be requested). */
+async function hasAnyImage(revisionId: string | null): Promise<boolean> {
+  if (!revisionId) return false;
+  const lessons = await prisma.trainingLesson.findMany({ where: { revisionId }, select: { pageImages: true } });
+  return lessons.some((l) => l.pageImages.some(Boolean));
+}
+
+/** Import the Cat Basics courses not imported yet, published, with their diagrams and final quiz where the seed has them. */
 export async function importCatBundle(ctx: RequestContext, raw: unknown) {
   requireTraining(ctx, "TRAINING_CONTENT_EDIT", "WRITE");
   const ids = z.object({ ids: z.array(z.string()).max(20).optional() }).parse(raw ?? {}).ids;
@@ -109,7 +135,23 @@ export async function importCatBundle(ctx: RequestContext, raw: unknown) {
     // The code is the prototype's course id (HYD-3...); if a course already uses it, the next free variant is taken.
     let code = item.id.toUpperCase();
     for (let n = 2; await prisma.trainingCourse.findFirst({ where: { companyId: ctx.companyId!, code: { equals: code, mode: "insensitive" } }, select: { id: true } }); n++) code = `${item.id.toUpperCase()}-${n}`;
-    results.push(await importPrototype(ctx, { course, images, cover: await readSeedCover(item.id), code, publish: true }, `cat-basics:${item.id}`));
+    const questions = (await readSeedQuiz(item.id)) ?? [];
+    results.push(await importPrototype(ctx, { course, images, cover: await readSeedCover(item.id), code, publish: true, questions }, `cat-basics:${item.id}`));
   }
   return { imported: results };
+}
+
+/** For Cat courses imported earlier: add the seed's final quizzes and diagram packs that they are missing. */
+export async function completeCatBundle(ctx: RequestContext) {
+  requireTraining(ctx, "TRAINING_CONTENT_EDIT", "WRITE");
+  const status = await catBundleStatus(ctx);
+  const done = [];
+  for (const item of status.items) {
+    if (!item.importedCourseId || (!item.quizNeeded && !item.imagesNeeded)) continue;
+    let questions = 0, diagrams = 0;
+    if (item.quizNeeded) questions = (await attachQuizPack(ctx, item.importedCourseId, { questions: (await readSeedQuiz(item.id)) ?? [] })).added;
+    if (item.imagesNeeded) diagrams = (await attachImagePack(ctx, item.importedCourseId, { images: await readSeedJson<PrototypeImagePack>(`img/${item.id}.json`) })).placed;
+    done.push({ title: item.title, questions, diagrams });
+  }
+  return { updated: done };
 }

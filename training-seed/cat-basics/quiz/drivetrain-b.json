@@ -1,0 +1,455 @@
+{
+ "course": "drivetrain-b",
+ "questions": [
+  {
+   "stableKey": "drivetrain-b-q01",
+   "scope": "FINAL",
+   "prompt": "What is the purpose of the front and rear axles on a wheel-type machine?",
+   "options": [
+    "To cool the brakes",
+    "To steer the machine only",
+    "To transfer power from the drive shafts to the tires to drive and stop the machine",
+    "To support the cab"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Axles transfer power from the drive shafts to the tires to both drive and stop the machine."
+  },
+  {
+   "stableKey": "drivetrain-b-q02",
+   "scope": "FINAL",
+   "prompt": "Inboard axles are found on which machines?",
+   "options": [
+    "Small and medium wheel loaders and backhoe loaders",
+    "Large wheel dozers",
+    "Off-highway trucks",
+    "Wheel tractor-scrapers"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Inboard axles are on small and medium wheel loaders and backhoe loaders; outboard axles on the large machines."
+  },
+  {
+   "stableKey": "drivetrain-b-q03",
+   "scope": "FINAL",
+   "prompt": "What does the bevel gear set do?",
+   "options": [
+    "Gives the final reduction at the wheel",
+    "Locks the differential",
+    "Applies the service brakes",
+    "Receives power from the drive shaft, turns it 90 degrees and sends it to the differential"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The bevel pinion and ring gear turn the power flow 90 degrees to the differential."
+  },
+  {
+   "stableKey": "drivetrain-b-q04",
+   "scope": "FINAL",
+   "prompt": "What does the differential do?",
+   "options": [
+    "Provides a balance of power to the wheels and transfers power to the final drives",
+    "Increases engine speed",
+    "Applies the parking brake",
+    "Pumps axle oil"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The differential balances power between the wheels, which is needed during turns."
+  },
+  {
+   "stableKey": "drivetrain-b-q05",
+   "scope": "FINAL",
+   "prompt": "In the differential, what do the pinion (spider) gears do?",
+   "options": [
+    "Hold the ring gear",
+    "Apply the brakes",
+    "Drive the bevel pinion",
+    "Transmit power from the differential case to the side gears"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The pinion gears ride on the spider and transmit power from the case to the side gears."
+  },
+  {
+   "stableKey": "drivetrain-b-q06",
+   "scope": "FINAL",
+   "prompt": "What provides the last speed reduction and torque increase in a wheel machine drivetrain?",
+   "options": [
+    "The bevel gear set",
+    "The differential",
+    "The torque converter",
+    "The planetary group (final drive)"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The planetary group is the final drive: last speed reduction and torque increase."
+  },
+  {
+   "stableKey": "drivetrain-b-q07",
+   "scope": "FINAL",
+   "prompt": "In an inboard axle planetary group, the ring gear...",
+   "options": [
+    "Drives the differential",
+    "Is pressed into the axle housing and does not rotate",
+    "Is splined to the sun shaft",
+    "Turns with the wheel"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The ring gear is held in the housing; the sun shaft drives the planet gears."
+  },
+  {
+   "stableKey": "drivetrain-b-q08",
+   "scope": "FINAL",
+   "prompt": "What retracts the service brake piston when hydraulic pressure is released?",
+   "options": [
+    "Springs",
+    "Gravity",
+    "The discs",
+    "The guides"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Springs, always under compression, retract the piston when pressure drops."
+  },
+  {
+   "stableKey": "drivetrain-b-q09",
+   "scope": "FINAL",
+   "prompt": "Wheel speed brakes are used on...",
+   "options": [
+    "Track-type tractors",
+    "Backhoe loaders",
+    "Off-highway trucks and some large wheel loaders",
+    "Motor graders only"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The wheel speed brake is used in off-highway trucks and some large wheel loaders."
+  },
+  {
+   "stableKey": "drivetrain-b-q10",
+   "scope": "FINAL",
+   "prompt": "When is a double reduction planetary final drive used?",
+   "options": [
+    "Only on track machines",
+    "On machines without differentials",
+    "On small machines",
+    "On some larger machines"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Double reduction planetary groups give the final reduction on some larger machines."
+  },
+  {
+   "stableKey": "drivetrain-b-q11",
+   "scope": "FINAL",
+   "prompt": "Why are traction aids needed?",
+   "options": [
+    "To raise top speed",
+    "To reduce tyre pressure",
+    "To cool the axle",
+    "Because the outside wheel travels further than the inside wheel in a turn, and a slipping wheel can take all the power"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "An open differential lets wheels turn at different speeds, so a wheel with no traction spins while the other stops."
+  },
+  {
+   "stableKey": "drivetrain-b-q12",
+   "scope": "FINAL",
+   "prompt": "What does a NoSPIN differential do?",
+   "options": [
+    "Disconnects the axle",
+    "Forces both wheels to turn at the same speed regardless of traction",
+    "Applies the brakes automatically",
+    "Lets one wheel spin freely"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "NoSPIN is an automatic locking differential that drives both wheels at the same speed."
+  },
+  {
+   "stableKey": "drivetrain-b-q13",
+   "scope": "FINAL",
+   "prompt": "A Limited Slip Differential gives equal power to both wheels until...",
+   "options": [
+    "The brakes are applied",
+    "Top gear is selected",
+    "Ground conditions between the left and right wheels differ",
+    "The machine turns"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The LSD shares power equally until underfoot conditions differ side to side."
+  },
+  {
+   "stableKey": "drivetrain-b-q14",
+   "scope": "FINAL",
+   "prompt": "How does a multi-disc differential lock differ from a jaw clutch lock?",
+   "options": [
+    "It can only engage when stopped",
+    "It can engage under full power independent of wheel spin",
+    "It works only in reverse",
+    "It has no clutch pack"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The jaw clutch engages only when wheels turn at the same speed; the multi-disc lock engages under full power regardless of wheel spin."
+  },
+  {
+   "stableKey": "drivetrain-b-q15",
+   "scope": "FINAL",
+   "prompt": "How does the wheel loader Traction Control System (TCS) give traction assist?",
+   "options": [
+    "By locking the transmission",
+    "By using the brakes on the slipping wheel, sending torque to the wheel with the best traction",
+    "By raising engine speed",
+    "By lowering tyre pressure"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "TCS behaves like an open differential and uses the brakes to transfer torque to the wheel with traction."
+  },
+  {
+   "stableKey": "drivetrain-b-q16",
+   "scope": "FINAL",
+   "prompt": "Which inputs does the TCS use to decide on wheel speed ratio?",
+   "options": [
+    "Transmission temperature",
+    "Four wheel speed sensors and an articulation sensor",
+    "Brake pedal position only",
+    "Engine speed only"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "TCS reads four wheel speed sensors and an articulation angle sensor."
+  },
+  {
+   "stableKey": "drivetrain-b-q17",
+   "scope": "FINAL",
+   "prompt": "Which brakes does the Automatic Electronic Traction Aid (AETA) on trucks use?",
+   "options": [
+    "The rear parking brakes",
+    "The engine brake",
+    "The front service brakes",
+    "The retarder"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "AETA uses the rear parking brakes (spring engaged, hydraulically released) to slow a spinning wheel."
+  },
+  {
+   "stableKey": "drivetrain-b-q18",
+   "scope": "FINAL",
+   "prompt": "How is a track-type machine steered?",
+   "options": [
+    "By causing one track to turn faster than the other",
+    "By the blade",
+    "By an articulation joint",
+    "By turning the front idlers"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "A track machine steers by making one track turn faster than the other."
+  },
+  {
+   "stableKey": "drivetrain-b-q19",
+   "scope": "FINAL",
+   "prompt": "Which two lower drivetrain systems are used on track-type tractors?",
+   "options": [
+    "NoSPIN and LSD",
+    "Open and closed centre",
+    "Steering clutch and differential steer",
+    "Hydrostatic and countershaft"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Track-type tractors use either the steering clutch system or the differential steer system."
+  },
+  {
+   "stableKey": "drivetrain-b-q20",
+   "scope": "FINAL",
+   "prompt": "Track-type tractor brakes are typically...",
+   "options": [
+    "Hydraulically applied and spring released",
+    "Air applied band brakes",
+    "Oil-cooled multiple disc, spring applied and hydraulically released",
+    "Dry drum brakes"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The brakes are oil-cooled multi-disc, spring applied (Belleville springs) and hydraulically released."
+  },
+  {
+   "stableKey": "drivetrain-b-q21",
+   "scope": "FINAL",
+   "prompt": "What do the steering clutches do?",
+   "options": [
+    "Select forward and reverse",
+    "Drive the steering pump",
+    "Transfer power from the bevel gears to the final drives and turn the machine",
+    "Provide direct drive"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "The steering clutches transfer power to the final drives; releasing one turns the machine."
+  },
+  {
+   "stableKey": "drivetrain-b-q22",
+   "scope": "FINAL",
+   "prompt": "In the differential steer system, what drives the steer planetary?",
+   "options": [
+    "The steering motor through a bevel pinion and ring gear",
+    "The transmission output shaft",
+    "The torque converter",
+    "The final drive"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The steering motor drives the steer planetary; the transmission drives the drive planetary."
+  },
+  {
+   "stableKey": "drivetrain-b-q23",
+   "scope": "FINAL",
+   "prompt": "Why can a differential steer tractor still turn with the transmission in neutral?",
+   "options": [
+    "Because the brakes steer it",
+    "Because of the speed difference generated by the steering motor",
+    "It cannot turn in neutral",
+    "Because the final drives disconnect"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "In neutral the steering motor still drives through the differential, so the tractor can counter-rotate the tracks."
+  },
+  {
+   "stableKey": "drivetrain-b-q24",
+   "scope": "FINAL",
+   "prompt": "What is a hydrostatic drive system?",
+   "options": [
+    "A torque converter drive",
+    "A closed-loop hydraulic system that gives infinitely variable travel speeds",
+    "A mechanical countershaft transmission",
+    "An open-loop gear drive"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "Hydrostatic drive is a closed loop that converts mechanical power to hydraulic and back to mechanical power."
+  },
+  {
+   "stableKey": "drivetrain-b-q25",
+   "scope": "FINAL",
+   "prompt": "In a hydrostatic drive, what determines the pressure in the drive line?",
+   "options": [
+    "The pump speed",
+    "The charge relief setting only",
+    "The load on the drive motor",
+    "Oil temperature"
+   ],
+   "answer": [
+    2
+   ],
+   "explanation": "Pressure in the drive line is determined by the load on the drive motor."
+  },
+  {
+   "stableKey": "drivetrain-b-q26",
+   "scope": "FINAL",
+   "prompt": "What is the job of the charge pump in a hydrostatic drive?",
+   "options": [
+    "To supply make-up oil to the drive loop",
+    "To cool the engine",
+    "To drive the motor",
+    "To control the swashplate angle directly"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "The charge pump supplies oil to the propel pump and provides make-up oil to the loop."
+  },
+  {
+   "stableKey": "drivetrain-b-q27",
+   "scope": "FINAL",
+   "prompt": "What do the crossover and main relief valves protect against?",
+   "options": [
+    "Oil overheating",
+    "Low charge pressure",
+    "Air in the oil",
+    "Excessive high pressure spikes in the propel system"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "The crossover and main relief valves protect the propel system from high pressure spikes."
+  },
+  {
+   "stableKey": "drivetrain-b-q28",
+   "scope": "FINAL",
+   "prompt": "What changes the displacement of a variable displacement piston pump?",
+   "options": [
+    "The swashplate angle, moved by the servo",
+    "The number of pistons",
+    "The port plate turning",
+    "The charge pump speed"
+   ],
+   "answer": [
+    0
+   ],
+   "explanation": "Moving the control lever moves the servo, which changes the swashplate angle and so the pump output."
+  },
+  {
+   "stableKey": "drivetrain-b-q29",
+   "scope": "FINAL",
+   "prompt": "On a hydraulic excavator travel motor, how is the parking brake released?",
+   "options": [
+    "By the swing motor",
+    "Manually with a lever",
+    "By spring force",
+    "By pump oil acting on the parking brake piston"
+   ],
+   "answer": [
+    3
+   ],
+   "explanation": "Springs apply the parking brake; pump oil on the parking brake piston releases it."
+  },
+  {
+   "stableKey": "drivetrain-b-q30",
+   "scope": "FINAL",
+   "prompt": "When the straight travel valve is activated on an excavator, what happens?",
+   "options": [
+    "The swing locks",
+    "One pump's flow goes to both travel control valves so the machine tracks straight while implements are used",
+    "Travel stops",
+    "The main relief is bypassed"
+   ],
+   "answer": [
+    1
+   ],
+   "explanation": "The straight travel valve crosses flow so one pump feeds both travel valves and the other feeds the implements."
+  }
+ ]
+}

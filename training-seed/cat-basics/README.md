@@ -6,6 +6,7 @@ Tech Training > Course manager ("Cat Basics courses ready to import").
 - `courses.json` - all seven courses (chapters, lessons, pages of text).
 - `covers/<course>.jpg` - course cover images.
 - `img/<course>.json` - diagram packs: which image goes on which page, images as data URLs.
+- `quiz/<course>.json` - final quiz pools written from the course text (25-32 questions each; a final attempt draws 25). Imported with the course, so certificates can be earned straight away. Courses imported before the quizzes existed get them from Course manager > "Updates ready for imported Cat courses". Review them like any content; change them in a new revision.
 
 Diagram packs included: drivetrain-a, fde-2, hyd-2, hyd-3.
 Not included (too large to copy across in this build): drivetrain-b, fde-1, hyd-1. Those three courses

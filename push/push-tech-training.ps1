@@ -23,7 +23,8 @@ Tech Training module: courses, employee register, quizzes, approved certificates
   print; verify by number. Revoke with reason.
 - Course manager: Draft -> In review -> Published -> Archived (restore); minor/major changes with "What changed", history and
   roll back; delete only never-published drafts. Text lesson editor with quiz builder. Add material: write, import Word /
-  PDF / text, import the Service Tech Training folder, copy a course. The 7 Cat Basics courses ship in training-seed/.
+  PDF / text, import the Service Tech Training folder, copy a course. The 7 Cat Basics courses ship in training-seed/,
+  each with a final quiz pool (25-32 questions, 25 drawn per attempt) so certificates can be earned once imported.
 - Records and ISO: per-employee competence record + audit trail (print / PDF pack), training matrix, controlled documents,
   ISO 9001 7.2 / 7.5 / 9.3 / 10.2 controls, corrective actions, CSV exports (matrix, competence, SETA list, audit).
 - Migrations 20261128120000_tech_training_enum and 20261128120100_tech_training. Tests: tech-training-model, tech-training-markdown.
