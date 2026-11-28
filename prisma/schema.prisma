@@ -80,6 +80,8 @@ enum ModuleKey {
   COMMISSIONS
   // 2026-11-25 — Failure Reports module.
   FAILURE_REPORTS
+  // 2026-11-28 — Tech Training module (courses, employee register, quizzes, approved certificates, ISO 9001 7.2 records).
+  TECH_TRAINING
 }
 
 // The platform hosts more than one product line under one shared
@@ -409,6 +411,13 @@ enum NotificationType {
   // One row per recipient (membership), tied to its PlatformBroadcast through Notification.broadcastId. Shown by the same
   // BroadcastBanner as ORG_BROADCAST, and listed in the bell and History like any other notification.
   PLATFORM_BROADCAST
+  // 2026-11-28 — Tech Training: a certificate is waiting for approval / was approved or sent back / a mentor question was asked or answered,
+  // a course was assigned, a course review or effectiveness review is due.
+  TRAINING_CERTIFICATE_REQUESTED
+  TRAINING_CERTIFICATE_DECIDED
+  TRAINING_COURSE_ASSIGNED
+  TRAINING_MENTOR_QUESTION
+  TRAINING_REVIEW_DUE
 }
 
 // Full replace (2026-09-09) of the old PexStockUnit/PexSupplyLink pair,
@@ -654,6 +663,12 @@ model Company {
   failureReports        FailureReport[]
   failureReportPhotos   FailureReportPhoto[]
   failureReportProfiles FailureReportProfile[]
+  // 2026-11-28 — Tech Training module.
+  trainingSettings      TrainingSettings?
+  trainingPositions     TrainingPosition[]
+  trainingEmployees     TrainingEmployee[]
+  trainingCourses       TrainingCourse[]
+  trainingCorrectiveActions TrainingCorrectiveAction[]
   jobDimensionLines JobDimensionLine[]
   specificationFormSettings SpecificationFormSettings?
   jobPartLines      JobPartLine[]
@@ -3614,4 +3629,456 @@ model FailureReportProfile {
   reports FailureReport[]
 
   @@index([companyId, active])
+}
+
+
+// ---------------------------------------------------------------------------
+// 2026-11-28 — Tech Training module. See src/lib/training/ and the plan doc "Flo X Integrations: Training & Certification module".
+// Records are kept for 10 years and never hard-deleted (ISO 9001 7.5.3): employees are deactivated, courses archived, and only a
+// course draft that was never published can be deleted.
+// ---------------------------------------------------------------------------
+
+enum TrainingEmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TrainingCourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum TrainingRevisionStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum TrainingChangeLevel {
+  MINOR
+  MAJOR
+}
+
+enum TrainingCompletionMode {
+  QUIZ_CERTIFICATE
+  ACKNOWLEDGE
+}
+
+enum TrainingLessonFormat {
+  TEXT
+  TEXT_IMAGES
+  PDF
+  VIDEO
+}
+
+enum TrainingQuestionScope {
+  FINAL
+  CHECK
+}
+
+enum TrainingEnrolmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  AWAITING_APPROVAL
+  CERTIFIED
+  ACKNOWLEDGED
+  WITHDRAWN
+}
+
+enum TrainingAttemptKind {
+  FINAL
+  PRE
+  CHECK
+}
+
+enum TrainingCertificateStatus {
+  PENDING
+  VALID
+  REJECTED
+  REVOKED
+}
+
+enum TrainingActionStatus {
+  OPEN
+  CLOSED
+}
+
+model TrainingSettings {
+  id                 String   @id @default(cuid())
+  companyId          String   @unique
+  certificatePrefix  String   @default("")
+  defaultPassMark    Int      @default(80)
+  defaultMaxAttempts Int      @default(3)
+  escalationDays     Int      @default(5)
+  effectivenessDays  Int      @default(30)
+  retentionYears     Int      @default(10)
+  updatedAt          DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// An approver's signature, stamped on the certificates they approve (each certificate keeps a copy, so a later change never alters it).
+model TrainingSigner {
+  id            String   @id @default(cuid())
+  companyId     String
+  userId        String
+  title         String   @default("")
+  signatureData Bytes?
+  signatureMime String?
+  updatedAt     DateTime @updatedAt
+
+  @@unique([companyId, userId])
+}
+
+model TrainingPosition {
+  id                String   @id @default(cuid())
+  companyId         String
+  name              String
+  requiredCourseIds String[]
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company   Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employees TrainingEmployee[]
+
+  @@unique([companyId, name])
+}
+
+model TrainingEmployee {
+  id            String                 @id @default(cuid())
+  companyId     String
+  employeeNo    String?
+  firstName     String
+  surname       String
+  idNumber      String
+  email         String
+  positionId    String?
+  managerUserId String?
+  userId        String?
+  status        TrainingEmployeeStatus @default(ACTIVE)
+  notes         String?
+  createdById   String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  position     TrainingPosition?     @relation(fields: [positionId], references: [id], onDelete: SetNull)
+  enrolments   TrainingEnrolment[]
+  certificates TrainingCertificate[]
+
+  @@unique([companyId, idNumber])
+  @@index([companyId, status])
+  @@index([companyId, userId])
+}
+
+model TrainingCourse {
+  id                  String                 @id @default(cuid())
+  companyId           String
+  code                String
+  title               String
+  group               String
+  docNumber           String                 @default("")
+  status              TrainingCourseStatus   @default(DRAFT)
+  completionMode      TrainingCompletionMode @default(QUIZ_CERTIFICATE)
+  passMark            Int                    @default(80)
+  maxAttempts         Int                    @default(3)
+  ownerUserId         String?
+  reviewMonths        Int                    @default(12)
+  nextReviewAt        DateTime?
+  liveRevisionId      String?
+  coverData           Bytes?
+  coverMime           String?
+  importKey           String?
+  archivedAt          DateTime?
+  archivedById        String?
+  archiveReason       String?
+  replacementCourseId String?
+  finishBy            DateTime?
+  createdById         String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  revisions    TrainingRevision[]
+  assets       TrainingAsset[]
+  enrolments   TrainingEnrolment[]
+  certificates TrainingCertificate[]
+  questions    TrainingMentorQuestion[]
+
+  @@unique([companyId, code])
+  @@index([companyId, status])
+}
+
+model TrainingRevision {
+  id            String                 @id @default(cuid())
+  companyId     String
+  courseId      String
+  major         Int
+  minor         Int
+  status        TrainingRevisionStatus @default(DRAFT)
+  changeLevel   TrainingChangeLevel?
+  whatChanged   String?
+  createdById   String?
+  submittedById String?
+  submittedAt   DateTime?
+  reviewComment String?
+  publishedById String?
+  publishedAt   DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  course    TrainingCourse     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons   TrainingLesson[]
+  questions TrainingQuestion[]
+
+  @@index([courseId, status])
+}
+
+model TrainingLesson {
+  id           String               @id @default(cuid())
+  companyId    String
+  revisionId   String
+  // Stays the same across revisions, so progress carries over when a course is updated.
+  stableKey    String
+  chapterKey   String
+  chapterTitle String
+  chapterOrder Int
+  topicTitle   String               @default("")
+  ordinal      Int
+  title        String
+  format       TrainingLessonFormat @default(TEXT)
+  objective    String               @default("")
+  // One entry per page: light markdown (headings, lists, tables, > Safety: / > Note: blocks).
+  pages        String[]
+  // Asset id shown on each page (same length as pages, "" for none).
+  pageImages   String[]
+  pdfAssetId   String?
+  videoUrl     String?
+  safetyPoint  String               @default("")
+  practicalTask String              @default("")
+  estMinutes   Int                  @default(5)
+
+  revision TrainingRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+
+  @@unique([revisionId, stableKey])
+  @@index([revisionId, chapterOrder, ordinal])
+}
+
+// Diagrams, images and PDFs used by a course. Shared by every revision of the course.
+model TrainingAsset {
+  id        String   @id @default(cuid())
+  companyId String
+  courseId  String
+  name      String
+  mime      String
+  data      Bytes
+  sha256    String
+  createdAt DateTime @default(now())
+
+  course TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, sha256])
+}
+
+model TrainingQuestion {
+  id           String                @id @default(cuid())
+  companyId    String
+  revisionId   String
+  stableKey    String
+  scope        TrainingQuestionScope @default(FINAL)
+  chapterKey   String                @default("")
+  lessonKey    String                @default("")
+  prompt       String
+  options      String[]
+  // Index(es) of the right option(s); several = pick every right one.
+  answer       Int[]
+  explanation  String                @default("")
+  ordinal      Int                   @default(0)
+
+  revision TrainingRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+
+  @@index([revisionId, scope])
+}
+
+model TrainingEnrolment {
+  id             String                  @id @default(cuid())
+  companyId      String
+  employeeId     String
+  courseId       String
+  revisionId     String?
+  assignedById   String?
+  dueDate        DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  activeSeconds  Int                     @default(0)
+  lastSeenAt     DateTime?
+  attemptsUsed   Int                     @default(0)
+  attemptsReset  Int                     @default(0)
+  status         TrainingEnrolmentStatus @default(ASSIGNED)
+  preScore       Int?
+  lastLessonKey  String?
+  lastPage       Int                     @default(0)
+  acknowledgedAt DateTime?
+  updateRequired Boolean                 @default(false)
+  withdrawnAt    DateTime?
+  withdrawnReason String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  employee  TrainingEmployee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  course    TrainingCourse        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  progress  TrainingProgress[]
+  attempts  TrainingQuizAttempt[]
+  signoffs  TrainingSignoff[]
+
+  @@unique([employeeId, courseId])
+  @@index([companyId, status])
+}
+
+model TrainingProgress {
+  id                String    @id @default(cuid())
+  companyId         String
+  enrolmentId       String
+  lessonKey         String
+  revisionId        String?
+  pagesSeen         Int       @default(0)
+  safetyConfirmedAt DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  enrolment TrainingEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrolmentId, lessonKey])
+}
+
+model TrainingQuizAttempt {
+  id              String              @id @default(cuid())
+  companyId       String
+  enrolmentId     String
+  employeeId      String
+  courseId        String
+  revisionId      String
+  kind            TrainingAttemptKind @default(FINAL)
+  chapterKey      String              @default("")
+  attemptNo       Int
+  questionIds     String[]
+  answers         Json?
+  score           Int?
+  passed          Boolean?
+  weakLessons     Json?
+  startedAt       DateTime            @default(now())
+  submittedAt     DateTime?
+  durationSeconds Int?
+
+  enrolment TrainingEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+
+  @@index([enrolmentId, kind])
+}
+
+model TrainingSignoff {
+  id          String   @id @default(cuid())
+  companyId   String
+  enrolmentId String
+  lessonKey   String
+  jobRef      String   @default("")
+  comment     String   @default("")
+  signedById  String
+  signedAt    DateTime @default(now())
+
+  enrolment TrainingEnrolment @relation(fields: [enrolmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrolmentId, lessonKey])
+}
+
+model TrainingCertificate {
+  id                 String                    @id @default(cuid())
+  companyId          String
+  certNo             String                    @unique
+  employeeId         String
+  courseId           String
+  revisionId         String
+  enrolmentId        String
+  attemptId          String?
+  status             TrainingCertificateStatus @default(PENDING)
+  requestedAt        DateTime                  @default(now())
+  checklist          Json?
+  decidedById        String?
+  decidedAt          DateTime?
+  decisionComment    String?
+  signatoryName      String?
+  signatoryTitle     String?
+  signatureData      Bytes?
+  signatureMime      String?
+  escalatedAt        DateTime?
+  revokedById        String?
+  revokedAt          DateTime?
+  revokedReason      String?
+  reviewDueAt        DateTime?
+  reviewedById       String?
+  reviewedAt         DateTime?
+  reviewCompetent    Boolean?
+  reviewComment      String?
+
+  employee TrainingEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  course   TrainingCourse   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+  @@index([employeeId])
+}
+
+model TrainingMentorQuestion {
+  id           String    @id @default(cuid())
+  companyId    String
+  courseId     String
+  lessonKey    String
+  employeeId   String
+  question     String
+  answer       String?
+  answeredById String?
+  answeredAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  course TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, lessonKey])
+}
+
+// Revision cards (spaced review of earlier courses): one row per employee and question they have seen.
+model TrainingCardReview {
+  id          String   @id @default(cuid())
+  companyId   String
+  employeeId  String
+  questionKey String
+  courseId    String
+  box         Int      @default(1)
+  dueAt       DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@unique([employeeId, questionKey])
+  @@index([employeeId, dueAt])
+}
+
+model TrainingCorrectiveAction {
+  id         String               @id @default(cuid())
+  companyId  String
+  ref        String
+  courseId   String?
+  title      String
+  detail     String               @default("")
+  status     TrainingActionStatus @default(OPEN)
+  dueDate    DateTime?
+  raisedById String?
+  closedById String?
+  closedAt   DateTime?
+  closeNote  String?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, ref])
 }

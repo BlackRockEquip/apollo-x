@@ -36,6 +36,14 @@ export class FailureReportError extends Error {
   }
 }
 
+// 2026-11-28 — Tech Training (training/*): a rule of the module was broken. Carries its own plain-words message.
+export class TrainingError extends Error {
+  constructor(public code: string, message: string, public status: 400 | 403 | 404 | 409 = 400) {
+    super(message);
+    this.name = "TrainingError";
+  }
+}
+
 // 2026-09-29 — SMTP "Test connection" button (company-settings-service.ts's
 // testCompanySmtpConnection). A failed test isn't really a 5xx server
 // error and isn't a Zod validation error either — it's the SMTP server (or
@@ -54,6 +62,7 @@ export function apiError(error: unknown) {
   if (error instanceof StockError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: 409 });
   if (error instanceof CommissionError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
   if (error instanceof FailureReportError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
+  if (error instanceof TrainingError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
   if (error instanceof TestingError) return NextResponse.json({ error: { code: error.code, message: error.message } }, { status: error.status });
   if (error instanceof SmtpTestError) return NextResponse.json({ error: { code: "SMTP_TEST_FAILED", message: error.message } }, { status: 422 });
   if (error instanceof AuthorizationError) return NextResponse.json({ error: { code: "FORBIDDEN", message: error.message } }, { status: 403 });

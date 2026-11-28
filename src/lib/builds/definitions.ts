@@ -52,6 +52,9 @@ export const TILES: Record<string, BuildTile> = {
   // 2026-11-25: Failure Reports - the Failure Report Builder as a module: photo failure reports (.pptx) with damage marks,
   // linked to a job (details pulled in, still editable), printed with our own or a client's logo and details.
   FAILURE_REPORTS: { id: "FAILURE_REPORTS", label: "Failure Reports", note: "Photo failure reports (PowerPoint) with damage marks, linked to a job, printed with our or the client's logo and details", modules: ["FAILURE_REPORTS"] },
+  // 2026-11-28: Tech Training - courses (text or diagrams), employee register kept by Company Admins, quizzes with every attempt
+  // recorded, certificates approved by a manager or Company Admin, ISO 9001 7.2 training records.
+  TECH_TRAINING: { id: "TECH_TRAINING", label: "Tech Training", note: "Training courses, employee register, quizzes, approved certificates and ISO training records", modules: ["TECH_TRAINING"] },
   SPECIFICATIONS: { id: "SPECIFICATIONS", label: "Specifications", note: "Dimensions, tolerances and spec notes, with before-work and after-work report uploads", modules: ["SPECIFICATIONS"] },
 };
 
@@ -74,7 +77,7 @@ export const BUILDS: Record<IndustryBuildId, BuildDefinition> = {
     label: "Workshop Business",
     description: "Repair, rebuild and field service workshops that quote parts, issue pick slips and track components through the shop.",
     example: "Repair and rebuild workshop",
-    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE", "TESTING_REPORTS", "FAILURE_REPORTS", "COMMISSIONS"],
+    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "RFQ", "STOCK", "PICK_SLIPS", "PEX", "OUTWORK", "FIELD_SERVICE", "TESTING_REPORTS", "FAILURE_REPORTS", "COMMISSIONS", "TECH_TRAINING"],
     defaultOn: ["JOB_PARTS", "RFQ", "OUTWORK", "FIELD_SERVICE"],
     wording: ["Job", "Component", "Pick slip", "Delivery note", "Mechanic"],
   },
@@ -83,7 +86,7 @@ export const BUILDS: Record<IndustryBuildId, BuildDefinition> = {
     label: "Engineering Business",
     description: "Engineering shops that run work through the same job flow as a workshop, without PEX inventory, supplier RFQs or field service.",
     example: "Subset of the Workshop modules",
-    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "STOCK", "PICK_SLIPS", "OUTWORK", "SPECIFICATIONS", "FAILURE_REPORTS", "COMMISSIONS"],
+    tiles: ["JOBS", "CUSTOMERS", "REPORTS", "DASHBOARD", "JOB_PARTS", "STOCK", "PICK_SLIPS", "OUTWORK", "SPECIFICATIONS", "FAILURE_REPORTS", "COMMISSIONS", "TECH_TRAINING"],
     defaultOn: ["JOB_PARTS", "OUTWORK", "SPECIFICATIONS"],
     wording: ["Job", "Pick slip", "Delivery note"],
   },

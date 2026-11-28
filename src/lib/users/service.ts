@@ -74,6 +74,7 @@ const MODULE_CATEGORY: Record<ModuleKey, string> = {
   TESTING_REPORTS: "Workshop",
   COMMISSIONS: "Commercial",
   FAILURE_REPORTS: "Workshop",
+  TECH_TRAINING: "People",
 };
 
 export async function companyEntitledModules(companyId: string) {
@@ -130,6 +131,8 @@ function modulePermissions(moduleKey: ModuleKey) {
     COMMISSIONS: [],
     // 2026-11-25: Failure Reports uses the job permissions (JOBS_VIEW / JOBS_EDIT), like Job parts - nothing of its own to sweep.
     FAILURE_REPORTS: [],
+    // 2026-11-28: Tech Training - TRAINING_VIEW (learn) and the manager / admin training permissions.
+    TECH_TRAINING: TENANT_PERMISSIONS.filter((p) => p.startsWith("TRAINING_")),
   };
   return new Set(prefixMap[moduleKey] ?? []);
 }

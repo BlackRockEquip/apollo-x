@@ -44,6 +44,10 @@ export const TENANT_PERMISSIONS = [
   // 2026-11-25, Commissions: see the commission tracker, and add / change lines, fuel, rep rates and payouts. Company Admins only
   // (and then only those with the module switched on in their user profile - see src/lib/commissions/access.ts).
   "COMMISSIONS_VIEW", "COMMISSIONS_EDIT",
+  // 2026-11-28, Tech Training: TRAINING_VIEW = take courses (every user type); APPROVE = approve certificates, sign off practical
+  // tasks, answer mentor questions; CONTENT_EDIT = add, update, publish, archive courses; REPORTS_VIEW = training records, matrix,
+  // ISO reports; EMPLOYEES_MANAGE = create and change employee profiles; SETTINGS = module settings. The last two are Company Admin only.
+  "TRAINING_VIEW", "TRAINING_APPROVE", "TRAINING_CONTENT_EDIT", "TRAINING_REPORTS_VIEW", "TRAINING_EMPLOYEES_MANAGE", "TRAINING_SETTINGS",
 ] as const;
 
 export type TenantPermission = (typeof TENANT_PERMISSIONS)[number];
@@ -79,7 +83,8 @@ const MANAGER_SETTINGS_PERMISSIONS = new Set<TenantPermission>([
   "TAX_CODES_VIEW", "TAX_CODES_CREATE", "TAX_CODES_EDIT", "COMMERCIAL_TERMS_VIEW", "COMMERCIAL_TERMS_CREATE", "COMMERCIAL_TERMS_EDIT",
 ]);
 // 2026-11-25: commission figures (sales, profit, pay) are for Company Admins only, so a Manager never holds them.
-const COMPANY_ADMIN_ONLY_PERMISSIONS = new Set<TenantPermission>(["COMMISSIONS_VIEW", "COMMISSIONS_EDIT"]);
+// 2026-11-28: employee profiles (ID numbers) and Tech Training settings are for Company Admins only (user requirement).
+const COMPANY_ADMIN_ONLY_PERMISSIONS = new Set<TenantPermission>(["COMMISSIONS_VIEW", "COMMISSIONS_EDIT", "TRAINING_EMPLOYEES_MANAGE", "TRAINING_SETTINGS"]);
 const MANAGER_KEPT_DEACTIVATIONS = new Set<TenantPermission>([
   "CUSTOMER_BRANCH_DEACTIVATE", "CUSTOMER_CONTACT_DEACTIVATE", "CUSTOMER_ADDRESS_DEACTIVATE", "SUPPLIER_CONTACT_DEACTIVATE", "SUPPLIER_ADDRESS_DEACTIVATE",
 ]);
@@ -101,10 +106,10 @@ const MANAGER = new Set<TenantPermission>(TENANT_PERMISSIONS.filter((permission)
 // here is both necessary and sufficient to enforce the restriction
 // everywhere (API layer, not just the UI) — see page-guard.ts for the
 // page-reachability half of "hidden completely".
-const USER = new Set<TenantPermission>(["JOBS_VIEW", "JOBS_EDIT", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_ISSUE", "SUPPLIERS_VIEW"]);
+const USER = new Set<TenantPermission>(["JOBS_VIEW", "JOBS_EDIT", "JOB_KITS_VIEW", "INVENTORY_VIEW", "INVENTORY_ISSUE", "SUPPLIERS_VIEW", "TRAINING_VIEW"]);
 // 2026-10-16, user request: "WIP View (View Only)" user type (Engineering Business). Sees the Jobs & WIP list and
 // opens a job, nothing else and nothing editable: no create/edit, no dashboard, customers, stock or settings.
-const WIP_VIEWER = new Set<TenantPermission>(["JOBS_VIEW"]);
+const WIP_VIEWER = new Set<TenantPermission>(["JOBS_VIEW", "TRAINING_VIEW"]);
 // 2026-10-19, user request: "Store controllers should be able to view/edit only these sidebar menus: Stock Levels, PickSlips and
 // PEX Inventory." Stock Levels covers the Inventory menu (Stock Levels, Storage Locations/bins and Manufacturers) and lets the
 // store controller check, add, update and remove stock; Pick slips need only INVENTORY_ISSUE (the job picker has its own
@@ -118,15 +123,16 @@ const STORES = new Set<TenantPermission>([
   "MANUFACTURERS_VIEW", "MANUFACTURERS_CREATE", "MANUFACTURERS_EDIT",
   "STORAGE_LOCATIONS_VIEW", "STORAGE_LOCATIONS_CREATE", "STORAGE_LOCATIONS_EDIT",
   "PEX_VIEW", "PEX_STOCK_VIEW", "PEX_TRACKING_VIEW",
+  "TRAINING_VIEW",
 ]);
 // 2026-11-07, user request: "create a new user type Testing Technician ... access granted to Admins, Managers, Testing Techs".
 // A Testing Technician sees Testing Reports and nothing else: they can open, fill in and complete reports and look up a job to
 // test, but cannot change the spec templates (those limits belong to Admins and Managers) and have no Jobs, stock, customer,
 // dashboard or settings access. Admins hold every permission and Managers hold everything except Settings, so both already
 // include the three TESTING_ permissions.
-const TESTING_TECHNICIAN = new Set<TenantPermission>(["TESTING_VIEW", "TESTING_EDIT"]);
-const SALES = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT", "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "SUPPLIERS_VIEW", "JOBS_VIEW", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT", "QUOTES_EDIT_PRICE", "QUOTES_APPLY_DISCOUNT", "QUOTES_SEND", "QUOTES_REVISE", "QUOTES_EXPORT", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE", "SALES_ORDERS_EDIT_DRAFT"]);
-const FINANCE = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "INVENTORY_VIEW", "INVENTORY_VIEW_COST", "STOCK_MOVEMENTS_VIEW", "QUOTES_VIEW","QUOTES_VIEW_COST", "QUOTES_VIEW_MARGIN", "SALES_ORDERS_VIEW", "SALES_ORDERS_VIEW_COST", "SALES_ORDERS_CREATE_INVOICE", "INVOICES_VIEW", "INVOICES_CREATE", "INVOICES_CREATE_FROM_JOB", "INVOICES_CREATE_FROM_SALES_ORDER", "INVOICES_EDIT_DRAFT", "INVOICES_VIEW_COST_MARGIN", "INVOICES_APPROVE", "INVOICES_ISSUE", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT", "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT", "REPORTS_VIEW"]);
+const TESTING_TECHNICIAN = new Set<TenantPermission>(["TESTING_VIEW", "TESTING_EDIT", "TRAINING_VIEW"]);
+const SALES = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "CUSTOMERS_CREATE", "CUSTOMERS_EDIT", "CUSTOMER_BRANCH_CREATE", "CUSTOMER_BRANCH_EDIT", "CUSTOMER_CONTACT_CREATE", "CUSTOMER_CONTACT_EDIT", "CUSTOMER_ADDRESS_CREATE", "CUSTOMER_ADDRESS_EDIT", "SUPPLIERS_VIEW", "JOBS_VIEW", "QUOTES_VIEW", "QUOTES_CREATE", "QUOTES_EDIT_DRAFT", "QUOTES_EDIT_PRICE", "QUOTES_APPLY_DISCOUNT", "QUOTES_SEND", "QUOTES_REVISE", "QUOTES_EXPORT", "SALES_ORDERS_VIEW", "SALES_ORDERS_CREATE_FROM_QUOTE", "SALES_ORDERS_EDIT_DRAFT", "TRAINING_VIEW"]);
+const FINANCE = new Set<TenantPermission>(["DASHBOARD_VIEW", "CUSTOMERS_VIEW", "JOBS_VIEW", "INVENTORY_VIEW", "INVENTORY_VIEW_COST", "STOCK_MOVEMENTS_VIEW", "QUOTES_VIEW","QUOTES_VIEW_COST", "QUOTES_VIEW_MARGIN", "SALES_ORDERS_VIEW", "SALES_ORDERS_VIEW_COST", "SALES_ORDERS_CREATE_INVOICE", "INVOICES_VIEW", "INVOICES_CREATE", "INVOICES_CREATE_FROM_JOB", "INVOICES_CREATE_FROM_SALES_ORDER", "INVOICES_EDIT_DRAFT", "INVOICES_VIEW_COST_MARGIN", "INVOICES_APPROVE", "INVOICES_ISSUE", "INVOICES_RECORD_PAYMENT", "INVOICES_EXPORT", "FINANCIAL_REPORTS_VIEW", "FINANCIAL_REPORTS_EXPORT", "REPORTS_VIEW", "TRAINING_VIEW"]);
 
 export const DEFAULT_TENANT_PERMISSIONS: Record<TenantRole, ReadonlySet<TenantPermission>> = {
   COMPANY_ADMIN: ALL_TENANT,

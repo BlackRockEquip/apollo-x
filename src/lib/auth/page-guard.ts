@@ -94,6 +94,8 @@ export function defaultTenantDestination(permissions: ReadonlySet<TenantPermissi
   if (permissions.has("SUPPLIERS_VIEW") && on("SUPPLIERS")) return "/suppliers";
   // 2026-11-07: a Testing Technician holds nothing but Testing Reports, so that is where they land.
   if (permissions.has("TESTING_VIEW") && on("TESTING_REPORTS")) return "/testing-reports";
+  // 2026-11-28: someone whose only access is Tech Training (a training-only login) lands on their courses.
+  if (permissions.has("TRAINING_VIEW") && on("TECH_TRAINING")) return "/tech-training";
   if (!moduleAccess) return "/login";
   if (permissions.has("CUSTOMERS_VIEW") && on("CUSTOMERS")) return "/customers";
   if (permissions.has("REPORTS_VIEW") && on("REPORTS")) return "/reports";

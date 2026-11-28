@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot, HandCoins, FileImage } from "lucide-react";
+import { BarChart3, Boxes, Building2, ChevronDown, FileSpreadsheet, Headset, LayoutDashboard, MapPin, Megaphone, Menu, Settings, Users, Factory, PackageOpen, BriefcaseBusiness, Repeat, ShieldCheck, Wrench, Package, Truck, Gauge, Cog, Settings2, Disc3, CircleDot, HandCoins, FileImage, GraduationCap, Library, IdCard, BadgeCheck, ClipboardList, SlidersHorizontal } from "lucide-react";
 import type { ModuleKey, TenantRole } from "@prisma/client";
 import type { RequestContext } from "@/lib/auth/context-types";
 import type { ModuleAccessMode } from "@/lib/entitlements/policy";
@@ -139,6 +139,17 @@ const NAV_GROUPS: NavGroup[] = [
   // 2026-11-25: Commissions - only shown to a Company Admin with the module switched on for the company and in their own profile
   // (session.ts denies the module for everyone else, so this filter hides it).
   { key: "commissions", label: "Sales", icon: HandCoins, items: [{ key: "commissions", label: "Commissions", href: "/commissions", module: "COMMISSIONS", permission: "COMMISSIONS_VIEW", icon: HandCoins }] },
+  // 2026-11-28: Tech Training - its own group. Courses is for everyone with the module; the rest follow the training permissions
+  // (Employees and Settings are Company Admin only - see permissions.ts).
+  { key: "tech-training", label: "Tech Training", icon: GraduationCap, items: [
+    { key: "tt-courses", label: "Courses", href: "/tech-training", module: "TECH_TRAINING", permission: "TRAINING_VIEW", icon: GraduationCap },
+    { key: "tt-manage", label: "Course manager", href: "/tech-training/manage", module: "TECH_TRAINING", permission: "TRAINING_CONTENT_EDIT", icon: Library },
+    { key: "tt-employees", label: "Employees", href: "/tech-training/employees", module: "TECH_TRAINING", permission: "TRAINING_EMPLOYEES_MANAGE", icon: IdCard },
+    { key: "tt-approvals", label: "Approvals", href: "/tech-training/approvals", module: "TECH_TRAINING", permission: "TRAINING_APPROVE", icon: BadgeCheck },
+    { key: "tt-records", label: "Training records", href: "/tech-training/records", module: "TECH_TRAINING", permission: "TRAINING_REPORTS_VIEW", icon: ClipboardList },
+    { key: "tt-compliance", label: "ISO & compliance", href: "/tech-training/compliance", module: "TECH_TRAINING", permission: "TRAINING_REPORTS_VIEW", icon: ShieldCheck },
+    { key: "tt-settings", label: "Training settings", href: "/tech-training/settings", module: "TECH_TRAINING", permission: "TRAINING_APPROVE", icon: SlidersHorizontal },
+  ] },
   { key: "settings", label: "Settings", icon: Settings, footer: true, items: SETTINGS_NAV_ITEMS.map((item) => ({ ...item, icon: SETTINGS_ICONS[item.key] ?? Settings })) },
 ];
 
